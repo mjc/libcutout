@@ -43,6 +43,21 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
     case stale
     case waitingForFirstTelemetry
     case unavailable
+
+    public var accessibilityValue: String {
+        switch self {
+        case .connected:
+            "connected"
+        case .disconnected:
+            "disconnected"
+        case .stale:
+            "stale"
+        case .waitingForFirstTelemetry:
+            "waiting for telemetry"
+        case .unavailable:
+            "unavailable"
+        }
+    }
 }
 
 public enum LiveActivityRideGlyph: String, Codable, Equatable, Hashable, Sendable {
@@ -174,6 +189,21 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
+    }
+
+    public var accessibilityValue: String {
+        switch state {
+        case .available:
+            [value, unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+        case .stale:
+            [value, unit, accessibilityDetail, "stale"].compactMap { $0 }.joined(separator: ", ")
+        case .unavailable:
+            ["unavailable", accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+        case .notApplicable:
+            "not applicable"
+        case .deferred:
+            ["waiting for data", accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+        }
     }
 
     public var speedGaugeProgressValue: Double? {

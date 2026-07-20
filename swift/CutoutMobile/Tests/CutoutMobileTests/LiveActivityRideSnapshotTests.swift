@@ -126,6 +126,43 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(resetReason, .profileChanged)
     }
 
+    func testAccessibilityValuesSpeakAvailabilityAndFreshness() {
+        XCTAssertEqual(
+            LiveActivityRideConnectionState.waitingForFirstTelemetry.accessibilityValue,
+            "waiting for telemetry"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.available(
+                label: "Voltage",
+                value: "84",
+                unit: "volts",
+                source: .liveTelemetry
+            ).accessibilityValue,
+            "84, volts"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.stale(
+                label: "Voltage",
+                value: "83",
+                unit: "volts",
+                source: .liveTelemetry
+            ).accessibilityValue,
+            "83, volts, stale"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.unavailable(label: "Voltage").accessibilityValue,
+            "unavailable"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.notApplicable(label: "Headroom").accessibilityValue,
+            "not applicable"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.deferred(label: "Battery").accessibilityValue,
+            "waiting for data"
+        )
+    }
+
     func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 

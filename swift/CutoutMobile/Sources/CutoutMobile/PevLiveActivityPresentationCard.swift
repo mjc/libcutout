@@ -51,6 +51,7 @@ public struct PevLiveActivityPresentationCard: View {
             Text(title)
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(PevLiveActivityPalette.primaryText)
+                .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(.caption)
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
@@ -70,6 +71,11 @@ public struct PevLiveActivityPresentationCard: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(PevLiveActivityPalette.secondaryText)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(snapshot.speed.label)
+            .accessibilityValue(
+                "\(snapshot.speed.accessibilityValue), \(snapshot.identity.displayLabel), \(snapshot.connectionState.accessibilityValue)"
+            )
 
             Spacer()
 
@@ -86,26 +92,31 @@ public struct PevLiveActivityPresentationCard: View {
             Text(snapshot.identity.displayLabel)
                 .font(.callout.weight(.semibold))
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
+                .accessibilityLabel("Device")
+                .accessibilityValue(
+                    "\(snapshot.identity.displayLabel), \(snapshot.connectionState.accessibilityValue)"
+                )
 
             Text(snapshot.speed.displayValue)
                 .font(.system(size: 52, weight: .bold, design: .rounded))
                 .foregroundStyle(PevLiveActivityPalette.primaryText)
+                .accessibilityLabel(snapshot.speed.label)
+                .accessibilityValue(snapshot.speed.accessibilityValue)
 
             PevDashboardGrid(columns: [
                 GridItem(.flexible(), spacing: 12),
                 GridItem(.flexible(), spacing: 12),
             ], spacing: 12) {
-                ForEach(snapshot.visibleValues, id: \.label) { value in
-                    PevLiveActivityValueCell(
-                        value: value,
-                        tint: PevLiveActivityPalette.accent,
-                        textColor: PevLiveActivityPalette.primaryText,
-                        secondaryTextColor: PevLiveActivityPalette.secondaryText,
-                        background: PevLiveActivityPalette.cellBackground,
-                        showsStateText: true
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
+                liveMetric(snapshot.speed)
+                liveMetric(snapshot.battery)
+                liveMetric(snapshot.packVoltage)
+                liveMetric(snapshot.pwm)
+                liveMetric(snapshot.mode)
+                liveMetric(snapshot.duration)
+                liveMetric(snapshot.distance)
+                liveMetric(snapshot.headroom)
+                liveMetric(snapshot.beeps)
+                liveMetric(snapshot.temperature)
             }
         }
     }
@@ -126,6 +137,11 @@ public struct PevLiveActivityPresentationCard: View {
                     .font(.system(size: 48, weight: .bold, design: .rounded))
                     .foregroundStyle(PevLiveActivityPalette.primaryText)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Ride")
+            .accessibilityValue(
+                "\(snapshot.identity.displayLabel), \(snapshot.connectionState.accessibilityValue), \(snapshot.speed.accessibilityValue)"
+            )
 
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 10) {

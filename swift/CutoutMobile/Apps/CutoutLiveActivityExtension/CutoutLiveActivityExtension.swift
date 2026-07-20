@@ -20,11 +20,17 @@ private struct CutoutRideLiveActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 5) {
-                        PevLiveActivityBrandMark(size: 15)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 5) {
+                            PevLiveActivityBrandMark(size: 15)
+                            Text("CUTOUT")
+                                .font(.system(size: 12, weight: .bold))
+                        }
                         Text("CUTOUT")
                             .font(.system(size: 12, weight: .bold))
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     HStack(spacing: 5) {
@@ -36,17 +42,31 @@ private struct CutoutRideLiveActivityWidget: Widget {
                         Circle()
                             .fill(context.state.snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                             .frame(width: 6, height: 6)
+                            .accessibilityHidden(true)
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Device")
+                    .accessibilityValue(
+                        "\(context.state.snapshot.identity.displayLabel), \(context.state.snapshot.connectionState.accessibilityValue)"
+                    )
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     DynamicIslandRideActivityView(snapshot: context.state.snapshot)
                 }
             } compactLeading: {
-                HStack(spacing: 4) {
-                    PevLiveActivityBrandMark(size: 18)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 4) {
+                        PevLiveActivityBrandMark(size: 18)
+                        Text(context.state.snapshot.speed.displayValue)
+                            .font(.caption.weight(.bold))
+                    }
                     Text(context.state.snapshot.speed.displayValue)
                         .font(.caption.weight(.bold))
                 }
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(context.state.snapshot.speed.label)
+                .accessibilityValue(context.state.snapshot.speed.accessibilityValue)
             } compactTrailing: {
                 HStack(spacing: 4) {
                     Text(context.state.snapshot.battery.displayValue)
@@ -54,9 +74,17 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     Circle()
                         .fill(context.state.snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                         .frame(width: 5, height: 5)
+                        .accessibilityHidden(true)
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(context.state.snapshot.battery.label)
+                .accessibilityValue(context.state.snapshot.battery.accessibilityValue)
             } minimal: {
                 PevLiveActivityBrandMark(size: 16)
+                    .accessibilityLabel("Cutout ride")
+                    .accessibilityValue(
+                        "\(context.state.snapshot.identity.displayLabel), \(context.state.snapshot.connectionState.accessibilityValue)"
+                    )
             }
         }
     }

@@ -18,6 +18,7 @@ public struct PevLiveActivityBrandMark: View {
                     endPoint: .bottomTrailing
                 )
             )
+            .accessibilityLabel("Cutout")
     }
 }
 
@@ -44,7 +45,13 @@ public struct PevLiveActivityHeader: View {
             Circle()
                 .fill(snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                 .frame(width: 7, height: 7)
+                .accessibilityHidden(true)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Cutout ride")
+        .accessibilityValue(
+            "\(snapshot.identity.displayLabel), \(snapshot.connectionState.accessibilityValue)"
+        )
     }
 }
 
@@ -86,6 +93,9 @@ public struct PevLiveActivitySpeedGauge: View {
             }
         }
         .frame(width: diameter, height: diameter)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(snapshot.speed.label)
+        .accessibilityValue(snapshot.speed.accessibilityValue)
     }
 }
 
@@ -116,6 +126,7 @@ public struct PevLiveActivityMetricGrid: View {
                 metricCell(value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
             }
         }
+        .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
@@ -161,8 +172,10 @@ public struct PevLiveActivitySafetyFooter: View {
                 tint: headroomIsWarning ? PevLiveActivityPalette.warning : PevLiveActivityPalette.connected
             )
             Divider().overlay(PevLiveActivityPalette.border)
+                .accessibilityHidden(true)
             PevLiveActivityFooterChip(systemName: "speaker.wave.2.fill", value: snapshot.beeps, tint: PevLiveActivityPalette.accent)
             Divider().overlay(PevLiveActivityPalette.border)
+                .accessibilityHidden(true)
             PevLiveActivityFooterChip(systemName: "thermometer.medium", value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
         }
         .font(.system(size: compact ? 9 : 10, weight: .medium))
@@ -186,6 +199,7 @@ public struct PevLiveActivityFooterChip: View {
             Image(systemName: systemName)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(tint)
+                .accessibilityHidden(true)
             Text(value.displayValue)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -198,6 +212,9 @@ public struct PevLiveActivityFooterChip: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(value.label)
+        .accessibilityValue(value.accessibilityValue)
     }
 }
 
