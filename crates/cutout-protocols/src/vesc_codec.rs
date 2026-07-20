@@ -1,7 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
-    BatteryCurrent, Distance, Duration, PeakCurrent, PhaseCurrent, Power, RawFloatFieldValue,
-    RotationalSpeed, Speed, TachometerReading, Temperature, Voltage,
+    BatteryCurrent, Distance, Duration, DutyCycle, ElectricCharge, ElectricEnergy, PeakCurrent,
+    PhaseCurrent, PlaneAngle, Power, Quantity, RotationalSpeed, Speed, TachometerReading,
+    Temperature, Unit, Voltage,
 };
 use cutout_core::{BatteryLevel, SeriesCount, VescControllerId};
 use thiserror::Error;
@@ -20,7 +21,9 @@ pub const VESC_MAX_STREAM_REPLIES: usize = 4;
 const VESC_FRAME_START_SHORT: u8 = 2;
 const VESC_FRAME_START_LONG: u8 = 3;
 const VESC_FRAME_END: u8 = 3;
+const VESC_COMM_GET_VALUES: u8 = 4;
 const VESC_COMM_GET_MCCONF: u8 = 14;
+const VESC_COMM_GET_VALUES_SELECTIVE: u8 = 50;
 const VESC_COMM_GET_MCCONF_TEMP: u8 = 91;
 const VESC_MCCONF_SIGNATURE: u32 = 1_470_992_211;
 const VESC_MCCONF_SETUP_OFFSET: usize = 452;
@@ -57,20 +60,50 @@ pub struct VescValuesMask(u32);
 
 bitflags::bitflags! {
     impl VescValuesMask: u32 {
+        /// MOSFET/controller temperature.
+        const TEMP_MOSFET = 1 << 0;
+        /// Motor temperature.
+        const TEMP_MOTOR = 1 << 1;
+        /// Average motor current.
+        const AVG_CURRENT_MOTOR = 1 << 2;
         /// Average input current.
         const AVG_CURRENT_INPUT = 1 << 3;
+        /// Direct-axis current.
+        const AVG_CURRENT_D = 1 << 4;
+        /// Quadrature-axis current.
+        const AVG_CURRENT_Q = 1 << 5;
+        /// Motor duty cycle.
+        const DUTY_CYCLE = 1 << 6;
         /// Electrical RPM.
         const RPM = 1 << 7;
         /// Input voltage.
         const VOLTAGE_IN = 1 << 8;
+        /// Consumed amp-hours.
+        const AMP_HOURS = 1 << 9;
+        /// Regenerated amp-hours.
+        const AMP_HOURS_CHARGED = 1 << 10;
         /// Consumed watt-hours.
         const WATT_HOURS = 1 << 11;
+        /// Regenerated watt-hours.
+        const WATT_HOURS_CHARGED = 1 << 12;
         /// Relative tachometer.
         const TACHOMETER = 1 << 13;
+        /// Absolute tachometer.
+        const TACHOMETER_ABS = 1 << 14;
         /// Fault code.
         const FAULT_CODE = 1 << 15;
+        /// Motor control-loop position.
+        const PID_POS = 1 << 16;
         /// Controller identifier.
         const CONTROLLER_ID = 1 << 17;
+        /// Per-phase MOSFET temperatures.
+        const TEMP_MOSFET_ALL = 1 << 18;
+        /// Direct-axis voltage.
+        const AVG_VOLTAGE_D = 1 << 19;
+        /// Quadrature-axis voltage.
+        const AVG_VOLTAGE_Q = 1 << 20;
+        /// Controller status.
+        const STATUS = 1 << 21;
     }
 }
 
@@ -189,9 +222,107 @@ pub enum VescReadOnlyReply {
     MotorSetupConfig(VescSpeedGeometry),
 }
 
-/// Owned VESC values telemetry subset used by the generic read-only session.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DeciMilliAmpHour;
+
+impl Unit for DeciMilliAmpHour {
+    type Dimension = ElectricCharge;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DeciMilliWattHour;
+
+impl Unit for DeciMilliWattHour {
+    type Dimension = ElectricEnergy;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MicroDegree;
+
+impl Unit for MicroDegree {
+    type Dimension = PlaneAngle;
+}
+
+/// Cumulative charge transferred through a VESC.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransferredCharge(Quantity<ElectricCharge, DeciMilliAmpHour, i32>);
+
+impl TransferredCharge {
+    /// Creates transferred charge from tenths of a milliamp-hour.
+    #[must_use]
+    pub const fn from_deci_milliamp_hours(value: i32) -> Self {
+        Self(Quantity::new(value))
+    }
+
+    /// Returns transferred charge in microamp-hours.
+    #[must_use]
+    pub fn as_microamp_hours(self) -> i64 {
+        i64::from(self.0.get()).saturating_mul(100)
+    }
+
+    const fn from_vesc_counter(value: i32) -> Self {
+        Self::from_deci_milliamp_hours(value)
+    }
+}
+
+/// Cumulative energy transferred through a VESC.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransferredEnergy(Quantity<ElectricEnergy, DeciMilliWattHour, i32>);
+
+impl TransferredEnergy {
+    /// Creates transferred energy from tenths of a milliwatt-hour.
+    #[must_use]
+    pub const fn from_deci_milliwatt_hours(value: i32) -> Self {
+        Self(Quantity::new(value))
+    }
+
+    /// Returns transferred energy in microwatt-hours.
+    #[must_use]
+    pub fn as_microwatt_hours(self) -> i64 {
+        i64::from(self.0.get()).saturating_mul(100)
+    }
+
+    const fn from_vesc_counter(value: i32) -> Self {
+        Self::from_deci_milliwatt_hours(value)
+    }
+}
+
+/// VESC motor control-loop position, stored in microdegrees.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MotorPosition(Quantity<PlaneAngle, MicroDegree, i32>);
+
+impl MotorPosition {
+    /// Creates a motor position from microdegrees.
+    #[must_use]
+    pub const fn from_microdegrees(value: i32) -> Self {
+        Self(Quantity::new(value))
+    }
+
+    /// Returns the motor position in microdegrees.
+    #[must_use]
+    pub const fn as_microdegrees(self) -> i32 {
+        self.0.get()
+    }
+}
+
+/// Owned semantic values returned by VESC `COMM_GET_VALUES` commands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VescValuesTelemetry {
+    /// Consumed charge counter.
+    pub consumed_charge: TransferredCharge,
+
+    /// Regenerated charge counter.
+    pub regenerated_charge: TransferredCharge,
+
+    /// Consumed energy counter.
+    pub consumed_energy: TransferredEnergy,
+
+    /// Regenerated energy counter.
+    pub regenerated_energy: TransferredEnergy,
+
     /// MOSFET/controller temperature.
     pub controller_temperature: Temperature,
 
@@ -201,14 +332,20 @@ pub struct VescValuesTelemetry {
     /// Average motor current.
     pub motor_current: PhaseCurrent,
 
+    /// Average battery/input current.
+    pub input_current: BatteryCurrent,
+
+    /// Direct-axis motor current.
+    pub direct_axis_current: PhaseCurrent,
+
+    /// Quadrature-axis motor current.
+    pub quadrature_axis_current: PhaseCurrent,
+
     /// Electrical RPM.
     pub rpm: RotationalSpeed,
 
     /// Input voltage.
     pub voltage: Voltage,
-
-    /// Input current.
-    pub input_current: BatteryCurrent,
 
     /// Relative tachometer.
     pub tachometer: TachometerReading,
@@ -216,17 +353,70 @@ pub struct VescValuesTelemetry {
     /// Absolute tachometer count.
     pub tachometer_absolute: TachometerReading,
 
-    /// Controller identifier.
-    pub controller_id: VescControllerId,
+    /// Motor control-loop position.
+    pub motor_position: MotorPosition,
+
+    /// First phase MOSFET temperature.
+    pub mosfet_temperature_1: Temperature,
+
+    /// Second phase MOSFET temperature.
+    pub mosfet_temperature_2: Temperature,
+
+    /// Third phase MOSFET temperature.
+    pub mosfet_temperature_3: Temperature,
+
+    /// Direct-axis voltage.
+    pub direct_axis_voltage: Voltage,
+
+    /// Quadrature-axis voltage.
+    pub quadrature_axis_voltage: Voltage,
+
+    /// Fields present in this full or selective reply.
+    pub present_fields: VescValuesMask,
+
+    /// Motor duty cycle.
+    pub duty_cycle: DutyCycle,
 
     /// Current VESC fault code.
     pub fault_code: VescFaultCode,
 
+    /// Controller identifier.
+    pub controller_id: VescControllerId,
+
     /// Controller status byte.
     pub status: u8,
+}
 
-    /// Every floating-point field returned by `COMM_GET_VALUES`, preserving exact bits.
-    pub raw_float_fields: ArrayVec<RawFloatFieldValue, 19>,
+impl Default for VescValuesTelemetry {
+    fn default() -> Self {
+        Self {
+            consumed_charge: TransferredCharge::from_deci_milliamp_hours(0),
+            regenerated_charge: TransferredCharge::from_deci_milliamp_hours(0),
+            consumed_energy: TransferredEnergy::from_deci_milliwatt_hours(0),
+            regenerated_energy: TransferredEnergy::from_deci_milliwatt_hours(0),
+            controller_temperature: Temperature::from_millicelsius(0),
+            motor_temperature: Temperature::from_millicelsius(0),
+            motor_current: PhaseCurrent::from_milliamps(0),
+            input_current: BatteryCurrent::from_milliamps(0),
+            direct_axis_current: PhaseCurrent::from_milliamps(0),
+            quadrature_axis_current: PhaseCurrent::from_milliamps(0),
+            rpm: RotationalSpeed::from_erpm(0),
+            voltage: Voltage::from_millivolts(0),
+            tachometer: TachometerReading::from_counts(0),
+            tachometer_absolute: TachometerReading::from_counts(0),
+            motor_position: MotorPosition::from_microdegrees(0),
+            mosfet_temperature_1: Temperature::from_millicelsius(0),
+            mosfet_temperature_2: Temperature::from_millicelsius(0),
+            mosfet_temperature_3: Temperature::from_millicelsius(0),
+            direct_axis_voltage: Voltage::from_millivolts(0),
+            quadrature_axis_voltage: Voltage::from_millivolts(0),
+            present_fields: VescValuesMask::empty(),
+            duty_cycle: DutyCycle::from_permille(0),
+            fault_code: VescFaultCode::None,
+            controller_id: VescControllerId::new(0),
+            status: 0,
+        }
+    }
 }
 
 /// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
@@ -637,7 +827,7 @@ impl VescReadOnlyCodec {
     /// Returns [`VescCodecError`] if the frame is invalid or the decoded reply
     /// is outside the read-only adapter surface.
     pub fn decode_reply(bytes: &[u8]) -> Result<VescReadOnlyReply, VescCodecError> {
-        if let Some(reply) = decode_private_reply(bytes)? {
+        if let Some(reply) = decode_typed_reply(bytes)? {
             return Ok(reply);
         }
         let (_consumed, reply) =
@@ -740,11 +930,10 @@ fn map_command_reply(reply: vesc::CommandReply) -> Result<VescReadOnlyReply, Ves
             commit_hash: bounded_string(info.commit_hash().unwrap_or("")),
             user_commit_hash: bounded_string(info.user_commit_hash().unwrap_or("")),
         }),
-        vesc::CommandReply::GetValues(values) | vesc::CommandReply::GetValuesSelective(values) => {
-            Ok(VescReadOnlyReply::Values(values.into()))
-        }
         vesc::CommandReply::GetStats(stats) => Ok(VescReadOnlyReply::Stats(stats.into())),
         vesc::CommandReply::FwVersion(_)
+        | vesc::CommandReply::GetValues(_)
+        | vesc::CommandReply::GetValuesSelective(_)
         | vesc::CommandReply::GetValuesSetupSelective(_)
         | vesc::CommandReply::ResetStats => Err(VescCodecError::UnsupportedReply),
     }
@@ -807,14 +996,14 @@ fn encode_raw_command(command_id: u8, frame: &mut [u8; VESC_MAX_FRAME_LEN]) -> u
 }
 
 fn decode_frame(frame: &[u8]) -> Result<VescReadOnlyReply, VescCodecError> {
-    if let Some(reply) = decode_private_reply(frame)? {
+    if let Some(reply) = decode_typed_reply(frame)? {
         return Ok(reply);
     }
     let (_consumed, reply) = vesc::decode(frame).map_err(|_err| VescCodecError::DecodeFailed)?;
     map_command_reply(reply)
 }
 
-fn decode_private_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCodecError> {
+fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCodecError> {
     let Some((payload_start, payload_len, _frame_len)) = frame_parts(frame)? else {
         return Ok(None);
     };
@@ -825,13 +1014,167 @@ fn decode_private_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescC
         return Err(VescCodecError::DecodeFailed);
     };
     match command_id {
+        VESC_COMM_GET_VALUES => decode_values(body, VescValuesMask::all())
+            .map(|values| Some(VescReadOnlyReply::Values(values))),
         VESC_COMM_GET_MCCONF => {
             decode_motor_config(body).map(|config| Some(VescReadOnlyReply::MotorConfig(config)))
+        }
+        VESC_COMM_GET_VALUES_SELECTIVE => {
+            decode_selective_values(body).map(|values| Some(VescReadOnlyReply::Values(values)))
         }
         VESC_COMM_GET_MCCONF_TEMP => decode_speed_geometry(body)
             .map(|geometry| Some(VescReadOnlyReply::MotorSetupConfig(geometry))),
         _ => Ok(None),
     }
+}
+
+struct VescValuesReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> VescValuesReader<'a> {
+    const fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn read<const N: usize>(&mut self) -> Result<[u8; N], VescCodecError> {
+        let end = self
+            .offset
+            .checked_add(N)
+            .ok_or(VescCodecError::DecodeFailed)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .and_then(|bytes| bytes.try_into().ok())
+            .ok_or(VescCodecError::DecodeFailed)?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, VescCodecError> {
+        self.read().map(|[value]| value)
+    }
+
+    fn read_i16(&mut self) -> Result<i16, VescCodecError> {
+        self.read().map(i16::from_be_bytes)
+    }
+
+    fn read_i32(&mut self) -> Result<i32, VescCodecError> {
+        self.read().map(i32::from_be_bytes)
+    }
+
+    fn read_u32(&mut self) -> Result<u32, VescCodecError> {
+        self.read().map(u32::from_be_bytes)
+    }
+
+    fn remaining(&self) -> &'a [u8] {
+        self.bytes.get(self.offset..).unwrap_or_default()
+    }
+}
+
+fn decode_selective_values(body: &[u8]) -> Result<VescValuesTelemetry, VescCodecError> {
+    let mut reader = VescValuesReader::new(body);
+    let present_fields = VescValuesMask::from_bits_retain(reader.read_u32()?);
+    decode_values(reader.remaining(), present_fields)
+}
+
+fn decode_values(
+    body: &[u8],
+    present_fields: VescValuesMask,
+) -> Result<VescValuesTelemetry, VescCodecError> {
+    let mut reader = VescValuesReader::new(body);
+    let mut values = VescValuesTelemetry {
+        present_fields,
+        ..VescValuesTelemetry::default()
+    };
+
+    if present_fields.contains(VescValuesMask::TEMP_MOSFET) {
+        values.controller_temperature = temperature_from_deci_celsius(reader.read_i16()?);
+    }
+    if present_fields.contains(VescValuesMask::TEMP_MOTOR) {
+        values.motor_temperature = temperature_from_deci_celsius(reader.read_i16()?);
+    }
+    if present_fields.contains(VescValuesMask::AVG_CURRENT_MOTOR) {
+        values.motor_current = phase_current_from_centi_amps(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::AVG_CURRENT_INPUT) {
+        values.input_current = battery_current_from_centi_amps(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::AVG_CURRENT_D) {
+        values.direct_axis_current = phase_current_from_centi_amps(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::AVG_CURRENT_Q) {
+        values.quadrature_axis_current = phase_current_from_centi_amps(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::DUTY_CYCLE) {
+        values.duty_cycle = DutyCycle::from_permille(reader.read_i16()?);
+    }
+    if present_fields.contains(VescValuesMask::RPM) {
+        values.rpm = RotationalSpeed::from_erpm(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::VOLTAGE_IN) {
+        values.voltage = voltage_from_deci_volts(reader.read_i16()?);
+    }
+    if present_fields.contains(VescValuesMask::AMP_HOURS) {
+        values.consumed_charge = TransferredCharge::from_vesc_counter(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::AMP_HOURS_CHARGED) {
+        values.regenerated_charge = TransferredCharge::from_vesc_counter(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::WATT_HOURS) {
+        values.consumed_energy = TransferredEnergy::from_vesc_counter(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::WATT_HOURS_CHARGED) {
+        values.regenerated_energy = TransferredEnergy::from_vesc_counter(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::TACHOMETER) {
+        values.tachometer = TachometerReading::from_counts(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::TACHOMETER_ABS) {
+        values.tachometer_absolute = TachometerReading::from_counts(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::FAULT_CODE) {
+        values.fault_code = vesc::FaultCode::from(reader.read_u8()?).into();
+    }
+    if present_fields.contains(VescValuesMask::PID_POS) {
+        values.motor_position = MotorPosition::from_microdegrees(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::CONTROLLER_ID) {
+        values.controller_id = VescControllerId::new(reader.read_u8()?);
+    }
+    if present_fields.contains(VescValuesMask::TEMP_MOSFET_ALL) {
+        values.mosfet_temperature_1 = temperature_from_deci_celsius(reader.read_i16()?);
+        values.mosfet_temperature_2 = temperature_from_deci_celsius(reader.read_i16()?);
+        values.mosfet_temperature_3 = temperature_from_deci_celsius(reader.read_i16()?);
+    }
+    if present_fields.contains(VescValuesMask::AVG_VOLTAGE_D) {
+        values.direct_axis_voltage = Voltage::from_millivolts(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::AVG_VOLTAGE_Q) {
+        values.quadrature_axis_voltage = Voltage::from_millivolts(reader.read_i32()?);
+    }
+    if present_fields.contains(VescValuesMask::STATUS) {
+        values.status = reader.read_u8()?;
+    }
+
+    Ok(values)
+}
+
+fn temperature_from_deci_celsius(value: i16) -> Temperature {
+    Temperature::from_millicelsius(i32::from(value).saturating_mul(100))
+}
+
+const fn phase_current_from_centi_amps(value: i32) -> PhaseCurrent {
+    PhaseCurrent::from_milliamps(value.saturating_mul(10))
+}
+
+const fn battery_current_from_centi_amps(value: i32) -> BatteryCurrent {
+    BatteryCurrent::from_milliamps(value.saturating_mul(10))
+}
+
+fn voltage_from_deci_volts(value: i16) -> Voltage {
+    Voltage::from_millivolts(i32::from(value).saturating_mul(100))
 }
 
 fn frame_len(bytes: &[u8]) -> Result<Option<usize>, VescCodecError> {
@@ -980,29 +1323,7 @@ fn command_for_can_request(request: VescCanReadOnlyRequest) -> vesc::Command<'st
 }
 
 fn vesc_values_mask(mask: VescValuesMask) -> vesc::ValuesMask {
-    let mut converted = vesc::ValuesMask::empty();
-    if mask.contains(VescValuesMask::AVG_CURRENT_INPUT) {
-        converted |= vesc::ValuesMask::AVG_CURRENT_INPUT;
-    }
-    if mask.contains(VescValuesMask::RPM) {
-        converted |= vesc::ValuesMask::RPM;
-    }
-    if mask.contains(VescValuesMask::VOLTAGE_IN) {
-        converted |= vesc::ValuesMask::VOLTAGE_IN;
-    }
-    if mask.contains(VescValuesMask::WATT_HOURS) {
-        converted |= vesc::ValuesMask::WATT_HOURS;
-    }
-    if mask.contains(VescValuesMask::TACHOMETER) {
-        converted |= vesc::ValuesMask::TACHOMETER;
-    }
-    if mask.contains(VescValuesMask::FAULT_CODE) {
-        converted |= vesc::ValuesMask::FAULT_CODE;
-    }
-    if mask.contains(VescValuesMask::CONTROLLER_ID) {
-        converted |= vesc::ValuesMask::CONTROLLER_ID;
-    }
-    converted
+    vesc::ValuesMask::from_bits_retain(mask.bits())
 }
 
 fn vesc_stats_mask(mask: VescStatsMask) -> vesc::StatsMask {
@@ -1038,64 +1359,6 @@ fn bounded_string(value: &str) -> ArrayString<VESC_MAX_HASH_LEN> {
     let mut output = ArrayString::new();
     let _ = output.try_push_str(value);
     output
-}
-
-impl From<vesc::Values> for VescValuesTelemetry {
-    fn from(values: vesc::Values) -> Self {
-        Self {
-            controller_temperature: temperature_from_celsius_f32(values.temp_mosfet),
-            motor_temperature: temperature_from_celsius_f32(values.temp_motor),
-            motor_current: PhaseCurrent::from_amps_f32(values.avg_current_motor),
-            rpm: RotationalSpeed::from_erpm_f32(values.rpm),
-            voltage: Voltage::from_volts_f32(values.voltage_in),
-            input_current: BatteryCurrent::from_amps_f32(values.avg_current_input),
-            tachometer: TachometerReading::from_counts(values.tachometer),
-            tachometer_absolute: TachometerReading::from_counts(values.tachometer_abs),
-            controller_id: VescControllerId::new(values.controller_id),
-            fault_code: values.fault_code.into(),
-            status: values.status,
-            raw_float_fields: vesc_values_float_fields(values),
-        }
-    }
-}
-
-fn vesc_values_float_fields(values: vesc::Values) -> ArrayVec<RawFloatFieldValue, 19> {
-    let values = [
-        values.temp_mosfet,
-        values.temp_motor,
-        values.avg_current_motor,
-        values.avg_current_input,
-        values.avg_current_d,
-        values.avg_current_q,
-        values.duty_cycle,
-        values.rpm,
-        values.voltage_in,
-        values.amp_hours,
-        values.amp_hours_charged,
-        values.watt_hours,
-        values.watt_hours_charged,
-        values.pid_pos,
-        values.temp_mosfet1,
-        values.temp_mosfet2,
-        values.temp_mosfet3,
-        values.avg_voltage_d,
-        values.avg_voltage_q,
-    ];
-    let mut fields = ArrayVec::new();
-    for (index, value) in values.into_iter().enumerate() {
-        let Some(id) = u16::try_from(index).ok().map(|index| 0x8100 + index) else {
-            continue;
-        };
-        if fields.try_push(RawFloatFieldValue::new(id, value)).is_err() {
-            break;
-        }
-    }
-    fields
-}
-
-#[allow(clippy::cast_possible_truncation)]
-fn temperature_from_celsius_f32(value: f32) -> Temperature {
-    Temperature::from_millicelsius((value * 1_000.0).round() as i32)
 }
 
 impl From<vesc::Stats> for VescStatsTelemetry {
@@ -1240,6 +1503,82 @@ mod tests {
         );
         assert_eq!(telemetry.controller_id, VescControllerId::new(20));
         assert_eq!(telemetry.fault_code, VescFaultCode::None);
+        assert_eq!(
+            telemetry.present_fields,
+            VescValuesMask::TEMP_MOTOR
+                | VescValuesMask::AVG_CURRENT_INPUT
+                | VescValuesMask::RPM
+                | VescValuesMask::VOLTAGE_IN
+                | VescValuesMask::TACHOMETER
+                | VescValuesMask::FAULT_CODE
+                | VescValuesMask::CONTROLLER_ID
+        );
+        assert!(
+            !telemetry
+                .present_fields
+                .contains(VescValuesMask::TEMP_MOSFET)
+        );
+    }
+
+    #[test]
+    fn full_values_decode_into_named_semantic_fields() {
+        let mut payload = vec![4];
+        payload.extend_from_slice(&267_i16.to_be_bytes());
+        payload.extend_from_slice(&315_i16.to_be_bytes());
+        payload.extend_from_slice(&1_234_i32.to_be_bytes());
+        payload.extend_from_slice(&(-456_i32).to_be_bytes());
+        payload.extend_from_slice(&111_i32.to_be_bytes());
+        payload.extend_from_slice(&(-222_i32).to_be_bytes());
+        payload.extend_from_slice(&750_i16.to_be_bytes());
+        payload.extend_from_slice(&989_i32.to_be_bytes());
+        payload.extend_from_slice(&375_i16.to_be_bytes());
+        payload.extend_from_slice(&12_345_i32.to_be_bytes());
+        payload.extend_from_slice(&6_789_i32.to_be_bytes());
+        payload.extend_from_slice(&543_210_i32.to_be_bytes());
+        payload.extend_from_slice(&123_450_i32.to_be_bytes());
+        payload.extend_from_slice(&(-2_i32).to_be_bytes());
+        payload.extend_from_slice(&4_i32.to_be_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&1_500_000_i32.to_be_bytes());
+        payload.push(7);
+        payload.extend_from_slice(&271_i16.to_be_bytes());
+        payload.extend_from_slice(&272_i16.to_be_bytes());
+        payload.extend_from_slice(&273_i16.to_be_bytes());
+        payload.extend_from_slice(&12_345_i32.to_be_bytes());
+        payload.extend_from_slice(&(-6_789_i32).to_be_bytes());
+        payload.push(3);
+
+        let reply = VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload))
+            .expect("full values decode");
+        let VescReadOnlyReply::Values(values) = reply else {
+            panic!("expected values reply");
+        };
+
+        assert_eq!(values.direct_axis_current.as_milliamps(), 1_110);
+        assert_eq!(values.quadrature_axis_current.as_milliamps(), -2_220);
+        assert_eq!(values.duty_cycle.as_permille(), 750);
+        assert_eq!(values.consumed_charge.as_microamp_hours(), 1_234_500);
+        assert_eq!(values.regenerated_charge.as_microamp_hours(), 678_900);
+        assert_eq!(values.consumed_energy.as_microwatt_hours(), 54_321_000);
+        assert_eq!(values.regenerated_energy.as_microwatt_hours(), 12_345_000);
+        assert_eq!(values.motor_position.as_microdegrees(), 1_500_000);
+        assert_eq!(values.mosfet_temperature_1.as_millicelsius(), 27_100);
+        assert_eq!(values.mosfet_temperature_2.as_millicelsius(), 27_200);
+        assert_eq!(values.mosfet_temperature_3.as_millicelsius(), 27_300);
+        assert_eq!(values.direct_axis_voltage.as_millivolts(), 12_345);
+        assert_eq!(values.quadrature_axis_voltage.as_millivolts(), -6_789);
+        assert_eq!(values.present_fields, VescValuesMask::all());
+    }
+
+    #[test]
+    fn values_reply_has_compact_semantic_storage() {
+        let values_size = size_of::<VescValuesTelemetry>();
+        let reply_size = size_of::<VescReadOnlyReply>();
+        assert!(
+            values_size <= 112,
+            "values telemetry is {values_size} bytes"
+        );
+        assert!(reply_size <= 112, "reply is {reply_size} bytes");
     }
 
     #[test]

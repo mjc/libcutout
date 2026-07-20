@@ -786,7 +786,7 @@ fn vesc_values_to_raw_telemetry(values: &VescValuesTelemetry) -> RawTelemetryRea
         ]
         .into_iter()
         .collect(),
-        float_fields: values.raw_float_fields.clone(),
+        float_fields: ArrayVec::new(),
     }
 }
 
@@ -2432,7 +2432,7 @@ mod tests {
         );
         assert_eq!(raw.fields[4].id, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID);
         assert_eq!(raw.fields[5].id, VESC_RAW_STATUS_FIELD_ID);
-        assert_eq!(raw.float_fields.len(), 19);
+        assert!(raw.float_fields.is_empty());
     }
 
     #[test]
@@ -2477,8 +2477,7 @@ mod tests {
             raw.fields[1],
             RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -2)
         );
-        assert_eq!(raw.float_fields.len(), 19);
-        assert_eq!(raw.float_fields[0].value_bits, 26.7_f32.to_bits());
+        assert!(raw.float_fields.is_empty());
         assert_eq!(
             raw.fields[2],
             RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 23)
@@ -2546,7 +2545,7 @@ mod tests {
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::AbsOverCurrent,
                 status: 0,
-                raw_float_fields: ArrayVec::new(),
+                ..VescValuesTelemetry::default()
             }),
             ms(42),
             None,
@@ -2682,7 +2681,7 @@ mod tests {
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::None,
                 status: 0,
-                raw_float_fields: ArrayVec::new(),
+                ..VescValuesTelemetry::default()
             }),
             ms(42),
             Some(board_profile),

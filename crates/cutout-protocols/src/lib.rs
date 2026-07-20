@@ -103,12 +103,12 @@ pub use session::{
     VeteranNotificationDecoder,
 };
 pub use vesc_codec::{
-    GearRatioDenominator, MotorPolePairs, VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN,
-    VESC_MAX_STREAM_REPLIES, VescBatteryCurve, VescBatteryProfile, VescBatteryType,
-    VescBoardProfile, VescCanReadOnlyRequest, VescCodecError, VescFaultCode, VescMotorConfig,
-    VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder,
-    VescReadOnlyStreamResult, VescSpeedGeometry, VescStatsMask, VescStatsTelemetry, VescValuesMask,
-    VescValuesTelemetry,
+    GearRatioDenominator, MotorPolePairs, MotorPosition, TransferredCharge, TransferredEnergy,
+    VESC_MAX_FRAME_LEN, VESC_MAX_HASH_LEN, VESC_MAX_STREAM_REPLIES, VescBatteryCurve,
+    VescBatteryProfile, VescBatteryType, VescBoardProfile, VescCanReadOnlyRequest, VescCodecError,
+    VescFaultCode, VescMotorConfig, VescReadOnlyCodec, VescReadOnlyReply, VescReadOnlyRequest,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescSpeedGeometry, VescStatsMask,
+    VescStatsTelemetry, VescValuesMask, VescValuesTelemetry,
 };
 pub use veteran_bms::{
     VETERAN_BMS_CELL_VALUES_OFFSET, VETERAN_BMS_CELL_VALUES_PER_PAGE,
