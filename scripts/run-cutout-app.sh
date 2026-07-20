@@ -11,8 +11,8 @@ if [[ "$(uname -s)" != Darwin ]]; then
   exit 1
 fi
 
-package_dir="${CUTOUT_SWIFT_APP_PACKAGE_DIR:-target/swift-package-app/CutoutMobile}"
-cutout_prepare_swift_package_workspace "$package_dir"
+package_dir="$root/swift/CutoutMobile"
+cutout_prepare_swift_package_workspace
 
 swift_cmd=($(cutout_swift_runtime_command))
 export DYLD_LIBRARY_PATH="$root/target/debug:${DYLD_LIBRARY_PATH:-}"

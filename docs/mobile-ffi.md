@@ -106,9 +106,8 @@ By default this prepares the checked-in Swift package in place:
 swift/CutoutMobile
 ```
 
-Set `CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR` to choose a separate generated
-workspace path, for example `target/swift-sourcekit/CutoutMobile`. Do not check
-in the generated bindings, header, or module map.
+The generated bindings, header, and module map remain ignored in that package.
+Xcode, SwiftPM tests, and SourceKit all consume this same workspace.
 
 For Serena/SourceKit diagnostics, activate Serena on the Swift package root
 after running the preparation script:

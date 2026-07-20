@@ -1192,8 +1192,10 @@ async fn drive_session_accepts_split_write_and_notify_channels() {
     let report = crate::drive_session_with_channel_pair(
         &peripheral,
         &mut session,
-        GattChannel::from_bytes([0xA2; 16]),
-        GattChannel::from_bytes([0xA3; 16]),
+        crate::SessionChannelPair::new(
+            GattChannel::from_bytes([0xA2; 16]),
+            GattChannel::from_bytes([0xA3; 16]),
+        ),
         &summary,
         summary
             .select_session_endpoints()
@@ -1328,16 +1330,24 @@ async fn drive_session_relays_notifications_back_into_session() {
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response: ReadOnlyResponse::Firmware(firmware),
+            response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && firmware.firmware_major == Some(Measured::reported(43))
+            && matches!(
+                response.as_ref(),
+                ReadOnlyResponse::Firmware(firmware)
+                    if firmware.firmware_major == Some(Measured::reported(43))
+            )
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response: ReadOnlyResponse::Settings(settings),
-        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries()[0].is_some()
+            response,
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && matches!(
+                response.as_ref(),
+                ReadOnlyResponse::Settings(settings) if settings.entries()[0].is_some()
+            )
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
@@ -1392,9 +1402,12 @@ fn report_settings_summary_keeps_only_available_settings_readbacks() {
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response: ReadOnlyResponse::Settings(settings),
+            response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && *settings == unavailable
+            && matches!(
+                response.as_ref(),
+                ReadOnlyResponse::Settings(settings) if *settings == unavailable
+            )
     )));
 }
 

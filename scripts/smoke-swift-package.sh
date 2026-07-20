@@ -21,8 +21,8 @@ esac
 
 swift_cmd=($(cutout_swift_runtime_command))
 
-package_dir="target/swift-package-smoke/CutoutMobile"
-cutout_prepare_swift_package_workspace "$package_dir"
+package_dir="$root/swift/CutoutMobile"
+cutout_prepare_swift_package_workspace
 
 "${swift_cmd[@]}" run \
   --package-path "$package_dir" \
