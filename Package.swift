@@ -1,6 +1,32 @@
 // swift-tools-version: 6.0
 
+import Foundation
 import PackageDescription
+
+private let hostRustLibraryDirectory = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appending(path: "target/debug")
+    .path
+
+#if os(Linux)
+private let hostRustLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags([
+        "-L\(hostRustLibraryDirectory)",
+        "-lcutout_mobile_ffi",
+        "-Xlinker", "-rpath",
+        "-Xlinker", hostRustLibraryDirectory,
+    ]),
+]
+#else
+private let hostRustLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags([
+        "-L\(hostRustLibraryDirectory)",
+        "-lcutout_mobile_ffi",
+        "-Xlinker", "-rpath",
+        "-Xlinker", hostRustLibraryDirectory,
+    ], .when(platforms: [.macOS])),
+]
+#endif
 
 let package = Package(
     name: "CutoutSourceKitWorkspace",
@@ -19,7 +45,8 @@ let package = Package(
         .target(
             name: "CutoutMobile",
             dependencies: ["cutout_mobile_ffiFFI"],
-            path: "swift/CutoutMobile/Sources/CutoutMobile"
+            path: "swift/CutoutMobile/Sources/CutoutMobile",
+            linkerSettings: hostRustLinkerSettings
         ),
         .testTarget(
             name: "CutoutMobileTests",

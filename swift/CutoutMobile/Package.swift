@@ -1,6 +1,42 @@
 // swift-tools-version: 6.0
 
+import Foundation
 import PackageDescription
+
+private func repositoryRoot(from manifestPath: String) -> URL {
+    var directory = URL(fileURLWithPath: manifestPath).deletingLastPathComponent()
+    while directory.path != "/" {
+        if FileManager.default.fileExists(atPath: directory.appending(path: "Cargo.toml").path) {
+            return directory
+        }
+        directory.deleteLastPathComponent()
+    }
+    preconditionFailure("CutoutMobile must be built from inside the libcutout repository")
+}
+
+private let hostRustLibraryDirectory = repositoryRoot(from: #filePath)
+    .appending(path: "target/debug")
+    .path
+
+#if os(Linux)
+private let hostRustLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags([
+        "-L\(hostRustLibraryDirectory)",
+        "-lcutout_mobile_ffi",
+        "-Xlinker", "-rpath",
+        "-Xlinker", hostRustLibraryDirectory,
+    ]),
+]
+#else
+private let hostRustLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags([
+        "-L\(hostRustLibraryDirectory)",
+        "-lcutout_mobile_ffi",
+        "-Xlinker", "-rpath",
+        "-Xlinker", hostRustLibraryDirectory,
+    ], .when(platforms: [.macOS])),
+]
+#endif
 
 let package = Package(
     name: "CutoutMobile",
@@ -18,7 +54,8 @@ let package = Package(
         ),
         .target(
             name: "CutoutMobile",
-            dependencies: ["cutout_mobile_ffiFFI"]
+            dependencies: ["cutout_mobile_ffiFFI"],
+            linkerSettings: hostRustLinkerSettings
         ),
         .testTarget(
             name: "CutoutMobileTests",
