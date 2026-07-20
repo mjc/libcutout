@@ -88,7 +88,7 @@ struct EucRideScreenView: View {
             speedCaption: "speed",
         ) { scale, columns in
             VStack(spacing: 10 * scale) {
-                ForEach(safetyBars, id: \.label) { bar in
+                ForEach(safetyBars) { bar in
                     PevDashboardProgressBar(
                         label: bar.label,
                         value: bar.value,

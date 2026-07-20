@@ -33,13 +33,20 @@ public enum PevAccent: String, Equatable, Hashable, Sendable {
     case yellow
 }
 
-public struct PevSafetyBar: Equatable, Hashable, Sendable {
+public enum PevSafetyBarID: Equatable, Hashable, Sendable {
+    case pwmHeadroom
+    case sagAdjustedEnergy
+}
+
+public struct PevSafetyBar: Equatable, Hashable, Sendable, Identifiable {
+    public let id: PevSafetyBarID
     public let label: String
     public let value: String
     public let progress: Double
     public let accent: PevAccent
 
-    public init(label: String, value: String, progress: Double, accent: PevAccent) {
+    public init(id: PevSafetyBarID, label: String, value: String, progress: Double, accent: PevAccent) {
+        self.id = id
         self.label = label
         self.value = value
         self.progress = progress

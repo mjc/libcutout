@@ -89,6 +89,33 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertNotEqual(battery.id, motorWithSameLabel.id)
     }
 
+    func testSafetyBarIdentityDoesNotDependOnVisibleLabel() {
+        let headroom = PevSafetyBar(
+            id: .pwmHeadroom,
+            label: "PWM headroom",
+            value: "75%",
+            progress: 0.75,
+            accent: .yellow
+        )
+        let localizedHeadroom = PevSafetyBar(
+            id: .pwmHeadroom,
+            label: "marge PWM",
+            value: "75 %",
+            progress: 0.75,
+            accent: .yellow
+        )
+        let energyWithSameLabel = PevSafetyBar(
+            id: .sagAdjustedEnergy,
+            label: "PWM headroom",
+            value: "75%",
+            progress: 0.75,
+            accent: .cyan
+        )
+
+        XCTAssertEqual(headroom.id, localizedHeadroom.id)
+        XCTAssertNotEqual(headroom.id, energyWithSameLabel.id)
+    }
+
     func testDevicePickerScanningHasNoInventedRows() {
         let state = DevicePickerScanState.scanning
 

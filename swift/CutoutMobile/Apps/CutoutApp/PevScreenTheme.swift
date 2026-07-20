@@ -115,18 +115,26 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
     [
         state.pwmHeadroomPermille.map { headroomPermille in
             return PevSafetyBar(
+                id: .pwmHeadroom,
                 label: "PWM headroom",
                 value: percentageString(fromPermille: headroomPermille),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
         } ?? PevSafetyBar(
+            id: .pwmHeadroom,
             label: "PWM headroom",
             value: state.pwmHeadroomApplicability == .notApplicable ? "Not applicable" : "Unavailable",
             progress: 0,
             accent: .yellow
         ),
-        PevSafetyBar(label: "sag-adjusted energy", value: "Unavailable", progress: 0, accent: .cyan),
+        PevSafetyBar(
+            id: .sagAdjustedEnergy,
+            label: "sag-adjusted energy",
+            value: "Unavailable",
+            progress: 0,
+            accent: .cyan
+        ),
     ]
 }
 
@@ -249,7 +257,7 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
 
 func unavailableSafetyBars(from bars: [PevSafetyBar]) -> [PevSafetyBar] {
     bars.map {
-        PevSafetyBar(label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
+        PevSafetyBar(id: $0.id, label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
     }
 }
 
