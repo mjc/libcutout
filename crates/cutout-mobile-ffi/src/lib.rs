@@ -16,31 +16,37 @@ use std::{
 };
 
 use cutout_core::{
-    AngleReadingDto, BatteryCurrentReadingDto, BatteryInfoDto, BatteryLevelReadingDto,
-    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, ChargeModeDto,
-    ChargeModeReadingDto, CommandKindDto, ControlRefusalReasonDto, CutoutSessionState,
-    DeviceCommandDto, DiscoveryCandidateSnapshot,
+    AngleReadingDto, BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto,
+    BatteryInfoDto, BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
+    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, Capacity,
+    ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
+    ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
+    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
+    ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
     DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
     DiscoveryManufacturerDataSummary as CoreDiscoveryManufacturerDataSummary,
-    DiscoveryObservation as CoreDiscoveryObservation, DistanceReadingDto, DutyCycleReadingDto,
-    FaultCode, FaultCodeDto, FaultHistoryAvailability, FaultHistoryAvailabilityDto,
-    FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback, FaultHistoryReadbackDto,
-    FootpadTelemetryDto, GattChannel, GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto,
-    IgnoredNotificationReasonDto, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord,
-    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
-    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingStateDto, SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry,
-    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
-    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
+    DiscoveryObservation as CoreDiscoveryObservation, DistanceReadingDto, Duration as CoreDuration,
+    DutyCycleReadingDto, FaultCode, FaultCodeDto, FaultHistoryAvailability,
+    FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
+    FaultHistoryReadbackDto, FootpadTelemetryDto, GattChannel, GattFingerprint, GattRoles,
+    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, Measured, MonotonicMillisDto,
+    MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
+    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
+    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
+    PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
+    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
+    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingStateDto,
+    SemanticEventCountDto, SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
     TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, ValueQuality, ValueQualityDto, ValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, VoltageReadingDto,
+    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
+    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
+    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput,
     WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
@@ -410,10 +416,12 @@ impl From<DiscoveryCandidateSnapshot> for DiscoveryCandidate {
                 .map(DiscoveryConnectionRoute::from),
             electric_unicycle_model,
             disabled_reason: match candidate.support {
-                CoreDiscoveryCandidateSupport::Supported => None,
-                CoreDiscoveryCandidateSupport::ProvisionalRoute => None,
-                CoreDiscoveryCandidateSupport::ProbeRecommended => Some(candidate.detail.clone()),
-                CoreDiscoveryCandidateSupport::UnknownRecordable => Some(candidate.detail.clone()),
+                CoreDiscoveryCandidateSupport::Supported
+                | CoreDiscoveryCandidateSupport::ProvisionalRoute => None,
+                CoreDiscoveryCandidateSupport::ProbeRecommended
+                | CoreDiscoveryCandidateSupport::UnknownRecordable => {
+                    Some(candidate.detail.clone())
+                }
                 CoreDiscoveryCandidateSupport::KnownUnsupported => {
                     Some("Not yet supported".to_owned())
                 }
@@ -742,6 +750,7 @@ pub fn mobile_discovery_candidate_from_advertisement(
 
 /// Manual picker placeholder for future record/capture flow.
 #[uniffi::export]
+#[must_use]
 pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
     DiscoveryCandidate {
         platform_identifier: "manual-add".to_owned(),
@@ -761,6 +770,7 @@ pub fn mobile_manual_discovery_candidate() -> DiscoveryCandidate {
 
 /// Ambiguous picker candidate that requires user confirmation before routing.
 #[uniffi::export]
+#[must_use]
 pub fn mobile_ambiguous_discovery_candidate(
     platform_identifier: String,
     display_name: String,
@@ -784,6 +794,7 @@ pub fn mobile_ambiguous_discovery_candidate(
 
 /// Conflicting picker candidate that must not route automatically.
 #[uniffi::export]
+#[must_use]
 pub fn mobile_conflicting_discovery_candidate(
     platform_identifier: String,
     display_name: String,
@@ -807,6 +818,10 @@ pub fn mobile_conflicting_discovery_candidate(
 
 /// Resolve a provisional EUC session model hint from a user-visible device label.
 #[must_use]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "UniFFI exports owned strings"
+)]
 #[uniffi::export]
 pub fn mobile_electric_unicycle_model_hint_from_device_kind(
     device_kind: String,
@@ -837,6 +852,7 @@ fn mobile_electric_unicycle_model_hint(lower_name: &str) -> Option<DiscoveryElec
 #[must_use]
 #[allow(
     clippy::needless_pass_by_value,
+    clippy::too_many_lines,
     reason = "UniFFI exports owned records"
 )]
 #[uniffi::export]
@@ -897,6 +913,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
 #[must_use]
 #[allow(
     clippy::needless_pass_by_value,
+    clippy::too_many_lines,
     reason = "UniFFI exports owned records"
 )]
 #[uniffi::export]
@@ -1235,6 +1252,7 @@ fn mobile_begode_identity_probe_evidence(probe: &MobileBegodeIdentityProbeDto) -
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mobile_begode_identity_probe_detail(
     supported: bool,
     reported_model: Option<&str>,
@@ -1763,6 +1781,339 @@ pub struct MobileSessionStepResultDto {
     pub error: Option<MobileSessionStepErrorDto>,
 }
 
+/// Fixed-unit duration used by the charging estimator boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileDurationDto {
+    /// Duration in milliseconds.
+    pub milliseconds: u64,
+}
+
+/// Source of usable pack capacity for charging estimates.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargeCapacitySourceDto {
+    /// Capacity selected from a verified protocol profile.
+    ProtocolProfile,
+
+    /// Capacity measured from the physical pack.
+    HardwareMeasured,
+
+    /// Capacity inferred from incomplete evidence.
+    Estimated,
+}
+
+/// Estimate confidence exposed to mobile presentation.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, uniffi::Enum)]
+pub enum MobileEstimateConfidenceDto {
+    /// Weak or substantially inferred evidence.
+    Low,
+
+    /// Useful evidence with material uncertainty.
+    Medium,
+
+    /// Verified and stable evidence.
+    High,
+}
+
+/// Kind of charge-time estimate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileEstimateKindDto {
+    /// Time at the currently observed charging rate.
+    AtPresentCurrent,
+
+    /// Time integrated from a verified charge profile.
+    ProfileBackedTimeToFull,
+
+    /// Time adjusted from observed live taper behavior.
+    ObservedTaperTimeToFull,
+}
+
+/// Reason a charge estimate is unavailable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargeEstimateUnavailableReasonDto {
+    /// The device is not explicitly charging.
+    NotCharging,
+
+    /// No battery current was supplied.
+    CurrentMissing,
+
+    /// Current direction or charge semantics are unverified.
+    CurrentDirectionUnverified,
+
+    /// Current is too small to produce a useful estimate.
+    CurrentTooSmall,
+
+    /// No usable SOC evidence was supplied.
+    BatteryLevelMissing,
+
+    /// No verified usable capacity was supplied.
+    CapacityMissing,
+
+    /// The supplied profile is missing or unverified.
+    UnsupportedProfile,
+
+    /// Current samples are too variable.
+    UnstableCurrent,
+
+    /// A sample is older than the freshness policy.
+    StaleInput,
+
+    /// Temperature is outside the conservative model.
+    TemperatureOutOfModel,
+
+    /// The pack is full or near full.
+    FullOrNearFull,
+
+    /// Independent charging inputs disagree.
+    ContradictoryInputs,
+}
+
+/// Reason the bounded estimator accumulator was reset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargeEstimateResetReasonDto {
+    /// The active session changed.
+    SessionChanged,
+
+    /// Charging stopped.
+    ChargingStopped,
+
+    /// A stale sample gap interrupted the window.
+    StaleGap,
+
+    /// A timestamp moved backwards.
+    TimestampOrder,
+
+    /// Current provenance changed.
+    CurrentEvidenceChanged,
+
+    /// Usable capacity changed.
+    CapacityChanged,
+
+    /// The selected charge profile changed.
+    ProfileChanged,
+
+    /// The caller explicitly reset the estimator.
+    Manual,
+}
+
+/// Why the estimator has not produced a valid result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargeEstimateErrorDto {
+    /// Input timestamps were invalid.
+    TimestampOrder,
+
+    /// Checked arithmetic could not represent the result.
+    ArithmeticOverflow,
+}
+
+/// Explicit usable capacity/profile configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileChargeProfileDto {
+    /// Stable active session identity.
+    pub session_id: u64,
+
+    /// Verified battery/charger profile identity.
+    pub profile_id: u32,
+
+    /// Usable capacity in milliamp-hours.
+    pub capacity_milliamp_hours: u32,
+
+    /// Capacity provenance.
+    pub capacity_source: MobileChargeCapacitySourceDto,
+
+    /// Capacity verification state.
+    pub verification: MobileVerificationStatusDto,
+
+    /// Independent charge-flow/polarity verification from LIBCU-521.
+    pub charge_flow_verification: MobileVerificationStatusDto,
+}
+
+/// Current-rate summary used by an available estimate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileCurrentRateSummaryDto {
+    /// Smoothed charging current magnitude in milliamps.
+    pub mean_milliamps: i32,
+
+    /// Minimum admitted charging current magnitude.
+    pub minimum_milliamps: i32,
+
+    /// Maximum admitted charging current magnitude.
+    pub maximum_milliamps: i32,
+
+    /// Current range divided by mean, in permille.
+    pub variability_permille: u16,
+}
+
+/// Recent voltage-sag evidence emitted by the Rust estimator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileVoltageSagEstimateDto {
+    /// Loaded-minus-reference pack voltage in millivolts.
+    pub delta_millivolts: i32,
+
+    /// Confidence in this sag evidence.
+    pub confidence: MobileEstimateConfidenceDto,
+
+    /// Timestamp at which the evidence was calculated.
+    pub calculated_at: MobileMonotonicMillisDto,
+
+    /// Timestamp after which the evidence is stale.
+    pub valid_until: MobileMonotonicMillisDto,
+}
+
+/// Loaded/reference voltage observation used by the sag estimator.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileVoltageSagInputDto {
+    /// Observation timestamp.
+    pub at: MobileMonotonicMillisDto,
+
+    /// Loaded voltage.
+    pub loaded_voltage: VoltageReading,
+
+    /// Rest/curve reference voltage.
+    pub reference_voltage: VoltageReading,
+
+    /// Battery current at the loaded observation.
+    pub battery_current: BatteryCurrentReading,
+}
+
+/// Charge estimate result with conservative bounds and provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileChargeTimeEstimateDto {
+    /// Conservative lower duration.
+    pub lower: MobileDurationDto,
+
+    /// Expected duration at the admitted current rate.
+    pub expected: MobileDurationDto,
+
+    /// Conservative upper duration.
+    pub upper: MobileDurationDto,
+
+    /// Estimate semantics.
+    pub kind: MobileEstimateKindDto,
+
+    /// Combined evidence confidence.
+    pub confidence: MobileEstimateConfidenceDto,
+
+    /// Current-rate evidence.
+    pub current_rate: MobileCurrentRateSummaryDto,
+
+    /// SOC value used by the calculation.
+    pub battery_level: BatteryLevelReading,
+
+    /// Whether SOC was reported or profile-estimated.
+    pub battery_level_basis: MobileBatteryLevelBasisDto,
+
+    /// Profile identity when SOC was profile-estimated.
+    pub battery_profile_id: Option<u32>,
+
+    /// Capacity provenance.
+    pub capacity_source: MobileChargeCapacitySourceDto,
+
+    /// Sag evidence incorporated into the bounds.
+    pub voltage_sag: Option<MobileVoltageSagEstimateDto>,
+
+    /// Host calculation timestamp.
+    pub calculated_at: MobileMonotonicMillisDto,
+
+    /// Timestamp after which this result is stale.
+    pub valid_until: MobileMonotonicMillisDto,
+}
+
+/// SOC basis used by a charge estimate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileBatteryLevelBasisDto {
+    /// SOC was reported by the device.
+    Reported,
+
+    /// SOC was derived from a verified voltage/profile basis.
+    ProfileEstimated,
+}
+
+/// Mobile charging-state value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargeModeDto {
+    /// The device reports that charging is active.
+    Charging,
+
+    /// The device reports that charging is not active.
+    NotCharging,
+}
+
+/// Mobile charging-state reading with provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileChargeModeReadingDto {
+    /// Charging-state value.
+    pub value: MobileChargeModeDto,
+
+    /// Value source.
+    pub source: MobileValueSourceDto,
+
+    /// Value quality.
+    pub quality: MobileValueQualityDto,
+
+    /// Value verification status.
+    pub verification: MobileVerificationStatusDto,
+}
+
+/// Typed state for Swift/dashboard presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileChargeEstimateStateDto {
+    /// Current state kind.
+    pub kind: MobileChargeEstimateStateKindDto,
+
+    /// Current estimate when available.
+    pub estimate: Option<MobileChargeTimeEstimateDto>,
+
+    /// Unavailable reason, when applicable.
+    pub unavailable_reason: Option<MobileChargeEstimateUnavailableReasonDto>,
+
+    /// Invariant/arithmetic error, when applicable.
+    pub error: Option<MobileChargeEstimateErrorDto>,
+
+    /// Most recent reset reason.
+    pub reset_reason: Option<MobileChargeEstimateResetReasonDto>,
+
+    /// Number of admitted samples.
+    pub samples: u16,
+
+    /// Observation duration covered by the bounded window.
+    pub observed_for: MobileDurationDto,
+}
+
+/// Presentation state kind for a charge estimate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileChargeEstimateStateKindDto {
+    /// Samples are still being collected.
+    CollectingSamples,
+
+    /// A valid estimate is available.
+    Available,
+
+    /// The current input cannot produce an estimate.
+    Unavailable,
+
+    /// The input stream has gone stale.
+    Stale,
+
+    /// An invariant or arithmetic error occurred.
+    Failed,
+}
+
+/// Input for one Rust-owned charge estimate update.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileChargeEstimateInputDto {
+    /// Host evaluation timestamp.
+    pub at: MobileMonotonicMillisDto,
+
+    /// Latest typed telemetry snapshot.
+    pub snapshot: MobileTelemetrySnapshotDto,
+
+    /// Optional loaded/reference voltage observation for sag estimation.
+    pub voltage_sag: Option<MobileVoltageSagInputDto>,
+
+    /// Maximum age and allowed gap for telemetry samples.
+    pub freshness: MobileDurationDto,
+}
+
 /// Mobile telemetry snapshot DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileTelemetrySnapshotDto {
@@ -1780,6 +2131,9 @@ pub struct MobileTelemetrySnapshotDto {
 
     /// Reported battery current.
     pub battery_current: Option<BatteryCurrentReading>,
+
+    /// Explicit protocol charging state with provenance.
+    pub charge_mode: Option<MobileChargeModeReadingDto>,
 
     /// Reported motor current.
     pub motor_current: Option<PhaseCurrentReading>,
@@ -2328,7 +2682,9 @@ struct BmsPageIdentity {
 impl BmsPageIdentity {
     fn from_page(page: cutout_core::BmsStatusPage) -> Self {
         Self::from_tag_and_selector(
-            page.id.namespace.map(|namespace| namespace.into_core()),
+            page.id
+                .namespace
+                .map(cutout_core::BmsStatusPageNamespace::into_core),
             page.id.selector,
         )
     }
@@ -2980,12 +3336,11 @@ const fn mobile_protocol_family_from_detection(
     protocol: ProtocolFamilyState,
 ) -> Option<MobileProtocolFamilyDto> {
     match protocol {
-        ProtocolFamilyState::Unknown => None,
+        ProtocolFamilyState::Unknown | ProtocolFamilyState::Conflict => None,
         ProtocolFamilyState::VeteranLeaperkimNosfet => {
             Some(MobileProtocolFamilyDto::VeteranLeaperkimNosfet)
         }
         ProtocolFamilyState::BegodeGotway => Some(MobileProtocolFamilyDto::BegodeGotway),
-        ProtocolFamilyState::Conflict => None,
     }
 }
 
@@ -3080,6 +3435,7 @@ struct CaptureMetadata {
     annotations: Vec<String>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum CaptureWriterMessage {
     Record(PevcapRecord),
     Metadata(CaptureMetadata),
@@ -3098,16 +3454,11 @@ impl CaptureWriter {
     fn start(
         path: PathBuf,
         wall_clock_start_unix_ms: WallClockUnixTimestamp,
-        platform_id: String,
+        platform_id: &str,
         write_limit: Option<TransportWriteLimit>,
-        metadata: CaptureMetadata,
+        metadata: &CaptureMetadata,
     ) -> Result<Self, String> {
-        let header = capture_header(
-            wall_clock_start_unix_ms,
-            platform_id.as_str(),
-            write_limit,
-            &metadata,
-        )?;
+        let header = capture_header(wall_clock_start_unix_ms, platform_id, write_limit, metadata)?;
         OpenOptions::new()
             .create(true)
             .write(true)
@@ -3193,13 +3544,14 @@ fn capture_header(
     .map_err(|error| format!("invalid capture header: {error}"))
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn run_capture_writer(
     path: PathBuf,
     mut header: PevcapHeader,
     receiver: Receiver<CaptureWriterMessage>,
     state: Arc<CaptureWriterState>,
 ) {
-    let result = write_capture_stream(&path, &mut header, receiver, &state);
+    let result = write_capture_stream(&path, &mut header, &receiver, &state);
     if let Err(error) = result {
         state.fail(error);
     }
@@ -3208,7 +3560,7 @@ fn run_capture_writer(
 fn write_capture_stream(
     path: &Path,
     header: &mut PevcapHeader,
-    receiver: Receiver<CaptureWriterMessage>,
+    receiver: &Receiver<CaptureWriterMessage>,
     state: &CaptureWriterState,
 ) -> Result<(), String> {
     let file = File::create(path).map_err(|error| error.to_string())?;
@@ -3289,7 +3641,7 @@ fn write_capture_stream(
 fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String> {
     writer
         .write_all(line.as_bytes())
-        .and_then(|_| writer.write_all(b"\n"))
+        .and_then(|()| writer.write_all(b"\n"))
         .map(|()| line.len() + 1)
         .map_err(|error| error.to_string())
 }
@@ -3361,7 +3713,7 @@ fn rewrite_capture_header(
 
 fn write_line_to_file(file: &mut File, line: &str) -> Result<(), String> {
     file.write_all(line.as_bytes())
-        .and_then(|_| file.write_all(b"\n"))
+        .and_then(|()| file.write_all(b"\n"))
         .map_err(|error| error.to_string())
 }
 
@@ -3457,9 +3809,9 @@ impl MobilePevcapCaptureBuilder {
         let writer = match CaptureWriter::start(
             PathBuf::from(path),
             self.wall_clock_start_unix_ms,
-            self.platform_id.clone(),
+            &self.platform_id,
             self.write_limit,
-            metadata,
+            &metadata,
         ) {
             Ok(writer) => writer,
             Err(error) => {
@@ -3906,6 +4258,7 @@ fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedRea
     })
 }
 
+#[allow(clippy::cast_possible_truncation)]
 fn round_f64_to_i32(value: f64) -> i32 {
     if value.is_nan() {
         return 0;
@@ -4277,6 +4630,7 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
 }
 
 impl From<SessionOutputDto> for MobileSessionOutputDto {
+    #[allow(clippy::too_many_lines)]
     fn from(output: SessionOutputDto) -> Self {
         match output {
             SessionOutputDto::Transport(TransportActionDto::Subscribe { channel }) => Self {
@@ -4748,6 +5102,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             operating_state,
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
+            charge_mode: snapshot.charge_mode.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
             power_flow: snapshot
@@ -4766,6 +5121,20 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             footpad: snapshot.footpad.map(Into::into),
             battery_level_reported: snapshot.battery_level_reported.map(Into::into),
             battery_level_estimated: snapshot.battery_level_estimated.map(Into::into),
+        }
+    }
+}
+
+impl From<ChargeModeReadingDto> for MobileChargeModeReadingDto {
+    fn from(reading: ChargeModeReadingDto) -> Self {
+        Self {
+            value: match reading.value {
+                ChargeModeDto::Charging => MobileChargeModeDto::Charging,
+                ChargeModeDto::NotCharging => MobileChargeModeDto::NotCharging,
+            },
+            source: reading.source.into(),
+            quality: reading.quality.into(),
+            verification: reading.verification.into(),
         }
     }
 }
@@ -4799,6 +5168,557 @@ impl From<MobileFalconProfileDto> for ConcreteFalconProfileDto {
         match profile {
             MobileFalconProfileDto::Default => Self::Default,
             MobileFalconProfileDto::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MobileChargeEstimatorState {
+    estimator: cutout_core::ChargeEstimator,
+    voltage_sag: VoltageSagEstimator,
+    profile: Option<MobileChargeProfileDto>,
+}
+
+/// Rust-owned charging estimate engine for mobile sessions.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileChargeEstimator {
+    state: Mutex<MobileChargeEstimatorState>,
+}
+
+#[uniffi::export]
+impl MobileChargeEstimator {
+    /// Creates an empty estimator. A verified profile must be configured before use.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(MobileChargeEstimatorState {
+                estimator: cutout_core::ChargeEstimator::new(),
+                voltage_sag: VoltageSagEstimator::new(),
+                profile: None,
+            }),
+        })
+    }
+
+    /// Replaces the usable pack profile and resets bounded history.
+    pub fn configure_profile(&self, profile: MobileChargeProfileDto) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.estimator.reset();
+        state.voltage_sag.reset();
+        state.profile = Some(profile);
+    }
+
+    /// Removes the usable pack profile and resets bounded history.
+    pub fn clear_profile(&self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.estimator.reset();
+        state.voltage_sag.reset();
+        state.profile = None;
+    }
+
+    /// Resets the bounded current and sag windows.
+    pub fn reset(&self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.estimator.reset();
+        state.voltage_sag.reset();
+    }
+
+    /// Admits one typed telemetry sample and returns its presentation state.
+    pub fn update(&self, input: MobileChargeEstimateInputDto) -> MobileChargeEstimateStateDto {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(profile) = state.profile else {
+            return charge_estimate_state_unavailable(
+                MobileChargeEstimateUnavailableReasonDto::CapacityMissing,
+                None,
+            );
+        };
+        let snapshot = input.snapshot;
+        let sag_input = input.voltage_sag.or_else(|| {
+            let loaded = snapshot.voltage?;
+            let delta = snapshot.voltage_sag?;
+            let battery_current = snapshot.battery_current?;
+            Some(MobileVoltageSagInputDto {
+                at: snapshot.at_ms.unwrap_or(input.at),
+                loaded_voltage: loaded,
+                reference_voltage: VoltageReading {
+                    value: Voltage {
+                        value: loaded.value.value.saturating_sub(delta.value.value),
+                    },
+                    source: delta.source,
+                    quality: delta.quality,
+                    verification: delta.verification,
+                },
+                battery_current,
+            })
+        });
+        let voltage_sag = sag_input.and_then(|sag| {
+            state.voltage_sag.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(sag.at.milliseconds),
+                loaded_voltage: core_measured_voltage(sag.loaded_voltage),
+                reference_voltage: core_measured_voltage(sag.reference_voltage),
+                battery_current: core_measured_battery_current(sag.battery_current),
+                freshness: TelemetryFreshness::new(CoreDuration::from_milliseconds(
+                    input.freshness.milliseconds,
+                )),
+            })
+        });
+        let at = MonotonicTimestamp::new(input.at.milliseconds);
+        let observed_at = snapshot.at_ms.map_or(at, |timestamp| {
+            MonotonicTimestamp::new(timestamp.milliseconds)
+        });
+        let battery_level = snapshot
+            .battery_level_reported
+            .map(core_battery_level)
+            .map(BatteryLevelBasis::reported)
+            .or_else(|| {
+                snapshot.battery_level_estimated.map(|level| {
+                    BatteryLevelBasis::profile_estimated(
+                        core_battery_level(level),
+                        ChargeProfileIdentity::new(profile.profile_id),
+                        MobileEstimateConfidenceDto::Medium.into(),
+                    )
+                })
+            })
+            .unwrap_or(BatteryLevelBasis::Unavailable);
+        let charge_mode = snapshot.charge_mode.map_or_else(
+            || Measured::estimated(ChargeMode::NotCharging),
+            core_charge_mode,
+        );
+        let flow = core_charge_flow(
+            &snapshot,
+            charge_mode,
+            profile.charge_flow_verification.into(),
+        );
+        let result = state.estimator.update(ChargeEstimateInput {
+            session: ChargeSessionIdentity::new(profile.session_id),
+            profile: ChargeProfileIdentity::new(profile.profile_id),
+            at,
+            observed_at,
+            battery_current: snapshot.battery_current.map(core_battery_current),
+            charge_mode,
+            flow,
+            battery_level,
+            usable_capacity: UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(profile.capacity_milliamp_hours),
+                profile.capacity_source.into(),
+                profile.verification.into(),
+            ),
+            battery_temperature: snapshot.battery_temperature.map(core_temperature),
+            voltage_sag,
+            freshness: TelemetryFreshness::new(CoreDuration::from_milliseconds(
+                input.freshness.milliseconds,
+            )),
+        });
+        mobile_charge_estimate_state(result, state.estimator.last_reset_reason())
+    }
+}
+
+impl Default for MobileChargeEstimator {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(MobileChargeEstimatorState {
+                estimator: cutout_core::ChargeEstimator::new(),
+                voltage_sag: VoltageSagEstimator::new(),
+                profile: None,
+            }),
+        }
+    }
+}
+
+fn core_measured<T>(
+    value: T,
+    source: MobileValueSourceDto,
+    quality: MobileValueQualityDto,
+    verification: MobileVerificationStatusDto,
+) -> Measured<T> {
+    Measured {
+        value,
+        source: match source {
+            MobileValueSourceDto::Reported => CoreValueSource::Reported,
+            MobileValueSourceDto::Calculated => CoreValueSource::Calculated,
+            MobileValueSourceDto::Estimated => CoreValueSource::Estimated,
+        },
+        quality: match quality {
+            MobileValueQualityDto::Known => CoreValueQuality::Known,
+            MobileValueQualityDto::Inferred => CoreValueQuality::Inferred,
+        },
+        verification: verification.into(),
+    }
+}
+
+fn core_measured_battery_current(reading: BatteryCurrentReading) -> Measured<CoreBatteryCurrent> {
+    core_measured(
+        CoreBatteryCurrent::from_milliamps(reading.value.value),
+        reading.source,
+        reading.quality,
+        reading.verification,
+    )
+}
+
+fn core_battery_current(reading: BatteryCurrentReading) -> Measured<CoreBatteryCurrent> {
+    core_measured_battery_current(reading)
+}
+
+fn core_measured_voltage(reading: VoltageReading) -> Measured<CoreVoltage> {
+    core_measured(
+        CoreVoltage::from_millivolts(reading.value.value),
+        reading.source,
+        reading.quality,
+        reading.verification,
+    )
+}
+
+fn core_battery_level(reading: BatteryLevelReading) -> Measured<CoreBatteryLevel> {
+    core_measured(
+        CoreBatteryLevel::from_percent(reading.value.value),
+        reading.source,
+        reading.quality,
+        reading.verification,
+    )
+}
+
+fn core_temperature(reading: TemperatureReading) -> Measured<cutout_core::Temperature> {
+    core_measured(
+        cutout_core::Temperature::from_millicelsius(reading.value.value),
+        reading.source,
+        reading.quality,
+        reading.verification,
+    )
+}
+
+fn core_charge_mode(reading: MobileChargeModeReadingDto) -> Measured<ChargeMode> {
+    core_measured(
+        match reading.value {
+            MobileChargeModeDto::Charging => ChargeMode::Charging,
+            MobileChargeModeDto::NotCharging => ChargeMode::NotCharging,
+        },
+        reading.source,
+        reading.quality,
+        reading.verification,
+    )
+}
+
+fn core_charge_flow(
+    snapshot: &MobileTelemetrySnapshotDto,
+    charge_mode: Measured<ChargeMode>,
+    charge_flow_verification: VerificationStatus,
+) -> Measured<ChargeFlow> {
+    let flow = if charge_mode.value.is_active() {
+        match snapshot.power_flow {
+            Some(
+                PowerFlowDirection::Discharge
+                | PowerFlowDirection::Regeneration
+                | PowerFlowDirection::NegativeUnknown,
+            ) => ChargeFlow::Unknown,
+            Some(PowerFlowDirection::Charging | PowerFlowDirection::Zero) | None => {
+                ChargeFlow::Charging
+            }
+        }
+    } else {
+        match snapshot.power_flow {
+            Some(PowerFlowDirection::Discharge) => ChargeFlow::Discharging,
+            Some(PowerFlowDirection::Regeneration) => ChargeFlow::Regeneration,
+            Some(PowerFlowDirection::Zero) => ChargeFlow::Zero,
+            Some(PowerFlowDirection::Charging) => ChargeFlow::Charging,
+            Some(PowerFlowDirection::NegativeUnknown) | None => ChargeFlow::Unknown,
+        }
+    };
+    Measured {
+        value: flow,
+        source: charge_mode.source,
+        quality: charge_mode.quality,
+        verification: combine_verification(charge_mode.verification, charge_flow_verification),
+    }
+}
+
+fn combine_verification(left: VerificationStatus, right: VerificationStatus) -> VerificationStatus {
+    let source_verified = matches!(
+        left,
+        VerificationStatus::SourceVerified | VerificationStatus::SourceAndHardwareVerified
+    ) && matches!(
+        right,
+        VerificationStatus::SourceVerified | VerificationStatus::SourceAndHardwareVerified
+    );
+    let hardware_verified = matches!(
+        left,
+        VerificationStatus::HardwareVerified | VerificationStatus::SourceAndHardwareVerified
+    ) && matches!(
+        right,
+        VerificationStatus::HardwareVerified | VerificationStatus::SourceAndHardwareVerified
+    );
+    match (source_verified, hardware_verified) {
+        (true, true) => VerificationStatus::SourceAndHardwareVerified,
+        (true, false) => VerificationStatus::SourceVerified,
+        (false, true) => VerificationStatus::HardwareVerified,
+        (false, false) => VerificationStatus::Unverified,
+    }
+}
+
+fn mobile_charge_estimate_state(
+    state: ChargeEstimateState,
+    reset_reason: Option<ChargeEstimateResetReason>,
+) -> MobileChargeEstimateStateDto {
+    let reset_reason = reset_reason.map(Into::into);
+    match state {
+        ChargeEstimateState::CollectingSamples {
+            samples,
+            observed_for,
+        } => MobileChargeEstimateStateDto {
+            kind: MobileChargeEstimateStateKindDto::CollectingSamples,
+            estimate: None,
+            unavailable_reason: None,
+            error: None,
+            reset_reason,
+            samples,
+            observed_for: mobile_duration(observed_for),
+        },
+        ChargeEstimateState::Available(estimate) => {
+            let estimate = estimate.into();
+            MobileChargeEstimateStateDto {
+                kind: MobileChargeEstimateStateKindDto::Available,
+                estimate: Some(estimate),
+                unavailable_reason: None,
+                error: None,
+                reset_reason,
+                samples: 0,
+                observed_for: MobileDurationDto { milliseconds: 0 },
+            }
+        }
+        ChargeEstimateState::Unavailable { reason } => MobileChargeEstimateStateDto {
+            kind: MobileChargeEstimateStateKindDto::Unavailable,
+            estimate: None,
+            unavailable_reason: Some(reason.into()),
+            error: None,
+            reset_reason,
+            samples: 0,
+            observed_for: MobileDurationDto { milliseconds: 0 },
+        },
+        ChargeEstimateState::Stale => MobileChargeEstimateStateDto {
+            kind: MobileChargeEstimateStateKindDto::Stale,
+            estimate: None,
+            unavailable_reason: Some(MobileChargeEstimateUnavailableReasonDto::StaleInput),
+            error: None,
+            reset_reason,
+            samples: 0,
+            observed_for: MobileDurationDto { milliseconds: 0 },
+        },
+        ChargeEstimateState::Failed(error) => MobileChargeEstimateStateDto {
+            kind: MobileChargeEstimateStateKindDto::Failed,
+            estimate: None,
+            unavailable_reason: None,
+            error: Some(error.into()),
+            reset_reason,
+            samples: 0,
+            observed_for: MobileDurationDto { milliseconds: 0 },
+        },
+        _ => MobileChargeEstimateStateDto {
+            kind: MobileChargeEstimateStateKindDto::Failed,
+            estimate: None,
+            unavailable_reason: None,
+            error: Some(MobileChargeEstimateErrorDto::ArithmeticOverflow),
+            reset_reason,
+            samples: 0,
+            observed_for: MobileDurationDto { milliseconds: 0 },
+        },
+    }
+}
+
+fn charge_estimate_state_unavailable(
+    reason: MobileChargeEstimateUnavailableReasonDto,
+    reset_reason: Option<MobileChargeEstimateResetReasonDto>,
+) -> MobileChargeEstimateStateDto {
+    MobileChargeEstimateStateDto {
+        kind: MobileChargeEstimateStateKindDto::Unavailable,
+        estimate: None,
+        unavailable_reason: Some(reason),
+        error: None,
+        reset_reason,
+        samples: 0,
+        observed_for: MobileDurationDto { milliseconds: 0 },
+    }
+}
+
+fn mobile_duration(duration: CoreDuration) -> MobileDurationDto {
+    MobileDurationDto {
+        milliseconds: duration.as_milliseconds(),
+    }
+}
+
+impl From<ChargeTimeEstimate> for MobileChargeTimeEstimateDto {
+    fn from(estimate: ChargeTimeEstimate) -> Self {
+        let (battery_level, battery_level_basis, battery_profile_id) =
+            match estimate.battery_level_basis {
+                BatteryLevelBasis::Reported(level) => (
+                    mobile_battery_level(level),
+                    MobileBatteryLevelBasisDto::Reported,
+                    None,
+                ),
+                BatteryLevelBasis::ProfileEstimated { level, profile, .. } => (
+                    mobile_battery_level(level),
+                    MobileBatteryLevelBasisDto::ProfileEstimated,
+                    Some(profile.get()),
+                ),
+                _ => (
+                    mobile_battery_level(Measured::estimated(CoreBatteryLevel::from_percent(0))),
+                    MobileBatteryLevelBasisDto::ProfileEstimated,
+                    None,
+                ),
+            };
+        Self {
+            lower: mobile_duration(estimate.lower),
+            expected: mobile_duration(estimate.expected),
+            upper: mobile_duration(estimate.upper),
+            kind: estimate.kind.into(),
+            confidence: estimate.confidence.into(),
+            current_rate: MobileCurrentRateSummaryDto {
+                mean_milliamps: estimate.current_rate.mean.as_milliamps(),
+                minimum_milliamps: estimate.current_rate.minimum.as_milliamps(),
+                maximum_milliamps: estimate.current_rate.maximum.as_milliamps(),
+                variability_permille: estimate.current_rate.variability_permille,
+            },
+            battery_level,
+            battery_level_basis,
+            battery_profile_id,
+            capacity_source: estimate.capacity_source.into(),
+            voltage_sag: estimate.voltage_sag.map(Into::into),
+            calculated_at: MobileMonotonicMillisDto {
+                milliseconds: estimate.calculated_at.get(),
+            },
+            valid_until: MobileMonotonicMillisDto {
+                milliseconds: estimate.valid_until.get(),
+            },
+        }
+    }
+}
+
+fn mobile_battery_level(level: Measured<CoreBatteryLevel>) -> BatteryLevelReading {
+    BatteryLevelReading {
+        value: BatteryLevel {
+            value: level.value.as_percent(),
+        },
+        source: level.source.into(),
+        quality: level.quality.into(),
+        verification: level.verification.into(),
+    }
+}
+
+impl From<VoltageSagEstimate> for MobileVoltageSagEstimateDto {
+    fn from(estimate: VoltageSagEstimate) -> Self {
+        Self {
+            delta_millivolts: estimate.delta.as_millivolts(),
+            confidence: estimate.confidence.into(),
+            calculated_at: MobileMonotonicMillisDto {
+                milliseconds: estimate.calculated_at.get(),
+            },
+            valid_until: MobileMonotonicMillisDto {
+                milliseconds: estimate.valid_until.get(),
+            },
+        }
+    }
+}
+
+impl From<MobileChargeCapacitySourceDto> for cutout_core::CapacitySource {
+    fn from(source: MobileChargeCapacitySourceDto) -> Self {
+        match source {
+            MobileChargeCapacitySourceDto::ProtocolProfile => Self::ProtocolProfile,
+            MobileChargeCapacitySourceDto::HardwareMeasured => Self::HardwareMeasured,
+            MobileChargeCapacitySourceDto::Estimated => Self::Estimated,
+        }
+    }
+}
+
+impl From<MobileEstimateConfidenceDto> for cutout_core::EstimateConfidence {
+    fn from(confidence: MobileEstimateConfidenceDto) -> Self {
+        match confidence {
+            MobileEstimateConfidenceDto::Low => Self::Low,
+            MobileEstimateConfidenceDto::Medium => Self::Medium,
+            MobileEstimateConfidenceDto::High => Self::High,
+        }
+    }
+}
+
+impl From<MobileEstimateKindDto> for cutout_core::EstimateKind {
+    fn from(kind: MobileEstimateKindDto) -> Self {
+        match kind {
+            MobileEstimateKindDto::AtPresentCurrent => Self::AtPresentCurrent,
+            MobileEstimateKindDto::ProfileBackedTimeToFull => Self::ProfileBackedTimeToFull,
+            MobileEstimateKindDto::ObservedTaperTimeToFull => Self::ObservedTaperTimeToFull,
+        }
+    }
+}
+
+impl From<cutout_core::CapacitySource> for MobileChargeCapacitySourceDto {
+    fn from(source: cutout_core::CapacitySource) -> Self {
+        match source {
+            cutout_core::CapacitySource::ProtocolProfile => Self::ProtocolProfile,
+            cutout_core::CapacitySource::HardwareMeasured => Self::HardwareMeasured,
+            _ => Self::Estimated,
+        }
+    }
+}
+
+impl From<cutout_core::EstimateConfidence> for MobileEstimateConfidenceDto {
+    fn from(confidence: cutout_core::EstimateConfidence) -> Self {
+        match confidence {
+            cutout_core::EstimateConfidence::Medium => Self::Medium,
+            cutout_core::EstimateConfidence::High => Self::High,
+            _ => Self::Low,
+        }
+    }
+}
+
+impl From<cutout_core::EstimateKind> for MobileEstimateKindDto {
+    fn from(kind: cutout_core::EstimateKind) -> Self {
+        match kind {
+            cutout_core::EstimateKind::ProfileBackedTimeToFull => Self::ProfileBackedTimeToFull,
+            cutout_core::EstimateKind::ObservedTaperTimeToFull => Self::ObservedTaperTimeToFull,
+            _ => Self::AtPresentCurrent,
+        }
+    }
+}
+
+impl From<ChargeEstimateUnavailableReason> for MobileChargeEstimateUnavailableReasonDto {
+    fn from(reason: ChargeEstimateUnavailableReason) -> Self {
+        match reason {
+            ChargeEstimateUnavailableReason::NotCharging => Self::NotCharging,
+            ChargeEstimateUnavailableReason::CurrentMissing => Self::CurrentMissing,
+            ChargeEstimateUnavailableReason::CurrentDirectionUnverified => {
+                Self::CurrentDirectionUnverified
+            }
+            ChargeEstimateUnavailableReason::CurrentTooSmall => Self::CurrentTooSmall,
+            ChargeEstimateUnavailableReason::BatteryLevelMissing => Self::BatteryLevelMissing,
+            ChargeEstimateUnavailableReason::CapacityMissing => Self::CapacityMissing,
+            ChargeEstimateUnavailableReason::UnsupportedProfile => Self::UnsupportedProfile,
+            ChargeEstimateUnavailableReason::UnstableCurrent => Self::UnstableCurrent,
+            ChargeEstimateUnavailableReason::StaleInput => Self::StaleInput,
+            ChargeEstimateUnavailableReason::TemperatureOutOfModel => Self::TemperatureOutOfModel,
+            ChargeEstimateUnavailableReason::FullOrNearFull => Self::FullOrNearFull,
+            ChargeEstimateUnavailableReason::ContradictoryInputs => Self::ContradictoryInputs,
+            _ => Self::CurrentDirectionUnverified,
+        }
+    }
+}
+
+impl From<ChargeEstimateResetReason> for MobileChargeEstimateResetReasonDto {
+    fn from(reason: ChargeEstimateResetReason) -> Self {
+        match reason {
+            ChargeEstimateResetReason::SessionChanged => Self::SessionChanged,
+            ChargeEstimateResetReason::ChargingStopped => Self::ChargingStopped,
+            ChargeEstimateResetReason::StaleGap => Self::StaleGap,
+            ChargeEstimateResetReason::TimestampOrder => Self::TimestampOrder,
+            ChargeEstimateResetReason::CurrentEvidenceChanged => Self::CurrentEvidenceChanged,
+            ChargeEstimateResetReason::CapacityChanged => Self::CapacityChanged,
+            ChargeEstimateResetReason::ProfileChanged => Self::ProfileChanged,
+            _ => Self::Manual,
+        }
+    }
+}
+
+impl From<ChargeEstimateError> for MobileChargeEstimateErrorDto {
+    fn from(error: ChargeEstimateError) -> Self {
+        match error {
+            ChargeEstimateError::TimestampOrder => Self::TimestampOrder,
+            _ => Self::ArithmeticOverflow,
         }
     }
 }
@@ -4943,7 +5863,7 @@ pub enum VescBatteryType {
     /// Li-ion 3.0-4.2 V pack type.
     LiIon,
 
-    /// LiFePO4 / lithium iron 2.6-3.6 V pack type.
+    /// `LiFePO4` / lithium iron 2.6-3.6 V pack type.
     LiIron,
 
     /// Lead-acid 2.1-2.36 V cell model.
@@ -6371,6 +7291,7 @@ mod tests {
         );
     }
 
+    #[allow(clippy::too_many_lines)]
     #[test]
     fn mobile_session_output_maps_battery_readback_to_bms_snapshot() {
         let reported_voltage = |value| VoltageReadingDto {
@@ -6757,7 +7678,7 @@ mod tests {
 
     #[test]
     fn core_discovery_candidate_resolution_states_project_to_mobile_rows() {
-        [
+        for (core_support, mobile_support, disabled_reason) in [
             (
                 CoreDiscoveryCandidateSupport::Ambiguous,
                 DiscoveryCandidateSupport::Ambiguous,
@@ -6778,9 +7699,7 @@ mod tests {
                 DiscoveryCandidateSupport::ManualPlaceholder,
                 "Capture flow later",
             ),
-        ]
-        .into_iter()
-        .for_each(|(core_support, mobile_support, disabled_reason)| {
+        ] {
             let candidate = DiscoveryCandidate::from(DiscoveryCandidateSnapshot {
                 platform_identifier: "ios-local-row".to_owned(),
                 display_name: "Candidate".to_owned(),
@@ -6796,7 +7715,7 @@ mod tests {
             assert_eq!(candidate.connection_route, None);
             assert_eq!(candidate.electric_unicycle_model, None);
             assert_eq!(candidate.disabled_reason, Some(disabled_reason.to_owned()));
-        });
+        }
     }
 
     #[test]
@@ -7499,6 +8418,7 @@ mod tests {
         assert!(snapshot.battery_current.is_some());
     }
 
+    #[allow(clippy::too_many_lines)]
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let path = std::env::temp_dir().join(format!(
@@ -7654,6 +8574,122 @@ mod tests {
         assert_eq!(
             status.last_error.as_deref(),
             Some("capture writer queue is full")
+        );
+    }
+
+    fn charge_profile(
+        charge_flow_verification: MobileVerificationStatusDto,
+    ) -> MobileChargeProfileDto {
+        MobileChargeProfileDto {
+            session_id: 1,
+            profile_id: 7,
+            capacity_milliamp_hours: 10_000,
+            capacity_source: MobileChargeCapacitySourceDto::HardwareMeasured,
+            verification: MobileVerificationStatusDto::HardwareVerified,
+            charge_flow_verification,
+        }
+    }
+
+    #[test]
+    fn charge_estimator_ffi_projects_estimates_and_sag() {
+        fn snapshot(at: u64, power_flow: PowerFlowDirection) -> MobileTelemetrySnapshotDto {
+            MobileTelemetrySnapshotDto {
+                at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
+                speed: None,
+                operating_state: RideOperatingState::Charging,
+                voltage: Some(VoltageReading {
+                    value: Voltage { value: 95_000 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                battery_current: Some(BatteryCurrentReading {
+                    value: BatteryCurrent { value: -2_000 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                charge_mode: Some(MobileChargeModeReadingDto {
+                    value: MobileChargeModeDto::Charging,
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                motor_current: None,
+                power: None,
+                power_flow: Some(power_flow),
+                voltage_sag: Some(VoltageDeltaReading {
+                    value: VoltageDelta { value: -1_200 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                controller_temperature: None,
+                motor_temperature: None,
+                battery_temperature: None,
+                pwm: None,
+                distance: None,
+                limp_home_range: None,
+                pitch: None,
+                balance_angle: None,
+                roll: None,
+                footpad: None,
+                battery_level_reported: Some(BatteryLevelReading {
+                    value: BatteryLevel { value: 50 },
+                    source: MobileValueSourceDto::Reported,
+                    quality: MobileValueQualityDto::Known,
+                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+                }),
+                battery_level_estimated: None,
+            }
+        }
+
+        let estimator = MobileChargeEstimator::new();
+        estimator.configure_profile(charge_profile(
+            MobileVerificationStatusDto::HardwareVerified,
+        ));
+        let update = |at, power_flow| {
+            estimator.update(MobileChargeEstimateInputDto {
+                at: MobileMonotonicMillisDto { milliseconds: at },
+                snapshot: snapshot(at, power_flow),
+                voltage_sag: None,
+                freshness: MobileDurationDto {
+                    milliseconds: 60_000,
+                },
+            })
+        };
+
+        assert_eq!(
+            update(0, PowerFlowDirection::Charging).kind,
+            MobileChargeEstimateStateKindDto::CollectingSamples
+        );
+        assert_eq!(
+            update(15_000, PowerFlowDirection::Charging).kind,
+            MobileChargeEstimateStateKindDto::CollectingSamples
+        );
+        let result = update(30_000, PowerFlowDirection::Charging);
+        let estimate = result.estimate.expect("stable samples produce an estimate");
+        assert_eq!(result.kind, MobileChargeEstimateStateKindDto::Available);
+        assert_eq!(estimate.kind, MobileEstimateKindDto::AtPresentCurrent);
+        assert_eq!(
+            estimate
+                .voltage_sag
+                .expect("sag is connected")
+                .delta_millivolts,
+            -1_200
+        );
+
+        let contradictory = update(45_000, PowerFlowDirection::Discharge);
+        assert_eq!(
+            contradictory.unavailable_reason,
+            Some(MobileChargeEstimateUnavailableReasonDto::ContradictoryInputs)
+        );
+
+        estimator.configure_profile(charge_profile(MobileVerificationStatusDto::Unverified));
+        let gated = update(0, PowerFlowDirection::Charging);
+        assert_eq!(
+            gated.unavailable_reason,
+            Some(MobileChargeEstimateUnavailableReasonDto::CurrentDirectionUnverified)
         );
     }
 }
