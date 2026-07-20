@@ -15,6 +15,8 @@ public struct PevDashboardKeyValueRow: Identifiable {
 }
 
 public struct PevDashboardKeyValueRows: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let rows: [PevDashboardKeyValueRow]
     let scale: CGFloat
     let fill: Color
@@ -47,17 +49,21 @@ public struct PevDashboardKeyValueRows: View {
     public var body: some View {
         VStack(spacing: 0) {
             ForEach(rows) { row in
-                HStack {
-                    Text(row.label)
-                        .font(.system(size: 14 * scale, weight: .bold))
-                        .foregroundStyle(labelColor)
-                    Spacer()
-                    Text(row.value)
-                        .font(.system(size: 15 * scale, weight: .black))
-                        .foregroundStyle(row.valueColor ?? valueColor)
-                        .monospacedDigit()
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 4 * scale) {
+                            keyValueLabel(row)
+                            keyValueValue(row)
+                        }
+                    } else {
+                        HStack {
+                            keyValueLabel(row)
+                            Spacer()
+                            keyValueValue(row)
+                        }
+                    }
                 }
-                .frame(height: 31 * scale)
+                .frame(minHeight: 31 * scale)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(row.label)
                 .accessibilityValue(row.value)
@@ -80,6 +86,19 @@ public struct PevDashboardKeyValueRows: View {
             )
         )
     }
+
+    private func keyValueLabel(_ row: PevDashboardKeyValueRow) -> some View {
+        Text(row.label)
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(labelColor)
+    }
+
+    private func keyValueValue(_ row: PevDashboardKeyValueRow) -> some View {
+        Text(row.value)
+            .font(.headline.weight(.black))
+            .foregroundStyle(row.valueColor ?? valueColor)
+            .monospacedDigit()
+    }
 }
 
 
@@ -98,6 +117,8 @@ public struct PevDashboardReadbackRow: Identifiable {
 }
 
 public struct PevDashboardReadbackRows: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let rows: [PevDashboardReadbackRow]
     let scale: CGFloat
     let emptyLabel: String?
@@ -126,20 +147,23 @@ public struct PevDashboardReadbackRows: View {
             } else {
                 ForEach(rows) { row in
                     VStack(alignment: .leading, spacing: 5 * scale) {
-                        HStack {
-                            Text(row.label)
-                                .font(.system(size: 14 * scale, weight: .bold))
-                                .foregroundStyle(PevDashboardColors.mutedText)
-                            Spacer()
-                            Text(row.value)
-                                .font(.system(size: 15 * scale, weight: .black))
-                                .monospacedDigit()
-                                .foregroundStyle(PevDashboardColors.primaryText)
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 4 * scale) {
+                                    readbackLabel(row)
+                                    readbackValue(row)
+                                }
+                            } else {
+                                HStack {
+                                    readbackLabel(row)
+                                    Spacer()
+                                    readbackValue(row)
+                                }
+                            }
                         }
                         Text(row.detail)
-                            .font(.system(size: 12 * scale, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(PevDashboardColors.mutedText)
-                            .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.vertical, 10 * scale)
@@ -162,35 +186,40 @@ public struct PevDashboardReadbackRows: View {
             }
         }
     }
+
+    private func readbackLabel(_ row: PevDashboardReadbackRow) -> some View {
+        Text(row.label)
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(PevDashboardColors.mutedText)
+    }
+
+    private func readbackValue(_ row: PevDashboardReadbackRow) -> some View {
+        Text(row.value)
+            .font(.headline.weight(.black))
+            .monospacedDigit()
+            .foregroundStyle(PevDashboardColors.primaryText)
+    }
 }
 
 public struct PevDashboardSectionLabel: View {
     let title: String
-    let scale: CGFloat
-    let fontSize: CGFloat
-    let weight: Font.Weight
+    let font: Font
     let color: Color
 
     public init(
         title: String,
-        scale: CGFloat,
-        fontSize: CGFloat = 15,
-        weight: Font.Weight = .semibold,
+        font: Font = .headline,
         color: Color = PevDashboardColors.mutedText
     ) {
         self.title = title
-        self.scale = scale
-        self.fontSize = fontSize
-        self.weight = weight
+        self.font = font
         self.color = color
     }
 
     public var body: some View {
         Text(title)
-            .font(.system(size: fontSize * scale, weight: weight))
+            .font(font)
             .foregroundStyle(color)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -268,7 +297,7 @@ public struct PevDashboardScanningPill: View {
     public var body: some View {
         HStack {
             Text(title)
-                .font(.system(size: 18 * scale, weight: .bold))
+                .font(.headline.weight(.bold))
             Spacer()
             HStack(spacing: 9 * scale) {
                 ForEach(0..<3, id: \.self) { index in
@@ -281,7 +310,8 @@ public struct PevDashboardScanningPill: View {
             .accessibilityHidden(true)
         }
         .padding(.horizontal, 22 * scale)
-        .frame(height: 64 * scale)
+        .padding(.vertical, 14 * scale)
+        .frame(minHeight: 64 * scale)
         .frame(maxWidth: .infinity)
         .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
         .accessibilityElement(children: .ignore)
@@ -304,7 +334,6 @@ public struct PevDashboardTabLabel: View {
     let scale: CGFloat
     let selectedColor: Color
     let unselectedColor: Color
-    let fontSize: CGFloat
     let indicatorWidth: CGFloat
     let indicatorHeight: CGFloat
     let spacing: CGFloat
@@ -315,7 +344,6 @@ public struct PevDashboardTabLabel: View {
         scale: CGFloat,
         selectedColor: Color,
         unselectedColor: Color,
-        fontSize: CGFloat = 14,
         indicatorWidth: CGFloat = 28,
         indicatorHeight: CGFloat = 4,
         spacing: CGFloat = 8
@@ -325,7 +353,6 @@ public struct PevDashboardTabLabel: View {
         self.scale = scale
         self.selectedColor = selectedColor
         self.unselectedColor = unselectedColor
-        self.fontSize = fontSize
         self.indicatorWidth = indicatorWidth
         self.indicatorHeight = indicatorHeight
         self.spacing = spacing
@@ -334,10 +361,8 @@ public struct PevDashboardTabLabel: View {
     public var body: some View {
         VStack(spacing: spacing * scale) {
             Text(title)
-                .font(.system(size: fontSize * scale, weight: isSelected ? .black : .semibold))
+                .font(.caption.weight(isSelected ? .black : .semibold))
                 .foregroundStyle(isSelected ? selectedColor : unselectedColor)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
             Capsule()
                 .fill(isSelected ? selectedColor : Color.clear)
                 .frame(width: indicatorWidth * scale, height: indicatorHeight * scale)
@@ -371,16 +396,17 @@ public struct PevDashboardTabStrip: View {
         VStack(spacing: 12 * scale) {
             Rectangle()
                 .fill(PevDashboardColors.cardStroke)
-                .frame(width: 254 * scale, height: 1)
+                .frame(maxWidth: .infinity)
+                .frame(height: 1)
+                .accessibilityHidden(true)
 
             HStack(spacing: 0) {
                 ForEach(tabs) { tab in
                     tabContent(tab)
                 }
             }
-            .frame(width: 254 * scale)
         }
-        .frame(height: 58 * scale, alignment: .top)
+        .frame(minHeight: 58 * scale, alignment: .top)
         .frame(maxWidth: .infinity)
     }
 
@@ -393,6 +419,7 @@ public struct PevDashboardTabStrip: View {
             tabLabel(tab)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, minHeight: 44)
         .disabled(!tab.isEnabled || tab.destinationTarget == nil)
         .accessibilityIdentifier("dashboard.nav.\(tab.title.lowercased())")
     }
@@ -409,6 +436,6 @@ public struct PevDashboardTabStrip: View {
         .opacity(tab.isEnabled ? 1 : 0.45)
         .accessibilityValue(tab.isSelected ? "Selected" : tab.isEnabled ? "Available" : "Unavailable")
         .accessibilityHint(tab.disabledReason ?? "")
-        .accessibilityAddTraits(tab.isSelected ? .isSelected : (tab.isEnabled ? [] : .isButton))
+        .accessibilityAddTraits(tab.isSelected ? .isSelected : [])
     }
 }

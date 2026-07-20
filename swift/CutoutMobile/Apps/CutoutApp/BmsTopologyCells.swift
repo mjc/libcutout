@@ -42,7 +42,6 @@ struct BmsBottomTab: View {
                 scale: scale,
                 selectedColor: PevColors.yellow,
                 unselectedColor: PevColors.muted,
-                fontSize: 15,
                 indicatorWidth: 24,
                 indicatorHeight: 3,
                 spacing: 7

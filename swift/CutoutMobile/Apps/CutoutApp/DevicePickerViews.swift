@@ -51,7 +51,7 @@ struct DevicePickerView: View {
             }
 
             VStack(alignment: .leading, spacing: 8 * scale) {
-                PevDashboardSectionLabel(title: "Device kind for capture", scale: scale)
+                PevDashboardSectionLabel(title: "Device kind for capture")
                 TextField("euc nosfet aeon", text: $recordOnlyDeviceKind)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(PevColors.primaryText)
@@ -104,7 +104,7 @@ struct DevicePickerView: View {
         scale: CGFloat
     ) -> some View {
         if !rows.isEmpty {
-            PevDashboardSectionLabel(title: title, scale: scale)
+            PevDashboardSectionLabel(title: title)
                 .padding(.top, 8 * scale)
             VStack(spacing: 12 * scale) {
                 ForEach(rows) { row in

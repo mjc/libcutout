@@ -96,7 +96,7 @@ struct BmsNoDataPackEstimateCard: View {
 
     private var estimate: some View {
         VStack(alignment: .leading, spacing: 8 * scale) {
-            PevDashboardSectionLabel(title: "PACK ESTIMATE", scale: scale, fontSize: 12, weight: .bold)
+            PevDashboardSectionLabel(title: "PACK ESTIMATE", font: .caption.weight(.bold))
             HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
                 Text(percentText)
                     .font(.system(size: 64 * scale, weight: .black))
@@ -117,7 +117,7 @@ struct BmsNoDataPackEstimateCard: View {
 
     private var confidence: some View {
         VStack(alignment: .leading, spacing: 8 * scale) {
-            PevDashboardSectionLabel(title: "CONFIDENCE", scale: scale, fontSize: 12, weight: .bold)
+            PevDashboardSectionLabel(title: "CONFIDENCE", font: .caption.weight(.bold))
             Text(confidenceTitle)
                 .font(.title2.weight(.black))
             Text(confidenceDetail)
@@ -152,7 +152,7 @@ struct BmsNoDataTelemetryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14 * scale) {
-            PevDashboardSectionLabel(title: "WHAT WE CAN SEE", scale: scale, fontSize: 12, weight: .bold)
+            PevDashboardSectionLabel(title: "WHAT WE CAN SEE", font: .caption.weight(.bold))
             PevDashboardGrid(
                 columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 18 * scale)],
                 spacing: 18 * scale
@@ -175,7 +175,7 @@ struct BmsNoDataUnknownsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
-            PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", scale: scale, fontSize: 12, weight: .bold)
+            PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", font: .caption.weight(.bold))
             ForEach(rows, id: \.self) { row in
                 Text(row)
                     .font(.body)
@@ -211,7 +211,7 @@ struct BmsNoDataRidingRuleCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
-            PevDashboardSectionLabel(title: "RIDING RULE", scale: scale, fontSize: 12, weight: .bold)
+            PevDashboardSectionLabel(title: "RIDING RULE", font: .caption.weight(.bold))
             Text(title)
                 .font(.body)
                 .foregroundStyle(PevColors.primaryText.opacity(0.9))
