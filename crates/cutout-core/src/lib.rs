@@ -22,6 +22,8 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod energy_estimate;
+pub use energy_estimate::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
@@ -6098,13 +6100,54 @@ pub struct DiagnosticReadback {
 
 /// Bounded protocol-native raw telemetry readback.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RawTelemetryReadback {
-    /// Raw telemetry field slots.
-    pub fields: [Option<RawFieldValue>; 8],
+    /// Present raw telemetry fields.
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_raw_fields"))]
+    pub fields: ArrayVec<RawFieldValue, 8>,
 
-    /// Protocol-native float field slots, retained without narrowing.
-    pub float_fields: [Option<RawFloatFieldValue>; 32],
+    /// Present protocol-native float fields, retained without narrowing.
+    #[cfg_attr(
+        feature = "serde",
+        serde(deserialize_with = "deserialize_raw_float_fields")
+    )]
+    pub float_fields: ArrayVec<RawFloatFieldValue, 19>,
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_raw_fields<'de, D>(deserializer: D) -> Result<ArrayVec<RawFieldValue, 8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_sparse_slots(deserializer)
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_raw_float_fields<'de, D>(
+    deserializer: D,
+) -> Result<ArrayVec<RawFloatFieldValue, 19>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_sparse_slots(deserializer)
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_sparse_slots<'de, T, D, const CAPACITY: usize>(
+    deserializer: D,
+) -> Result<ArrayVec<T, CAPACITY>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    let slots = <Vec<Option<T>> as serde::Deserialize>::deserialize(deserializer)?;
+    let mut fields = ArrayVec::new();
+    for field in slots.into_iter().flatten().take(CAPACITY) {
+        if fields.try_push(field).is_err() {
+            break;
+        }
+    }
+    Ok(fields)
 }
 
 /// Generic read-only settings entry.
@@ -7638,16 +7681,14 @@ mod tests {
     fn raw_telemetry_response_preserves_protocol_native_fields() {
         let response = crate::ReadOnlyResponse::RawTelemetry(crate::RawTelemetryReadback {
             fields: [
-                Some(crate::RawFieldValue::new(0x8001, 989)),
-                Some(crate::RawFieldValue::new(0x8002, -21_973)),
-                Some(crate::RawFieldValue::new(0x8003, 20)),
-                Some(crate::RawFieldValue::new(0x8004, 0)),
-                None,
-                None,
-                None,
-                None,
-            ],
-            float_fields: [None; 32],
+                crate::RawFieldValue::new(0x8001, 989),
+                crate::RawFieldValue::new(0x8002, -21_973),
+                crate::RawFieldValue::new(0x8003, 20),
+                crate::RawFieldValue::new(0x8004, 0),
+            ]
+            .into_iter()
+            .collect(),
+            float_fields: arrayvec::ArrayVec::new(),
         });
 
         assert_eq!(
@@ -7657,10 +7698,36 @@ mod tests {
         let crate::ReadOnlyResponse::RawTelemetry(raw) = response else {
             panic!("expected raw telemetry");
         };
-        assert_eq!(raw.fields[0], Some(crate::RawFieldValue::new(0x8001, 989)));
+        assert_eq!(raw.fields[0], crate::RawFieldValue::new(0x8001, 989));
+        assert_eq!(raw.fields[1], crate::RawFieldValue::new(0x8002, -21_973));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn raw_telemetry_serde_reads_sparse_slots_and_writes_packed_fields() {
+        let raw: crate::RawTelemetryReadback = serde_json::from_value(serde_json::json!({
+            "fields": [null, { "id": 0x8002, "value": -21_973 }],
+            "float_fields": [null, null, { "id": 0x8010, "value_bits": 0x3f80_0001 }]
+        }))
+        .expect("legacy sparse telemetry should deserialize");
+
         assert_eq!(
-            raw.fields[1],
-            Some(crate::RawFieldValue::new(0x8002, -21_973))
+            raw.fields.as_slice(),
+            &[crate::RawFieldValue::new(0x8002, -21_973)]
+        );
+        assert_eq!(
+            raw.float_fields.as_slice(),
+            &[crate::RawFloatFieldValue {
+                id: 0x8010,
+                value_bits: 0x3f80_0001,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_value(raw).expect("packed telemetry should serialize"),
+            serde_json::json!({
+                "fields": [{ "id": 0x8002, "value": -21_973 }],
+                "float_fields": [{ "id": 0x8010, "value_bits": 0x3f80_0001 }]
+            })
         );
     }
 

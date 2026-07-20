@@ -27,9 +27,9 @@ build_linux_app() {
 
   local swift_cmd package_dir
   swift_cmd=($(cutout_swift_runtime_command))
-  package_dir="$ROOT_DIR/target/swift-package-app/CutoutMobile"
+  package_dir="$ROOT_DIR/swift/CutoutMobile"
 
-  cutout_prepare_swift_package_workspace "$package_dir"
+  cutout_prepare_swift_package_workspace
 
   "${swift_cmd[@]}" build \
     --package-path "$package_dir" \

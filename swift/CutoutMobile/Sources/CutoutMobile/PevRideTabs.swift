@@ -15,7 +15,7 @@ public enum PevRideTabs {
             PevScreenTab(title: "Ride", isSelected: selected == nil, destinationTarget: .vescRide),
             PevScreenTab(title: "Debug", isSelected: selected == .vescDebug, destinationScreenID: .vescDebug),
             unavailableTab(title: "Map", reason: "LIBCU-517"),
-            unavailableTab(title: "Logs", reason: "LIBCU-423")
+            unavailableTab(title: "Logs", reason: "LIBCU-518")
         ]
     }
 

@@ -110,6 +110,11 @@ public struct PevLiveActivityMetricGrid: View {
                 metricCell(value: snapshot.duration, tint: PevLiveActivityPalette.primaryText)
                 metricCell(value: snapshot.distance, tint: PevLiveActivityPalette.primaryText)
             }
+            GridRow {
+                metricCell(value: snapshot.chargeEstimate, tint: PevLiveActivityPalette.connected)
+                metricCell(value: snapshot.headroom, tint: PevLiveActivityPalette.orange)
+                metricCell(value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous))
         .overlay {

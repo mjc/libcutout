@@ -2,6 +2,130 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testChargeEstimateDisplayNamesPreserveCollectingAndNearFullStates() {
+        let collecting = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .collectingSamples,
+            estimate: nil,
+            voltageSag: nil,
+            unavailableReason: nil,
+            error: nil,
+            resetReason: nil,
+            samples: 2,
+            observedFor: MobileDurationDto(milliseconds: 15_000)
+        ))
+        XCTAssertEqual(collecting.displayValue, "estimating")
+        XCTAssertEqual(collecting.displayDetail, "estimating charge time · 2 samples")
+
+        let nearFull = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .unavailable,
+            estimate: nil,
+            voltageSag: nil,
+            unavailableReason: .fullOrNearFull,
+            error: nil,
+            resetReason: nil,
+            samples: 0,
+            observedFor: MobileDurationDto(milliseconds: 0)
+        ))
+        XCTAssertEqual(nearFull.displayValue, "near full")
+        XCTAssertEqual(nearFull.displayDetail, "near full")
+    }
+
+    func testChargeEstimateAccessibilityCarriesKindAndConfidence() {
+        let value = LiveActivityRideValue(
+            label: "Charge",
+            value: "45 min",
+            unit: nil,
+            accessibilityDetail: "at present current, medium confidence",
+            state: .available,
+            source: .derivedTelemetry
+        )
+
+        XCTAssertEqual(
+            value.accessibilityText,
+            "45 min, at present current, medium confidence"
+        )
+    }
+
+    func testStaleChargeEstimateIsHiddenWhileDisconnected() {
+        let staleEstimate = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .stale,
+            estimate: nil,
+            voltageSag: nil,
+            unavailableReason: nil,
+            error: nil,
+            resetReason: nil,
+            samples: 3,
+            observedFor: MobileDurationDto(milliseconds: 30_000)
+        ))
+        let rideState = liveRideState(
+            speed: nil,
+            telemetry: TelemetrySnapshot(chargeEstimate: staleEstimate)
+        )
+
+        let disconnected = LiveActivityRideSnapshot.chargeEstimateValue(
+            rideState: rideState,
+            connectionState: .disconnected
+        )
+        XCTAssertEqual(disconnected.state, .unavailable)
+        XCTAssertEqual(disconnected.value, "--")
+
+        let connected = LiveActivityRideSnapshot.chargeEstimateValue(
+            rideState: rideState,
+            connectionState: .connected
+        )
+        XCTAssertEqual(connected.state, .stale)
+        XCTAssertEqual(connected.value, "stale")
+    }
+
+    func testChargeEstimatePublicSurfaceWrapsGeneratedEnums() throws {
+        let estimate = MobileChargeTimeEstimateDto(
+            lower: MobileDurationDto(milliseconds: 1_000),
+            expected: MobileDurationDto(milliseconds: 2_000),
+            upper: MobileDurationDto(milliseconds: 3_000),
+            kind: .atPresentCurrent,
+            confidence: .medium,
+            currentRate: MobileCurrentRateSummaryDto(
+                meanMilliamps: 2_000,
+                minimumMilliamps: 1_900,
+                maximumMilliamps: 2_100,
+                variabilityPermille: 100
+            ),
+            batteryLevel: BatteryLevelReading(
+                value: BatteryLevel(value: 65),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            batteryLevelBasis: .profileEstimated,
+            batteryProfileId: 42,
+            capacitySource: .hardwareMeasured,
+            voltageSag: nil,
+            calculatedAt: MobileMonotonicMillisDto(milliseconds: 4_000),
+            validUntil: MobileMonotonicMillisDto(milliseconds: 5_000)
+        )
+        let state = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .available,
+            estimate: estimate,
+            voltageSag: nil,
+            unavailableReason: nil,
+            error: .arithmeticOverflow,
+            resetReason: .profileChanged,
+            samples: 5,
+            observedFor: MobileDurationDto(milliseconds: 30_000)
+        ))
+
+        let wrappedEstimate = try XCTUnwrap(state.estimate)
+        let basis: BatteryLevelBasis = wrappedEstimate.batteryLevelBasis
+        let capacitySource: ChargeCapacitySource = wrappedEstimate.capacitySource
+        let error: ChargeEstimateError? = state.error
+        let resetReason: ChargeEstimateResetReason? = state.resetReason
+
+        XCTAssertEqual(basis, .profileEstimated)
+        XCTAssertEqual(capacitySource, .hardwareMeasured)
+        XCTAssertEqual(error, .arithmeticOverflow)
+        XCTAssertEqual(resetReason, .profileChanged)
+    }
+
     func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 
@@ -40,6 +164,10 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
         XCTAssertEqual(snapshot.headroom.value, "Headroom good")
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "34", unit: "°C", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.chargeEstimate,
+            .unavailable(label: "Charge", accessibilityDetail: "usable pack capacity unavailable")
+        )
     }
 
     func testDistanceValueConvertsToKilometresWhenSpeedUnitIsMetric() {
@@ -92,6 +220,10 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.connectionState, .connected)
         XCTAssertEqual(snapshot.speed.state, .unavailable)
         XCTAssertEqual(snapshot.battery.source, .derivedTelemetry)
+        XCTAssertEqual(
+            snapshot.chargeEstimate,
+            .unavailable(label: "Charge", accessibilityDetail: "usable pack capacity unavailable")
+        )
         XCTAssertEqual(snapshot.mode.state, .deferred)
         XCTAssertEqual(snapshot.duration.state, .deferred)
         XCTAssertEqual(snapshot.beeps.state, .deferred)
@@ -291,6 +423,13 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
     func testNotApplicablePreservesUnitWhenProvided() {
         XCTAssertEqual(LiveActivityRideValue.notApplicable(label: "PWM", unit: "%").unit, "%")
+    }
+
+    func testNotApplicableAccessibilityUsesFullWords() {
+        XCTAssertEqual(
+            LiveActivityRideValue.notApplicable(label: "PWM", unit: "%").accessibilityText,
+            "Not applicable, %"
+        )
     }
 }
 

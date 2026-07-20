@@ -69,6 +69,9 @@ public struct PevLiveActivityValueCell: View {
         .padding(.vertical, compact ? 4 : 7)
         .frame(minWidth: compact ? 60 : 66, maxWidth: .infinity, minHeight: compact ? 34 : 50, alignment: .leading)
         .background(background)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(value.label))
+        .accessibilityValue(Text(value.accessibilityText))
     }
 
     private var availableValueColor: Color {

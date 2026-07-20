@@ -710,7 +710,7 @@ measured_reading_from_i32!(AngleReadingDto);
 impl From<Measured<i32>> for VersionComponentDto {
     fn from(measured: Measured<i32>) -> Self {
         Self {
-            value: measured.value as u16,
+            value: u16::try_from(measured.value.clamp(0, i32::from(u16::MAX))).unwrap_or_default(),
             source: measured.source.into(),
             quality: measured.quality.into(),
             verification: measured.verification.into(),
@@ -1205,11 +1205,10 @@ pub struct RawFloatFieldValueDto {
 impl From<RawTelemetryReadback> for RawTelemetryReadbackDto {
     fn from(raw: RawTelemetryReadback) -> Self {
         Self {
-            fields: raw.fields.into_iter().flatten().map(Into::into).collect(),
+            fields: raw.fields.into_iter().map(Into::into).collect(),
             float_fields: raw
                 .float_fields
                 .into_iter()
-                .flatten()
                 .map(|field| RawFloatFieldValueDto {
                     id: field.id,
                     value_bits: field.value_bits,
@@ -2417,16 +2416,12 @@ mod tests {
     fn read_only_raw_telemetry_output_owns_present_fields_only() {
         let response = ReadOnlyResponse::RawTelemetry(RawTelemetryReadback {
             fields: [
-                Some(RawFieldValue::new(0x8001, 989)),
-                None,
-                Some(RawFieldValue::new(0x8002, -21_973)),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-            float_fields: [None; 32],
+                RawFieldValue::new(0x8001, 989),
+                RawFieldValue::new(0x8002, -21_973),
+            ]
+            .into_iter()
+            .collect(),
+            float_fields: arrayvec::ArrayVec::new(),
         });
 
         let output = ReadOnlyOutput::from(response);

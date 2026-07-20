@@ -1,12 +1,12 @@
 use arrayvec::ArrayVec;
-use cutout_core::{CommandKind, RequestKey, RequestTarget, VescControllerId, WriteMode};
-
-use crate::{
-    AeroProbe, FalconProbe, RefloatReadOnlyRequest, VESC_MAX_FRAME_LEN, VescCanReadOnlyRequest,
-    VescReadOnlyCodec, VescReadOnlyRequest,
+use cutout_core::{
+    CommandKind, RequestKey, RequestTarget, VescControllerId, WriteMode, WritePayload,
 };
 
-const MAX_REQUEST_LEN: usize = VESC_MAX_FRAME_LEN;
+use crate::{
+    AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,
+    VescReadOnlyRequest,
+};
 
 /// Bounded encoded request payload plus correlation metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,7 +18,7 @@ pub struct EncodedRequest<P> {
     pub command: CommandKind,
 
     /// Bounded request bytes.
-    pub payload: ArrayVec<u8, MAX_REQUEST_LEN>,
+    pub payload: WritePayload,
 
     /// GATT write mode required by this request.
     pub mode: WriteMode,
@@ -116,13 +116,13 @@ impl VescRequestEncoder {
                     VescReadOnlyRequest::MotorConfig,
                     VescReadOnlyRequest::Values,
                 ] {
-                    let mut payload = ArrayVec::new();
-                    VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+                    let mut encoded = ArrayVec::new();
+                    VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
                     requests
                         .try_push(EncodedRequest {
                             probe: request,
                             command: kind,
-                            payload,
+                            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
                             mode: WriteMode::WithoutResponse,
                         })
                         .ok()?;
@@ -143,12 +143,12 @@ impl VescRequestEncoder {
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
-        let mut payload = ArrayVec::new();
-        VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+        let mut encoded = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
         Some(RequestDisposition::Write(EncodedRequest {
             probe: request,
             command: kind,
-            payload,
+            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
             mode: WriteMode::WithoutResponse,
         }))
     }
@@ -211,23 +211,21 @@ impl VescCanTarget {
             controller_id: self.controller_id,
             request,
         };
-        let mut payload = ArrayVec::new();
-        VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+        let mut encoded = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
         Some(RequestDisposition::Write(EncodedRequest {
             probe: request,
             command: kind,
-            payload,
+            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
             mode: WriteMode::WithoutResponse,
         }))
     }
 }
 
-fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_REQUEST_LEN> {
-    let mut payload = ArrayVec::new();
-    for byte in bytes {
-        let pushed = payload.try_push(*byte);
-        debug_assert!(pushed.is_ok());
-    }
+fn request_payload(bytes: &[u8]) -> WritePayload {
+    let Ok(payload) = WritePayload::try_from_slice(bytes) else {
+        unreachable!("bounded protocol request exceeds the transport maximum");
+    };
     payload
 }
 
@@ -246,19 +244,15 @@ mod tests {
 
         assert!(matches!(
             identity,
-            RequestDisposition::Write(EncodedRequest {
-                command: CommandKind::RequestIdentity,
-                mode: WriteMode::WithoutResponse,
-                ..
-            })
+            RequestDisposition::Write(ref request)
+                if request.command == CommandKind::RequestIdentity
+                    && request.mode == WriteMode::WithoutResponse
         ));
         assert!(matches!(
             firmware,
-            RequestDisposition::Write(EncodedRequest {
-                command: CommandKind::RequestFirmwareInfo,
-                mode: WriteMode::WithoutResponse,
-                ..
-            })
+            RequestDisposition::Write(ref request)
+                if request.command == CommandKind::RequestFirmwareInfo
+                    && request.mode == WriteMode::WithoutResponse
         ));
         assert!(matches!(
             telemetry,
@@ -277,8 +271,9 @@ mod tests {
         assert_eq!(
             match identity {
                 RequestDisposition::Write(request) => request.payload,
-                RequestDisposition::Writes(_) => unreachable!(),
-                RequestDisposition::Passive { .. } => unreachable!(),
+                RequestDisposition::Writes(_) | RequestDisposition::Passive { .. } => {
+                    unreachable!()
+                }
             }
             .as_slice(),
             b"N"
@@ -286,8 +281,9 @@ mod tests {
         assert_eq!(
             match firmware {
                 RequestDisposition::Write(request) => request.payload,
-                RequestDisposition::Writes(_) => unreachable!(),
-                RequestDisposition::Passive { .. } => unreachable!(),
+                RequestDisposition::Writes(_) | RequestDisposition::Passive { .. } => {
+                    unreachable!()
+                }
             }
             .as_slice(),
             b"V"
@@ -316,11 +312,9 @@ mod tests {
     fn falcon_encode_command_is_write_backed_for_identity() {
         assert!(matches!(
             FalconRequestEncoder::encode_command(CommandKind::RequestIdentity),
-            Some(RequestDisposition::Write(EncodedRequest {
-                command: CommandKind::RequestIdentity,
-                mode: WriteMode::WithoutResponse,
-                ..
-            }))
+            Some(RequestDisposition::Write(request))
+                if request.command == CommandKind::RequestIdentity
+                    && request.mode == WriteMode::WithoutResponse
         ));
     }
 
@@ -465,8 +459,7 @@ mod tests {
         .into_iter()
         .filter_map(|disposition| match disposition {
             RequestDisposition::Write(request) => Some(request.payload.len()),
-            RequestDisposition::Writes(_) => None,
-            RequestDisposition::Passive { .. } => None,
+            RequestDisposition::Writes(_) | RequestDisposition::Passive { .. } => None,
         })
         .collect::<Vec<_>>();
 

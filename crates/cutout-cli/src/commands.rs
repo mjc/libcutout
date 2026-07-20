@@ -14,10 +14,11 @@ use cutout_btle::{
     NotificationPayloadTotal, NotificationWindow, PevcapSessionMetadata, ProtocolWriteCount,
     RawNotificationRecord, ReadOnlyResponseCount, ReconnectAttemptReport, ScanWindow,
     SessionBridgeEvent, SessionBridgeReport, SessionCapture, SessionCaptureRecord,
-    SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount, TransportWriteCount,
-    WriteProvenance, capture_raw_notifications, capture_reconnecting_session_with_commands,
-    capture_session_with_channel_pair, capture_session_with_commands, connect_and_discover,
-    drive_session, drive_session_with_commands, read_battery_level, scan_peripherals,
+    SessionChannelPair, SessionEndpoints, SessionPeripheral, SubscribeCount, TelemetryEventCount,
+    TransportWriteCount, WriteProvenance, capture_raw_notifications,
+    capture_reconnecting_session_with_commands, capture_session_with_channel_pair,
+    capture_session_with_commands, connect_and_discover, drive_session,
+    drive_session_with_commands, read_battery_level, scan_peripherals,
 };
 use cutout_core::{
     BatteryPageKind, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
@@ -40,9 +41,9 @@ use cutout_protocols::{
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
     NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest, RefloatRealtimeValue,
     RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession,
-    VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec, VescReadOnlyReply,
-    VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescStatsMask,
-    begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
+    VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec,
+    VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
+    VescStatsMask, begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
@@ -1349,27 +1350,16 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
     let mut refloat_decoder = RefloatStreamDecoder::new();
     for probe in probes {
         info!(?probe, "running serialized VESC probe");
-        let refloat_request = refloat_probe_request(probe);
-        let (command, request_frame) = match refloat_request {
-            Some((command, request)) => {
-                let mut request_frame = arrayvec::ArrayVec::new();
-                encode_refloat_request(request, &mut request_frame)?;
-                (command, request_frame)
-            }
-            None => {
-                let (command, request) =
-                    direct_vesc_probe_request(probe).context("unsupported VESC probe")?;
-                let mut request_frame = arrayvec::ArrayVec::new();
-                VescReadOnlyCodec::encode_request(request, &mut request_frame)?;
-                (command, request_frame)
-            }
-        };
-        let mut session = OneShotVescRequestSession::new(request_frame.as_slice())?;
+        let EncodedVescProbe {
+            command,
+            payload,
+            protocol,
+        } = encode_vesc_probe(probe)?;
+        let mut session = OneShotVescRequestSession::new(payload);
         let capture = capture_session_with_channel_pair(
             &connection.peripheral,
             &mut session,
-            VESC_WRITE_CHANNEL,
-            VESC_NOTIFY_CHANNEL,
+            SessionChannelPair::new(VESC_WRITE_CHANNEL, VESC_NOTIFY_CHANNEL),
             &connection.summary,
             endpoints,
             NotificationWindow::from_secs(seconds),
@@ -1377,12 +1367,15 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
         )
         .await?;
         let report = &capture.report;
-        print_session_report(&report);
+        print_session_report(report);
         print_session_diagnostics_jsonl(report, diagnostics_jsonl)?;
-        if refloat_request.is_some() {
-            print_refloat_replies_jsonl(&capture, &mut refloat_decoder, read_only_jsonl)?;
-        } else {
-            print_vesc_replies_jsonl(&capture, &mut vesc_decoder, read_only_jsonl)?;
+        match protocol {
+            VescProbeProtocol::Vesc => {
+                print_vesc_replies_jsonl(&capture, &mut vesc_decoder, read_only_jsonl)?;
+            }
+            VescProbeProtocol::Refloat => {
+                print_refloat_replies_jsonl(&capture, &mut refloat_decoder, read_only_jsonl)?;
+            }
         }
         print_raw_notifications_jsonl(&capture, raw_notifications_jsonl)?;
     }
@@ -1682,6 +1675,37 @@ const fn refloat_probe_request(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VescProbeProtocol {
+    Vesc,
+    Refloat,
+}
+
+struct EncodedVescProbe {
+    command: DeviceCommand,
+    payload: WritePayload,
+    protocol: VescProbeProtocol,
+}
+
+fn encode_vesc_probe(probe: VescProbe) -> Result<EncodedVescProbe> {
+    let mut frame = arrayvec::ArrayVec::<u8, VESC_MAX_FRAME_LEN>::new();
+    let (command, protocol) = if let Some((command, request)) = refloat_probe_request(probe) {
+        encode_refloat_request(request, &mut frame)?;
+        (command, VescProbeProtocol::Refloat)
+    } else {
+        let (command, request) =
+            direct_vesc_probe_request(probe).context("unsupported VESC probe")?;
+        VescReadOnlyCodec::encode_request(request, &mut frame)?;
+        (command, VescProbeProtocol::Vesc)
+    };
+
+    Ok(EncodedVescProbe {
+        command,
+        payload: WritePayload::try_from_slice(frame.as_slice())?,
+        protocol,
+    })
+}
+
 #[derive(Clone, Debug)]
 struct OneShotVescRequestSession {
     request: WritePayload,
@@ -1689,11 +1713,11 @@ struct OneShotVescRequestSession {
 }
 
 impl OneShotVescRequestSession {
-    fn new(request: &[u8]) -> Result<Self> {
-        Ok(Self {
-            request: WritePayload::try_from_slice(request)?,
+    const fn new(request: WritePayload) -> Self {
+        Self {
+            request,
             wrote: false,
-        })
+        }
     }
 }
 
@@ -2511,16 +2535,18 @@ fn print_refloat_replies_jsonl(
         let SessionCaptureRecord::Notification { bytes, .. } = record else {
             continue;
         };
-        match decoder.feed_result(bytes.as_raw_bytes()) {
-            Ok(RefloatStreamResult::Buffered) => {}
-            Ok(RefloatStreamResult::Replies(replies)) => {
-                for reply in replies {
-                    print_refloat_reply_summary(&reply);
-                    if enabled {
-                        info!("{}", serde_json::to_string(&refloat_reply_json(&reply))?);
-                    }
+        let mut json_error = None;
+        let result = decoder.feed_result(bytes.as_raw_bytes(), |reply| {
+            print_refloat_reply_summary(reply);
+            if enabled && json_error.is_none() {
+                match serde_json::to_string(&refloat_reply_json(reply)) {
+                    Ok(json) => info!("{json}"),
+                    Err(error) => json_error = Some(error),
                 }
             }
+        });
+        match result {
+            Ok(RefloatStreamResult::Buffered | RefloatStreamResult::Replies(_)) => {}
             Err(
                 cutout_protocols::RefloatCodecError::UnexpectedVescCommand
                 | cutout_protocols::RefloatCodecError::UnexpectedPackageInterface,
@@ -2529,11 +2555,14 @@ fn print_refloat_replies_jsonl(
             }
             Err(err) => return Err(err.into()),
         }
+        if let Some(error) = json_error {
+            return Err(error.into());
+        }
     }
     Ok(())
 }
 
-fn print_refloat_reply_summary(reply: &RefloatReply) {
+fn print_refloat_reply_summary(reply: RefloatReply<'_>) {
     match reply {
         RefloatReply::Info(info) => info!(
             package = info.package_name.as_str(),
@@ -2565,7 +2594,7 @@ fn print_refloat_reply_summary(reply: &RefloatReply) {
     }
 }
 
-fn refloat_reply_json(reply: &RefloatReply) -> serde_json::Value {
+fn refloat_reply_json(reply: RefloatReply<'_>) -> serde_json::Value {
     match reply {
         RefloatReply::Info(info) => serde_json::json!({
             "type": "refloat_info",
@@ -2586,12 +2615,12 @@ fn refloat_reply_json(reply: &RefloatReply) -> serde_json::Value {
             "always": ids
                 .always
                 .iter()
-                .map(|id| id.as_str())
+                .map(arrayvec::ArrayString::as_str)
                 .collect::<Vec<_>>(),
             "runtime": ids
                 .runtime
                 .iter()
-                .map(|id| id.as_str())
+                .map(arrayvec::ArrayString::as_str)
                 .collect::<Vec<_>>(),
         }),
         RefloatReply::RealtimeData(data) => serde_json::json!({
@@ -2735,7 +2764,7 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "raw_telemetry",
-            "fields": raw.fields.iter().flatten().copied().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
+            "fields": raw.fields.iter().copied().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
         })),
     }
 }
@@ -2758,7 +2787,7 @@ fn battery_page_json(payload: &BatteryPagePayload) -> serde_json::Value {
     let page = payload.page();
     serde_json::json!({
         "selector": page.selector.get(),
-        "tag": page.tag.map(|tag| tag.get()),
+        "tag": page.tag.map(cutout_core::ProtocolTag::get),
         "side": battery_page_side_name(page.kind, page.selector.get()),
         "kind": battery_page_kind_name(page.kind),
         "verification": verification_status_name(page.verification),
@@ -5936,5 +5965,27 @@ mod tests {
                 VescProbe::RefloatRealtime,
             ]
         );
+    }
+
+    #[test]
+    fn vesc_probe_encoding_keeps_protocol_and_command_together() {
+        for (probe, protocol, command) in [
+            (
+                VescProbe::Firmware,
+                VescProbeProtocol::Vesc,
+                DeviceCommand::RequestFirmwareInfo,
+            ),
+            (
+                VescProbe::RefloatInfo,
+                VescProbeProtocol::Refloat,
+                DeviceCommand::RequestIdentity,
+            ),
+        ] {
+            let encoded = encode_vesc_probe(probe).expect("probe encodes");
+
+            assert_eq!(encoded.protocol, protocol);
+            assert_eq!(encoded.command, command);
+            assert!(!encoded.payload.is_empty());
+        }
     }
 }

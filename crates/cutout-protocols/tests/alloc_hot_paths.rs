@@ -7,14 +7,21 @@ use std::sync::{
 };
 
 use cutout_core::{
-    LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput, TransportWriteLimit,
+    CommandKind, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput,
+    TransportWriteLimit,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
-    BegodeFrameReassembler, NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession,
-    VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL, VescGenericModel, VescReadOnlyStreamDecoder,
-    VescReadOnlyStreamResult,
+    BegodeFrameReassembler, FalconRequestEncoder, NosfetAeroModel, ReadOnlyModelSpec,
+    ReadOnlySession, RefloatStreamDecoder, RefloatStreamResult, VESC_NOTIFY_CHANNEL,
+    VETERAN_DATA_CHANNEL, VescGenericModel, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
+    VescRequestEncoder,
 };
+
+const REFLOAT_IDS_FRAME: &[u8] = &[
+    2, 35, 36, 101, 32, 2, 11, 109, 111, 116, 111, 114, 46, 115, 112, 101, 101, 100, 8, 105, 109,
+    117, 46, 114, 111, 108, 108, 1, 8, 115, 101, 116, 112, 111, 105, 110, 116, 88, 149, 3,
+];
 
 struct CountingAllocator;
 
@@ -118,6 +125,27 @@ fn protocol_parser_owned_results_do_not_allocate() {
     veteran_parser_owned_results_do_not_allocate();
     begode_parser_owned_results_do_not_allocate();
     vesc_parser_owned_results_do_not_allocate();
+}
+
+#[test]
+fn read_request_encoders_do_not_allocate() {
+    assert_no_allocations("read request encoding", || {
+        assert!(FalconRequestEncoder::encode_command(CommandKind::RequestIdentity).is_some());
+        assert!(VescRequestEncoder::encode_command(CommandKind::RequestTelemetry).is_some());
+        assert!(VescRequestEncoder::encode_command(CommandKind::RequestDiagnostics).is_some());
+    });
+}
+
+#[test]
+fn refloat_parser_owned_results_do_not_allocate() {
+    let mut decoder = RefloatStreamDecoder::new();
+
+    assert_no_allocations("Refloat parser owned result", || {
+        let result = decoder
+            .feed_result(REFLOAT_IDS_FRAME, |_| {})
+            .expect("fixture frame decodes");
+        assert_eq!(result, RefloatStreamResult::Replies(1));
+    });
 }
 
 fn veteran_parser_owned_results_do_not_allocate() {

@@ -98,7 +98,7 @@ impl CutoutSessionState {
                 .identity
                 .apply_update(DeviceIdentityUpdate::firmware(*firmware)),
             ReadOnlyResponse::Battery(readback) => self.telemetry.bms.observe_readback(readback),
-            ReadOnlyResponse::RawTelemetry(readback) => self.telemetry.raw = *readback,
+            ReadOnlyResponse::RawTelemetry(readback) => self.telemetry.raw = readback.clone(),
             ReadOnlyResponse::Diagnostics(_)
             | ReadOnlyResponse::Settings(_)
             | ReadOnlyResponse::FaultHistory(_) => {}

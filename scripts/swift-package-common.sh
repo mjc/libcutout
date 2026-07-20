@@ -34,10 +34,9 @@ cutout_use_xcode_developer_dir() {
 }
 
 cutout_prepare_swift_package_workspace() {
-  local root package_dir
+  local root
   root="$(cutout_repo_root)"
-  package_dir="$1"
-  CUTOUT_SWIFT_SOURCEKIT_PACKAGE_DIR="$package_dir" "$root/scripts/prepare-swift-sourcekit-workspace.sh" >/dev/null
+  "$root/scripts/prepare-swift-sourcekit-workspace.sh" >/dev/null
 }
 
 cutout_iphoneos_sdk_path() {
@@ -107,7 +106,7 @@ PY
 cutout_build_ios_app_bundle() {
   local root package_dir project scheme destination derived_data rust_lib product
   root="$(cutout_repo_root)"
-  package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
+  package_dir="$root/swift/CutoutMobile"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   destination="${CUTOUT_IOS_APP_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
@@ -117,7 +116,7 @@ cutout_build_ios_app_bundle() {
 
   cutout_use_xcode_developer_dir
 
-  cutout_prepare_swift_package_workspace "$package_dir"
+  cutout_prepare_swift_package_workspace
 
   cutout_build_ios_rust_ffi
 
@@ -151,7 +150,7 @@ cutout_build_ios_device_app_bundle() {
   local root package_dir project scheme device_udid destination derived_data rust_lib product
   local development_team bundle_id
   root="$(cutout_repo_root)"
-  package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
+  package_dir="$root/swift/CutoutMobile"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
@@ -170,7 +169,7 @@ cutout_build_ios_device_app_bundle() {
     return 1
   fi
 
-  cutout_prepare_swift_package_workspace "$package_dir"
+  cutout_prepare_swift_package_workspace
 
   cutout_build_ios_rust_ffi
 
@@ -219,7 +218,7 @@ cutout_archive_ios_release_testing_app() {
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
-  package_dir="${CUTOUT_IOS_APP_PACKAGE_DIR:-target/swift-sourcekit/CutoutMobile}"
+  package_dir="$root/swift/CutoutMobile"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"
@@ -245,7 +244,7 @@ cutout_archive_ios_release_testing_app() {
     done < <(cutout_xcode_auth_args)
   fi
 
-  cutout_prepare_swift_package_workspace "$package_dir"
+  cutout_prepare_swift_package_workspace
   cutout_build_ios_rust_ffi
 
   rm -rf "$archive_path"

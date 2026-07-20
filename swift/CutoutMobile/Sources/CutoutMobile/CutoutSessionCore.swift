@@ -48,6 +48,8 @@ public final class CutoutSessionCore: NSObject {
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
+    private var chargeEstimateProfile: ChargeEstimateProfile?
+    private var vescBoardProfile: VescBoardProfile?
     private var isRecordOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
@@ -165,11 +167,43 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
 
+    /// Configures the Rust-owned charge estimate profile for the active or next connection.
+    public func configureChargeEstimate(profile: ChargeEstimateProfile) {
+        onBleQueue {
+            chargeEstimateProfile = profile
+            liveOwner?.configureChargeEstimate(profile: profile)
+        }
+    }
+
+    /// Removes the charge estimate profile for the active connection.
+    public func clearChargeEstimateProfile() {
+        onBleQueue {
+            chargeEstimateProfile = nil
+            liveOwner?.clearChargeEstimateProfile()
+        }
+    }
+
+    /// Configures the board and battery facts selected for the next VESC connection.
+    public func configureVescBoard(profile: VescBoardProfile) {
+        onBleQueue {
+            vescBoardProfile = profile
+        }
+    }
+
+    /// Removes the selected VESC board and battery facts.
+    public func clearVescBoardProfile() {
+        onBleQueue {
+            vescBoardProfile = nil
+        }
+    }
+
     private func disconnectAndScanOnBleQueue() {
         suppressReconnect = true
         isRecordOnly = false
         selectedModel = nil
         selectedRoute = nil
+        chargeEstimateProfile = nil
+        vescBoardProfile = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
         pendingBegodeProbeResponses.removeAll()
@@ -464,6 +498,9 @@ public final class CutoutSessionCore: NSObject {
                 retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil,
                 executionQueue: bleQueue
             )
+            if let chargeEstimateProfile {
+                liveOwner?.configureChargeEstimate(profile: chargeEstimateProfile)
+            }
             setPhase(.subscribing)
             let inventory = CoreBluetoothGattInventory(services: peripheral.services ?? [])
             liveOwner?.recordInventory(inventory)
@@ -482,8 +519,14 @@ public final class CutoutSessionCore: NSObject {
             guard let selectedModel else {
                 throw CutoutSessionError.unexpectedStepError("missing EUC model")
             }
-            return try .electricUnicycle(model: selectedModel)
+            return try .electricUnicycle(
+                model: selectedModel,
+                deviceIdentity: advertisement?.peripheralIdentifier.rawValue
+            )
         case .vescOnewheel:
+            if let vescBoardProfile {
+                return .vescOnewheel(boardProfile: vescBoardProfile)
+            }
             return .vescOnewheel()
         }
     }
