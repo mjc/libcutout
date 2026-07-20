@@ -226,6 +226,8 @@ public struct PevDashboardSectionLabel: View {
 }
 
 public struct PevDashboardStatusPill: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     let title: String
     let scale: CGFloat
     let fill: Color
@@ -270,7 +272,12 @@ public struct PevDashboardStatusPill: View {
                 Capsule()
                     .fill(fill)
                     .overlay(
-                        Capsule().stroke(stroke ?? .clear, lineWidth: stroke == nil ? 0 : 1)
+                        Capsule().stroke(
+                            stroke ?? .clear,
+                            lineWidth: stroke == nil
+                                ? 0
+                                : pevDashboardResolvedLineWidth(base: 1, contrast: colorSchemeContrast)
+                        )
                     )
             )
     }

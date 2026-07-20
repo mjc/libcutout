@@ -85,6 +85,10 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             PevDashboardCardBackground.resolvedLineWidth(base: 2, contrast: .increased),
             3
         )
+        XCTAssertEqual(
+            pevDashboardResolvedLineWidth(base: 0.8, contrast: .increased),
+            2
+        )
     }
 
     func testFootpadReadoutBuildsACompleteDefaultAccessibilityValue() {

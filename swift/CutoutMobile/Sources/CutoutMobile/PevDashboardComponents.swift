@@ -11,6 +11,13 @@ func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
     parts.filter { !$0.isEmpty }.joined(separator: ", ")
 }
 
+nonisolated func pevDashboardResolvedLineWidth(
+    base: CGFloat,
+    contrast: ColorSchemeContrast
+) -> CGFloat {
+    contrast == .increased ? max(2, base * 1.5) : base
+}
+
 public struct PevDashboardCardBackground: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
@@ -47,6 +54,6 @@ public struct PevDashboardCardBackground: View {
         base: CGFloat,
         contrast: ColorSchemeContrast
     ) -> CGFloat {
-        contrast == .increased ? max(2, base * 1.5) : base
+        pevDashboardResolvedLineWidth(base: base, contrast: contrast)
     }
 }

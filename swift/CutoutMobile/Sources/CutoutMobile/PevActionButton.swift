@@ -86,6 +86,8 @@ public struct PevActionButton: View {
 }
 
 public struct PevActionButtonLabel: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     public let title: String
     public let systemImageName: String?
     public let scale: CGFloat
@@ -167,7 +169,13 @@ public struct PevActionButtonLabel: View {
                 .fill(isEnabled ? fillEnabled : fillDisabled)
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(isEnabled ? strokeEnabled : strokeDisabled, lineWidth: 1 * scale)
+                        .stroke(
+                            isEnabled ? strokeEnabled : strokeDisabled,
+                            lineWidth: pevDashboardResolvedLineWidth(
+                                base: 1 * scale,
+                                contrast: colorSchemeContrast
+                            )
+                        )
                 )
         )
         .contentShape(Rectangle())
