@@ -1330,24 +1330,17 @@ async fn drive_session_relays_notifications_back_into_session() {
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response,
+            response: ReadOnlyResponse::Firmware(firmware),
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && matches!(
-                response,
-                ReadOnlyResponse::Firmware(firmware)
-                    if firmware.firmware_major == Some(Measured::reported(43))
-            )
+            && firmware.firmware_major == Some(Measured::reported(43))
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response,
+            response: ReadOnlyResponse::Settings(settings),
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && matches!(
-                response,
-                ReadOnlyResponse::Settings(settings) if settings.entries()[0].is_some()
-            )
+            && settings.entries()[0].is_some()
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,
@@ -1402,12 +1395,9 @@ fn report_settings_summary_keeps_only_available_settings_readbacks() {
         event,
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
-            response,
+            response: ReadOnlyResponse::Settings(settings),
         } if *monotonic_ms == crate::MonotonicMs::new(2)
-            && matches!(
-                response,
-                ReadOnlyResponse::Settings(settings) if *settings == unavailable
-            )
+            && *settings == unavailable
     )));
 }
 

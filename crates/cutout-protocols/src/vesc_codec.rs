@@ -1055,7 +1055,7 @@ fn decode_typed_reply(frame: &[u8]) -> Result<Option<VescReadOnlyReply>, VescCod
         return Err(VescCodecError::DecodeFailed);
     };
     match command_id {
-        VESC_COMM_GET_VALUES => decode_values(body, VescValuesMask::all())
+        VESC_COMM_GET_VALUES => decode_values(body, full_values_mask(body.len())?)
             .map(|values| Some(VescReadOnlyReply::Values(values))),
         VESC_COMM_GET_MCCONF => {
             decode_motor_config(body).map(|config| Some(VescReadOnlyReply::MotorConfig(config)))
@@ -1112,6 +1112,20 @@ impl<'a> VescValuesReader<'a> {
     fn remaining(&self) -> &'a [u8] {
         self.bytes.get(self.offset..).unwrap_or_default()
     }
+}
+
+fn full_values_mask(body_len: usize) -> Result<VescValuesMask, VescCodecError> {
+    let field_count = match body_len {
+        53 => 16,
+        57 => 17,
+        58 => 18,
+        64 => 19,
+        72 => 21,
+        73 => 22,
+        _ => return Err(VescCodecError::DecodeFailed),
+    };
+
+    Ok(VescValuesMask::from_bits_retain((1_u32 << field_count) - 1))
 }
 
 fn decode_selective_values(body: &[u8]) -> Result<VescValuesTelemetry, VescCodecError> {
@@ -1621,31 +1635,7 @@ mod tests {
 
     #[test]
     fn full_values_decode_into_named_semantic_fields() {
-        let mut payload = vec![4];
-        payload.extend_from_slice(&267_i16.to_be_bytes());
-        payload.extend_from_slice(&315_i16.to_be_bytes());
-        payload.extend_from_slice(&1_234_i32.to_be_bytes());
-        payload.extend_from_slice(&(-456_i32).to_be_bytes());
-        payload.extend_from_slice(&111_i32.to_be_bytes());
-        payload.extend_from_slice(&(-222_i32).to_be_bytes());
-        payload.extend_from_slice(&750_i16.to_be_bytes());
-        payload.extend_from_slice(&989_i32.to_be_bytes());
-        payload.extend_from_slice(&375_i16.to_be_bytes());
-        payload.extend_from_slice(&12_345_i32.to_be_bytes());
-        payload.extend_from_slice(&6_789_i32.to_be_bytes());
-        payload.extend_from_slice(&543_210_i32.to_be_bytes());
-        payload.extend_from_slice(&123_450_i32.to_be_bytes());
-        payload.extend_from_slice(&(-2_i32).to_be_bytes());
-        payload.extend_from_slice(&4_i32.to_be_bytes());
-        payload.push(0);
-        payload.extend_from_slice(&1_500_000_i32.to_be_bytes());
-        payload.push(7);
-        payload.extend_from_slice(&271_i16.to_be_bytes());
-        payload.extend_from_slice(&272_i16.to_be_bytes());
-        payload.extend_from_slice(&273_i16.to_be_bytes());
-        payload.extend_from_slice(&12_345_i32.to_be_bytes());
-        payload.extend_from_slice(&(-6_789_i32).to_be_bytes());
-        payload.push(3);
+        let payload = full_values_payload();
 
         let reply = VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload))
             .expect("full values decode");
@@ -1668,6 +1658,35 @@ mod tests {
         assert_eq!(values.quadrature_axis_voltage.as_millivolts(), -6_789);
         assert_eq!(values.status, VescStatus::new(3));
         assert_eq!(values.present_fields, VescValuesMask::all());
+    }
+
+    #[test]
+    fn full_values_decode_each_released_layout_without_inventing_missing_fields() {
+        let payload = full_values_payload();
+
+        for (body_len, field_count) in [(53, 16), (57, 17), (58, 18), (64, 19), (72, 21), (73, 22)]
+        {
+            let reply = VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload[..=body_len]))
+                .expect("released full-values layout decodes");
+            let VescReadOnlyReply::Values(values) = reply else {
+                panic!("expected values reply");
+            };
+
+            assert_eq!(
+                values.present_fields,
+                VescValuesMask::from_bits_retain((1 << field_count) - 1)
+            );
+        }
+    }
+
+    #[test]
+    fn full_values_reject_truncations_that_were_never_released_layouts() {
+        let payload = full_values_payload();
+
+        assert!(matches!(
+            VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload[..=54])),
+            Err(VescCodecError::DecodeFailed)
+        ));
     }
 
     #[test]
@@ -2119,6 +2138,35 @@ mod tests {
         push_bytes(&mut frame, &vesc_crc16(payload).to_be_bytes());
         frame.push(VESC_FRAME_END);
         frame
+    }
+
+    fn full_values_payload() -> Vec<u8> {
+        let mut payload = vec![VESC_COMM_GET_VALUES];
+        payload.extend_from_slice(&267_i16.to_be_bytes());
+        payload.extend_from_slice(&315_i16.to_be_bytes());
+        payload.extend_from_slice(&1_234_i32.to_be_bytes());
+        payload.extend_from_slice(&(-456_i32).to_be_bytes());
+        payload.extend_from_slice(&111_i32.to_be_bytes());
+        payload.extend_from_slice(&(-222_i32).to_be_bytes());
+        payload.extend_from_slice(&750_i16.to_be_bytes());
+        payload.extend_from_slice(&989_i32.to_be_bytes());
+        payload.extend_from_slice(&375_i16.to_be_bytes());
+        payload.extend_from_slice(&12_345_i32.to_be_bytes());
+        payload.extend_from_slice(&6_789_i32.to_be_bytes());
+        payload.extend_from_slice(&543_210_i32.to_be_bytes());
+        payload.extend_from_slice(&123_450_i32.to_be_bytes());
+        payload.extend_from_slice(&(-2_i32).to_be_bytes());
+        payload.extend_from_slice(&4_i32.to_be_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&1_500_000_i32.to_be_bytes());
+        payload.push(7);
+        payload.extend_from_slice(&271_i16.to_be_bytes());
+        payload.extend_from_slice(&272_i16.to_be_bytes());
+        payload.extend_from_slice(&273_i16.to_be_bytes());
+        payload.extend_from_slice(&12_345_i32.to_be_bytes());
+        payload.extend_from_slice(&(-6_789_i32).to_be_bytes());
+        payload.push(3);
+        payload
     }
 
     fn pad_to(payload: &mut ArrayVec<u8, VESC_MAX_FRAME_LEN>, len: usize) {
