@@ -15,11 +15,6 @@ public struct PevDashboardMetricTile: View {
     let detailColor: Color
     let cornerRadius: CGFloat
     let minHeight: CGFloat
-    let labelFontSize: CGFloat
-    let valueFontSize: CGFloat
-    let unitFontSize: CGFloat
-    let detailFontSize: CGFloat
-    let valueMinimumScaleFactor: CGFloat
 
     var accessibilityValueText: String {
         pevDashboardAccessibilityValue([value, unit, detail])
@@ -39,12 +34,7 @@ public struct PevDashboardMetricTile: View {
         unitColor: Color? = nil,
         detailColor: Color = PevDashboardColors.mutedText,
         cornerRadius: CGFloat = 20,
-        minHeight: CGFloat = 106,
-        labelFontSize: CGFloat = 14,
-        valueFontSize: CGFloat = 25,
-        unitFontSize: CGFloat = 13,
-        detailFontSize: CGFloat = 13,
-        valueMinimumScaleFactor: CGFloat = 0.82
+        minHeight: CGFloat = 106
     ) {
         self.label = label
         self.value = value
@@ -60,40 +50,31 @@ public struct PevDashboardMetricTile: View {
         self.detailColor = detailColor
         self.cornerRadius = cornerRadius
         self.minHeight = minHeight
-        self.labelFontSize = labelFontSize
-        self.valueFontSize = valueFontSize
-        self.unitFontSize = unitFontSize
-        self.detailFontSize = detailFontSize
-        self.valueMinimumScaleFactor = valueMinimumScaleFactor
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8 * scale) {
             Text(label)
-                .font(.system(size: labelFontSize * scale, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(labelColor)
 
             HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
                 Text(value)
-                    .font(.system(size: valueFontSize * scale, weight: .black))
+                    .font(.title3.weight(.black))
                     .foregroundStyle(valueColor)
                     .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(valueMinimumScaleFactor)
                 Spacer(minLength: 4 * scale)
                 if !unit.isEmpty {
                     Text(unit)
-                        .font(.system(size: unitFontSize * scale, weight: .black))
+                        .font(.subheadline.weight(.black))
                         .foregroundStyle(unitColor)
                 }
             }
 
             if !detail.isEmpty {
                 Text(detail)
-                    .font(.system(size: detailFontSize * scale, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .foregroundStyle(detailColor)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.68)
             }
         }
         .padding(.horizontal, 16 * scale)
@@ -165,19 +146,19 @@ public struct PevDashboardHeroCard: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 2 * scale) {
             Text(eyebrow)
-                .font(.system(size: 14 * scale, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(secondaryTextColor)
             HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
                 Text(value)
-                    .font(.system(size: 58 * scale, weight: .black))
+                    .font(.largeTitle.weight(.black))
                     .foregroundStyle(textColor)
                     .monospacedDigit()
                 Text(unit)
-                    .font(.system(size: 15 * scale, weight: .black))
+                    .font(.headline.weight(.black))
                     .foregroundStyle(accent)
             }
             Text(detail)
-                .font(.system(size: 13 * scale, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(secondaryTextColor)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
@@ -254,20 +235,16 @@ public struct PevDashboardWideCard: View {
         VStack(alignment: .leading, spacing: 7 * scale) {
             if let title {
                 Text(title)
-                    .font(.system(size: 14 * scale, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .foregroundStyle(secondaryTextColor)
             }
             Text(value)
-                .font(.system(size: 25 * scale, weight: .black))
+                .font(.title3.weight(.black))
                 .foregroundStyle(textColor)
-                .lineLimit(2)
-                .minimumScaleFactor(0.74)
             if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(.system(size: 13 * scale, weight: .black))
+                    .font(.subheadline.weight(.black))
                     .foregroundStyle(accent)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.72)
             }
         }
         .padding(.horizontal, 18 * scale)

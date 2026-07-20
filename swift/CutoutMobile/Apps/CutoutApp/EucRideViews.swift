@@ -110,8 +110,7 @@ struct EucRideScreenView: View {
                     detailColor: PevColors.warningText,
                     fill: PevColors.warningFill,
                     stroke: PevColors.warningStroke,
-                    scale: scale,
-                    height: 76
+                    scale: scale
                 )
                     .padding(.top, 14 * scale)
             }

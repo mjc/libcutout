@@ -77,12 +77,7 @@ extension PevDashboardMetricTile {
         unitColor: Color? = nil,
         detailColor: Color = PevDashboardColors.mutedText,
         cornerRadius: CGFloat = 20,
-        minHeight: CGFloat = 106,
-        labelFontSize: CGFloat = 14,
-        valueFontSize: CGFloat = 25,
-        unitFontSize: CGFloat = 13,
-        detailFontSize: CGFloat = 13,
-        valueMinimumScaleFactor: CGFloat = 0.82
+        minHeight: CGFloat = 106
     ) {
         self.init(
             label: tile.label,
@@ -98,12 +93,7 @@ extension PevDashboardMetricTile {
             unitColor: unitColor,
             detailColor: detailColor,
             cornerRadius: cornerRadius,
-            minHeight: minHeight,
-            labelFontSize: labelFontSize,
-            valueFontSize: valueFontSize,
-            unitFontSize: unitFontSize,
-            detailFontSize: detailFontSize,
-            valueMinimumScaleFactor: valueMinimumScaleFactor
+            minHeight: minHeight
         )
     }
 }

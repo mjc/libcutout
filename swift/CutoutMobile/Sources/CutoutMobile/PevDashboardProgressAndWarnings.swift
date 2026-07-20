@@ -9,8 +9,6 @@ public struct PevDashboardProgressBar: View {
     let labelColor: Color
     let valueColor: Color
     let scale: CGFloat
-    let labelFontSize: CGFloat
-    let valueFontSize: CGFloat
     let height: CGFloat
 
     var clampedProgress: Double {
@@ -26,8 +24,6 @@ public struct PevDashboardProgressBar: View {
         labelColor: Color,
         valueColor: Color,
         scale: CGFloat,
-        labelFontSize: CGFloat = 15,
-        valueFontSize: CGFloat = 14,
         height: CGFloat = 17
     ) {
         self.label = label
@@ -38,8 +34,6 @@ public struct PevDashboardProgressBar: View {
         self.labelColor = labelColor
         self.valueColor = valueColor
         self.scale = scale
-        self.labelFontSize = labelFontSize
-        self.valueFontSize = valueFontSize
         self.height = height
     }
 
@@ -47,11 +41,11 @@ public struct PevDashboardProgressBar: View {
         VStack(alignment: .leading, spacing: 7 * scale) {
             HStack {
                 Text(label)
-                    .font(.system(size: labelFontSize * scale, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(labelColor)
                 Spacer()
                 Text(value)
-                    .font(.system(size: valueFontSize * scale, weight: .black))
+                    .font(.headline.weight(.black))
                     .foregroundStyle(valueColor)
                     .monospacedDigit()
             }
@@ -127,16 +121,13 @@ public struct PevDashboardProgressCard: View {
                 track: track,
                 labelColor: labelColor,
                 valueColor: valueColor,
-                scale: scale,
-                labelFontSize: 14,
-                valueFontSize: 25
+                scale: scale
             )
 
             if !detail.isEmpty {
                 Text(detail)
-                    .font(.system(size: 13 * scale, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .foregroundStyle(detailColor)
-                    .lineLimit(2)
             }
         }
         .padding(.horizontal, 22 * scale)
@@ -165,10 +156,7 @@ public struct PevDashboardWarningCard: View {
     let fill: Color
     let stroke: Color
     let scale: CGFloat
-    let titleFontSize: CGFloat
-    let detailFontSize: CGFloat
     let cornerRadius: CGFloat
-    let height: CGFloat?
 
     public init(
         title: String,
@@ -178,10 +166,7 @@ public struct PevDashboardWarningCard: View {
         fill: Color,
         stroke: Color,
         scale: CGFloat,
-        titleFontSize: CGFloat = 20,
-        detailFontSize: CGFloat = 13,
-        cornerRadius: CGFloat = 23,
-        height: CGFloat? = nil
+        cornerRadius: CGFloat = 23
     ) {
         self.title = title
         self.detail = detail
@@ -190,27 +175,21 @@ public struct PevDashboardWarningCard: View {
         self.fill = fill
         self.stroke = stroke
         self.scale = scale
-        self.titleFontSize = titleFontSize
-        self.detailFontSize = detailFontSize
         self.cornerRadius = cornerRadius
-        self.height = height
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 7 * scale) {
             Text(title)
-                .font(.system(size: titleFontSize * scale, weight: .black))
+                .font(.title3.weight(.black))
                 .foregroundStyle(accent)
             Text(detail)
-                .font(.system(size: detailFontSize * scale, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(detailColor)
-                .lineLimit(2)
-                .minimumScaleFactor(0.72)
         }
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 16 * scale)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: height.map { $0 * scale })
         .background(
             PevDashboardCardBackground(
                 cornerRadius: cornerRadius * scale,

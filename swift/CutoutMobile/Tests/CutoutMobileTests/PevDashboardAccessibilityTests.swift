@@ -23,6 +23,34 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(makeProgressBar(progress: 1.8).clampedProgress, 1)
     }
 
+    func testHeroProgressAndReadbackUseTheSameTypedValues() {
+        let card = PevDashboardHeroCard(
+            eyebrow: "Battery",
+            value: "82",
+            unit: "percent",
+            detail: "charging",
+            progress: 1.4,
+            accent: .green,
+            scale: 1
+        )
+
+        XCTAssertEqual(card.clampedProgress, 1)
+        XCTAssertEqual(card.accessibilityValueText, "82, percent, charging")
+    }
+
+    func testWideCardWithoutTitleUsesValueAsItsAccessibilityLabel() {
+        let card = PevDashboardWideCard(
+            title: nil,
+            value: "Trend stable",
+            detail: "No change",
+            accent: .yellow,
+            scale: 1
+        )
+
+        XCTAssertEqual(card.accessibilityLabelText, "Trend stable")
+        XCTAssertEqual(card.accessibilityValueText, "No change")
+    }
+
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
         XCTAssertTrue(
             PevDashboardScanningPill.shouldAnimate(
