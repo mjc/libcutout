@@ -1506,10 +1506,7 @@ mod tests {
         );
         assert_eq!(resolution.missing_probe_response, None);
         assert_eq!(
-            resolution
-                .model_banner
-                .as_ref()
-                .map(|banner| banner.as_bytes()),
+            resolution.model_banner.as_ref().map(ModelBanner::as_bytes),
             Some(b"Falcon\0".as_slice())
         );
         assert_eq!(resolution.staged.model, None);
@@ -1715,10 +1712,7 @@ mod tests {
             Some(PendingProbe::BegodeName)
         );
         assert_eq!(
-            update
-                .model_banner
-                .as_ref()
-                .map(super::ModelBanner::as_bytes),
+            update.model_banner.as_ref().map(ModelBanner::as_bytes),
             Some(&b"Falcon\0"[..])
         );
     }
@@ -1878,10 +1872,7 @@ mod tests {
         });
 
         assert_eq!(
-            malformed
-                .model_banner
-                .as_ref()
-                .map(super::ModelBanner::as_bytes),
+            malformed.model_banner.as_ref().map(ModelBanner::as_bytes),
             Some(&b"Falcon\x00"[..])
         );
 

@@ -76,6 +76,7 @@ public struct PevLiveActivityPresentationCard: View {
             VStack(alignment: .trailing, spacing: 8) {
                 liveMetric(snapshot.battery)
                 liveMetric(snapshot.headroom)
+                liveMetric(snapshot.chargeEstimate)
             }
         }
     }
@@ -143,6 +144,7 @@ public struct PevLiveActivityPresentationCard: View {
                     liveMetric(snapshot.headroom)
                     liveMetric(snapshot.beeps)
                     liveMetric(snapshot.temperature)
+                    liveMetric(snapshot.chargeEstimate)
                 }
             }
         }

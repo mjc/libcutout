@@ -102,6 +102,13 @@ public struct PevDashboardMetricTile: View {
                 stroke: stroke
             )
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(label))
+        .accessibilityValue(Text(
+            [value, unit, detail]
+                .filter { !$0.isEmpty }
+                .joined(separator: ", ")
+        ))
     }
 }
 

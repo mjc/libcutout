@@ -324,7 +324,7 @@
 			);
 			mainGroup = 111111111111111111111141;
 			packageReferences = (
-				111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */,
+				111111111111111111111180 /* XCLocalSwiftPackageReference "." */,
 			);
 			productRefGroup = 111111111111111111111153 /* Products */;
 			projectDirPath = "";
@@ -665,21 +665,21 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */ = {
+		111111111111111111111180 /* XCLocalSwiftPackageReference "." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../target/swift-sourcekit/CutoutMobile";
+			relativePath = ".";
 		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		111111111111111111111181 /* CutoutMobile */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
 			productName = CutoutMobile;
 		};
 		222222222222222222222181 /* CutoutMobile */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "../../target/swift-sourcekit/CutoutMobile" */;
+			package = 111111111111111111111180 /* XCLocalSwiftPackageReference "." */;
 			productName = CutoutMobile;
 		};
 /* End XCSwiftPackageProductDependency section */

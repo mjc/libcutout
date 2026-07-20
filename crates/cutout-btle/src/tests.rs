@@ -1192,8 +1192,10 @@ async fn drive_session_accepts_split_write_and_notify_channels() {
     let report = crate::drive_session_with_channel_pair(
         &peripheral,
         &mut session,
-        GattChannel::from_bytes([0xA2; 16]),
-        GattChannel::from_bytes([0xA3; 16]),
+        crate::SessionChannelPair::new(
+            GattChannel::from_bytes([0xA2; 16]),
+            GattChannel::from_bytes([0xA3; 16]),
+        ),
         &summary,
         summary
             .select_session_endpoints()
@@ -1337,7 +1339,8 @@ async fn drive_session_relays_notifications_back_into_session() {
         crate::SessionBridgeEvent::ReadOnlyResponse {
             monotonic_ms,
             response: ReadOnlyResponse::Settings(settings),
-        } if *monotonic_ms == crate::MonotonicMs::new(2) && settings.entries()[0].is_some()
+        } if *monotonic_ms == crate::MonotonicMs::new(2)
+            && settings.entries()[0].is_some()
     )));
     assert!(report.events.iter().any(|event| matches!(
         event,

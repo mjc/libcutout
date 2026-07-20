@@ -862,8 +862,8 @@ impl PopulatedRawTelemetryFieldCount {
         Self(value)
     }
 
-    fn from_raw_telemetry(raw: RawTelemetryReadback) -> Self {
-        Self::new(raw.fields.into_iter().flatten().count())
+    fn from_raw_telemetry(raw: &RawTelemetryReadback) -> Self {
+        Self::new(raw.fields.len())
     }
 }
 
@@ -2456,7 +2456,7 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
             format!("read-only diagnostics details={populated}")
         }
         ReadOnlyResponse::RawTelemetry(raw) => {
-            let populated = PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw);
+            let populated = PopulatedRawTelemetryFieldCount::from_raw_telemetry(&raw);
             format!("read-only raw telemetry fields={populated}")
         }
     }
@@ -5261,26 +5261,20 @@ mod tests {
                 None,
             ],
         };
-        let raw = RawTelemetryReadback {
-            fields: [
-                Some(RawFieldValue::new(0x8001, 989)),
-                None,
-                Some(RawFieldValue::new(0x8002, -21_973)),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-            float_fields: [None; 32],
-        };
+        let mut raw = RawTelemetryReadback::default();
+        raw.fields
+            .try_push(RawFieldValue::new(0x8001, 989))
+            .expect("bounded fixture");
+        raw.fields
+            .try_push(RawFieldValue::new(0x8002, -21_973))
+            .expect("bounded fixture");
 
         assert_eq!(
             PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics),
             PopulatedDiagnosticDetailCount::new(1)
         );
         assert_eq!(
-            PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw),
+            PopulatedRawTelemetryFieldCount::from_raw_telemetry(&raw),
             PopulatedRawTelemetryFieldCount::new(2)
         );
         assert_eq!(

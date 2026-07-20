@@ -16,6 +16,25 @@ use crate::{
     units::{MonotonicMs, NegotiatedWriteLimit, NotificationWindow, WriteProvenance},
 };
 
+/// Write and notification channels used by a protocol session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionChannelPair {
+    write: GattChannel,
+    subscribe: GattChannel,
+}
+
+impl SessionChannelPair {
+    /// Creates a pair with distinct write and notification channels.
+    #[must_use]
+    pub const fn new(write: GattChannel, subscribe: GattChannel) -> Self {
+        Self { write, subscribe }
+    }
+
+    const fn shared(channel: GattChannel) -> Self {
+        Self::new(channel, channel)
+    }
+}
+
 /// Drives a protocol session against the selected BTLE endpoints.
 ///
 /// # Errors
@@ -113,8 +132,7 @@ where
     drive_session_with_channel_pair(
         peripheral,
         session,
-        channel,
-        channel,
+        SessionChannelPair::shared(channel),
         summary,
         endpoints,
         notification_window,
@@ -132,8 +150,7 @@ where
 pub async fn drive_session_with_channel_pair<P, S>(
     peripheral: &P,
     session: &mut S,
-    write_channel: GattChannel,
-    subscribe_channel: GattChannel,
+    channels: SessionChannelPair,
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
     notification_window: NotificationWindow,
@@ -147,8 +164,8 @@ where
         peripheral,
         session,
         DriveSessionConfig {
-            write_channel,
-            subscribe_channel,
+            write_channel: channels.write,
+            subscribe_channel: channels.subscribe,
             summary,
             endpoints,
             notification_window,
@@ -230,8 +247,7 @@ where
     capture_session_with_channel_pair(
         peripheral,
         session,
-        channel,
-        channel,
+        SessionChannelPair::shared(channel),
         summary,
         endpoints,
         notification_window,
@@ -249,8 +265,7 @@ where
 pub async fn capture_session_with_channel_pair<P, S>(
     peripheral: &P,
     session: &mut S,
-    write_channel: GattChannel,
-    subscribe_channel: GattChannel,
+    channels: SessionChannelPair,
     summary: &ConnectionSummary,
     endpoints: SessionEndpoints<'_>,
     notification_window: NotificationWindow,
@@ -265,8 +280,8 @@ where
         peripheral,
         session,
         DriveSessionConfig {
-            write_channel,
-            subscribe_channel,
+            write_channel: channels.write,
+            subscribe_channel: channels.subscribe,
             summary,
             endpoints,
             notification_window,

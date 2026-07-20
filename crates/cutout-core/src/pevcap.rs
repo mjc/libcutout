@@ -1864,7 +1864,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             link_max_write_len: record.link_max_write_len.map(TransportWriteLimit::as_bytes),
             target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
-            telemetry: record.telemetry,
+            telemetry: record.telemetry.clone(),
             phone_location: record.phone_location,
         }
     }

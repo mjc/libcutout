@@ -72,6 +72,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
     public let unit: String?
+    public let accessibilityDetail: String?
     public let state: LiveActivityRideValueState
     public let source: LiveActivityRideValueSource
 
@@ -79,12 +80,14 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         label: String,
         value: String,
         unit: String?,
+        accessibilityDetail: String? = nil,
         state: LiveActivityRideValueState,
         source: LiveActivityRideValueSource
     ) {
         self.label = label
         self.value = value
         self.unit = unit
+        self.accessibilityDetail = accessibilityDetail
         self.state = state
         self.source = source
     }
@@ -93,22 +96,49 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         label: String,
         value: String,
         unit: String?,
+        accessibilityDetail: String? = nil,
         source: LiveActivityRideValueSource
     ) -> Self {
-        Self(label: label, value: value, unit: unit, state: .available, source: source)
+        Self(
+            label: label,
+            value: value,
+            unit: unit,
+            accessibilityDetail: accessibilityDetail,
+            state: .available,
+            source: source
+        )
     }
 
-    public static func unavailable(label: String, unit: String? = nil) -> Self {
-        Self(label: label, value: "--", unit: unit, state: .unavailable, source: .explicitlyUnavailable)
+    public static func unavailable(
+        label: String,
+        unit: String? = nil,
+        accessibilityDetail: String? = nil
+    ) -> Self {
+        Self(
+            label: label,
+            value: "--",
+            unit: unit,
+            accessibilityDetail: accessibilityDetail,
+            state: .unavailable,
+            source: .explicitlyUnavailable
+        )
     }
 
     public static func stale(
         label: String,
         value: String,
         unit: String?,
+        accessibilityDetail: String? = nil,
         source: LiveActivityRideValueSource
     ) -> Self {
-        Self(label: label, value: value, unit: unit, state: .stale, source: source)
+        Self(
+            label: label,
+            value: value,
+            unit: unit,
+            accessibilityDetail: accessibilityDetail,
+            state: .stale,
+            source: source
+        )
     }
 
     public static func notApplicable(label: String, unit: String? = nil) -> Self {
@@ -137,6 +167,13 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         case .unavailable, .deferred:
             "--"
         }
+    }
+
+    public var accessibilityText: String {
+        [value, unit, accessibilityDetail]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
     }
 
     public var speedGaugeProgressValue: Double? {
@@ -176,6 +213,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let headroom: LiveActivityRideValue
     public let beeps: LiveActivityRideValue
     public let temperature: LiveActivityRideValue
+    public let chargeEstimate: LiveActivityRideValue
 
     public init(
         identity: LiveActivityRideIdentity,
@@ -209,6 +247,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.headroom = Self.headroomValue(rideState: rideState, connectionState: connectionState)
         self.beeps = .deferred(label: "Beeps")
         self.temperature = Self.temperatureValue(telemetry: rideState.telemetry, connectionState: connectionState)
+        self.chargeEstimate = Self.chargeEstimateValue(rideState: rideState, connectionState: connectionState)
     }
 
     public init(
@@ -225,7 +264,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         distance: LiveActivityRideValue,
         headroom: LiveActivityRideValue,
         beeps: LiveActivityRideValue,
-        temperature: LiveActivityRideValue
+        temperature: LiveActivityRideValue,
+        chargeEstimate: LiveActivityRideValue? = nil
     ) {
         self.identity = identity
         self.glyph = glyph
@@ -241,6 +281,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.headroom = headroom
         self.beeps = beeps
         self.temperature = temperature
+        self.chargeEstimate = chargeEstimate ?? .deferred(label: "Charge")
     }
 
     public var visibleValues: [LiveActivityRideValue] {
@@ -255,6 +296,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
             headroom,
             beeps,
             temperature,
+            chargeEstimate,
         ]
     }
 }
@@ -448,25 +490,83 @@ extension LiveActivityRideSnapshot {
         } ?? .unavailable(label: "Temp", unit: unit)
     }
 
+    static func chargeEstimateValue(
+        rideState: EucRideScreenState,
+        connectionState: LiveActivityRideConnectionState
+    ) -> LiveActivityRideValue {
+        let estimate = rideState.chargeEstimate
+        switch estimate.kind {
+        case .available:
+            return value(
+                label: "Charge",
+                value: estimate.displayValue,
+                unit: nil,
+                source: .derivedTelemetry,
+                connectionState: connectionState,
+                accessibilityDetail: estimate.displayDetail
+            )
+        case .collectingSamples:
+            return value(
+                label: "Charge",
+                value: estimate.displayValue,
+                unit: nil,
+                source: .derivedTelemetry,
+                connectionState: connectionState,
+                accessibilityDetail: estimate.displayDetail
+            )
+        case .stale:
+            return value(
+                label: "Charge",
+                value: estimate.displayValue,
+                unit: nil,
+                source: .derivedTelemetry,
+                connectionState: connectionState,
+                state: .stale,
+                accessibilityDetail: estimate.displayDetail
+            )
+        case .unavailable:
+            if estimate.unavailableReason == .fullOrNearFull {
+                return value(
+                    label: "Charge",
+                    value: estimate.displayValue,
+                    unit: nil,
+                    source: .derivedTelemetry,
+                    connectionState: connectionState,
+                    accessibilityDetail: estimate.displayDetail
+                )
+            }
+            return .unavailable(label: "Charge", accessibilityDetail: estimate.displayDetail)
+        case .failed:
+            return .unavailable(label: "Charge", accessibilityDetail: estimate.displayDetail)
+        }
+    }
+
     static func value(
         label: String,
         value: String,
         unit: String?,
         source: LiveActivityRideValueSource,
-        connectionState: LiveActivityRideConnectionState
+        connectionState: LiveActivityRideConnectionState,
+        state: LiveActivityRideValueState? = nil,
+        accessibilityDetail: String? = nil
     ) -> LiveActivityRideValue {
         if (source == .liveTelemetry || source == .derivedTelemetry)
             && connectionState != .connected
             && connectionState != .stale
         {
-            return .unavailable(label: label, unit: unit)
+            return .unavailable(
+                label: label,
+                unit: unit,
+                accessibilityDetail: accessibilityDetail
+            )
         }
 
         return LiveActivityRideValue(
             label: label,
             value: value,
             unit: unit,
-            state: connectionState == .stale ? .stale : .available,
+            accessibilityDetail: accessibilityDetail,
+            state: state ?? (connectionState == .stale ? .stale : .available),
             source: source
         )
     }

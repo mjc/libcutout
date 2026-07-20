@@ -26,9 +26,9 @@ mod units;
 pub use battery::read_battery_level;
 /// Single-link protocol session drivers.
 pub use bridge::{
-    capture_session, capture_session_with_channel_pair, capture_session_with_commands,
-    drive_session, drive_session_with_channel_pair, drive_session_with_commands,
-    drive_session_with_identity_observer,
+    SessionChannelPair, capture_session, capture_session_with_channel_pair,
+    capture_session_with_commands, drive_session, drive_session_with_channel_pair,
+    drive_session_with_commands, drive_session_with_identity_observer,
 };
 /// Live capture records and raw notification capture utilities.
 pub use capture::{

@@ -21,9 +21,9 @@ case "$(cutout_host_os)" in
 esac
 
 swift_cmd=($(cutout_swift_runtime_command))
-package_dir="${CUTOUT_SWIFT_TEST_PACKAGE_DIR:-target/swift-package-test/CutoutMobile}"
+package_dir="$root/swift/CutoutMobile"
 
-cutout_prepare_swift_package_workspace "$package_dir"
+cutout_prepare_swift_package_workspace
 
 "${swift_cmd[@]}" test \
   --package-path "$package_dir" \

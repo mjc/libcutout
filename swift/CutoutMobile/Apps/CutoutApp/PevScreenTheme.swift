@@ -143,14 +143,14 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
 func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [PevDashboardTile] {
     let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: state.speedUnit)
     return [
+        chargeEstimateTile(from: state),
         telemetry.voltage.map { voltage in
             PevDashboardTile(
                 label: "pack",
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
-                detail: state.voltageSag.map {
-                    decimalString(fromMillivolts: $0.value, fractionDigits: 1) + " V sag"
-                } ?? "sag unavailable",
+                detail: telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
+                    ?? "sag unavailable",
                 accent: .cyan
             )
         } ?? PevDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
@@ -174,6 +174,31 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
             )
         } ?? PevDashboardTile(label: "limp-home", value: "--", unit: distanceUnit, detail: "unavailable", accent: .cyan),
     ]
+}
+
+func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
+    let estimate = state.chargeEstimate
+    let detail = if let voltageSag = estimate.voltageSag {
+        "\(voltageSagDetail(voltageSag)) · \(estimate.displayDetail)"
+    } else {
+        estimate.displayDetail
+    }
+    return PevDashboardTile(
+        label: "charge",
+        value: estimate.displayValue,
+        unit: "",
+        detail: detail,
+        accent: .green
+    )
+}
+
+func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {
+    let voltage = decimalString(
+        fromMillivolts: abs(sag.deltaMillivolts),
+        fractionDigits: 1
+    )
+    let current = RideUnits.currentText(milliamps: abs(sag.loadCurrent.value))
+    return "\(voltage) V sag at \(current) A · \(sag.effectiveResistanceMilliohms) mΩ"
 }
 
 func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
