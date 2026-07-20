@@ -45,8 +45,8 @@ struct BmsNoDataWarningCard: View {
                     .font(.headline)
                     .foregroundStyle(PevColors.yellow)
             }
-            ForEach(Array(snapshot.noDataWarningLines.enumerated()), id: \.offset) { _, line in
-                Text(line)
+            ForEach(snapshot.noDataWarningLines) { line in
+                Text(line.text)
                     .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.9))
                     .fixedSize(horizontal: false, vertical: true)
@@ -65,7 +65,7 @@ struct BmsNoDataWarningCard: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(snapshot.noDataWarningTitle)
-        .accessibilityValue(snapshot.noDataWarningLines.joined(separator: ". "))
+        .accessibilityValue(snapshot.noDataWarningLines.map(\.text).joined(separator: ". "))
         .accessibilityIdentifier("bms.no-data.warning")
     }
 }
@@ -170,14 +170,14 @@ struct BmsNoDataTelemetryCard: View {
 }
 
 struct BmsNoDataUnknownsCard: View {
-    let rows: [String]
+    let rows: [BmsNoDataTextRow]
     let scale: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
             PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", font: .caption.weight(.bold))
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                Text(row)
+            ForEach(rows) { row in
+                Text(row.text)
                     .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.92))
                     .padding(.horizontal, 12 * scale)

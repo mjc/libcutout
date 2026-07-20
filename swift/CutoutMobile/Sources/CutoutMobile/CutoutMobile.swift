@@ -2011,6 +2011,31 @@ public struct BmsFault: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
+public enum BmsNoDataTextRow: Hashable, Sendable, Identifiable {
+    case cellBalanceWarning
+    case bmsDiagnosticsWarning
+    case cellVoltages
+    case weakGroups
+    case bmsDiagnostics
+
+    public var id: Self { self }
+
+    public var text: String {
+        switch self {
+        case .cellBalanceWarning:
+            "CutOut can’t see individual cell balance or weak groups."
+        case .bmsDiagnosticsWarning:
+            "BMS temperature, faults, or cutout reason stay unavailable."
+        case .cellVoltages:
+            "individual cell/group voltages"
+        case .weakGroups:
+            "cell balance / weak parallel group"
+        case .bmsDiagnostics:
+            "BMS temperature, faults, and cutout reason"
+        }
+    }
+}
+
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let availability: ReadbackAvailability
     public let topology: BmsTopology
@@ -2348,18 +2373,18 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         "No cell-level BMS data"
     }
 
-    public var noDataWarningLines: [String] {
+    public var noDataWarningLines: [BmsNoDataTextRow] {
         [
-            "CutOut can’t see individual cell balance or weak groups.",
-            "BMS temperature, faults, or cutout reason stay unavailable.",
+            .cellBalanceWarning,
+            .bmsDiagnosticsWarning,
         ]
     }
 
-    public var noDataUnknownRows: [String] {
+    public var noDataUnknownRows: [BmsNoDataTextRow] {
         [
-            "individual cell/group voltages",
-            "cell balance / weak parallel group",
-            "BMS temperature, faults, and cutout reason",
+            .cellVoltages,
+            .weakGroups,
+            .bmsDiagnostics,
         ]
     }
 

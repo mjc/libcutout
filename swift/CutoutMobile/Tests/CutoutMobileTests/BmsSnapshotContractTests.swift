@@ -396,11 +396,20 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.noDataWarningTitle, "No cell-level BMS data")
-        XCTAssertEqual(snapshot.noDataWarningLines, [
+        XCTAssertEqual(snapshot.noDataWarningLines.map(\.id), [
+            .cellBalanceWarning,
+            .bmsDiagnosticsWarning,
+        ])
+        XCTAssertEqual(snapshot.noDataWarningLines.map(\.text), [
             "CutOut can’t see individual cell balance or weak groups.",
             "BMS temperature, faults, or cutout reason stay unavailable.",
         ])
-        XCTAssertEqual(snapshot.noDataUnknownRows, [
+        XCTAssertEqual(snapshot.noDataUnknownRows.map(\.id), [
+            .cellVoltages,
+            .weakGroups,
+            .bmsDiagnostics,
+        ])
+        XCTAssertEqual(snapshot.noDataUnknownRows.map(\.text), [
             "individual cell/group voltages",
             "cell balance / weak parallel group",
             "BMS temperature, faults, and cutout reason",
