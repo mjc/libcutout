@@ -157,9 +157,9 @@ struct BmsNoDataTelemetryCard: View {
                 columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 18 * scale)],
                 spacing: 18 * scale
             ) {
-                BmsNoDataMetric(value: voltageValue, unit: "V", label: "pack voltage", scale: scale)
-                BmsNoDataMetric(value: rideSagValue, unit: rideSagUnit, label: "ride sag", scale: scale)
-                BmsNoDataMetric(value: loadValue, unit: loadUnit, label: "load now", scale: scale)
+                BmsNoDataMetric(value: voltageValue, unit: "V", label: "pack voltage")
+                BmsNoDataMetric(value: rideSagValue, unit: rideSagUnit, label: "ride sag")
+                BmsNoDataMetric(value: loadValue, unit: loadUnit, label: "load now")
             }
         }
         .padding(.horizontal, 20 * scale)
