@@ -104,6 +104,8 @@ for device in devices:
 
     if hardware.get("platform") != "iOS":
         continue
+    if hardware.get("reality") != "physical":
+        continue
     if state.get("bootState") != "booted":
         continue
 
@@ -112,7 +114,7 @@ for device in devices:
         print(udid)
         raise SystemExit(0)
 
-raise SystemExit("no connected booted iOS device found")
+raise SystemExit("no connected booted physical iOS device found")
 PY
 }
 
@@ -167,7 +169,7 @@ cutout_build_ios_device_app_bundle() {
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
-  destination="${CUTOUT_IOS_DEVICE_DESTINATION:-id=$device_udid}"
+  destination="${CUTOUT_IOS_DEVICE_DESTINATION:-platform=iOS,id=$device_udid}"
   derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-signed}"
   rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
