@@ -24,43 +24,38 @@ struct BmsScreenView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let designWidth = proxy.size.width
-            let scale: CGFloat = 1
+        let scale: CGFloat = 1
 
-            Group {
-                if content.kind == .noData {
-                    BmsNoDataLayout(
-                        screen: screen,
-                        content: content,
-                        rideState: rideState,
-                        liveSnapshot: bmsSnapshot,
-                        scale: scale,
-                    )
-                } else {
-                    VStack(spacing: 0) {
-                        ScrollView(.vertical, showsIndicators: false) {
-                            VStack(alignment: .leading, spacing: 14 * scale) {
-                                header(scale: scale)
-                                chipRow(scale: scale)
-                                contentSection(scale: scale)
-                                if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
-                                    liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
-                                }
+        Group {
+            if content.kind == .noData {
+                BmsNoDataLayout(
+                    screen: screen,
+                    content: content,
+                    rideState: rideState,
+                    liveSnapshot: bmsSnapshot,
+                    scale: scale,
+                )
+            } else {
+                VStack(spacing: 0) {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 14 * scale) {
+                            header(scale: scale)
+                            chipRow(scale: scale)
+                            contentSection(scale: scale)
+                            if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
+                                liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
                             }
-                            .padding(.horizontal, 23 * scale)
-                            .padding(.top, 31 * scale)
-                            .padding(.bottom, 18 * scale)
                         }
-
+                        .padding(.horizontal, 23 * scale)
+                        .padding(.top, 31 * scale)
+                        .padding(.bottom, 18 * scale)
                     }
                 }
             }
-            .frame(width: designWidth, height: proxy.size.height, alignment: .topLeading)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(PevColors.pageBackground)
-            .foregroundStyle(PevColors.primaryText)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(PevColors.pageBackground)
+        .foregroundStyle(PevColors.primaryText)
     }
 
     @ViewBuilder

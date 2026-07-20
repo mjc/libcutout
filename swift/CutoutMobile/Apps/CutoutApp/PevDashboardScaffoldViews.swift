@@ -2,6 +2,8 @@ import CutoutMobile
 import SwiftUI
 
 struct PevDashboardScaffold<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let sectionTitle: String
     let headerLeadingAccessory: ((CGFloat) -> AnyView)?
     let bottomPadding: CGFloat
@@ -35,30 +37,27 @@ struct PevDashboardScaffold<Content: View>: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = DashboardViewport.contentScale(width: proxy.size.width, height: proxy.size.height)
-            let columns = [
-                GridItem(.flexible(), spacing: columnSpacing * scale),
-                GridItem(.flexible(), spacing: columnSpacing * scale),
-            ]
+        let scale: CGFloat = 1
+        let minimumColumnWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 240 : 150
+        let columns = [
+            GridItem(.adaptive(minimum: minimumColumnWidth), spacing: columnSpacing),
+        ]
 
-            Group {
-                if allowsVerticalScroll {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        scaffoldContent(scale: scale, columns: columns, width: proxy.size.width)
-                    }
-                } else {
-                    scaffoldContent(scale: scale, columns: columns, width: proxy.size.width)
-                        .frame(height: proxy.size.height, alignment: .topLeading)
+        Group {
+            if allowsVerticalScroll {
+                ScrollView(.vertical, showsIndicators: false) {
+                    scaffoldContent(scale: scale, columns: columns)
                 }
+            } else {
+                scaffoldContent(scale: scale, columns: columns)
             }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
-            .background(PevColors.pageBackground)
-            .foregroundStyle(PevColors.primaryText)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(PevColors.pageBackground)
+        .foregroundStyle(PevColors.primaryText)
     }
 
-    private func scaffoldContent(scale: CGFloat, columns: [GridItem], width: CGFloat) -> some View {
+    private func scaffoldContent(scale: CGFloat, columns: [GridItem]) -> some View {
         VStack(alignment: .leading, spacing: contentSpacing * scale) {
             if showsHeader {
                 PevDashboardHeader(sectionTitle: sectionTitle, scale: scale, leadingAccessory: headerLeadingAccessory.map { $0(scale) })
@@ -68,7 +67,7 @@ struct PevDashboardScaffold<Content: View>: View {
         }
         .padding(.horizontal, horizontalPadding * scale)
         .padding(.bottom, bottomPadding * scale)
-        .frame(width: width, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -103,52 +102,50 @@ struct PevAppShell<Content: View>: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let scale = DashboardViewport.contentScale(width: proxy.size.width, height: proxy.size.height)
+        let scale: CGFloat = 1
 
-            VStack(spacing: 0) {
-                PevDashboardHeader(
-                    sectionTitle: sectionTitle,
+        VStack(spacing: 0) {
+            PevDashboardHeader(
+                sectionTitle: sectionTitle,
+                scale: scale,
+                leadingAccessory: AnyView(PevRideDisconnectButton(scale: scale, action: disconnect))
+            )
+            .padding(.horizontal, 24 * scale)
+
+            if let connectionStatus = connectionStatus {
+                PevDashboardWarningCard(
+                    title: connectionStatus.title,
+                    detail: connectionStatus.detail,
+                    accent: connectionStatus.accent,
+                    detailColor: PevColors.primaryText,
+                    fill: connectionStatus.fill,
+                    stroke: connectionStatus.stroke,
                     scale: scale,
-                    leadingAccessory: AnyView(PevRideDisconnectButton(scale: scale, action: disconnect))
-                )
-                .padding(.horizontal, 24 * scale)
-
-                if let connectionStatus = connectionStatus {
-                    PevDashboardWarningCard(
-                        title: connectionStatus.title,
-                        detail: connectionStatus.detail,
-                        accent: connectionStatus.accent,
-                        detailColor: PevColors.primaryText,
-                        fill: connectionStatus.fill,
-                        stroke: connectionStatus.stroke,
-                        scale: scale,
-                        cornerRadius: 20
-                    )
-                    .padding(.horizontal, 24 * scale)
-                    .padding(.top, 8 * scale)
-                }
-
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(PevColors.pageBackground)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                PevDashboardTabStrip(
-                    tabs: tabs,
-                    scale: scale,
-                    selectedColor: selectedColor,
-                    unselectedColor: unselectedColor,
-                    selectTarget: selectTarget
+                    cornerRadius: 20
                 )
                 .padding(.horizontal, 24 * scale)
                 .padding(.top, 8 * scale)
-                .padding(.bottom, 8 * scale)
-                .background(PevColors.pageBackground)
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("dashboard.bottom.navigation")
             }
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PevColors.pageBackground)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            PevDashboardTabStrip(
+                tabs: tabs,
+                scale: scale,
+                selectedColor: selectedColor,
+                unselectedColor: unselectedColor,
+                selectTarget: selectTarget
+            )
+            .padding(.horizontal, 24 * scale)
+            .padding(.top, 8 * scale)
+            .padding(.bottom, 8 * scale)
+            .background(PevColors.pageBackground)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dashboard.bottom.navigation")
         }
     }
 

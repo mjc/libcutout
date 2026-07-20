@@ -28,10 +28,6 @@ public struct DashboardViewport: Equatable, Sendable {
         self.safeAreaBottom = safeAreaBottom
     }
 
-    public static func contentScale(width _: CGFloat, height _: CGFloat) -> CGFloat {
-        1
-    }
-
     public func navigationFrame(height: CGFloat = DashboardViewport.navigationHeight) -> DashboardLayoutFrame {
         DashboardLayoutFrame(top: self.height - safeAreaBottom - height, height: height)
     }
