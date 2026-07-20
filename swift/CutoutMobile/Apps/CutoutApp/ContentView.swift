@@ -79,7 +79,7 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
             if case .failed = phase {
-                model.disconnectAndSearch()
+                disconnectAndReturnToPicker()
                 return
             }
             openRideScreen(ifNeededFor: phase)
