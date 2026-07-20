@@ -5,14 +5,14 @@ import SwiftUI
 
 struct ContentView: View {
     let model: CutoutAppModel
-    @State private var navigationPath: [CutoutAppRoute]
+    @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
 
     private let catalog = PevScreenCatalog.live
 
-    init(model: CutoutAppModel) {
+    init(model: CutoutAppModel, navigationPath: Binding<[CutoutAppRoute]>) {
         self.model = model
-        _navigationPath = State(initialValue: CutoutAppRoute.navigationPath(for: .initialRoute()))
+        _navigationPath = navigationPath
     }
 
     private var route: CutoutAppRoute {
@@ -110,12 +110,7 @@ struct ContentView: View {
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
-        switch target {
-        case .screen(let screenID):
-            selectScreen(screenID)
-        case .vescRide:
-            navigate(to: .vescRide)
-        }
+        navigate(to: CutoutAppRoute.route(forNavigationTarget: target))
     }
 
     private func navigate(to route: CutoutAppRoute) {
@@ -185,27 +180,7 @@ struct ContentView: View {
     }
 
     private var appTabs: [PevScreenTab] {
-        switch route {
-        case .vescRide, .vescDebug:
-            PevRideTabs.vescRideTabs(selected: selectedScreenID)
-        default:
-            PevRideTabs.eucRideTabs(selected: selectedScreenID)
-        }
-    }
-
-    private var selectedScreenID: PevScreenID? {
-        switch route {
-        case .eucRide:
-            .eucRide
-        case .eucPack(let screenID):
-            screenID
-        case .vescRide:
-            .vescRide
-        case .vescDebug:
-            .vescDebug
-        case .devicePicker, .capture:
-            nil
-        }
+        route.navigationTabs
     }
 
     private var appSelectedColor: Color {

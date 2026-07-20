@@ -62,15 +62,6 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertNotEqual(ride.accessibilityIdentifier, differentRoleWithSameTitle.accessibilityIdentifier)
     }
 
-    func testTabsExposeStableKeyboardShortcuts() {
-        XCTAssertEqual(PevScreenTabID.ride.keyboardShortcut, "1")
-        XCTAssertEqual(PevScreenTabID.pack.keyboardShortcut, "2")
-        XCTAssertEqual(PevScreenTabID.map.keyboardShortcut, "3")
-        XCTAssertEqual(PevScreenTabID.tune.keyboardShortcut, "4")
-        XCTAssertEqual(PevScreenTabID.debug.keyboardShortcut, "5")
-        XCTAssertEqual(PevScreenTabID.logs.keyboardShortcut, "6")
-    }
-
     func testDashboardTileIdentityDoesNotDependOnVisibleLabel() {
         let battery = PevDashboardTile(
             kind: .batteryCurrent,

@@ -29,7 +29,6 @@ public struct PevRideDisconnectButton: View {
             strokeDisabled: PevDashboardColors.cardStroke,
             action: action
         )
-        .keyboardShortcut("d", modifiers: [.command, .shift])
         .accessibilityIdentifier("dashboard.disconnect")
     }
 }

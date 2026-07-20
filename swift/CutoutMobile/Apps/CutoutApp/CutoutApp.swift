@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 #endif
+import CutoutMobile
 import SwiftUI
 
 @main
@@ -9,6 +10,7 @@ struct CutoutApp: App {
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @State private var model = CutoutAppModel()
+    @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -30,16 +32,79 @@ struct CutoutApp: App {
                     model.flushCapture()
                 }
         }
+        .commands {
+            CutoutNavigationCommands(
+                navigationTabs: navigationTabs,
+                currentRoute: currentRoute,
+                navigationPath: $navigationPath,
+                disconnect: model.disconnectAndSearch
+            )
+        }
     }
 
     @ViewBuilder
     private var rootView: some View {
         #if os(macOS)
-        ContentView(model: model)
+        ContentView(model: model, navigationPath: $navigationPath)
             .frame(minWidth: 360, minHeight: 280)
         #else
-        ContentView(model: model)
+        ContentView(model: model, navigationPath: $navigationPath)
         #endif
+    }
+
+    private var currentRoute: CutoutAppRoute {
+        navigationPath.last ?? .devicePicker
+    }
+
+    private var navigationTabs: [PevScreenTab] {
+        currentRoute.navigationTabs
+    }
+}
+
+struct CutoutNavigationCommands: Commands {
+    let navigationTabs: [PevScreenTab]
+    let currentRoute: CutoutAppRoute
+    @Binding var navigationPath: [CutoutAppRoute]
+    let disconnect: () -> Void
+
+    nonisolated static func shortcut(for tabID: PevScreenTabID) -> Character {
+        switch tabID {
+        case .ride: "1"
+        case .pack: "2"
+        case .map: "3"
+        case .tune: "4"
+        case .debug: "5"
+        case .logs: "6"
+        }
+    }
+
+    var body: some Commands {
+        CommandMenu("Navigate") {
+            if navigationTabs.isEmpty {
+                Button("No connected device") {}
+                    .disabled(true)
+            } else {
+                ForEach(navigationTabs) { tab in
+                    Button(tab.title) {
+                        guard let target = tab.destinationTarget else { return }
+                        navigationPath = CutoutAppRoute.navigationPath(
+                            for: .route(forNavigationTarget: target)
+                        )
+                    }
+                    .keyboardShortcut(KeyEquivalent(Self.shortcut(for: tab.id)), modifiers: .command)
+                    .disabled(!tab.isEnabled || tab.destinationTarget == nil)
+                }
+            }
+
+            Divider()
+
+            Button("Disconnect") {
+                disconnect()
+                navigationPath = CutoutAppRoute.navigationPath(for: .devicePicker)
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(currentRoute == .devicePicker)
+        }
     }
 }
 

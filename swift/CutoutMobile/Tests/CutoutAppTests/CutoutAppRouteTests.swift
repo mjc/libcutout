@@ -51,6 +51,27 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .capture), [.capture])
     }
 
+    func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
+        XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs.isEmpty)
+        XCTAssertTrue(CutoutAppRoute.capture.navigationTabs.isEmpty)
+        XCTAssertEqual(CutoutAppRoute.eucRide.navigationTabs.map(\.id), [.ride, .pack, .map, .tune])
+        XCTAssertEqual(CutoutAppRoute.vescRide.navigationTabs.map(\.id), [.ride, .debug, .map, .logs])
+        XCTAssertTrue(
+            CutoutAppRoute.eucPack(.bmsOverview).navigationTabs.first(where: { $0.id == .pack })?.isSelected == true
+        )
+        XCTAssertTrue(
+            CutoutAppRoute.vescDebug.navigationTabs.first(where: { $0.id == .debug })?.isSelected == true
+        )
+        XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .vescRide), .vescRide)
+        XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .screen(.bmsOverview)), .eucPack(.bmsOverview))
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .ride), "1")
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .pack), "2")
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .map), "3")
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .tune), "4")
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .debug), "5")
+        XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .logs), "6")
+    }
+
     func testPairingProgressOpensTheRideSurface() {
         XCTAssertTrue(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
         XCTAssertTrue(SessionConnectionPhase.discoveringServices.opensRideScreen)

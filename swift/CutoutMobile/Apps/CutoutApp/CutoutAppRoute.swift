@@ -36,8 +36,32 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
+    static func route(forNavigationTarget navigationTarget: PevNavigationTarget) -> CutoutAppRoute {
+        switch navigationTarget {
+        case .screen(let screenID):
+            route(for: screenID)
+        case .vescRide:
+            .vescRide
+        }
+    }
+
     static func navigationPath(for route: CutoutAppRoute) -> [CutoutAppRoute] {
         route == .devicePicker ? [] : [route]
+    }
+
+    var navigationTabs: [PevScreenTab] {
+        switch self {
+        case .devicePicker, .capture:
+            []
+        case .eucRide:
+            PevRideTabs.eucRideTabs(selected: .eucRide)
+        case .eucPack(let screenID):
+            PevRideTabs.eucRideTabs(selected: screenID)
+        case .vescRide:
+            PevRideTabs.vescRideTabs(selected: .vescRide)
+        case .vescDebug:
+            PevRideTabs.vescRideTabs(selected: .vescDebug)
+        }
     }
 
 }

@@ -117,17 +117,6 @@ public enum PevScreenTabID: String, Equatable, Hashable, Sendable {
     case tune
     case debug
     case logs
-
-    public var keyboardShortcut: Character {
-        switch self {
-        case .ride: "1"
-        case .pack: "2"
-        case .map: "3"
-        case .tune: "4"
-        case .debug: "5"
-        case .logs: "6"
-        }
-    }
 }
 
 public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
