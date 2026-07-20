@@ -29,6 +29,7 @@ public struct PevStatusStrip: View {
             Circle()
                 .fill(indicatorColor)
                 .frame(width: 10 * scale, height: 10 * scale)
+                .accessibilityHidden(true)
             Text(text)
                 .font(.system(size: 13 * scale, weight: .semibold))
                 .foregroundStyle(foreground)
@@ -42,5 +43,7 @@ public struct PevStatusStrip: View {
         .background(
             PevDashboardCardBackground(cornerRadius: cornerRadius * scale, fill: background)
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
     }
 }

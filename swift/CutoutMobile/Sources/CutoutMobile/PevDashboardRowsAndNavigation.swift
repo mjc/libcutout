@@ -181,6 +181,7 @@ public struct PevDashboardSectionLabel: View {
             .foregroundStyle(color)
             .lineLimit(1)
             .minimumScaleFactor(0.8)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -242,6 +243,8 @@ public struct PevDashboardStatusPill: View {
 
 
 public struct PevDashboardScanningPill: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let title: String
     let isScanning: Bool
     let scale: CGFloat
@@ -251,6 +254,10 @@ public struct PevDashboardScanningPill: View {
         self.title = title
         self.isScanning = isScanning
         self.scale = scale
+    }
+
+    static func shouldAnimate(isScanning: Bool, reduceMotion: Bool) -> Bool {
+        isScanning && !reduceMotion
     }
 
     public var body: some View {
@@ -266,13 +273,18 @@ public struct PevDashboardScanningPill: View {
                 }
             }
             .foregroundStyle(.yellow)
+            .accessibilityHidden(true)
         }
         .padding(.horizontal, 22 * scale)
         .frame(height: 64 * scale)
         .frame(maxWidth: .infinity)
         .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
-        .task(id: isScanning) {
-            guard isScanning else { return }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .task(id: Self.shouldAnimate(isScanning: isScanning, reduceMotion: reduceMotion)) {
+            guard Self.shouldAnimate(isScanning: isScanning, reduceMotion: reduceMotion) else {
+                return
+            }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(260))
                 phase = (phase + 1) % 3
