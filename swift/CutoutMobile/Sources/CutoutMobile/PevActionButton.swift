@@ -79,6 +79,7 @@ public struct PevActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .frame(minWidth: 44, minHeight: 44)
         .disabled(!isEnabled)
         .accessibilityLabel(title)
     }
