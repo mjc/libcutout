@@ -45,7 +45,7 @@ struct BmsNoDataWarningCard: View {
                     .font(.headline)
                     .foregroundStyle(PevColors.yellow)
             }
-            ForEach(snapshot.noDataWarningLines, id: \.self) { line in
+            ForEach(Array(snapshot.noDataWarningLines.enumerated()), id: \.offset) { _, line in
                 Text(line)
                     .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.9))
@@ -176,7 +176,7 @@ struct BmsNoDataUnknownsCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10 * scale) {
             PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", font: .caption.weight(.bold))
-            ForEach(rows, id: \.self) { row in
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 Text(row)
                     .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.92))
