@@ -344,6 +344,13 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
     func testNotApplicablePreservesUnitWhenProvided() {
         XCTAssertEqual(LiveActivityRideValue.notApplicable(label: "PWM", unit: "%").unit, "%")
     }
+
+    func testNotApplicableAccessibilityUsesFullWords() {
+        XCTAssertEqual(
+            LiveActivityRideValue.notApplicable(label: "PWM", unit: "%").accessibilityText,
+            "Not applicable, %"
+        )
+    }
 }
 
 private func liveRideState(speed: Int32?, telemetry: TelemetrySnapshot) -> EucRideScreenState {

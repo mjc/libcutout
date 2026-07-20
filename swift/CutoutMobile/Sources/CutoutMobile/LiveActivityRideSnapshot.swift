@@ -179,7 +179,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     }
 
     public var accessibilityText: String {
-        [displayValue, unit, accessibilityDetail]
+        [value, unit, accessibilityDetail]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
             .joined(separator: ", ")
