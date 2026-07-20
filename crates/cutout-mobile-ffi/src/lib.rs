@@ -1,6 +1,7 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
 use std::{
+    collections::VecDeque,
     convert::TryFrom,
     fmt,
     fs::{self, File, OpenOptions},
@@ -3424,15 +3425,36 @@ struct CaptureMetadata {
 }
 
 enum CaptureWriterMessage {
-    Record(Box<PevcapRecord>),
+    Record,
     Metadata(CaptureMetadata),
     Flush,
     Finish(SyncSender<Result<(), String>>),
 }
 
 #[derive(Debug)]
+struct CaptureRecordPool {
+    records: Mutex<VecDeque<PevcapRecord>>,
+}
+
+impl CaptureRecordPool {
+    fn new(capacity: usize) -> Self {
+        Self {
+            records: Mutex::new(VecDeque::with_capacity(capacity)),
+        }
+    }
+
+    fn take(&self) -> Option<PevcapRecord> {
+        self.records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pop_front()
+    }
+}
+
+#[derive(Debug)]
 struct CaptureWriter {
     sender: SyncSender<CaptureWriterMessage>,
+    records: Arc<CaptureRecordPool>,
     state: Arc<CaptureWriterState>,
     join: Option<JoinHandle<()>>,
 }
@@ -3453,14 +3475,19 @@ impl CaptureWriter {
             .open(&path)
             .map_err(|error| error.to_string())?;
         let (sender, receiver) = sync_channel(CAPTURE_WRITER_QUEUE_CAPACITY);
+        let records = Arc::new(CaptureRecordPool::new(CAPTURE_WRITER_QUEUE_CAPACITY));
         let state = Arc::new(CaptureWriterState::default());
+        let thread_records = Arc::clone(&records);
         let thread_state = Arc::clone(&state);
         let join = thread::Builder::new()
             .name("cutout-pevcap-writer".into())
-            .spawn(move || run_capture_writer(&path, header, &receiver, &thread_state))
+            .spawn(move || {
+                run_capture_writer(&path, header, &receiver, &thread_records, &thread_state);
+            })
             .map_err(|error| error.to_string())?;
         Ok(Self {
             sender,
+            records,
             state,
             join: Some(join),
         })
@@ -3481,6 +3508,41 @@ impl CaptureWriter {
                 self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
                 self.state.fail("capture writer stopped");
                 false
+            }
+        }
+    }
+
+    fn try_send_record(&self, record: PevcapRecord) -> bool {
+        let mut records = self
+            .records
+            .records
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if records.len() == records.capacity() {
+            self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+            self.state.fail("capture writer queue is full");
+            return false;
+        }
+        records.push_back(record);
+        self.state.queued_messages.fetch_add(1, Ordering::AcqRel);
+        match self.sender.try_send(CaptureWriterMessage::Record) {
+            Ok(()) => true,
+            Err(TrySendError::Full(CaptureWriterMessage::Record)) => {
+                records.pop_back();
+                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+                self.state.fail("capture writer queue is full");
+                false
+            }
+            Err(TrySendError::Disconnected(CaptureWriterMessage::Record)) => {
+                records.pop_back();
+                self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
+                self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
+                self.state.fail("capture writer stopped");
+                false
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                unreachable!("record send returned a different message")
             }
         }
     }
@@ -3535,9 +3597,10 @@ fn run_capture_writer(
     path: &Path,
     mut header: PevcapHeader,
     receiver: &Receiver<CaptureWriterMessage>,
+    records: &CaptureRecordPool,
     state: &CaptureWriterState,
 ) {
-    let result = write_capture_stream(path, &mut header, receiver, state);
+    let result = write_capture_stream(path, &mut header, receiver, records, state);
     if let Err(error) = result {
         state.fail(error);
     }
@@ -3547,6 +3610,7 @@ fn write_capture_stream(
     path: &Path,
     header: &mut PevcapHeader,
     receiver: &Receiver<CaptureWriterMessage>,
+    records: &CaptureRecordPool,
     state: &CaptureWriterState,
 ) -> Result<(), String> {
     let file = File::create(path).map_err(|error| error.to_string())?;
@@ -3567,7 +3631,10 @@ fn write_capture_stream(
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
         match message {
-            CaptureWriterMessage::Record(record) => {
+            CaptureWriterMessage::Record => {
+                let record = records
+                    .take()
+                    .ok_or_else(|| "capture record slot was empty".to_string())?;
                 let line = record.to_jsonl_line().map_err(|error| error.to_string())?;
                 let bytes = write_line(&mut writer, &line)? as u64;
                 state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
@@ -3984,7 +4051,7 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Record(Box::new(record))))
+            .is_some_and(|writer| writer.try_send_record(record))
     }
 }
 
@@ -8680,6 +8747,7 @@ mod tests {
         let state = Arc::new(CaptureWriterState::default());
         let writer = CaptureWriter {
             sender,
+            records: Arc::new(CaptureRecordPool::new(1)),
             state: Arc::clone(&state),
             join: None,
         };

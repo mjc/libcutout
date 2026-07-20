@@ -1333,7 +1333,7 @@ async fn drive_session_relays_notifications_back_into_session() {
             response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
             && matches!(
-                response.as_ref(),
+                response,
                 ReadOnlyResponse::Firmware(firmware)
                     if firmware.firmware_major == Some(Measured::reported(43))
             )
@@ -1345,7 +1345,7 @@ async fn drive_session_relays_notifications_back_into_session() {
             response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
             && matches!(
-                response.as_ref(),
+                response,
                 ReadOnlyResponse::Settings(settings) if settings.entries()[0].is_some()
             )
     )));
@@ -1405,7 +1405,7 @@ fn report_settings_summary_keeps_only_available_settings_readbacks() {
             response,
         } if *monotonic_ms == crate::MonotonicMs::new(2)
             && matches!(
-                response.as_ref(),
+                response,
                 ReadOnlyResponse::Settings(settings) if *settings == unavailable
             )
     )));

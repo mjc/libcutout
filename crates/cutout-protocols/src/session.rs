@@ -519,22 +519,23 @@ impl VescNotificationDecoder {
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
     ) -> bool {
-        match self.refloat_stream.feed_result(bytes) {
-            Ok(RefloatStreamResult::Replies(replies)) => {
+        let reports_battery_current = self
+            .board_profile
+            .is_some_and(|profile| profile.reports_battery_current);
+        let result = self.refloat_stream.feed_result(bytes, |reply| {
+            push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
+        });
+
+        match result {
+            Ok(RefloatStreamResult::Replies(reply_count)) => {
                 self.stream = VescReadOnlyStreamDecoder::new();
-                let reports_battery_current = self
-                    .board_profile
-                    .is_some_and(|profile| profile.reports_battery_current);
-                for reply in &*replies {
-                    push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
-                }
                 output.push(SessionOutput::NotificationIngest(
                     NotificationIngestOutcome::semantic_events(
                         family,
                         channel,
                         NotificationByteLen::from_bytes(bytes.len()),
                         monotonic_ms,
-                        SemanticEventCount::from_events(replies.len()),
+                        SemanticEventCount::from_events(reply_count),
                     ),
                 ));
                 true
@@ -702,7 +703,7 @@ fn push_vesc_reply(
 }
 
 fn push_refloat_reply(
-    reply: &RefloatReply,
+    reply: RefloatReply<'_>,
     monotonic_ms: MonotonicTimestamp,
     reports_battery_current: bool,
     output: &mut Vec<SessionOutput>,

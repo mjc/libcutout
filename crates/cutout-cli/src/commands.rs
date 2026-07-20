@@ -2535,16 +2535,18 @@ fn print_refloat_replies_jsonl(
         let SessionCaptureRecord::Notification { bytes, .. } = record else {
             continue;
         };
-        match decoder.feed_result(bytes.as_raw_bytes()) {
-            Ok(RefloatStreamResult::Buffered) => {}
-            Ok(RefloatStreamResult::Replies(replies)) => {
-                for reply in *replies {
-                    print_refloat_reply_summary(&reply);
-                    if enabled {
-                        info!("{}", serde_json::to_string(&refloat_reply_json(&reply))?);
-                    }
+        let mut json_error = None;
+        let result = decoder.feed_result(bytes.as_raw_bytes(), |reply| {
+            print_refloat_reply_summary(reply);
+            if enabled && json_error.is_none() {
+                match serde_json::to_string(&refloat_reply_json(reply)) {
+                    Ok(json) => info!("{json}"),
+                    Err(error) => json_error = Some(error),
                 }
             }
+        });
+        match result {
+            Ok(RefloatStreamResult::Buffered | RefloatStreamResult::Replies(_)) => {}
             Err(
                 cutout_protocols::RefloatCodecError::UnexpectedVescCommand
                 | cutout_protocols::RefloatCodecError::UnexpectedPackageInterface,
@@ -2553,11 +2555,14 @@ fn print_refloat_replies_jsonl(
             }
             Err(err) => return Err(err.into()),
         }
+        if let Some(error) = json_error {
+            return Err(error.into());
+        }
     }
     Ok(())
 }
 
-fn print_refloat_reply_summary(reply: &RefloatReply) {
+fn print_refloat_reply_summary(reply: RefloatReply<'_>) {
     match reply {
         RefloatReply::Info(info) => info!(
             package = info.package_name.as_str(),
@@ -2589,7 +2594,7 @@ fn print_refloat_reply_summary(reply: &RefloatReply) {
     }
 }
 
-fn refloat_reply_json(reply: &RefloatReply) -> serde_json::Value {
+fn refloat_reply_json(reply: RefloatReply<'_>) -> serde_json::Value {
     match reply {
         RefloatReply::Info(info) => serde_json::json!({
             "type": "refloat_info",

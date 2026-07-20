@@ -2232,7 +2232,7 @@ fn format_bridge_event(event: &SessionBridgeEvent) -> (&'static str, String) {
             "info",
             format!(
                 "t={monotonic_ms}ms {}",
-                format_read_only_response(response.as_ref().clone())
+                format_read_only_response(response.clone())
             ),
         ),
         SessionBridgeEvent::Diagnostics {
@@ -5509,7 +5509,7 @@ mod tests {
             read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                response: Box::new(read_only_response),
+                response: read_only_response,
             }],
             ..empty_session_bridge_report()
         };
@@ -5556,7 +5556,7 @@ mod tests {
             read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                response: Box::new(read_only_response),
+                response: read_only_response,
             }],
             ..empty_session_bridge_report()
         };
@@ -5722,7 +5722,7 @@ mod tests {
             read_only_response_events: vec![read_only_response.clone()],
             events: vec![SessionBridgeEvent::ReadOnlyResponse {
                 monotonic_ms: cutout_btle::MonotonicMs::new(7),
-                response: Box::new(read_only_response),
+                response: read_only_response,
             }],
             ..empty_session_bridge_report()
         };

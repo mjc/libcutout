@@ -48,27 +48,27 @@ pub enum RefloatReadOnlyRequest {
     RealtimeData,
 }
 
-/// Parser-owned result for one Refloat stream feed.
-#[derive(Clone, Debug, PartialEq)]
+/// Result of feeding bytes into a Refloat stream decoder.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RefloatStreamResult {
     /// The decoder accepted bytes but is still waiting for a complete reply.
     Buffered,
 
-    /// The decoder completed one or more bounded read-only replies.
-    Replies(Box<ArrayVec<RefloatReply, 4>>),
+    /// The decoder completed this many read-only replies.
+    Replies(usize),
 }
 
-/// Refloat package reply.
-#[derive(Clone, Debug, PartialEq)]
-pub enum RefloatReply {
+/// Borrowed Refloat package reply delivered while decoding a frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum RefloatReply<'a> {
     /// Package information.
-    Info(RefloatInfo),
+    Info(&'a RefloatInfo),
 
     /// Dynamic realtime field ids.
-    RealtimeFieldIds(Box<RefloatRealtimeFieldIds>),
+    RealtimeFieldIds(&'a RefloatRealtimeFieldIds),
 
     /// Dynamic realtime data.
-    RealtimeData(Box<RefloatRealtimeData>),
+    RealtimeData(&'a RefloatRealtimeData),
 }
 
 /// Refloat INFO v2 package information.
@@ -350,28 +350,27 @@ impl RefloatStreamDecoder {
     ///
     /// Returns [`RefloatCodecError`] if framing, checksums, or bounded parsing
     /// fail.
-    pub fn feed_result(&mut self, bytes: &[u8]) -> Result<RefloatStreamResult, RefloatCodecError> {
+    pub fn feed_result(
+        &mut self,
+        bytes: &[u8],
+        mut on_reply: impl FnMut(RefloatReply<'_>),
+    ) -> Result<RefloatStreamResult, RefloatCodecError> {
         for byte in bytes {
             self.buffer
                 .try_push(*byte)
                 .map_err(|_byte| RefloatCodecError::FrameTooLong)?;
         }
 
-        let mut replies = ArrayVec::new();
+        let mut reply_count = 0;
         while let Some(frame) = self.take_next_frame()? {
-            let reply = self.decode_frame(&frame)?;
-            if let RefloatReply::RealtimeFieldIds(ids) = &reply {
-                self.field_ids = Some((**ids).clone());
-            }
-            replies
-                .try_push(reply)
-                .map_err(|_reply| RefloatCodecError::TooManyItems)?;
+            self.decode_frame(&frame, &mut on_reply)?;
+            reply_count += 1;
         }
 
-        Ok(if replies.is_empty() {
+        Ok(if reply_count == 0 {
             RefloatStreamResult::Buffered
         } else {
-            RefloatStreamResult::Replies(Box::new(replies))
+            RefloatStreamResult::Replies(reply_count)
         })
     }
 
@@ -430,7 +429,11 @@ impl RefloatStreamDecoder {
         Ok(Some(frame))
     }
 
-    fn decode_frame(&self, frame: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
+    fn decode_frame(
+        &mut self,
+        frame: &[u8],
+        on_reply: &mut impl FnMut(RefloatReply<'_>),
+    ) -> Result<(), RefloatCodecError> {
         let start = frame
             .first()
             .copied()
@@ -476,17 +479,26 @@ impl RefloatStreamDecoder {
             return Err(RefloatCodecError::UnexpectedPackageInterface);
         }
         match cursor.read_u8()? {
-            REFLOAT_COMMAND_INFO => parse_info(cursor.remaining()),
-            REFLOAT_COMMAND_REALTIME_DATA_IDS => parse_realtime_ids(cursor.remaining()),
+            REFLOAT_COMMAND_INFO => {
+                let info = parse_info(cursor.remaining())?;
+                on_reply(RefloatReply::Info(&info));
+            }
+            REFLOAT_COMMAND_REALTIME_DATA_IDS => {
+                let ids = parse_realtime_ids(cursor.remaining())?;
+                on_reply(RefloatReply::RealtimeFieldIds(&ids));
+                self.field_ids = Some(ids);
+            }
             REFLOAT_COMMAND_REALTIME_DATA => {
                 let ids = self
                     .field_ids
                     .as_ref()
                     .ok_or(RefloatCodecError::MissingRealtimeFieldIds)?;
-                parse_realtime_data(cursor.remaining(), ids)
+                let data = parse_realtime_data(cursor.remaining(), ids)?;
+                on_reply(RefloatReply::RealtimeData(&data));
             }
-            _ => Err(RefloatCodecError::UnsupportedCommand),
+            _ => return Err(RefloatCodecError::UnsupportedCommand),
         }
+        Ok(())
     }
 }
 
@@ -575,7 +587,7 @@ pub(crate) fn encode_custom_app_frame(
     Ok(())
 }
 
-fn parse_info(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
+fn parse_info(bytes: &[u8]) -> Result<RefloatInfo, RefloatCodecError> {
     if bytes.len() < INFO_V2_BODY_LEN {
         return Err(RefloatCodecError::ShortPayload);
     }
@@ -595,7 +607,7 @@ fn parse_info(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
     let capabilities = cursor.read_u32()?;
     let extra_flags = cursor.read_u8()?;
 
-    Ok(RefloatReply::Info(RefloatInfo {
+    Ok(RefloatInfo {
         info_version,
         flags,
         package_name,
@@ -607,22 +619,20 @@ fn parse_info(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
         tick_rate_hz,
         capabilities,
         extra_flags,
-    }))
+    })
 }
 
-fn parse_realtime_ids(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
+fn parse_realtime_ids(bytes: &[u8]) -> Result<RefloatRealtimeFieldIds, RefloatCodecError> {
     let mut cursor = Cursor::new(bytes);
     let always = read_id_list(&mut cursor)?;
     let runtime = read_id_list(&mut cursor)?;
-    Ok(RefloatReply::RealtimeFieldIds(Box::new(
-        RefloatRealtimeFieldIds { always, runtime },
-    )))
+    Ok(RefloatRealtimeFieldIds { always, runtime })
 }
 
 fn parse_realtime_data(
     bytes: &[u8],
     ids: &RefloatRealtimeFieldIds,
-) -> Result<RefloatReply, RefloatCodecError> {
+) -> Result<RefloatRealtimeData, RefloatCodecError> {
     let mut cursor = Cursor::new(bytes);
     let mask = cursor.read_u8()?;
     let extra_flags = cursor.read_u8()?;
@@ -656,7 +666,7 @@ fn parse_realtime_data(
         (None, None, None)
     };
 
-    Ok(RefloatReply::RealtimeData(Box::new(RefloatRealtimeData {
+    Ok(RefloatRealtimeData {
         mask,
         extra_flags,
         time_ticks,
@@ -676,7 +686,7 @@ fn parse_realtime_data(
         active_alert_mask_low,
         active_alert_mask_high,
         firmware_fault_code,
-    })))
+    })
 }
 
 fn read_id_list(
@@ -840,6 +850,13 @@ impl<'a> Cursor<'a> {
 mod tests {
     use super::*;
 
+    #[derive(Clone, Debug, PartialEq)]
+    enum CapturedReply {
+        Info(RefloatInfo),
+        RealtimeFieldIds(Box<RefloatRealtimeFieldIds>),
+        RealtimeData(Box<RefloatRealtimeData>),
+    }
+
     #[test]
     fn encodes_refloat_info_request_as_vesc_custom_app_data() {
         let mut frame = ArrayVec::new();
@@ -854,14 +871,10 @@ mod tests {
         let frame = custom_app_frame(&info_payload());
         let mut decoder = RefloatStreamDecoder::new();
 
-        let replies = decoder.feed_result(&frame).expect("decode succeeds");
-
-        let RefloatStreamResult::Replies(replies) = replies else {
-            panic!("expected reply");
-        };
+        let (_, replies) = feed_captured(&mut decoder, &frame).expect("decode succeeds");
         assert_eq!(
             replies.as_slice(),
-            &[RefloatReply::Info(RefloatInfo {
+            &[CapturedReply::Info(RefloatInfo {
                 info_version: 2,
                 flags: 0,
                 package_name: fixed_string("Refloat"),
@@ -882,14 +895,10 @@ mod tests {
         let frame = custom_app_frame(&ids_payload());
         let mut decoder = RefloatStreamDecoder::new();
 
-        let replies = decoder.feed_result(&frame).expect("decode succeeds");
-
-        let RefloatStreamResult::Replies(replies) = replies else {
-            panic!("expected reply");
-        };
+        let (_, replies) = feed_captured(&mut decoder, &frame).expect("decode succeeds");
         assert!(matches!(
             replies.as_slice(),
-            [RefloatReply::RealtimeFieldIds(_)]
+            [CapturedReply::RealtimeFieldIds(_)]
         ));
         let ids = decoder.field_ids().expect("ids retained");
         assert_eq!(
@@ -903,16 +912,15 @@ mod tests {
     fn decodes_live_realtime_ids_long_frame() {
         let mut decoder = RefloatStreamDecoder::new();
         let mut result = RefloatStreamResult::Buffered;
+        let mut replies = Vec::new();
         for chunk in live_realtime_ids_chunks() {
-            result = decoder.feed_result(chunk).expect("live ids chunk decodes");
+            (result, replies) = feed_captured(&mut decoder, chunk).expect("live ids chunk decodes");
         }
 
-        let RefloatStreamResult::Replies(replies) = result else {
-            panic!("expected live ids reply");
-        };
+        assert_eq!(result, RefloatStreamResult::Replies(1));
         assert!(matches!(
             replies.as_slice(),
-            [RefloatReply::RealtimeFieldIds(_)]
+            [CapturedReply::RealtimeFieldIds(_)]
         ));
         let ids = decoder.field_ids().expect("ids retained");
         assert_eq!(ids.always.len(), 16);
@@ -946,11 +954,11 @@ mod tests {
         assert!(matches!(
             captured.as_slice(),
             [
-                RefloatReply::RealtimeFieldIds(_),
-                RefloatReply::RealtimeData(_)
+                CapturedReply::RealtimeFieldIds(_),
+                CapturedReply::RealtimeData(_)
             ]
         ));
-        let RefloatReply::RealtimeData(data) = &captured[1] else {
+        let CapturedReply::RealtimeData(data) = &captured[1] else {
             panic!("expected realtime data");
         };
         assert_eq!(data.time_ticks, 3_111_813);
@@ -966,17 +974,13 @@ mod tests {
     fn decodes_realtime_data_using_discovered_ids() {
         let mut decoder = RefloatStreamDecoder::new();
         decoder
-            .feed_result(&custom_app_frame(&ids_payload()))
+            .feed_result(&custom_app_frame(&ids_payload()), |_| {})
             .expect("ids decode");
 
-        let replies = decoder
-            .feed_result(&custom_app_frame(&realtime_payload()))
+        let (_, replies) = feed_captured(&mut decoder, &custom_app_frame(&realtime_payload()))
             .expect("data decode");
 
-        let RefloatStreamResult::Replies(replies) = replies else {
-            panic!("expected reply");
-        };
-        let [RefloatReply::RealtimeData(data)] = replies.as_slice() else {
+        let [CapturedReply::RealtimeData(data)] = replies.as_slice() else {
             panic!("expected realtime data");
         };
         assert_eq!(data.mask, 0x4);
@@ -1008,19 +1012,15 @@ mod tests {
     fn decodes_full_nibbles_for_realtime_package_state_and_mode() {
         let mut decoder = RefloatStreamDecoder::new();
         decoder
-            .feed_result(&custom_app_frame(&ids_payload()))
+            .feed_result(&custom_app_frame(&ids_payload()), |_| {})
             .expect("ids decode");
         let mut realtime = realtime_payload();
         realtime[8] = 0xBA;
 
-        let replies = decoder
-            .feed_result(&custom_app_frame(&realtime))
-            .expect("data decode");
+        let (_, replies) =
+            feed_captured(&mut decoder, &custom_app_frame(&realtime)).expect("data decode");
 
-        let RefloatStreamResult::Replies(replies) = replies else {
-            panic!("expected reply");
-        };
-        let [RefloatReply::RealtimeData(data)] = replies.as_slice() else {
+        let [CapturedReply::RealtimeData(data)] = replies.as_slice() else {
             panic!("expected realtime data");
         };
         assert_eq!(data.package_state, 10);
@@ -1031,15 +1031,11 @@ mod tests {
     fn realtime_data_reports_refloat_speed_without_board_profile() {
         let mut decoder = RefloatStreamDecoder::new();
         decoder
-            .feed_result(&custom_app_frame(&ids_payload()))
+            .feed_result(&custom_app_frame(&ids_payload()), |_| {})
             .expect("ids decode");
-        let RefloatStreamResult::Replies(replies) = decoder
-            .feed_result(&custom_app_frame(&realtime_payload()))
-            .expect("data decode")
-        else {
-            panic!("expected realtime data reply");
-        };
-        let [RefloatReply::RealtimeData(data)] = replies.as_slice() else {
+        let (_, replies) = feed_captured(&mut decoder, &custom_app_frame(&realtime_payload()))
+            .expect("data decode");
+        let [CapturedReply::RealtimeData(data)] = replies.as_slice() else {
             panic!("expected realtime data");
         };
 
@@ -1056,15 +1052,12 @@ mod tests {
     fn realtime_data_maps_named_refloat_fields_to_shared_telemetry() {
         let mut decoder = RefloatStreamDecoder::new();
         decoder
-            .feed_result(&custom_app_frame(&telemetry_ids_payload()))
+            .feed_result(&custom_app_frame(&telemetry_ids_payload()), |_| {})
             .expect("ids decode");
-        let RefloatStreamResult::Replies(replies) = decoder
-            .feed_result(&custom_app_frame(&telemetry_values_payload()))
-            .expect("data decode")
-        else {
-            panic!("expected realtime data reply");
-        };
-        let [RefloatReply::RealtimeData(data)] = replies.as_slice() else {
+        let (_, replies) =
+            feed_captured(&mut decoder, &custom_app_frame(&telemetry_values_payload()))
+                .expect("data decode");
+        let [CapturedReply::RealtimeData(data)] = replies.as_slice() else {
             panic!("expected realtime data");
         };
 
@@ -1154,7 +1147,7 @@ mod tests {
         let mut decoder = RefloatStreamDecoder::new();
 
         assert_eq!(
-            decoder.feed_result(&custom_app_frame(&realtime_payload())),
+            decoder.feed_result(&custom_app_frame(&realtime_payload()), |_| {}),
             Err(RefloatCodecError::MissingRealtimeFieldIds)
         );
     }
@@ -1408,7 +1401,7 @@ mod tests {
         ]
     }
 
-    fn decode_live_refloat_captured_chunks() -> Vec<RefloatReply> {
+    fn decode_live_refloat_captured_chunks() -> Vec<CapturedReply> {
         let mut decoder = RefloatStreamDecoder::new();
         let mut output = Vec::new();
         for chunk in live_realtime_ids_chunks()
@@ -1420,7 +1413,7 @@ mod tests {
         output
     }
 
-    fn decode_live_refloat_whole_frames() -> Vec<RefloatReply> {
+    fn decode_live_refloat_whole_frames() -> Vec<CapturedReply> {
         let ids = concat_chunks(&live_realtime_ids_chunks());
         let data = concat_chunks(&live_realtime_data_chunks());
         let mut decoder = RefloatStreamDecoder::new();
@@ -1430,7 +1423,7 @@ mod tests {
         output
     }
 
-    fn decode_live_refloat_one_byte_chunks() -> Vec<RefloatReply> {
+    fn decode_live_refloat_one_byte_chunks() -> Vec<CapturedReply> {
         let ids = concat_chunks(&live_realtime_ids_chunks());
         let data = concat_chunks(&live_realtime_data_chunks());
         let mut decoder = RefloatStreamDecoder::new();
@@ -1444,13 +1437,29 @@ mod tests {
     fn collect_replies(
         decoder: &mut RefloatStreamDecoder,
         chunk: &[u8],
-        output: &mut Vec<RefloatReply>,
+        output: &mut Vec<CapturedReply>,
     ) {
-        if let RefloatStreamResult::Replies(replies) =
-            decoder.feed_result(chunk).expect("live replay decodes")
-        {
-            output.extend(*replies);
-        }
+        let (_, replies) = feed_captured(decoder, chunk).expect("live replay decodes");
+        output.extend(replies);
+    }
+
+    fn feed_captured(
+        decoder: &mut RefloatStreamDecoder,
+        bytes: &[u8],
+    ) -> Result<(RefloatStreamResult, Vec<CapturedReply>), RefloatCodecError> {
+        let mut replies = Vec::new();
+        let result = decoder.feed_result(bytes, |reply| {
+            replies.push(match reply {
+                RefloatReply::Info(info) => CapturedReply::Info(info.clone()),
+                RefloatReply::RealtimeFieldIds(ids) => {
+                    CapturedReply::RealtimeFieldIds(Box::new(ids.clone()))
+                }
+                RefloatReply::RealtimeData(data) => {
+                    CapturedReply::RealtimeData(Box::new(data.clone()))
+                }
+            });
+        })?;
+        Ok((result, replies))
     }
 
     fn concat_chunks<const N: usize>(chunks: &[&[u8]; N]) -> ArrayVec<u8, REFLOAT_MAX_FRAME_LEN> {
