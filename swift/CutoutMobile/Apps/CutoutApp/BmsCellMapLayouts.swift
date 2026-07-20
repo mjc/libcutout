@@ -130,17 +130,17 @@ struct BmsDetailLayout: View {
     let scale: CGFloat
     @State private var selectedGroupIndex: Int?
 
-    init(content: PevBmsContent, scale: CGFloat) {
-        self.content = content
-        self.scale = scale
-        _selectedGroupIndex = State(
-            initialValue: content.selectedGroupIndex ?? content.snapshot.groups.first?.index
-        )
-    }
-
     private var snapshot: BmsSnapshot { content.snapshot }
     private var selectedGroup: BmsGroupSnapshot? {
-        snapshot.groups.first { $0.index == selectedGroupIndex } ?? snapshot.groups.first
+        if let selectedGroupIndex,
+           let selectedGroup = snapshot.groups.first(where: { $0.index == selectedGroupIndex }) {
+            return selectedGroup
+        }
+        if let contentGroupIndex = content.selectedGroupIndex,
+           let contentGroup = snapshot.groups.first(where: { $0.index == contentGroupIndex }) {
+            return contentGroup
+        }
+        return snapshot.groups.first
     }
 
     private var columns: [GridItem] {
