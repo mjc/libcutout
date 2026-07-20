@@ -132,14 +132,32 @@ public enum PevBmsScreenKind: Equatable, Hashable, Sendable {
     case noData
 }
 
-public struct PevBmsChip: Equatable, Hashable, Sendable {
+public struct PevBmsChip: Identifiable, Equatable, Hashable, Sendable {
+    public enum ID: String, Sendable {
+        case topology
+        case bmsStatus
+        case liveReadback
+        case selectedGroup
+        case dataStatus
+        case topologyStatus
+        case captureStatus
+        case availability
+    }
+
+    public let id: ID
     public let title: String
     public let accent: PevAccent
 
-    public init(title: String, accent: PevAccent) {
+    public init(id: ID, title: String, accent: PevAccent) {
+        self.id = id
         self.title = title
         self.accent = accent
     }
+}
+
+public struct PevBmsMode: Identifiable, Equatable, Hashable, Sendable {
+    public let id: Int
+    public let title: String
 }
 
 public struct PevBmsContent: Equatable, Hashable, Sendable {
@@ -148,7 +166,11 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
     public let chips: [PevBmsChip]
     public let highlightedGroupIndices: [Int]
     public let selectedGroupIndex: Int?
-    public let modeTitles: [String]
+    public let modes: [PevBmsMode]
+
+    public var modeTitles: [String] {
+        modes.map(\.title)
+    }
 
     public init(
         kind: PevBmsScreenKind,
@@ -163,7 +185,7 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
         self.chips = chips
         self.highlightedGroupIndices = highlightedGroupIndices
         self.selectedGroupIndex = selectedGroupIndex
-        self.modeTitles = modeTitles
+        self.modes = modeTitles.enumerated().map { PevBmsMode(id: $0.offset, title: $0.element) }
     }
 
     public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
@@ -276,29 +298,29 @@ private extension PevBmsScreenKind {
     func liveChips(snapshot: BmsSnapshot, selectedGroupIndex: Int?) -> [PevBmsChip] {
         switch self {
         case .overview:
-            var chips = [PevBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow)]
+            var chips = [PevBmsChip(id: .topology, title: snapshot.topology.layoutLabel, accent: .yellow)]
             if snapshot.topology.bmsCount > 0 {
-                chips.append(PevBmsChip(title: "\(snapshot.topology.bmsCount) BMS online", accent: .green))
+                chips.append(PevBmsChip(id: .bmsStatus, title: "\(snapshot.topology.bmsCount) BMS online", accent: .green))
             }
             return chips
         case .cellMapInline, .cellMapScrollable:
             return [
-                PevBmsChip(title: "live readback", accent: .cyan),
-                PevBmsChip(title: snapshot.topology.layoutLabel, accent: .yellow),
+                PevBmsChip(id: .liveReadback, title: "live readback", accent: .cyan),
+                PevBmsChip(id: .topology, title: snapshot.topology.layoutLabel, accent: .yellow),
             ]
         case .cellDetail:
             return [
-                PevBmsChip(title: "live readback", accent: .cyan),
-                PevBmsChip(title: selectedGroupIndex.map { "group \($0)" } ?? "selected group", accent: .orange),
+                PevBmsChip(id: .liveReadback, title: "live readback", accent: .cyan),
+                PevBmsChip(id: .selectedGroup, title: selectedGroupIndex.map { "group \($0)" } ?? "selected group", accent: .orange),
             ]
         case .unknownTopology:
             return [
-                PevBmsChip(title: "partial data", accent: .orange),
-                PevBmsChip(title: "topology unverified", accent: .green),
+                PevBmsChip(id: .dataStatus, title: "partial data", accent: .orange),
+                PevBmsChip(id: .topologyStatus, title: "topology unverified", accent: .green),
             ]
         case .noData:
             return [
-                PevBmsChip(title: snapshot.captureActionState ?? "limited data", accent: .yellow),
+                PevBmsChip(id: .captureStatus, title: snapshot.captureActionState ?? "limited data", accent: .yellow),
             ]
         }
     }
@@ -852,7 +874,7 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
                 kind: .noData,
                 snapshot: snapshot,
                 chips: [
-                    PevBmsChip(title: "no live BMS", accent: .yellow),
+                    PevBmsChip(id: .availability, title: "no live BMS", accent: .yellow),
                 ]
             ),
         )

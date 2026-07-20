@@ -85,7 +85,7 @@ struct BmsScreenView: View {
             columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 10 * scale)],
             spacing: 10 * scale
         ) {
-            ForEach(content.chips, id: \.self) { chip in
+            ForEach(content.chips) { chip in
                 BmsChip(
                     title: chip.title,
                     accent: chip.accent

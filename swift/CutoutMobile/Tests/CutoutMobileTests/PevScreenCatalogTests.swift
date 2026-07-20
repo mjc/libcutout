@@ -113,6 +113,30 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(presented.bmsContent?.modeTitles, ["balance view"])
     }
 
+    func testBmsPresentationIdentityDoesNotDependOnVisibleText() {
+        let chips = [
+            PevBmsChip(id: .topology, title: "Same label", accent: .yellow),
+            PevBmsChip(id: .bmsStatus, title: "Same label", accent: .green),
+        ]
+        let content = PevBmsContent(
+            kind: .cellMapInline,
+            snapshot: BmsSnapshot(topology: BmsTopology(
+                layoutLabel: "Test pack",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            )),
+            chips: chips,
+            modeTitles: ["Same label", "Same label"]
+        )
+
+        XCTAssertNotEqual(chips[0].id, chips[1].id)
+        XCTAssertEqual(content.modes.map(\.id), [0, 1])
+        XCTAssertEqual(content.modeTitles, ["Same label", "Same label"])
+    }
+
     func testPresentedBmsScreenKeepsExplicitRouteIdentity() throws {
         let overview = try XCTUnwrap(PevScreenCatalog.live.screen(id: .bmsOverview))
         let snapshot = BmsSnapshot(

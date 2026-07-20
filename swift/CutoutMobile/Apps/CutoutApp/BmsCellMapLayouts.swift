@@ -48,8 +48,8 @@ struct BmsInlineLayout: View {
                     columns: [GridItem(.adaptive(minimum: 100), spacing: 10 * scale)],
                     spacing: 10 * scale
                 ) {
-                    ForEach(content.modeTitles, id: \.self) { title in
-                        BmsModeChip(title: title)
+                    ForEach(content.modes) { mode in
+                        BmsModeChip(title: mode.title)
                     }
                 }
                 Text(snapshot.cellMapInteractionHint)
