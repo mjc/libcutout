@@ -183,7 +183,7 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    /// Configures the board and battery facts selected for the active or next VESC connection.
+    /// Configures the board and battery facts selected for the next VESC connection.
     public func configureVescBoard(profile: VescBoardProfile) {
         onBleQueue {
             vescBoardProfile = profile

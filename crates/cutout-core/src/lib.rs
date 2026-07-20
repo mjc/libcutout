@@ -6103,35 +6103,15 @@ pub struct DiagnosticReadback {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RawTelemetryReadback {
     /// Present raw telemetry fields.
-    #[cfg_attr(
-        feature = "serde",
-        serde(
-            serialize_with = "serialize_raw_fields",
-            deserialize_with = "deserialize_raw_fields"
-        )
-    )]
+    #[cfg_attr(feature = "serde", serde(deserialize_with = "deserialize_raw_fields"))]
     pub fields: ArrayVec<RawFieldValue, 8>,
 
     /// Present protocol-native float fields, retained without narrowing.
     #[cfg_attr(
         feature = "serde",
-        serde(
-            serialize_with = "serialize_raw_float_fields",
-            deserialize_with = "deserialize_raw_float_fields"
-        )
+        serde(deserialize_with = "deserialize_raw_float_fields")
     )]
     pub float_fields: ArrayVec<RawFloatFieldValue, 19>,
-}
-
-#[cfg(feature = "serde")]
-fn serialize_raw_fields<S>(
-    fields: &ArrayVec<RawFieldValue, 8>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serialize_sparse_slots::<_, _, 8, 8>(fields, serializer)
 }
 
 #[cfg(feature = "serde")]
@@ -6143,17 +6123,6 @@ where
 }
 
 #[cfg(feature = "serde")]
-fn serialize_raw_float_fields<S>(
-    fields: &ArrayVec<RawFloatFieldValue, 19>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serialize_sparse_slots::<_, _, 19, 32>(fields, serializer)
-}
-
-#[cfg(feature = "serde")]
 fn deserialize_raw_float_fields<'de, D>(
     deserializer: D,
 ) -> Result<ArrayVec<RawFloatFieldValue, 19>, D::Error>
@@ -6161,24 +6130,6 @@ where
     D: serde::Deserializer<'de>,
 {
     deserialize_sparse_slots(deserializer)
-}
-
-#[cfg(feature = "serde")]
-fn serialize_sparse_slots<T, S, const CAPACITY: usize, const WIRE_SLOTS: usize>(
-    fields: &ArrayVec<T, CAPACITY>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    T: serde::Serialize,
-    S: serde::Serializer,
-{
-    use serde::ser::SerializeSeq;
-
-    let mut sequence = serializer.serialize_seq(Some(WIRE_SLOTS))?;
-    for index in 0..WIRE_SLOTS {
-        sequence.serialize_element(&fields.get(index))?;
-    }
-    sequence.end()
 }
 
 #[cfg(feature = "serde")]
@@ -7749,6 +7700,35 @@ mod tests {
         };
         assert_eq!(raw.fields[0], crate::RawFieldValue::new(0x8001, 989));
         assert_eq!(raw.fields[1], crate::RawFieldValue::new(0x8002, -21_973));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn raw_telemetry_serde_reads_sparse_slots_and_writes_packed_fields() {
+        let raw: crate::RawTelemetryReadback = serde_json::from_value(serde_json::json!({
+            "fields": [null, { "id": 0x8002, "value": -21_973 }],
+            "float_fields": [null, null, { "id": 0x8010, "value_bits": 0x3f80_0001 }]
+        }))
+        .expect("legacy sparse telemetry should deserialize");
+
+        assert_eq!(
+            raw.fields.as_slice(),
+            &[crate::RawFieldValue::new(0x8002, -21_973)]
+        );
+        assert_eq!(
+            raw.float_fields.as_slice(),
+            &[crate::RawFloatFieldValue {
+                id: 0x8010,
+                value_bits: 0x3f80_0001,
+            }]
+        );
+        assert_eq!(
+            serde_json::to_value(raw).expect("packed telemetry should serialize"),
+            serde_json::json!({
+                "fields": [{ "id": 0x8002, "value": -21_973 }],
+                "float_fields": [{ "id": 0x8010, "value_bits": 0x3f80_0001 }]
+            })
+        );
     }
 
     #[test]
