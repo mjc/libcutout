@@ -9,6 +9,10 @@ use thiserror::Error;
 const MIN_SAMPLES: u16 = 3;
 const MIN_OBSERVATION_MILLISECONDS: u64 = 30_000;
 const MIN_CHARGE_CURRENT_MILLIAMPS: i64 = 100;
+const MIN_SAG_CURRENT_STEP_MILLIAMPS: u64 = 500;
+const MIN_SAG_VOLTAGE_STEP_MILLIVOLTS: u64 = 50;
+const MAX_SAG_LOAD_STEP_MILLISECONDS: u64 = 5_000;
+const MAX_EFFECTIVE_RESISTANCE_MILLIOHMS: u64 = 2_000;
 const STABLE_VARIABILITY_PERMILLE: u64 = 100;
 const EWMA_SHIFT: i64 = 2;
 const MILLISECONDS_PER_MILLIAMP_HOUR: u128 = 3_600_000;
@@ -225,11 +229,35 @@ impl VoltageDelta {
     }
 }
 
+/// Effective pack resistance learned from observed voltage/current load steps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EffectiveResistance(u32);
+
+impl EffectiveResistance {
+    /// Creates an effective resistance in milliohms.
+    #[must_use]
+    pub const fn from_milliohms(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// Returns the effective resistance in milliohms.
+    #[must_use]
+    pub const fn as_milliohms(self) -> u32 {
+        self.0
+    }
+}
+
 /// Rust-owned recent voltage-sag evidence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VoltageSagEstimate {
-    /// Loaded-minus-reference pack voltage.
+    /// Estimated loaded-minus-no-load pack voltage.
     pub delta: VoltageDelta,
+    /// Latest observed pack current used to project sag.
+    pub load_current: Measured<BatteryCurrent>,
+    /// Effective pack resistance learned from observed load steps.
+    pub effective_resistance: EffectiveResistance,
+    /// Number of admitted load-step observations in the bounded model.
+    pub observations: u16,
     /// Confidence in the sag evidence.
     pub confidence: EstimateConfidence,
     /// Timestamp at which this evidence was calculated.
@@ -243,12 +271,18 @@ impl VoltageSagEstimate {
     #[must_use]
     pub const fn new(
         delta: VoltageDelta,
+        load_current: Measured<BatteryCurrent>,
+        effective_resistance: EffectiveResistance,
+        observations: u16,
         confidence: EstimateConfidence,
         calculated_at: MonotonicTimestamp,
         valid_until: MonotonicTimestamp,
     ) -> Self {
         Self {
             delta,
+            load_current,
+            effective_resistance,
+            observations,
             confidence,
             calculated_at,
             valid_until,
@@ -256,26 +290,61 @@ impl VoltageSagEstimate {
     }
 }
 
-/// One loaded/reference voltage observation for sag estimation.
+/// One measured pack-voltage/current observation for sag estimation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VoltageSagInput {
     /// Host observation timestamp.
     pub at: MonotonicTimestamp,
-    /// Voltage observed while the pack is loaded.
-    pub loaded_voltage: Measured<Voltage>,
-    /// Reference voltage from a rest/curve estimate.
-    pub reference_voltage: Measured<Voltage>,
-    /// Pack current that makes the loaded/reference comparison meaningful.
+    /// Observed pack voltage.
+    pub voltage: Measured<Voltage>,
+    /// Simultaneously observed pack current.
     pub battery_current: Measured<BatteryCurrent>,
     /// Freshness policy for the resulting evidence.
     pub freshness: TelemetryFreshness,
 }
 
+/// Durable learned pack resistance for one stable EUC identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VoltageSagModel {
+    /// Learned effective pack resistance.
+    pub effective_resistance: EffectiveResistance,
+    /// Number of admitted load steps.
+    pub observations: u16,
+    /// Whether every admitted step came from hardware-verified telemetry.
+    pub hardware_verified: bool,
+}
+
+impl VoltageSagModel {
+    /// Creates a persistable learned resistance model.
+    #[must_use]
+    pub const fn new(
+        effective_resistance: EffectiveResistance,
+        observations: u16,
+        hardware_verified: bool,
+    ) -> Self {
+        Self {
+            effective_resistance,
+            observations,
+            hardware_verified,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VoltageSagSample {
+    at: MonotonicTimestamp,
+    voltage: Measured<Voltage>,
+    battery_current: Measured<BatteryCurrent>,
+}
+
 /// Bounded recent voltage-sag estimator.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct VoltageSagEstimator {
-    last_at: Option<MonotonicTimestamp>,
-    delta_q8: i64,
+    last: Option<VoltageSagSample>,
+    resistance_q8: u64,
+    observations: u16,
+    all_hardware_verified: bool,
+    loaded_current_negative: Option<bool>,
 }
 
 impl VoltageSagEstimator {
@@ -283,63 +352,207 @@ impl VoltageSagEstimator {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            last_at: None,
-            delta_q8: 0,
+            last: None,
+            resistance_q8: 0,
+            observations: 0,
+            all_hardware_verified: false,
+            loaded_current_negative: None,
         }
     }
 
     /// Clears recent sag evidence.
     pub fn reset(&mut self) {
-        self.last_at = None;
-        self.delta_q8 = 0;
+        *self = Self::new();
     }
 
-    /// Updates recent sag evidence without allocating or retaining samples.
+    /// Clears only the transient observation pair, preserving learned resistance.
+    pub fn reset_observations(&mut self) {
+        self.last = None;
+        self.loaded_current_negative = None;
+    }
+
+    /// Returns the durable learned resistance model, when available.
     #[must_use]
-    pub fn update(&mut self, input: VoltageSagInput) -> Option<VoltageSagEstimate> {
-        if !input.loaded_voltage.verification.is_trusted()
-            || !input.reference_voltage.verification.is_trusted()
-            || !input.battery_current.verification.is_trusted()
-            || input.loaded_voltage.quality == ValueQuality::Inferred
-            || input.reference_voltage.quality == ValueQuality::Inferred
-            || input.at < self.last_at.unwrap_or(input.at)
+    pub fn model(&self) -> Option<VoltageSagModel> {
+        (self.observations > 0).then(|| {
+            VoltageSagModel::new(
+                EffectiveResistance::from_milliohms(
+                    u32::try_from(self.resistance_q8.saturating_add(128) / 256).unwrap_or(u32::MAX),
+                ),
+                self.observations,
+                self.all_hardware_verified,
+            )
+        })
+    }
+
+    /// Restores a validated model belonging to the active EUC identity.
+    #[must_use]
+    pub fn restore_model(&mut self, model: VoltageSagModel) -> bool {
+        let resistance = u64::from(model.effective_resistance.as_milliohms());
+        if model.observations == 0
+            || !(1..=MAX_EFFECTIVE_RESISTANCE_MILLIOHMS).contains(&resistance)
         {
             self.reset();
-            return None;
+            return false;
         }
-        let current = input.battery_current.value.as_milliamps().unsigned_abs();
-        if u64::from(current) < MIN_CHARGE_CURRENT_MILLIAMPS as u64 {
-            return None;
-        }
-        let delta = i64::from(input.loaded_voltage.value.as_millivolts())
-            .saturating_sub(i64::from(input.reference_voltage.value.as_millivolts()));
-        let delta_q8 = delta.saturating_mul(256);
-        self.delta_q8 = if self.last_at.is_none() {
-            delta_q8
-        } else {
-            self.delta_q8
-                .saturating_add(delta_q8.saturating_sub(self.delta_q8) / 4)
-        };
-        self.last_at = Some(input.at);
-        let delta_millivolts = if self.delta_q8 < 0 {
-            self.delta_q8.saturating_sub(128) / 256
-        } else {
-            self.delta_q8.saturating_add(128) / 256
-        };
-        let delta_millivolts = i32::try_from(delta_millivolts).ok()?;
-        let confidence = if input.loaded_voltage.verification.is_hardware_verified()
-            && input.reference_voltage.verification.is_hardware_verified()
+
+        self.resistance_q8 = resistance.saturating_mul(256);
+        self.observations = model.observations;
+        self.all_hardware_verified = model.hardware_verified;
+        self.reset_observations();
+        true
+    }
+
+    /// Learns from consecutive load steps and projects sag at the latest current.
+    #[must_use]
+    pub fn update(&mut self, input: VoltageSagInput) -> Option<VoltageSagEstimate> {
+        if !input.voltage.verification.is_trusted()
+            || !input.battery_current.verification.is_trusted()
+            || input.voltage.quality == ValueQuality::Inferred
+            || input.battery_current.quality == ValueQuality::Inferred
         {
-            EstimateConfidence::High
+            self.reset_observations();
+            return None;
+        }
+
+        let sample = VoltageSagSample {
+            at: input.at,
+            voltage: input.voltage,
+            battery_current: input.battery_current,
+        };
+        let Some(previous) = self.last else {
+            self.seed(sample);
+            return None;
+        };
+        let elapsed = input.at.saturating_duration_since(previous.at);
+        if input.at < previous.at
+            || elapsed > input.freshness.max_age
+            || elapsed.as_milliseconds() > MAX_SAG_LOAD_STEP_MILLISECONDS
+            || previous.voltage.source != sample.voltage.source
+            || previous.voltage.verification != sample.voltage.verification
+            || previous.battery_current.source != sample.battery_current.source
+            || previous.battery_current.verification != sample.battery_current.verification
+        {
+            self.reset_observations();
+            self.seed(sample);
+            return None;
+        }
+
+        let current = u64::from(sample.battery_current.value.as_milliamps().unsigned_abs());
+        let previous_current =
+            u64::from(previous.battery_current.value.as_milliamps().unsigned_abs());
+        let current_polarity = (current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
+            .then_some(sample.battery_current.value.as_milliamps().is_negative());
+        if current_polarity
+            .zip(self.loaded_current_negative)
+            .is_some_and(|(current, previous)| current != previous)
+        {
+            self.reset_observations();
+            self.seed(sample);
+            return None;
+        }
+
+        let current_delta = i128::from(current).saturating_sub(i128::from(previous_current));
+        let voltage_delta = i128::from(sample.voltage.value.as_millivolts())
+            .saturating_sub(i128::from(previous.voltage.value.as_millivolts()));
+        let current_step = u64::try_from(current_delta.unsigned_abs()).unwrap_or(u64::MAX);
+        let voltage_step = u64::try_from(voltage_delta.unsigned_abs()).unwrap_or(u64::MAX);
+        let material_current_step = current_step >= MIN_SAG_CURRENT_STEP_MILLIAMPS;
+        let material_voltage_step = voltage_step >= MIN_SAG_VOLTAGE_STEP_MILLIVOLTS;
+        let opposing_step = (current_delta.is_positive() && voltage_delta.is_negative())
+            || (current_delta.is_negative() && voltage_delta.is_positive());
+
+        if material_current_step && material_voltage_step && !opposing_step {
+            self.reset_observations();
+            self.seed(sample);
+            return None;
+        }
+        if material_current_step && material_voltage_step {
+            self.learn(previous, sample, current_step, voltage_step);
+        }
+
+        self.last = Some(sample);
+        if let Some(polarity) = current_polarity {
+            self.loaded_current_negative = Some(polarity);
+        }
+        if self.observations == 0 || current < MIN_SAG_CURRENT_STEP_MILLIAMPS {
+            return None;
+        }
+
+        self.project(input, current)
+    }
+
+    fn learn(
+        &mut self,
+        previous: VoltageSagSample,
+        sample: VoltageSagSample,
+        current_step: u64,
+        voltage_step: u64,
+    ) {
+        let Some(resistance_milliohms) = voltage_step
+            .saturating_mul(1_000)
+            .saturating_add(current_step / 2)
+            .checked_div(current_step)
+        else {
+            return;
+        };
+        if !(1..=MAX_EFFECTIVE_RESISTANCE_MILLIOHMS).contains(&resistance_milliohms) {
+            return;
+        }
+
+        let resistance_q8 = resistance_milliohms.saturating_mul(256);
+        self.resistance_q8 = if self.observations == 0 {
+            resistance_q8
+        } else if resistance_q8 >= self.resistance_q8 {
+            self.resistance_q8
+                .saturating_add((resistance_q8 - self.resistance_q8) / 4)
         } else {
-            EstimateConfidence::Medium
+            self.resistance_q8
+                .saturating_sub((self.resistance_q8 - resistance_q8) / 4)
+        };
+        let pair_hardware_verified = previous.voltage.verification.is_hardware_verified()
+            && previous.battery_current.verification.is_hardware_verified()
+            && sample.voltage.verification.is_hardware_verified()
+            && sample.battery_current.verification.is_hardware_verified();
+        self.all_hardware_verified = if self.observations == 0 {
+            pair_hardware_verified
+        } else {
+            self.all_hardware_verified && pair_hardware_verified
+        };
+        self.observations = self.observations.saturating_add(1);
+    }
+
+    fn project(&self, input: VoltageSagInput, current: u64) -> Option<VoltageSagEstimate> {
+        let resistance_milliohms = self.resistance_q8.saturating_add(128) / 256;
+        let delta_millivolts = current
+            .saturating_mul(resistance_milliohms)
+            .saturating_add(500)
+            .checked_div(1_000)?;
+        let delta_millivolts = i32::try_from(delta_millivolts).ok()?.saturating_neg();
+        let confidence = match self.observations {
+            0 | 1 => EstimateConfidence::Low,
+            2 => EstimateConfidence::Medium,
+            _ if self.all_hardware_verified => EstimateConfidence::High,
+            _ => EstimateConfidence::Medium,
         };
         Some(VoltageSagEstimate::new(
             VoltageDelta::from_millivolts(delta_millivolts),
+            input.battery_current,
+            EffectiveResistance::from_milliohms(
+                u32::try_from(resistance_milliohms).unwrap_or(u32::MAX),
+            ),
+            self.observations,
             confidence,
             input.at,
             input.at.saturating_add_duration(input.freshness.max_age),
         ))
+    }
+
+    fn seed(&mut self, sample: VoltageSagSample) {
+        let current = u64::from(sample.battery_current.value.as_milliamps().unsigned_abs());
+        self.last = Some(sample);
+        self.loaded_current_negative = (current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
+            .then_some(sample.battery_current.value.as_milliamps().is_negative());
     }
 }
 
@@ -890,7 +1103,7 @@ fn calculate_estimate(
         widen_permille = widen_permille.saturating_add(150);
     }
     if let Some(sag) = input.voltage_sag {
-        if sag.valid_until < input.at {
+        if sag.valid_until < input.at || sag.confidence == EstimateConfidence::Low {
             widen_permille = widen_permille.saturating_add(200);
         } else if sag.delta.as_millivolts().unsigned_abs() > 1_000 {
             widen_permille = widen_permille.saturating_add(100);
@@ -1196,20 +1409,195 @@ mod tests {
     }
 
     #[test]
-    fn sag_estimator_produces_typed_recent_evidence() {
+    fn sag_estimator_learns_resistance_from_an_observed_load_step() {
         let mut estimator = VoltageSagEstimator::new();
+        assert_eq!(
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(0),
+                voltage: Measured::reported(Voltage::from_millivolts(100_000)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(0)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            }),
+            None
+        );
         let evidence = estimator
             .update(VoltageSagInput {
-                at: MonotonicTimestamp::new(10_000),
-                loaded_voltage: Measured::reported(Voltage::from_millivolts(95_000)),
-                reference_voltage: Measured::reported(Voltage::from_millivolts(96_200)),
-                battery_current: Measured::reported(BatteryCurrent::from_milliamps(20_000)),
+                at: MonotonicTimestamp::new(1_000),
+                voltage: Measured::reported(Voltage::from_millivolts(99_000)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
             })
-            .expect("verified loaded/reference voltages should produce sag");
-        assert_eq!(evidence.delta.as_millivolts(), -1_200);
-        assert_eq!(evidence.confidence, EstimateConfidence::High);
-        assert_eq!(evidence.valid_until.get(), 40_000);
+            .expect("an observed load step should produce sag");
+        assert_eq!(evidence.delta.as_millivolts(), -1_000);
+        assert_eq!(evidence.load_current.value.as_milliamps(), 10_000);
+        assert_eq!(evidence.effective_resistance.as_milliohms(), 100);
+        assert_eq!(evidence.observations, 1);
+        assert_eq!(evidence.confidence, EstimateConfidence::Low);
+        assert_eq!(evidence.valid_until.get(), 31_000);
+    }
+
+    #[test]
+    fn sag_estimator_rejects_same_direction_and_stable_current_samples() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+        assert_eq!(observe(&mut estimator, 0, 100_000, 0), None);
+        assert_eq!(observe(&mut estimator, 1_000, 101_000, 10_000), None);
+        assert_eq!(observe(&mut estimator, 2_000, 99_000, 10_000), None);
+    }
+
+    #[test]
+    fn sag_estimator_learns_from_voltage_recovery_when_load_decreases() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+        let _ = observe(&mut estimator, 0, 100_000, 0);
+        let _ = observe(&mut estimator, 1_000, 99_000, 10_000);
+        let evidence = observe(&mut estimator, 2_000, 99_800, 2_000)
+            .expect("voltage recovery should update the resistance model");
+        assert_eq!(evidence.delta.as_millivolts(), -200);
+        assert_eq!(evidence.effective_resistance.as_milliohms(), 100);
+        assert_eq!(evidence.observations, 2);
+        assert_eq!(evidence.confidence, EstimateConfidence::Medium);
+    }
+
+    #[test]
+    fn sag_estimator_preserves_the_learned_model_across_transient_resets() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+        let _ = observe(&mut estimator, 0, 100_000, 0);
+        let learned = observe(&mut estimator, 1_000, 99_000, 10_000)
+            .expect("load step should learn a resistance model");
+
+        estimator.reset_observations();
+        assert_eq!(
+            estimator.model(),
+            Some(VoltageSagModel::new(
+                learned.effective_resistance,
+                learned.observations,
+                true,
+            ))
+        );
+        assert_eq!(observe(&mut estimator, 60_000, 99_000, 10_000), None);
+        let restored = observe(&mut estimator, 61_000, 99_000, 10_000)
+            .expect("fresh samples should reuse the learned resistance");
+        assert_eq!(restored.delta.as_millivolts(), -1_000);
+        assert_eq!(restored.observations, 1);
+    }
+
+    #[test]
+    fn sag_estimator_restores_a_valid_per_device_model() {
+        let model = VoltageSagModel::new(EffectiveResistance::from_milliohms(125), 7, true);
+        let mut estimator = VoltageSagEstimator::new();
+
+        assert!(estimator.restore_model(model));
+        assert_eq!(estimator.model(), Some(model));
+        estimator.reset_observations();
+        assert_eq!(estimator.model(), Some(model));
+        estimator.reset();
+        assert_eq!(estimator.model(), None);
+    }
+
+    #[test]
+    fn sag_estimator_rejects_invalid_persisted_models() {
+        let mut estimator = VoltageSagEstimator::new();
+
+        assert!(!estimator.restore_model(VoltageSagModel::new(
+            EffectiveResistance::from_milliohms(0),
+            1,
+            true,
+        )));
+        assert!(!estimator.restore_model(VoltageSagModel::new(
+            EffectiveResistance::from_milliohms(100),
+            0,
+            true,
+        )));
+        assert_eq!(estimator.model(), None);
+    }
+
+    #[test]
+    fn sag_estimator_stale_and_out_of_order_samples_preserve_the_model() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+        let _ = observe(&mut estimator, 0, 100_000, 0);
+        let learned = observe(&mut estimator, 1_000, 99_000, 10_000)
+            .expect("load step should learn a resistance model");
+        let model = estimator.model();
+
+        assert_eq!(observe(&mut estimator, 40_000, 99_000, 10_000), None);
+        assert_eq!(estimator.model(), model);
+        assert_eq!(
+            observe(&mut estimator, 41_000, 99_000, 10_000)
+                .expect("fresh observations should reuse the model")
+                .effective_resistance,
+            learned.effective_resistance
+        );
+        assert_eq!(observe(&mut estimator, 40_500, 99_000, 10_000), None);
+        assert_eq!(estimator.model(), model);
+    }
+
+    #[test]
+    fn sag_estimator_admits_higher_resistance_slowly_as_the_pack_ages() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+        let _ = observe(&mut estimator, 0, 100_000, 0);
+        let _ = observe(&mut estimator, 1_000, 99_000, 10_000);
+        let _ = observe(&mut estimator, 2_000, 100_000, 0);
+        let aged = observe(&mut estimator, 3_000, 98_000, 10_000)
+            .expect("later higher resistance should update the model");
+
+        assert_eq!(aged.effective_resistance.as_milliohms(), 125);
+        assert_eq!(aged.observations, 3);
+    }
+
+    #[test]
+    fn sag_estimator_does_not_treat_a_slow_change_as_an_instantaneous_load_step() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+
+        assert_eq!(observe(&mut estimator, 0, 100_000, 0), None);
+        assert_eq!(observe(&mut estimator, 10_000, 99_000, 10_000), None);
+        assert_eq!(estimator.model(), None);
     }
 
     #[test]

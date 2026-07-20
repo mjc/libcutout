@@ -14,7 +14,7 @@ use cutout_core::{
     ModelRuntimeRegistration, MonotonicTimestamp, ParserKey, ProtocolFamily, ProtocolSession,
     RequestKey, RequestPolicy, RequestQueue, RequestScheduler, RequestUrgency, SessionInput,
     SessionKey, SessionOutput, TelemetryFreshness, TransportWriteLimit, UsablePackCapacity,
-    VerificationStatus,
+    VerificationStatus, Voltage, VoltageSagEstimator, VoltageSagInput,
 };
 
 const fn ms(value: u64) -> MonotonicTimestamp {
@@ -159,6 +159,7 @@ fn hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs() {
         hot_paths_do_not_allocate_for_borrowed_or_bounded_inputs_locked();
         large_catalog_lookup_does_not_allocate_after_setup_locked();
         charge_estimator_update_does_not_allocate_locked();
+        voltage_sag_estimator_update_does_not_allocate_locked();
     });
 }
 
@@ -305,6 +306,23 @@ fn charge_estimator_update_does_not_allocate_locked() {
             update(&mut estimator, 30_000),
             cutout_core::ChargeEstimateState::Available(_)
         ));
+    });
+}
+
+fn voltage_sag_estimator_update_does_not_allocate_locked() {
+    let mut estimator = VoltageSagEstimator::new();
+    let update = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+        estimator.update(VoltageSagInput {
+            at: ms(at),
+            voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+            battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+            freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+        })
+    };
+
+    assert_no_allocations("voltage sag estimator update", || {
+        assert_eq!(update(&mut estimator, 0, 100_000, 0), None);
+        assert!(update(&mut estimator, 1_000, 99_000, 10_000).is_some());
     });
 }
 

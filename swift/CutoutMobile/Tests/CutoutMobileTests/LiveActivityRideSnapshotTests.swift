@@ -6,6 +6,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         let collecting = ChargeEstimateState(MobileChargeEstimateStateDto(
             kind: .collectingSamples,
             estimate: nil,
+            voltageSag: nil,
             unavailableReason: nil,
             error: nil,
             resetReason: nil,
@@ -18,6 +19,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         let nearFull = ChargeEstimateState(MobileChargeEstimateStateDto(
             kind: .unavailable,
             estimate: nil,
+            voltageSag: nil,
             unavailableReason: .fullOrNearFull,
             error: nil,
             resetReason: nil,

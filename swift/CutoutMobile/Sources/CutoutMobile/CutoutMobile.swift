@@ -631,12 +631,24 @@ public struct ChargeCurrentRateSummary: Equatable, Hashable, Sendable {
 
 public struct ChargeVoltageSagEstimate: Equatable, Hashable, Sendable {
     public let deltaMillivolts: Int32
+    public let loadCurrent: BatteryCurrent
+    public let loadCurrentSource: ReadbackSource
+    public let loadCurrentQuality: ReadbackQuality
+    public let loadCurrentVerification: MobileVerificationStatusDto
+    public let effectiveResistanceMilliohms: UInt32
+    public let observations: UInt16
     public let confidence: ChargeEstimateConfidence
     public let calculatedAt: MonotonicMilliseconds
     public let validUntil: MonotonicMilliseconds
 
     fileprivate init(_ dto: MobileVoltageSagEstimateDto) {
         self.deltaMillivolts = dto.deltaMillivolts
+        self.loadCurrent = dto.loadCurrent.value
+        self.loadCurrentSource = ReadbackSource(dto.loadCurrent.source)
+        self.loadCurrentQuality = ReadbackQuality(dto.loadCurrent.quality)
+        self.loadCurrentVerification = dto.loadCurrent.verification
+        self.effectiveResistanceMilliohms = dto.effectiveResistanceMilliohms
+        self.observations = dto.observations
         self.confidence = ChargeEstimateConfidence(dto.confidence)
         self.calculatedAt = MonotonicMilliseconds(dto.calculatedAt.milliseconds)
         self.validUntil = MonotonicMilliseconds(dto.validUntil.milliseconds)
@@ -678,6 +690,7 @@ public struct ChargeTimeEstimate: Equatable, Hashable, Sendable {
 public struct ChargeEstimateState: Equatable, Hashable, Sendable {
     public let kind: ChargeEstimateStateKind
     public let estimate: ChargeTimeEstimate?
+    public let voltageSag: ChargeVoltageSagEstimate?
     public let unavailableReason: ChargeEstimateUnavailableReason?
     public let error: MobileChargeEstimateErrorDto?
     public let resetReason: MobileChargeEstimateResetReasonDto?
@@ -687,6 +700,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
     init(_ dto: MobileChargeEstimateStateDto) {
         self.kind = ChargeEstimateStateKind(dto.kind)
         self.estimate = dto.estimate.map(ChargeTimeEstimate.init)
+        self.voltageSag = dto.voltageSag.map(ChargeVoltageSagEstimate.init)
         self.unavailableReason = dto.unavailableReason.map(ChargeEstimateUnavailableReason.init)
         self.error = dto.error
         self.resetReason = dto.resetReason
@@ -698,6 +712,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         Self(MobileChargeEstimateStateDto(
             kind: .unavailable,
             estimate: nil,
+            voltageSag: nil,
             unavailableReason: .capacityMissing,
             error: nil,
             resetReason: nil,
@@ -1109,7 +1124,9 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             motorCurrent: dto.motorCurrent?.value,
             power: dto.power?.value,
             powerFlow: dto.powerFlow,
-            voltageSag: dto.voltageSag?.value,
+            voltageSag: chargeEstimate?.voltageSag.map {
+                VoltageDelta(value: $0.deltaMillivolts)
+            } ?? dto.voltageSag?.value,
             controllerTemperature: dto.controllerTemperature?.value,
             motorTemperature: dto.motorTemperature?.value,
             batteryTemperature: dto.batteryTemperature?.value,
@@ -3056,6 +3073,60 @@ public extension ElectricUnicycleModel {
     }
 }
 
+struct VoltageSagModelStore {
+    private struct Record: Codable {
+        let schemaVersion: UInt16
+        let deviceIdentity: String
+        let effectiveResistanceMilliohms: UInt32
+        let observations: UInt16
+        let hardwareVerified: Bool
+        let lastLearnedWallClockMilliseconds: Int64
+    }
+
+    private static let keyPrefix = "io.cutout.voltage-sag.v1."
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func load(for deviceIdentity: String) -> MobileVoltageSagModelDto? {
+        guard
+            !deviceIdentity.isEmpty,
+            let data = defaults.data(forKey: Self.keyPrefix + deviceIdentity),
+            let record = try? JSONDecoder().decode(Record.self, from: data),
+            record.schemaVersion == 1,
+            record.deviceIdentity == deviceIdentity
+        else {
+            return nil
+        }
+        return MobileVoltageSagModelDto(
+            schemaVersion: record.schemaVersion,
+            effectiveResistanceMilliohms: record.effectiveResistanceMilliohms,
+            observations: record.observations,
+            hardwareVerified: record.hardwareVerified
+        )
+    }
+
+    func save(_ model: MobileVoltageSagModelDto, for deviceIdentity: String) {
+        guard !deviceIdentity.isEmpty else { return }
+        let record = Record(
+            schemaVersion: model.schemaVersion,
+            deviceIdentity: deviceIdentity,
+            effectiveResistanceMilliohms: model.effectiveResistanceMilliohms,
+            observations: model.observations,
+            hardwareVerified: model.hardwareVerified,
+            lastLearnedWallClockMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
+        guard let data = try? JSONEncoder().encode(record) else { return }
+        defaults.set(data, forKey: Self.keyPrefix + deviceIdentity)
+    }
+
+    func remove(for deviceIdentity: String) {
+        defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
+    }
+}
+
 public final class ElectricUnicycleSession: @unchecked Sendable {
     private enum Inner {
         case aero(AeroReadOnlySession)
@@ -3065,10 +3136,14 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
     public let model: ElectricUnicycleModel
     private let inner: Inner
     private let chargeEstimator = MobileChargeEstimator()
+    private let voltageSagIdentity: String?
+    private let voltageSagStore = VoltageSagModelStore()
+    private var persistedVoltageSagObservations: UInt16 = 0
     private var chargeEstimateState = ChargeEstimateState.missingProfile
 
-    public init(model: ElectricUnicycleModel) throws {
+    public init(model: ElectricUnicycleModel, deviceIdentity: String? = nil) throws {
         self.model = model
+        self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
             .aero(AeroReadOnlySession())
@@ -3077,6 +3152,15 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
         if model == .aero {
             chargeEstimator.configureNosfetAero30s2pSamsung50sProfile()
+        } else if model == .falcon {
+            chargeEstimator.configureBegodeFalcon24s2pSamsung50sProfile()
+        }
+        if
+            let deviceIdentity,
+            let model = voltageSagStore.load(for: deviceIdentity),
+            chargeEstimator.restoreVoltageSagModel(model: model)
+        {
+            persistedVoltageSagObservations = model.observations
         }
     }
 
@@ -3103,7 +3187,14 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
     }
 
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
+        let hadVoltageSagModel = chargeEstimator.voltageSagModel() != nil
         chargeEstimator.configureProfile(profile: profile.dto)
+        if hadVoltageSagModel, chargeEstimator.voltageSagModel() == nil {
+            persistedVoltageSagObservations = 0
+            if let voltageSagIdentity {
+                voltageSagStore.remove(for: voltageSagIdentity)
+            }
+        }
         refreshChargeEstimate(at: currentSnapshot.at ?? MonotonicMilliseconds(0))
     }
 
@@ -3172,6 +3263,7 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             )
         }
         if kind == .linkDown {
+            persistVoltageSagModelIfChanged(force: true)
             chargeEstimator.reset()
             chargeEstimateState = .missingProfile
         } else {
@@ -3188,10 +3280,25 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         chargeEstimateState = ChargeEstimateState(chargeEstimator.update(input: MobileChargeEstimateInputDto(
             at: monotonicMilliseconds.dto,
             snapshot: snapshot,
-            voltageSag: nil,
             freshness: MobileDurationDto(milliseconds: 30_000)
         )))
+        persistVoltageSagModelIfChanged()
     }
+
+    private func persistVoltageSagModelIfChanged(force: Bool = false) {
+        guard
+            let voltageSagIdentity,
+            let model = chargeEstimator.voltageSagModel(),
+            model.observations != persistedVoltageSagObservations,
+            force || persistedVoltageSagObservations == 0
+                || UInt32(model.observations) >= UInt32(persistedVoltageSagObservations) + 8
+        else {
+            return
+        }
+        voltageSagStore.save(model, for: voltageSagIdentity)
+        persistedVoltageSagObservations = model.observations
+    }
+
 }
 
 public final class VescOnewheelSession: @unchecked Sendable {
@@ -3280,7 +3387,6 @@ public final class VescOnewheelSession: @unchecked Sendable {
         chargeEstimateState = ChargeEstimateState(chargeEstimator.update(input: MobileChargeEstimateInputDto(
             at: monotonicMilliseconds.dto,
             snapshot: inner.currentSnapshot(),
-            voltageSag: nil,
             freshness: MobileDurationDto(milliseconds: 30_000)
         )))
     }
@@ -3475,8 +3581,14 @@ public enum CoreBluetoothSession: Sendable {
     case electricUnicycle(ElectricUnicycleSession)
     case vescOnewheel(VescOnewheelSession)
 
-    public static func electricUnicycle(model: ElectricUnicycleModel) throws -> CoreBluetoothSession {
-        try .electricUnicycle(ElectricUnicycleSession(model: model))
+    public static func electricUnicycle(
+        model: ElectricUnicycleModel,
+        deviceIdentity: String? = nil
+    ) throws -> CoreBluetoothSession {
+        try .electricUnicycle(ElectricUnicycleSession(
+            model: model,
+            deviceIdentity: deviceIdentity
+        ))
     }
 
     public static func vescOnewheel() -> CoreBluetoothSession {

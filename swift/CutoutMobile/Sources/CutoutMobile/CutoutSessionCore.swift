@@ -503,7 +503,10 @@ public final class CutoutSessionCore: NSObject {
             guard let selectedModel else {
                 throw CutoutSessionError.unexpectedStepError("missing EUC model")
             }
-            return try .electricUnicycle(model: selectedModel)
+            return try .electricUnicycle(
+                model: selectedModel,
+                deviceIdentity: advertisement?.peripheralIdentifier.rawValue
+            )
         case .vescOnewheel:
             return .vescOnewheel()
         }
