@@ -56,8 +56,8 @@ public struct PevDashboardFootpadReadout: View {
             }
 
             HStack(spacing: 10 * scale) {
-                footpadSide(label: leftLabel, value: leftValue, isActive: leftValue != "--")
-                footpadSide(label: rightLabel, value: rightValue, isActive: rightValue != "--")
+                footpadSide(label: leftLabel, value: leftValue)
+                footpadSide(label: rightLabel, value: rightValue)
             }
         }
         .padding(.horizontal, 14 * scale)
@@ -72,12 +72,9 @@ public struct PevDashboardFootpadReadout: View {
         )
     }
 
-    private func footpadSide(label: String, value: String, isActive: Bool) -> some View {
+    private func footpadSide(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 3 * scale) {
             HStack(spacing: 5 * scale) {
-                Circle()
-                    .fill(isActive ? accent : secondaryTextColor.opacity(0.45))
-                    .frame(width: 6 * scale, height: 6 * scale)
                 Text(label)
                     .font(.system(size: 10 * scale, weight: .bold))
                     .foregroundStyle(secondaryTextColor)

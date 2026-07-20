@@ -21,6 +21,10 @@ public struct PevDashboardMetricTile: View {
     let detailFontSize: CGFloat
     let valueMinimumScaleFactor: CGFloat
 
+    var accessibilityValueText: String {
+        pevDashboardAccessibilityValue([value, unit, detail])
+    }
+
     public init(
         label: String,
         value: String,
@@ -103,12 +107,8 @@ public struct PevDashboardMetricTile: View {
             )
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(label))
-        .accessibilityValue(Text(
-            [value, unit, detail]
-                .filter { !$0.isEmpty }
-                .joined(separator: ", ")
-        ))
+        .accessibilityLabel(label)
+        .accessibilityValue(accessibilityValueText)
     }
 }
 
@@ -125,6 +125,14 @@ public struct PevDashboardHeroCard: View {
     let textColor: Color
     let secondaryTextColor: Color
     let scale: CGFloat
+
+    var clampedProgress: Double {
+        max(0, min(1, progress))
+    }
+
+    var accessibilityValueText: String {
+        pevDashboardAccessibilityValue([value, unit, detail])
+    }
 
     public init(
         eyebrow: String,
@@ -176,7 +184,7 @@ public struct PevDashboardHeroCard: View {
                     Capsule().fill(track)
                     Capsule()
                         .fill(accent)
-                        .frame(width: max(0, min(1, progress)) * proxy.size.width)
+                        .frame(width: clampedProgress * proxy.size.width)
                 }
             }
             .frame(height: 12 * scale)
@@ -191,6 +199,11 @@ public struct PevDashboardHeroCard: View {
                 stroke: stroke
             )
         )
+        .accessibilityRepresentation {
+            ProgressView(value: clampedProgress)
+                .accessibilityLabel(eyebrow)
+                .accessibilityValue(accessibilityValueText)
+        }
     }
 }
 
@@ -204,6 +217,16 @@ public struct PevDashboardWideCard: View {
     let textColor: Color
     let secondaryTextColor: Color
     let scale: CGFloat
+
+    var accessibilityLabelText: String {
+        title ?? value
+    }
+
+    var accessibilityValueText: String {
+        title == nil
+            ? (detail ?? "")
+            : pevDashboardAccessibilityValue([value, detail ?? ""])
+    }
 
     public init(
         title: String?,
@@ -258,5 +281,8 @@ public struct PevDashboardWideCard: View {
                 lineWidth: 1.2
             )
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabelText)
+        .accessibilityValue(accessibilityValueText)
     }
 }

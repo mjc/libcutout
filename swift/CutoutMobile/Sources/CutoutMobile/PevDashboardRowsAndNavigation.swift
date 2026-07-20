@@ -58,11 +58,15 @@ public struct PevDashboardKeyValueRows: View {
                         .monospacedDigit()
                 }
                 .frame(height: 31 * scale)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(row.label)
+                .accessibilityValue(row.value)
 
                 if row.id != rows.last?.id {
                     Rectangle()
                         .fill(stroke)
                         .frame(height: 1)
+                        .accessibilityHidden(true)
                 }
             }
         }
@@ -139,11 +143,17 @@ public struct PevDashboardReadbackRows: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.vertical, 10 * scale)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(row.label)
+                    .accessibilityValue(
+                        pevDashboardAccessibilityValue([row.value, row.detail])
+                    )
 
                     if row.id != rows.last?.id {
                         Rectangle()
                             .fill(PevDashboardColors.cardStroke)
                             .frame(height: 1)
+                            .accessibilityHidden(true)
                     }
                 }
                 .padding(.horizontal, 22 * scale)

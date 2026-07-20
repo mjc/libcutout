@@ -4,6 +4,19 @@ import XCTest
 
 @MainActor
 final class PevDashboardAccessibilityTests: XCTestCase {
+    func testMetricSemanticsGroupValueUnitAndDetail() {
+        let tile = PevDashboardMetricTile(
+            label: "Pack voltage",
+            value: "84",
+            unit: "volts",
+            detail: "stale",
+            accent: .yellow,
+            scale: 1
+        )
+
+        XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")
+    }
+
     func testProgressSemanticsClampOutOfRangeValues() {
         XCTAssertEqual(makeProgressBar(progress: -0.4).clampedProgress, 0)
         XCTAssertEqual(makeProgressBar(progress: 0.42).clampedProgress, 0.42)

@@ -7,6 +7,10 @@ public enum PevDashboardColors {
     public static let mutedText = Color(red: 0.561, green: 0.596, blue: 0.659)
 }
 
+func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
+    parts.filter { !$0.isEmpty }.joined(separator: ", ")
+}
+
 public struct PevDashboardCardBackground: View {
     let cornerRadius: CGFloat
     let fill: Color
