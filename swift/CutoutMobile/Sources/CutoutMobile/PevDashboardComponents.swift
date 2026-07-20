@@ -12,6 +12,8 @@ func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
 }
 
 public struct PevDashboardCardBackground: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     let cornerRadius: CGFloat
     let fill: Color
     let stroke: Color
@@ -34,7 +36,17 @@ public struct PevDashboardCardBackground: View {
             .fill(fill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(stroke, lineWidth: lineWidth)
+                    .stroke(stroke, lineWidth: Self.resolvedLineWidth(
+                        base: lineWidth,
+                        contrast: colorSchemeContrast
+                    ))
             )
+    }
+
+    nonisolated static func resolvedLineWidth(
+        base: CGFloat,
+        contrast: ColorSchemeContrast
+    ) -> CGFloat {
+        contrast == .increased ? max(2, base * 1.5) : base
     }
 }

@@ -72,6 +72,21 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
     }
 
+    func testCardBordersStrengthenForIncreasedContrast() {
+        XCTAssertEqual(
+            PevDashboardCardBackground.resolvedLineWidth(base: 1, contrast: .standard),
+            1
+        )
+        XCTAssertEqual(
+            PevDashboardCardBackground.resolvedLineWidth(base: 1, contrast: .increased),
+            2
+        )
+        XCTAssertEqual(
+            PevDashboardCardBackground.resolvedLineWidth(base: 2, contrast: .increased),
+            3
+        )
+    }
+
     func testFootpadReadoutBuildsACompleteDefaultAccessibilityValue() {
         let readout = makeFootpadReadout()
 
