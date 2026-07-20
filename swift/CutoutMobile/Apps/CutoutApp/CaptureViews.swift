@@ -17,14 +17,14 @@ struct CaptureRecordingScreen: View {
             contentSpacing: 16,
             horizontalPadding: 18,
             showsHeader: false
-        ) { scale, _ in
+        ) { _, _ in
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top) {
                     titleBlock
-                    Spacer(minLength: 12 * scale)
+                    Spacer(minLength: 12)
                     stopCaptureButton
                 }
-                VStack(alignment: .leading, spacing: 12 * scale) {
+                VStack(alignment: .leading, spacing: 12) {
                     titleBlock
                     stopCaptureButton
                 }
@@ -32,7 +32,7 @@ struct CaptureRecordingScreen: View {
 
             PevStatusStrip(
                 text: captureStatusText ?? "Recording locally",
-                scale: scale,
+                scale: 1,
                 indicatorColor: PevColors.green,
                 background: PevColors.cardFill,
                 foreground: PevColors.primaryText,
@@ -41,7 +41,6 @@ struct CaptureRecordingScreen: View {
 
             ScrollView(.vertical, showsIndicators: false) {
                 CaptureLabelControls(
-                    scale: scale,
                     activeLabels: activeLabels,
                     startCaptureLabel: startCaptureLabel,
                     stopCaptureLabel: stopCaptureLabel
@@ -71,7 +70,6 @@ struct CaptureRecordingScreen: View {
 }
 
 struct CaptureLabelControls: View {
-    let scale: CGFloat
     let activeLabels: Set<CaptureQuickLabel>
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
@@ -81,12 +79,11 @@ struct CaptureLabelControls: View {
     ]
 
     var body: some View {
-        PevDashboardGrid(columns: columns, spacing: 10 * scale) {
+        PevDashboardGrid(columns: columns, spacing: 10) {
             ForEach(CaptureQuickLabel.allCases) { label in
                 CaptureLabelControlRow(
                     label: label,
                     isActive: activeLabels.contains(label),
-                    scale: scale,
                     start: { startCaptureLabel(label) },
                     stop: { stopCaptureLabel(label) }
                 )
@@ -98,31 +95,30 @@ struct CaptureLabelControls: View {
 private struct CaptureLabelControlRow: View {
     let label: CaptureQuickLabel
     let isActive: Bool
-    let scale: CGFloat
     let start: () -> Void
     let stop: () -> Void
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10 * scale) {
+            HStack(spacing: 10) {
                 status
-                Spacer(minLength: 8 * scale)
+                Spacer(minLength: 8)
                 actions
             }
-            VStack(alignment: .leading, spacing: 10 * scale) {
+            VStack(alignment: .leading, spacing: 10) {
                 status
                 actions
             }
         }
-        .padding(14 * scale)
-        .frame(maxWidth: .infinity, minHeight: 58 * scale, alignment: .leading)
-        .background(PevDashboardCardBackground(cornerRadius: 8 * scale))
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .background(PevDashboardCardBackground(cornerRadius: 8))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.label.\(label.id)")
     }
 
     private var status: some View {
-        VStack(alignment: .leading, spacing: 3 * scale) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(label.title)
                 .font(.headline)
                 .foregroundStyle(PevColors.primaryText)
@@ -136,7 +132,7 @@ private struct CaptureLabelControlRow: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 10 * scale) {
+        HStack(spacing: 10) {
             Button("Start", action: start)
                 .buttonStyle(.borderedProminent)
                 .disabled(isActive)
