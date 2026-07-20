@@ -64,11 +64,11 @@ struct BmsScreenView: View {
         case .overview:
             BmsOverviewLayout(content: content, scale: scale)
         case .cellMapInline:
-            BmsInlineLayout(content: content, scale: scale)
+            BmsInlineLayout(content: content)
         case .cellMapScrollable:
-            BmsScrollableLayout(content: content, scale: scale)
+            BmsScrollableLayout(content: content)
         case .cellDetail:
-            BmsDetailLayout(content: content, scale: scale)
+            BmsDetailLayout(content: content)
         case .unknownTopology:
             BmsUnknownLayout(content: content, scale: scale)
         case .noData:

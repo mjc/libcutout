@@ -3,23 +3,22 @@ import SwiftUI
 
 struct BmsInlineLayout: View {
     let content: PevBmsContent
-    let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16 * scale) {
+        VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: "topology fits inline",
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel,
                 accent: PevColors.green,
-                scale: scale
+                scale: 1
             )
 
             PevDashboardGrid(
-                columns: [GridItem(.adaptive(minimum: 96), spacing: 12 * scale)],
-                spacing: 14 * scale
+                columns: [GridItem(.adaptive(minimum: 96), spacing: 12)],
+                spacing: 14
             ) {
                 ForEach(snapshot.groups) { group in
                     BmsGroupCell(
@@ -35,17 +34,17 @@ struct BmsInlineLayout: View {
                 value: snapshot.cellMapSpreadSummary,
                 detail: snapshot.cellMapFocusSummary,
                 accent: PevColors.cyan,
-                scale: scale
+                scale: 1
             )
 
-            VStack(alignment: .leading, spacing: 14 * scale) {
+            VStack(alignment: .leading, spacing: 14) {
                 Text("display modes")
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
                 PevDashboardGrid(
-                    columns: [GridItem(.adaptive(minimum: 100), spacing: 10 * scale)],
-                    spacing: 10 * scale
+                    columns: [GridItem(.adaptive(minimum: 100), spacing: 10)],
+                    spacing: 10
                 ) {
                     ForEach(content.modes) { mode in
                         BmsModeChip(title: mode.title)
@@ -55,35 +54,34 @@ struct BmsInlineLayout: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
             }
-            .padding(.horizontal, 18 * scale)
-            .padding(.vertical, 18 * scale)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+            .background(PevDashboardCardBackground(cornerRadius: 24))
         }
     }
 }
 
 struct BmsScrollableLayout: View {
     let content: PevBmsContent
-    let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 72), spacing: 8 * scale)]
+        [GridItem(.adaptive(minimum: 72), spacing: 8)]
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16 * scale) {
+        VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: "large packs use grouped overview first",
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel,
                 accent: PevColors.cyan,
-                scale: scale
+                scale: 1
             )
 
-            PevDashboardGrid(columns: columns, spacing: 8 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 8) {
                 ForEach(snapshot.groups) { group in
                     BmsStripCell(
                         group: group,
@@ -98,10 +96,10 @@ struct BmsScrollableLayout: View {
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
                 accent: PevColors.orange,
                 stroke: PevColors.orange,
-                scale: scale
+                scale: 1
             )
 
-            VStack(alignment: .leading, spacing: 10 * scale) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("display modes")
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
@@ -115,17 +113,16 @@ struct BmsScrollableLayout: View {
                     .font(.subheadline.weight(.black))
                     .foregroundStyle(PevColors.yellow)
             }
-            .padding(.horizontal, 18 * scale)
-            .padding(.vertical, 18 * scale)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+            .background(PevDashboardCardBackground(cornerRadius: 24))
         }
     }
 }
 
 struct BmsDetailLayout: View {
     let content: PevBmsContent
-    let scale: CGFloat
     @State private var selectedGroupIndex: Int?
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -142,12 +139,12 @@ struct BmsDetailLayout: View {
     }
 
     private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 52), spacing: 10 * scale)]
+        [GridItem(.adaptive(minimum: 52), spacing: 10)]
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12 * scale) {
-            PevDashboardGrid(columns: columns, spacing: 10 * scale) {
+        VStack(alignment: .leading, spacing: 12) {
+            PevDashboardGrid(columns: columns, spacing: 10) {
                 ForEach(snapshot.groups) { group in
                     BmsGroupIndexCell(
                         group: group,
@@ -158,7 +155,7 @@ struct BmsDetailLayout: View {
             }
 
             if let selectedGroup {
-                VStack(alignment: .leading, spacing: 15 * scale) {
+                VStack(alignment: .leading, spacing: 15) {
                     Text("group \(selectedGroup.index)")
                         .font(.headline)
                         .foregroundStyle(PevColors.muted)
@@ -174,9 +171,9 @@ struct BmsDetailLayout: View {
 
                     PevDashboardGrid(
                         columns: [
-                            GridItem(.adaptive(minimum: 140), spacing: 14 * scale),
+                            GridItem(.adaptive(minimum: 140), spacing: 14),
                         ],
-                        spacing: 14 * scale
+                        spacing: 14
                     ) {
                         PevDashboardMetricTile(
                             label: "temp",
@@ -184,7 +181,7 @@ struct BmsDetailLayout: View {
                             unit: "°C",
                             detail: "",
                             accent: PevColors.green,
-                            scale: scale,
+                            scale: 1,
                             detailColor: PevColors.green
                         )
                         PevDashboardMetricTile(
@@ -193,7 +190,7 @@ struct BmsDetailLayout: View {
                             unit: "mΩ",
                             detail: "",
                             accent: PevColors.green,
-                            scale: scale,
+                            scale: 1,
                             detailColor: PevColors.green
                         )
                     }
@@ -203,13 +200,13 @@ struct BmsDetailLayout: View {
                         value: "trend: \(snapshot.detailGroupTrend(for: selectedGroup.index))",
                         detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index),
                         accent: PevColors.yellow,
-                        scale: scale
+                        scale: 1
                     )
                 }
-                .padding(.horizontal, 18 * scale)
-                .padding(.vertical, 20 * scale)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 20)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PevDashboardCardBackground(cornerRadius: 34 * scale, stroke: PevColors.yellow, lineWidth: 1.2))
+                .background(PevDashboardCardBackground(cornerRadius: 34, stroke: PevColors.yellow, lineWidth: 1.2))
             }
         }
     }
