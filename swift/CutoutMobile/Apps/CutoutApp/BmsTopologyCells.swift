@@ -26,35 +26,6 @@ struct BmsChip: View {
     }
 }
 
-struct BmsBottomTab: View {
-    let title: String
-    let isSelected: Bool
-    let scale: CGFloat
-    let action: (() -> Void)?
-
-    var body: some View {
-        Button {
-            action?()
-        } label: {
-            PevDashboardTabLabel(
-                title: title,
-                isSelected: isSelected,
-                scale: scale,
-                selectedColor: PevColors.yellow,
-                unselectedColor: PevColors.muted,
-                indicatorWidth: 24,
-                indicatorHeight: 3,
-                spacing: 7
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(action == nil)
-        .frame(minHeight: 44)
-        .accessibilityValue(isSelected ? "Selected" : action == nil ? "Unavailable" : "Available")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
 struct BmsGroupCell: View {
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
