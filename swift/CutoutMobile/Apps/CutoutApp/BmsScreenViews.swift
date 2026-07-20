@@ -41,7 +41,7 @@ struct BmsScreenView: View {
                         VStack(alignment: .leading, spacing: 14 * scale) {
                             header
                             chipRow(scale: scale)
-                            contentSection(scale: scale)
+                            contentSection()
                             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
                                 liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
                             }
@@ -59,7 +59,7 @@ struct BmsScreenView: View {
     }
 
     @ViewBuilder
-    private func contentSection(scale: CGFloat) -> some View {
+    private func contentSection() -> some View {
         switch content.kind {
         case .overview:
             BmsOverviewLayout(content: content)
@@ -70,7 +70,7 @@ struct BmsScreenView: View {
         case .cellDetail:
             BmsDetailLayout(content: content)
         case .unknownTopology:
-            BmsUnknownLayout(content: content, scale: scale)
+            BmsUnknownLayout(content: content)
         case .noData:
             EmptyView()
         }

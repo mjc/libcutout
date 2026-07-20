@@ -3,27 +3,26 @@ import SwiftUI
 
 struct BmsUnknownLayout: View {
     let content: PevBmsContent
-    let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16 * scale) {
+        VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: "do not pretend certainty",
                 value: snapshot.faultSummary ?? "--",
                 detail: snapshot.faultDetail ?? "",
                 accent: PevColors.orange,
                 stroke: PevColors.orange,
-                scale: scale
+                scale: 1
             )
 
             PevDashboardGrid(
                 columns: [
-                    GridItem(.flexible(), spacing: 14 * scale),
-                    GridItem(.flexible(), spacing: 14 * scale),
+                    GridItem(.flexible(), spacing: 14),
+                    GridItem(.flexible(), spacing: 14),
                 ],
-                spacing: 14 * scale
+                spacing: 14
             ) {
                 PevDashboardMetricTile(
                     label: "reported voltage",
@@ -31,7 +30,7 @@ struct BmsUnknownLayout: View {
                     unit: "V",
                     detail: snapshot.unknownTopologyVoltageDetail,
                     accent: PevColors.yellow,
-                    scale: scale,
+                    scale: 1,
                     detailColor: PevColors.yellow
                 )
                 PevDashboardMetricTile(
@@ -40,7 +39,7 @@ struct BmsUnknownLayout: View {
                     unit: "",
                     detail: snapshot.unknownTopologyCellCountDetail,
                     accent: PevColors.orange,
-                    scale: scale,
+                    scale: 1,
                     detailColor: PevColors.orange
                 )
                 PevDashboardMetricTile(
@@ -49,7 +48,7 @@ struct BmsUnknownLayout: View {
                     unit: "sensors",
                     detail: snapshot.unknownTopologyTemperatureDetail,
                     accent: PevColors.green,
-                    scale: scale,
+                    scale: 1,
                     detailColor: PevColors.green
                 )
                 PevDashboardMetricTile(
@@ -58,12 +57,12 @@ struct BmsUnknownLayout: View {
                     unit: "",
                     detail: snapshot.faults.first?.label ?? "",
                     accent: PevColors.orange,
-                    scale: scale,
+                    scale: 1,
                     detailColor: PevColors.orange
                 )
             }
 
-            VStack(alignment: .leading, spacing: 10 * scale) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("next capture flow")
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
@@ -76,14 +75,14 @@ struct BmsUnknownLayout: View {
                 Text(snapshot.captureActionState ?? "")
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText.opacity(0.82))
-                    .padding(.horizontal, 18 * scale)
-                    .frame(minHeight: 44 * scale)
+                    .padding(.horizontal, 18)
+                    .frame(minHeight: 44)
                     .background(Capsule().fill(PevColors.muted.opacity(0.33)))
             }
-            .padding(.horizontal, 18 * scale)
-            .padding(.vertical, 18 * scale)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+            .background(PevDashboardCardBackground(cornerRadius: 24))
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("bms.unknown.capture-flow")
         }
