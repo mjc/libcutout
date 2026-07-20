@@ -1,5 +1,6 @@
-import Foundation
+import Accessibility
 import CutoutMobile
+import Foundation
 import SwiftUI
 
 struct ContentView: View {
@@ -49,6 +50,9 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground.ignoresSafeArea())
         .onChange(of: model.phase) { _, phase in
+            if let announcement = phase.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
             if case .failed = phase {
                 model.disconnectAndSearch()
                 return

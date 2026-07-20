@@ -33,4 +33,24 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(SessionConnectionPhase.scanning.opensRideScreen)
     }
 
+    func testConnectionAnnouncementsCoverMeaningfulTransitionsWithoutChatter() {
+        XCTAssertNil(SessionConnectionPhase.starting.accessibilityAnnouncement)
+        XCTAssertNil(SessionConnectionPhase.scanning.accessibilityAnnouncement)
+        XCTAssertNil(SessionConnectionPhase.discoveringServices.accessibilityAnnouncement)
+        XCTAssertNil(SessionConnectionPhase.subscribing.accessibilityAnnouncement)
+        XCTAssertEqual(
+            SessionConnectionPhase.bluetoothUnavailable(rawState: 4).accessibilityAnnouncement,
+            "Bluetooth unavailable. Turn on Bluetooth to reconnect."
+        )
+        XCTAssertEqual(
+            SessionConnectionPhase.connecting(model: .falcon).accessibilityAnnouncement,
+            "Connecting to Falcon."
+        )
+        XCTAssertEqual(SessionConnectionPhase.live.accessibilityAnnouncement, "Connected.")
+        XCTAssertEqual(
+            SessionConnectionPhase.failed(.connectFailed("timed out")).accessibilityAnnouncement,
+            "Connection lost. Retrying. Connect failed: timed out"
+        )
+    }
+
 }

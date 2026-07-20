@@ -81,4 +81,19 @@ extension SessionConnectionPhase {
             false
         }
     }
+
+    var accessibilityAnnouncement: String? {
+        switch self {
+        case .starting, .scanning, .discoveringServices, .subscribing:
+            nil
+        case .bluetoothUnavailable:
+            "Bluetooth unavailable. Turn on Bluetooth to reconnect."
+        case .connecting(let model):
+            "Connecting to \(model.displayName)."
+        case .live:
+            "Connected."
+        case .failed(let failure):
+            "Connection lost. Retrying. \(failure.displayText)"
+        }
+    }
 }
