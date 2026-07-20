@@ -157,6 +157,7 @@ pub enum VescCanReadOnlyRequest {
 
 /// Owned VESC read-only reply.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum VescReadOnlyReply {
     /// Firmware build information.
     FirmwareInfo {
@@ -225,7 +226,7 @@ pub struct VescValuesTelemetry {
     /// Controller status byte.
     pub status: u8,
 
-    /// Every floating-point field returned by COMM_GET_VALUES, preserving exact bits.
+    /// Every floating-point field returned by `COMM_GET_VALUES`, preserving exact bits.
     pub raw_float_fields: [Option<RawFloatFieldValue>; 32],
 }
 
@@ -324,7 +325,7 @@ pub enum VescBatteryType {
     /// Li-ion 3.0-4.2 V pack type.
     LiIon,
 
-    /// LiFePO4 / lithium iron 2.6-3.6 V pack type.
+    /// `LiFePO4` / lithium iron 2.6-3.6 V pack type.
     LiIron,
 
     /// Lead-acid 2.1-2.36 V cell model.
@@ -536,7 +537,7 @@ impl VescBatteryType {
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn vesc_liion_level(cell_voltage: cutout_core::CellVoltage) -> BatteryLevel {
     let norm = ((cell_voltage.as_microvolts() as f32 / 1_000.0) - 3_200.0) / 1_000.0;
     let norm = norm.clamp(0.0, 1.0);
@@ -545,7 +546,7 @@ fn vesc_liion_level(cell_voltage: cutout_core::CellVoltage) -> BatteryLevel {
     let v4 = v3 * norm;
     let v5 = v4 * norm;
     let capacity =
-        -2.979_767 * v5 + 5.487_810 * v4 - 3.501_286 * v3 + 1.675_683 * v2 + 0.317_147 * norm;
+        -2.979_767 * v5 + 5.487_81 * v4 - 3.501_286 * v3 + 1.675_683 * v2 + 0.317_147 * norm;
     BatteryLevel::from_percent_i32((capacity.clamp(0.0, 1.0) * 100.0).round() as i32)
 }
 
@@ -653,6 +654,7 @@ impl Default for VescReadOnlyStreamDecoder {
     }
 }
 
+#[allow(clippy::indexing_slicing)]
 impl VescReadOnlyStreamDecoder {
     /// Creates an empty VESC stream decoder.
     #[must_use]
@@ -747,9 +749,11 @@ fn encode_request_frame(
         VescReadOnlyRequest::Stats(mask) => {
             vesc::encode(vesc::Command::GetStats(vesc_stats_mask(mask)), frame)
         }
-        VescReadOnlyRequest::MotorConfig => return encode_raw_command(VESC_COMM_GET_MCCONF, frame),
+        VescReadOnlyRequest::MotorConfig => {
+            return Ok(encode_raw_command(VESC_COMM_GET_MCCONF, frame));
+        }
         VescReadOnlyRequest::MotorSetupConfig => {
-            return encode_raw_command(VESC_COMM_GET_MCCONF_TEMP, frame);
+            return Ok(encode_raw_command(VESC_COMM_GET_MCCONF_TEMP, frame));
         }
         VescReadOnlyRequest::Refloat(request) => {
             let mut output = ArrayVec::new();
@@ -776,17 +780,14 @@ fn encode_request_frame(
     .map_err(|_err| VescCodecError::EncodeFailed)
 }
 
-fn encode_raw_command(
-    command_id: u8,
-    frame: &mut [u8; VESC_MAX_FRAME_LEN],
-) -> Result<usize, VescCodecError> {
+fn encode_raw_command(command_id: u8, frame: &mut [u8; VESC_MAX_FRAME_LEN]) -> usize {
     frame[0] = VESC_FRAME_START_SHORT;
     frame[1] = 1;
     frame[2] = command_id;
     let checksum = vesc_crc16(&frame[2..3]);
     frame[3..5].copy_from_slice(&checksum.to_be_bytes());
     frame[5] = VESC_FRAME_END;
-    Ok(6)
+    6
 }
 
 fn decode_frame(frame: &[u8]) -> Result<VescReadOnlyReply, VescCodecError> {
@@ -821,6 +822,7 @@ fn frame_len(bytes: &[u8]) -> Result<Option<usize>, VescCodecError> {
     frame_parts(bytes).map(|parts| parts.map(|(_payload_start, _payload_len, len)| len))
 }
 
+#[allow(clippy::indexing_slicing)]
 fn frame_parts(bytes: &[u8]) -> Result<Option<(usize, usize, usize)>, VescCodecError> {
     let Some(&start) = bytes.first() else {
         return Ok(None);
@@ -886,6 +888,7 @@ fn decode_speed_geometry(body: &[u8]) -> Result<VescSpeedGeometry, VescCodecErro
     decode_setup_fields(setup).map(|(geometry, _next)| geometry)
 }
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn decode_setup_fields(body: &[u8]) -> Result<(VescSpeedGeometry, usize), VescCodecError> {
     let motor_poles = *body.first().ok_or(VescCodecError::DecodeFailed)?;
     let gear_ratio = read_vesc_f32_auto(body, 1)?;
@@ -1045,8 +1048,12 @@ fn vesc_values_float_fields(values: vesc::Values) -> [Option<RawFloatFieldValue>
     ];
     let mut fields = [None; 32];
     for (index, value) in values.into_iter().enumerate() {
-        let id = 0x8100 + u16::try_from(index).expect("VESC raw field index fits u16");
-        fields[index] = Some(RawFloatFieldValue::new(id, value));
+        let Some(id) = u16::try_from(index).ok().map(|index| 0x8100 + index) else {
+            continue;
+        };
+        if let Some(field) = fields.get_mut(index) {
+            *field = Some(RawFloatFieldValue::new(id, value));
+        }
     }
     fields
 }

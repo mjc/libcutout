@@ -1350,19 +1350,16 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
     for probe in probes {
         info!(?probe, "running serialized VESC probe");
         let refloat_request = refloat_probe_request(probe);
-        let (command, request_frame) = match refloat_request {
-            Some((command, request)) => {
-                let mut request_frame = arrayvec::ArrayVec::new();
-                encode_refloat_request(request, &mut request_frame)?;
-                (command, request_frame)
-            }
-            None => {
-                let (command, request) =
-                    direct_vesc_probe_request(probe).context("unsupported VESC probe")?;
-                let mut request_frame = arrayvec::ArrayVec::new();
-                VescReadOnlyCodec::encode_request(request, &mut request_frame)?;
-                (command, request_frame)
-            }
+        let (command, request_frame) = if let Some((command, request)) = refloat_request {
+            let mut request_frame = arrayvec::ArrayVec::new();
+            encode_refloat_request(request, &mut request_frame)?;
+            (command, request_frame)
+        } else {
+            let (command, request) =
+                direct_vesc_probe_request(probe).context("unsupported VESC probe")?;
+            let mut request_frame = arrayvec::ArrayVec::new();
+            VescReadOnlyCodec::encode_request(request, &mut request_frame)?;
+            (command, request_frame)
         };
         let mut session = OneShotVescRequestSession::new(request_frame.as_slice())?;
         let capture = capture_session_with_channel_pair(
@@ -1377,7 +1374,7 @@ async fn vesc_probe(args: VescProbeArgs) -> Result<()> {
         )
         .await?;
         let report = &capture.report;
-        print_session_report(&report);
+        print_session_report(report);
         print_session_diagnostics_jsonl(report, diagnostics_jsonl)?;
         if refloat_request.is_some() {
             print_refloat_replies_jsonl(&capture, &mut refloat_decoder, read_only_jsonl)?;
@@ -2586,12 +2583,12 @@ fn refloat_reply_json(reply: &RefloatReply) -> serde_json::Value {
             "always": ids
                 .always
                 .iter()
-                .map(|id| id.as_str())
+                .map(arrayvec::ArrayString::as_str)
                 .collect::<Vec<_>>(),
             "runtime": ids
                 .runtime
                 .iter()
-                .map(|id| id.as_str())
+                .map(arrayvec::ArrayString::as_str)
                 .collect::<Vec<_>>(),
         }),
         RefloatReply::RealtimeData(data) => serde_json::json!({
@@ -2758,7 +2755,7 @@ fn battery_page_json(payload: &BatteryPagePayload) -> serde_json::Value {
     let page = payload.page();
     serde_json::json!({
         "selector": page.selector.get(),
-        "tag": page.tag.map(|tag| tag.get()),
+        "tag": page.tag.map(cutout_core::ProtocolTag::get),
         "side": battery_page_side_name(page.kind, page.selector.get()),
         "kind": battery_page_kind_name(page.kind),
         "verification": verification_status_name(page.verification),

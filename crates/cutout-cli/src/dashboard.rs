@@ -862,7 +862,7 @@ impl PopulatedRawTelemetryFieldCount {
         Self(value)
     }
 
-    fn from_raw_telemetry(raw: RawTelemetryReadback) -> Self {
+    fn from_raw_telemetry(raw: &RawTelemetryReadback) -> Self {
         Self::new(raw.fields.into_iter().flatten().count())
     }
 }
@@ -2456,7 +2456,7 @@ fn format_read_only_response(response: ReadOnlyResponse) -> String {
             format!("read-only diagnostics details={populated}")
         }
         ReadOnlyResponse::RawTelemetry(raw) => {
-            let populated = PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw);
+            let populated = PopulatedRawTelemetryFieldCount::from_raw_telemetry(&raw);
             format!("read-only raw telemetry fields={populated}")
         }
     }
@@ -5280,7 +5280,7 @@ mod tests {
             PopulatedDiagnosticDetailCount::new(1)
         );
         assert_eq!(
-            PopulatedRawTelemetryFieldCount::from_raw_telemetry(raw),
+            PopulatedRawTelemetryFieldCount::from_raw_telemetry(&raw),
             PopulatedRawTelemetryFieldCount::new(2)
         );
         assert_eq!(

@@ -50,6 +50,7 @@ pub enum RefloatReadOnlyRequest {
 
 /// Parser-owned result for one Refloat stream feed.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum RefloatStreamResult {
     /// The decoder accepted bytes but is still waiting for a complete reply.
     Buffered,
@@ -60,6 +61,7 @@ pub enum RefloatStreamResult {
 
 /// Refloat package reply.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum RefloatReply {
     /// Package information.
     Info(RefloatInfo),
@@ -704,7 +706,7 @@ fn read_values(
     for id in ids {
         output
             .try_push(RefloatRealtimeValue {
-                id: id.clone(),
+                id: *id,
                 value: read_float16(cursor)?,
             })
             .map_err(|_value| RefloatCodecError::TooManyItems)?;
@@ -990,10 +992,10 @@ mod tests {
         assert_eq!(data.alert_reason, 8);
         assert_eq!(data.values.len(), 2);
         assert_eq!(
-            data.values.get(0).map(|value| value.id.as_str()),
+            data.values.first().map(|value| value.id.as_str()),
             Some("motor.speed")
         );
-        assert_eq!(data.values.get(0).map(|value| value.value), Some(1.0));
+        assert_eq!(data.values.first().map(|value| value.value), Some(1.0));
         assert_eq!(
             data.values.get(1).map(|value| value.id.as_str()),
             Some("imu.roll")

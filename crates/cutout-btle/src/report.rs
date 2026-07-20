@@ -84,6 +84,7 @@ impl SessionBridgeReport {
 
 /// Timestamped semantic event emitted by the bridge.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum SessionBridgeEvent {
     /// Link-down event emitted by the protocol session after transport disconnect.
     LinkDown {

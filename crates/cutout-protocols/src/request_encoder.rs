@@ -26,6 +26,7 @@ pub struct EncodedRequest<P> {
 
 /// Explicit disposition for a family-specific request.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum RequestDisposition<P> {
     /// A probe that does not require a transport write.
     Passive {
@@ -277,8 +278,9 @@ mod tests {
         assert_eq!(
             match identity {
                 RequestDisposition::Write(request) => request.payload,
-                RequestDisposition::Writes(_) => unreachable!(),
-                RequestDisposition::Passive { .. } => unreachable!(),
+                RequestDisposition::Writes(_) | RequestDisposition::Passive { .. } => {
+                    unreachable!()
+                }
             }
             .as_slice(),
             b"N"
@@ -286,8 +288,9 @@ mod tests {
         assert_eq!(
             match firmware {
                 RequestDisposition::Write(request) => request.payload,
-                RequestDisposition::Writes(_) => unreachable!(),
-                RequestDisposition::Passive { .. } => unreachable!(),
+                RequestDisposition::Writes(_) | RequestDisposition::Passive { .. } => {
+                    unreachable!()
+                }
             }
             .as_slice(),
             b"V"
@@ -465,8 +468,7 @@ mod tests {
         .into_iter()
         .filter_map(|disposition| match disposition {
             RequestDisposition::Write(request) => Some(request.payload.len()),
-            RequestDisposition::Writes(_) => None,
-            RequestDisposition::Passive { .. } => None,
+            RequestDisposition::Writes(_) | RequestDisposition::Passive { .. } => None,
         })
         .collect::<Vec<_>>();
 

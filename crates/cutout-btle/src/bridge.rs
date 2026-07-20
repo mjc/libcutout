@@ -129,6 +129,7 @@ where
 ///
 /// Returns the underlying Bluetooth transport error if subscribe, write, or
 /// notification streaming fails.
+#[allow(clippy::too_many_arguments)]
 pub async fn drive_session_with_channel_pair<P, S>(
     peripheral: &P,
     session: &mut S,
@@ -246,6 +247,7 @@ where
 ///
 /// Returns the underlying Bluetooth transport error if subscribe, write, or
 /// notification streaming fails.
+#[allow(clippy::too_many_arguments)]
 pub async fn capture_session_with_channel_pair<P, S>(
     peripheral: &P,
     session: &mut S,

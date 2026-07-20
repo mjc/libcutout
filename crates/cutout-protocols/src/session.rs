@@ -518,6 +518,7 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
         self.refloat_stream = RefloatStreamDecoder::new();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn handle_notification(
         &mut self,
         family: ProtocolFamily,
@@ -546,8 +547,8 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                 ));
                 return;
             }
-            Ok(RefloatStreamResult::Buffered) => {}
-            Err(
+            Ok(RefloatStreamResult::Buffered)
+            | Err(
                 RefloatCodecError::UnexpectedVescCommand
                 | RefloatCodecError::UnexpectedPackageInterface
                 | RefloatCodecError::UnsupportedCommand,
@@ -673,10 +674,10 @@ fn push_vesc_reply(
         ))),
         VescReadOnlyReply::Values(values) => {
             output.push(SessionOutput::Event(DeviceEvent::Telemetry(
-                vesc_values_to_delta(*values, monotonic_ms, board_profile),
+                vesc_values_to_delta(values, monotonic_ms, board_profile),
             )));
             output.push(SessionOutput::Event(DeviceEvent::ReadOnlyResponse(
-                ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(*values)),
+                ReadOnlyResponse::RawTelemetry(vesc_values_to_raw_telemetry(values)),
             )));
         }
         VescReadOnlyReply::Stats(stats) => {
@@ -714,17 +715,19 @@ fn push_refloat_realtime_request(output: &mut Vec<SessionOutput>) {
     )
     .is_ok()
     {
+        let Ok(bytes) = WritePayload::try_from_slice(payload.as_slice()) else {
+            return;
+        };
         output.push(SessionOutput::Transport(TransportAction::Write {
             channel: VESC_WRITE_CHANNEL,
-            bytes: WritePayload::try_from_slice(payload.as_slice())
-                .expect("encoded Refloat realtime request fits write payload"),
+            bytes,
             mode: WriteMode::WithoutResponse,
         }));
     }
 }
 
 fn vesc_values_to_delta(
-    values: VescValuesTelemetry,
+    values: &VescValuesTelemetry,
     monotonic_ms: MonotonicTimestamp,
     board_profile: Option<VescBoardProfile>,
 ) -> cutout_core::TelemetryDelta {
@@ -747,7 +750,7 @@ fn vesc_values_to_delta(
     }
 }
 
-fn vesc_values_to_raw_telemetry(values: VescValuesTelemetry) -> RawTelemetryReadback {
+fn vesc_values_to_raw_telemetry(values: &VescValuesTelemetry) -> RawTelemetryReadback {
     RawTelemetryReadback {
         fields: [
             Some(RawFieldValue::new(
