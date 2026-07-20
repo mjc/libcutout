@@ -36,11 +36,10 @@ struct BmsGroupCell: View {
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
     let isSelected: Bool
-    let scale: CGFloat
 
     var body: some View {
-        VStack(spacing: 8 * scale) {
-            HStack(spacing: 4 * scale) {
+        VStack(spacing: 8) {
+            HStack(spacing: 4) {
                 Text("\(group.index)")
                 BmsAlertIndicator(alertLevel: group.alertLevel)
             }
@@ -51,8 +50,8 @@ struct BmsGroupCell: View {
                 .monospacedDigit()
         }
         .frame(maxWidth: .infinity)
-        .frame(minHeight: 70 * scale)
-        .background(PevDashboardCardBackground(cornerRadius: 10 * scale, stroke: strokeColor, lineWidth: 1.2))
+        .frame(minHeight: 70)
+        .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(group.accessibilityLabel)
         .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
@@ -73,11 +72,10 @@ struct BmsGroupCell: View {
 struct BmsStripCell: View {
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
-    let scale: CGFloat
 
     var body: some View {
-        VStack(spacing: 2 * scale) {
-            HStack(spacing: 2 * scale) {
+        VStack(spacing: 2) {
+            HStack(spacing: 2) {
                 Text(String(format: "%02d", group.index))
                 BmsAlertIndicator(alertLevel: group.alertLevel)
             }
@@ -87,8 +85,8 @@ struct BmsStripCell: View {
                 .font(.caption.weight(.black))
                 .monospacedDigit()
         }
-        .frame(maxWidth: .infinity, minHeight: 60 * scale)
-        .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: strokeColor, lineWidth: 1.2))
+        .frame(maxWidth: .infinity, minHeight: 60)
+        .background(PevDashboardCardBackground(cornerRadius: 8, stroke: strokeColor, lineWidth: 1.2))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(group.accessibilityLabel)
         .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
@@ -143,7 +141,6 @@ struct BmsAlertIndicator: View {
 struct BmsGroupIndexCell: View {
     let group: BmsGroupSnapshot
     let isSelected: Bool
-    let scale: CGFloat
     let action: () -> Void
 
     var body: some View {
@@ -153,7 +150,7 @@ struct BmsGroupIndexCell: View {
                 .foregroundStyle(PevColors.muted)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)
-                .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
+                .background(PevDashboardCardBackground(cornerRadius: 8, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)

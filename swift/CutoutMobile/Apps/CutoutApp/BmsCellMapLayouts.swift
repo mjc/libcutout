@@ -25,8 +25,7 @@ struct BmsInlineLayout: View {
                     BmsGroupCell(
                         group: group,
                         isHighlighted: content.highlightedGroupIndices.contains(group.index),
-                        isSelected: false,
-                        scale: scale
+                        isSelected: false
                     )
                 }
             }
@@ -88,8 +87,7 @@ struct BmsScrollableLayout: View {
                 ForEach(snapshot.groups) { group in
                     BmsStripCell(
                         group: group,
-                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
-                        scale: scale
+                        isHighlighted: content.highlightedGroupIndices.contains(group.index)
                     )
                 }
             }
@@ -154,7 +152,6 @@ struct BmsDetailLayout: View {
                     BmsGroupIndexCell(
                         group: group,
                         isSelected: group.index == selectedGroup?.index,
-                        scale: scale,
                         action: { selectedGroupIndex = group.index }
                     )
                 }
