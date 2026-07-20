@@ -146,6 +146,7 @@ struct VescRideScreenView: View {
     var body: some View {
         PevRideDashboardShell(
             sectionTitle: "Ride",
+            heroStyle: .vescOnewheel,
             title: title,
             subtitle: subtitle,
             statusFill: PevColors.purple,

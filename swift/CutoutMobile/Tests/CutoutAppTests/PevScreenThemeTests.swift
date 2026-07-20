@@ -3,6 +3,13 @@ import XCTest
 import CutoutMobile
 
 final class PevScreenThemeTests: XCTestCase {
+    func testRideHeroTypographyMatchesReferenceAtDefaultTextSize() {
+        XCTAssertEqual(PevRideHeroStyle.electricUnicycle.speedPointSize, 138)
+        XCTAssertEqual(PevRideHeroStyle.vescOnewheel.speedPointSize, 124)
+        XCTAssertEqual(PevRideHeroStyle.electricUnicycle.unitPointSize, 24)
+        XCTAssertEqual(PevRideHeroStyle.vescOnewheel.unitPointSize, 24)
+    }
+
     func testPowerFlowDetailUsesPlainStateWords() {
         XCTAssertEqual(powerFlowDetail(.discharge, fallback: "fallback"), "discharging")
         XCTAssertEqual(powerFlowDetail(.zero, fallback: "fallback"), "idle")

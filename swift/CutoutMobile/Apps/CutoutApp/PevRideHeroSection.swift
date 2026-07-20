@@ -1,9 +1,23 @@
 import CutoutMobile
 import SwiftUI
 
+enum PevRideHeroStyle {
+    case electricUnicycle
+    case vescOnewheel
+
+    var speedPointSize: CGFloat {
+        switch self {
+        case .electricUnicycle: 138
+        case .vescOnewheel: 124
+        }
+    }
+
+    var unitPointSize: CGFloat { 24 }
+}
+
 struct PevRideHeroSection: View {
-    @ScaledMetric(relativeTo: .largeTitle) private var speedFontSize: CGFloat = 104
-    @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize: CGFloat = 27
+    @ScaledMetric(relativeTo: .largeTitle) private var speedFontSize: CGFloat = 0
+    @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize: CGFloat = 0
 
     let title: String
     let subtitle: String
@@ -13,6 +27,35 @@ struct PevRideHeroSection: View {
     let speedUnit: String
     let speedCaption: String
     let scale: CGFloat
+
+    init(
+        style: PevRideHeroStyle,
+        title: String,
+        subtitle: String,
+        statusFill: Color,
+        captureStatusText: String?,
+        speedValue: String,
+        speedUnit: String,
+        speedCaption: String,
+        scale: CGFloat
+    ) {
+        _speedFontSize = ScaledMetric(
+            wrappedValue: style.speedPointSize,
+            relativeTo: .largeTitle
+        )
+        _speedUnitFontSize = ScaledMetric(
+            wrappedValue: style.unitPointSize,
+            relativeTo: .title2
+        )
+        self.title = title
+        self.subtitle = subtitle
+        self.statusFill = statusFill
+        self.captureStatusText = captureStatusText
+        self.speedValue = speedValue
+        self.speedUnit = speedUnit
+        self.speedCaption = speedCaption
+        self.scale = scale
+    }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -79,7 +122,7 @@ struct PevRideHeroSection: View {
 
     private var speed: some View {
         Text(speedValue)
-            .font(.system(size: speedFontSize * scale, weight: .black))
+            .font(.system(size: speedFontSize, weight: .black))
             .monospacedDigit()
     }
 
@@ -87,7 +130,7 @@ struct PevRideHeroSection: View {
     private var unit: some View {
         if !speedUnit.isEmpty {
             Text(speedUnit)
-                .font(.system(size: speedUnitFontSize * scale, weight: .bold))
+                .font(.system(size: speedUnitFontSize, weight: .bold))
                 .foregroundStyle(PevColors.muted)
         }
     }

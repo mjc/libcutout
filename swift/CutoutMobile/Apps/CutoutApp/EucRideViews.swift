@@ -79,6 +79,7 @@ struct EucRideScreenView: View {
     var body: some View {
         PevRideDashboardShell(
             sectionTitle: "EUC ride",
+            heroStyle: .electricUnicycle,
             title: titleText,
             subtitle: phaseText,
             statusFill: PevColors.green,

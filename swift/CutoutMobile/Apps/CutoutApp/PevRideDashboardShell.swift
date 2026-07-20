@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PevRideDashboardShell<Content: View>: View {
     let sectionTitle: String
+    let heroStyle: PevRideHeroStyle
     let title: String
     let subtitle: String
     let statusFill: Color
@@ -15,6 +16,7 @@ struct PevRideDashboardShell<Content: View>: View {
 
     init(
         sectionTitle: String,
+        heroStyle: PevRideHeroStyle,
         title: String,
         subtitle: String,
         statusFill: Color,
@@ -26,6 +28,7 @@ struct PevRideDashboardShell<Content: View>: View {
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
+        self.heroStyle = heroStyle
         self.title = title
         self.subtitle = subtitle
         self.statusFill = statusFill
@@ -46,6 +49,7 @@ struct PevRideDashboardShell<Content: View>: View {
             showsHeader: false
         ) { scale, columns in
             PevRideHeroSection(
+                style: heroStyle,
                 title: title,
                 subtitle: subtitle,
                 statusFill: statusFill,
