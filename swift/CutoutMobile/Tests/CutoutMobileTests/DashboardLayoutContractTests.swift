@@ -2,6 +2,12 @@ import XCTest
 @testable import CutoutMobile
 
 final class DashboardLayoutContractTests: XCTestCase {
+    func testContentScaleNeverShrinksTheWholeDashboard() {
+        XCTAssertEqual(DashboardViewport.contentScale(width: 390, height: 844), 1)
+        XCTAssertEqual(DashboardViewport.contentScale(width: 320, height: 568), 1)
+        XCTAssertEqual(DashboardViewport.contentScale(width: 844, height: 320), 1)
+    }
+
     func testEveryProductionScreenUsesTheSharedLayoutContractAcrossViewports() {
         let screenIDs = PevScreenID.allCases
         let catalogIDs = PevScreenCatalog.live.screens.map(\.id)
