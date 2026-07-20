@@ -4,17 +4,13 @@ import SwiftUI
 struct BmsChip: View {
     let title: String
     let accent: PevAccent
-    let scale: CGFloat
-    let maxWidth: CGFloat?
 
     var body: some View {
         Text(title)
-            .font(.system(size: 15 * scale, weight: .bold))
+            .font(.callout.weight(.bold))
             .foregroundStyle(.black.opacity(accent == .green ? 0.82 : 0.92))
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
-            .padding(.horizontal, 16 * scale)
-            .frame(maxWidth: maxWidth, minHeight: 30 * scale)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .background(chipBackground)
     }
 

@@ -2133,6 +2133,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             || highestTemperature != nil
     }
 
+    public var energyProgress: Double? {
+        energyPercent.map { min(max(Double($0.value) / 100, 0), 1) }
+    }
+
     public var readbackRows: [SessionDebugRow] {
         var rows = [
             SessionDebugRow(label: "availability", value: availability.displayText),

@@ -2,6 +2,27 @@ import XCTest
 @testable import CutoutMobile
 
 final class BmsSnapshotContractTests: XCTestCase {
+    func testEnergyProgressUsesAndClampsTypedBatteryLevel() {
+        let topology = BmsTopology(
+            layoutLabel: "test pack",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .verified
+        )
+
+        XCTAssertNil(BmsSnapshot(topology: topology).energyProgress)
+        XCTAssertEqual(
+            BmsSnapshot(topology: topology, energyPercent: BatteryLevel(value: 72)).energyProgress,
+            0.72
+        )
+        XCTAssertEqual(
+            BmsSnapshot(topology: topology, energyPercent: BatteryLevel(value: 255)).energyProgress,
+            1
+        )
+    }
+
     func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {
         let group = BmsGroupSnapshot(
             index: 7,

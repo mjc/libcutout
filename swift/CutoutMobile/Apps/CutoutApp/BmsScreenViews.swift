@@ -25,8 +25,8 @@ struct BmsScreenView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let designWidth = min(proxy.size.width, 390)
-            let scale = min(1, designWidth / 390.0, proxy.size.height / 844.0)
+            let designWidth = proxy.size.width
+            let scale: CGFloat = 1
 
             Group {
                 if content.kind == .noData {
@@ -42,7 +42,7 @@ struct BmsScreenView: View {
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(alignment: .leading, spacing: 14 * scale) {
                                 header(scale: scale)
-                                chipRow(scale: scale, contentWidth: designWidth - (46 * scale))
+                                chipRow(scale: scale)
                                 contentSection(scale: scale)
                                 if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
                                     liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
@@ -82,33 +82,18 @@ struct BmsScreenView: View {
     }
 
     private func header(scale: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 2 * scale) {
-            Text("CutOut · BMS")
-                .font(.system(size: 15 * scale, weight: .medium))
-                .foregroundStyle(PevColors.muted)
-            Text(screen.title)
-                .font(.system(size: 32 * scale, weight: .black))
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-        }
+        PevScreenTitleBlock(title: screen.title, subtitle: "CutOut · BMS", scale: scale)
     }
 
-    private func chipRow(scale: CGFloat, contentWidth: CGFloat) -> some View {
-        let chipWidths: [CGFloat?]
-        if content.chips.count == 3 {
-            let availableWidth = max(contentWidth - (20 * scale), 0)
-            chipWidths = [availableWidth * 0.38, availableWidth * 0.22, availableWidth * 0.40]
-        } else {
-            chipWidths = Array(repeating: nil, count: content.chips.count)
-        }
-
-        return HStack(spacing: 10 * scale) {
-            ForEach(Array(content.chips.enumerated()), id: \.offset) { index, chip in
+    private func chipRow(scale: CGFloat) -> some View {
+        PevDashboardGrid(
+            columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 10 * scale)],
+            spacing: 10 * scale
+        ) {
+            ForEach(content.chips, id: \.self) { chip in
                 BmsChip(
                     title: chip.title,
-                    accent: chip.accent,
-                    scale: scale,
-                    maxWidth: chipWidths[index]
+                    accent: chip.accent
                 )
             }
         }

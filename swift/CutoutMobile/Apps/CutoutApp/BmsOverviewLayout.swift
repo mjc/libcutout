@@ -13,10 +13,7 @@ struct BmsOverviewLayout: View {
 
             if hasCellVoltageEvidence {
                 PevDashboardGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 14 * scale),
-                        GridItem(.flexible(), spacing: 14 * scale),
-                    ],
+                    columns: [GridItem(.adaptive(minimum: 140 * scale), spacing: 14 * scale)],
                     spacing: 14 * scale
                 ) {
                     if let averageGroupVoltage {
@@ -81,13 +78,13 @@ struct BmsOverviewLayout: View {
 
     @ViewBuilder
     private var summaryCard: some View {
-        if snapshot.energyPercent != nil {
+        if let energyProgress = snapshot.energyProgress {
             PevDashboardHeroCard(
                 eyebrow: "usable energy",
                 value: percentText(snapshot.energyPercent),
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
-                progress: 0.72,
+                progress: energyProgress,
                 accent: PevColors.yellow,
                 scale: scale
             )
