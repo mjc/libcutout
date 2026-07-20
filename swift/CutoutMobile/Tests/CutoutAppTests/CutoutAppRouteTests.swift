@@ -83,6 +83,15 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(SessionConnectionPhase.failed(.missingNotifyChannel).opensRideScreen)
     }
 
+    func testEveryTelemetryRouteRequiresALiveSession() {
+        XCTAssertFalse(CutoutAppRoute.devicePicker.requiresLiveSession)
+        XCTAssertFalse(CutoutAppRoute.capture.requiresLiveSession)
+        XCTAssertTrue(CutoutAppRoute.eucRide.requiresLiveSession)
+        XCTAssertTrue(CutoutAppRoute.eucPack(.bmsOverview).requiresLiveSession)
+        XCTAssertTrue(CutoutAppRoute.vescRide.requiresLiveSession)
+        XCTAssertTrue(CutoutAppRoute.vescDebug.requiresLiveSession)
+    }
+
     func testConnectionAnnouncementsCoverMeaningfulTransitionsWithoutChatter() {
         XCTAssertNil(SessionConnectionPhase.starting.accessibilityAnnouncement)
         XCTAssertNil(SessionConnectionPhase.scanning.accessibilityAnnouncement)
