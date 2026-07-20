@@ -314,6 +314,7 @@ fn voltage_sag_estimator_update_does_not_allocate_locked() {
     let update = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
         estimator.update(VoltageSagInput {
             at: ms(at),
+            flow: ChargeFlow::Discharging,
             voltage: Measured::reported(Voltage::from_millivolts(voltage)),
             battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
             freshness: TelemetryFreshness::new(Duration::from_seconds(30)),

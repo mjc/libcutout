@@ -5288,9 +5288,20 @@ impl MobileChargeEstimator {
     pub fn update(&self, input: MobileChargeEstimateInputDto) -> MobileChargeEstimateStateDto {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let snapshot = input.snapshot;
+        let charge_mode = snapshot.charge_mode.map_or_else(
+            || Measured::estimated(ChargeMode::NotCharging),
+            core_charge_mode,
+        );
+        let charge_flow_verification = state
+            .profile
+            .map_or(VerificationStatus::Unverified, |profile| {
+                profile.charge_flow_verification.into()
+            });
+        let flow = core_charge_flow(&snapshot, charge_mode, charge_flow_verification);
         let voltage_sag = match (snapshot.voltage, snapshot.battery_current) {
             (Some(voltage), Some(battery_current)) => state.voltage_sag.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(snapshot.at_ms.unwrap_or(input.at).milliseconds),
+                flow: flow.value,
                 voltage: core_measured_voltage(voltage),
                 battery_current: core_measured_battery_current(battery_current),
                 freshness: TelemetryFreshness::new(CoreDuration::from_milliseconds(
@@ -5324,15 +5335,6 @@ impl MobileChargeEstimator {
         let observed_at = snapshot.at_ms.map_or(at, |timestamp| {
             MonotonicTimestamp::new(timestamp.milliseconds)
         });
-        let charge_mode = snapshot.charge_mode.map_or_else(
-            || Measured::estimated(ChargeMode::NotCharging),
-            core_charge_mode,
-        );
-        let flow = core_charge_flow(
-            &snapshot,
-            charge_mode,
-            profile.charge_flow_verification.into(),
-        );
         let result = state.estimator.update(ChargeEstimateInput {
             session: ChargeSessionIdentity::new(profile.session_id),
             profile: ChargeProfileIdentity::new(profile.profile_id),
@@ -8756,6 +8758,20 @@ mod tests {
         }
     }
 
+    fn sag_estimator_snapshot(
+        at: u64,
+        power_flow: PowerFlowDirection,
+    ) -> MobileTelemetrySnapshotDto {
+        let mut snapshot = charge_estimator_snapshot(at, power_flow);
+        snapshot.operating_state = RideOperatingState::Riding;
+        snapshot
+            .charge_mode
+            .as_mut()
+            .expect("fixture charge mode")
+            .value = MobileChargeModeDto::NotCharging;
+        snapshot
+    }
+
     #[test]
     fn charge_estimator_ffi_projects_estimates() {
         let estimator = MobileChargeEstimator::new();
@@ -8811,8 +8827,7 @@ mod tests {
     fn voltage_sag_ffi_learns_from_observed_load_steps() {
         let estimator = MobileChargeEstimator::new();
         let update = |at, voltage, current| {
-            let mut snapshot = charge_estimator_snapshot(at, PowerFlowDirection::Discharge);
-            snapshot.operating_state = RideOperatingState::Riding;
+            let mut snapshot = sag_estimator_snapshot(at, PowerFlowDirection::Discharge);
             snapshot
                 .voltage
                 .as_mut()
@@ -8849,8 +8864,7 @@ mod tests {
     fn voltage_sag_ffi_exports_and_restores_a_per_device_model() {
         let estimator = MobileChargeEstimator::new();
         let update = |estimator: &MobileChargeEstimator, at, voltage, current| {
-            let mut snapshot = charge_estimator_snapshot(at, PowerFlowDirection::Discharge);
-            snapshot.operating_state = RideOperatingState::Riding;
+            let mut snapshot = sag_estimator_snapshot(at, PowerFlowDirection::Discharge);
             snapshot
                 .voltage
                 .as_mut()
@@ -8891,6 +8905,42 @@ mod tests {
         );
         restored.clear_voltage_sag_model();
         assert_eq!(restored.voltage_sag_model(), None);
+    }
+
+    #[test]
+    fn voltage_sag_ffi_does_not_project_non_discharging_current() {
+        let model = MobileVoltageSagModelDto {
+            schema_version: 1,
+            effective_resistance_milliohms: 100,
+            observations: 8,
+            hardware_verified: true,
+        };
+        let charging = charge_estimator_snapshot(1_000, PowerFlowDirection::Charging);
+        let regeneration = sag_estimator_snapshot(1_000, PowerFlowDirection::Regeneration);
+
+        for (flow, mut snapshot) in [("charging", charging), ("regeneration", regeneration)] {
+            snapshot
+                .battery_current
+                .as_mut()
+                .expect("fixture current")
+                .value
+                .value = 10_000;
+            let estimator = MobileChargeEstimator::new();
+            assert!(estimator.restore_voltage_sag_model(model));
+
+            let state = estimator.update(MobileChargeEstimateInputDto {
+                at: MobileMonotonicMillisDto {
+                    milliseconds: 1_000,
+                },
+                snapshot,
+                freshness: MobileDurationDto {
+                    milliseconds: 30_000,
+                },
+            });
+
+            assert_eq!(state.voltage_sag, None, "{flow} must not produce sag");
+            assert_eq!(estimator.voltage_sag_model(), Some(model));
+        }
     }
 
     #[test]

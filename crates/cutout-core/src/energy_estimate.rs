@@ -295,6 +295,8 @@ impl VoltageSagEstimate {
 pub struct VoltageSagInput {
     /// Host observation timestamp.
     pub at: MonotonicTimestamp,
+    /// Canonical direction of pack current.
+    pub flow: ChargeFlow,
     /// Observed pack voltage.
     pub voltage: Measured<Voltage>,
     /// Simultaneously observed pack current.
@@ -406,7 +408,8 @@ impl VoltageSagEstimator {
     /// Learns from consecutive load steps and projects sag at the latest current.
     #[must_use]
     pub fn update(&mut self, input: VoltageSagInput) -> Option<VoltageSagEstimate> {
-        if !input.voltage.verification.is_trusted()
+        if input.flow != ChargeFlow::Discharging
+            || !input.voltage.verification.is_trusted()
             || !input.battery_current.verification.is_trusted()
             || input.voltage.quality == ValueQuality::Inferred
             || input.battery_current.quality == ValueQuality::Inferred
@@ -1518,6 +1521,7 @@ mod tests {
         assert_eq!(
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(0),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(100_000)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(0)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1527,6 +1531,7 @@ mod tests {
         let evidence = estimator
             .update(VoltageSagInput {
                 at: MonotonicTimestamp::new(1_000),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(99_000)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1546,6 +1551,7 @@ mod tests {
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1562,6 +1568,7 @@ mod tests {
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1583,6 +1590,7 @@ mod tests {
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1632,6 +1640,7 @@ mod tests {
         let sag = estimator
             .update(VoltageSagInput {
                 at: MonotonicTimestamp::new(1_000),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(99_000)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1642,11 +1651,40 @@ mod tests {
     }
 
     #[test]
+    fn restored_sag_model_ignores_non_discharging_current() {
+        let model = VoltageSagModel::new(EffectiveResistance::from_milliohms(100), 8, true);
+
+        for flow in [
+            ChargeFlow::Charging,
+            ChargeFlow::Regeneration,
+            ChargeFlow::Zero,
+            ChargeFlow::Unknown,
+        ] {
+            let mut estimator = VoltageSagEstimator::new();
+            assert!(estimator.restore_model(model));
+
+            assert_eq!(
+                estimator.update(VoltageSagInput {
+                    at: MonotonicTimestamp::new(1_000),
+                    flow,
+                    voltage: Measured::reported(Voltage::from_millivolts(99_000)),
+                    battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
+                    freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+                }),
+                None,
+                "{flow:?} must not produce sag"
+            );
+            assert_eq!(estimator.model(), Some(model));
+        }
+    }
+
+    #[test]
     fn unlearned_sag_model_uses_connection_under_load_only_as_a_baseline() {
         let mut estimator = VoltageSagEstimator::new();
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1683,6 +1721,7 @@ mod tests {
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1711,6 +1750,7 @@ mod tests {
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
@@ -1732,6 +1772,7 @@ mod tests {
         let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
             estimator.update(VoltageSagInput {
                 at: MonotonicTimestamp::new(at),
+                flow: ChargeFlow::Discharging,
                 voltage: Measured::reported(Voltage::from_millivolts(voltage)),
                 battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
                 freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
