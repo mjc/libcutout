@@ -189,7 +189,6 @@ struct PevDashboardHeader: View {
                 }
             }
         }
-        .padding(.top, 10 * scale)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.top.navigation")
     }
