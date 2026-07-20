@@ -831,6 +831,14 @@ pub struct ChargeEstimator {
     last_reset_reason: Option<ChargeEstimateResetReason>,
 }
 
+#[derive(Clone, Copy)]
+struct ValidatedChargeSample {
+    current: i64,
+    current_negative: bool,
+    battery_current: Measured<BatteryCurrent>,
+    level_confidence: EstimateConfidence,
+}
+
 impl ChargeEstimator {
     /// Creates an empty estimator.
     #[must_use]
@@ -871,18 +879,40 @@ impl ChargeEstimator {
 
     /// Admits one typed sample and returns the current estimator state.
     #[must_use]
-    #[allow(clippy::too_many_lines)]
     pub fn update(&mut self, input: ChargeEstimateInput) -> ChargeEstimateState {
-        if input.at < input.observed_at {
-            self.reset_with_reason(ChargeEstimateResetReason::TimestampOrder);
-            return ChargeEstimateState::Failed(ChargeEstimateError::TimestampOrder);
+        if let Err(state) = self.prepare_identity(input) {
+            return state;
         }
-        let age = input.at.saturating_duration_since(input.observed_at);
-        if age > input.freshness.max_age {
-            self.reset_with_reason(ChargeEstimateResetReason::StaleGap);
-            return ChargeEstimateState::Stale;
+        let sample = match self.validate_evidence(input) {
+            Ok(sample) => sample,
+            Err(state) => return state,
+        };
+        if let Err(state) = self.prepare_sample(input, sample) {
+            return state;
         }
 
+        self.window.observe(input.observed_at, sample.current);
+        self.last_current_negative = Some(sample.current_negative);
+        self.last_current_source = Some(sample.battery_current.source);
+        self.last_current_verification = Some(sample.battery_current.verification);
+        self.last_charge_mode_source = Some(input.charge_mode.source);
+        self.last_charge_mode_verification = Some(input.charge_mode.verification);
+        self.capacity = Some(input.usable_capacity);
+
+        self.current_state(input, sample.level_confidence)
+    }
+
+    fn prepare_identity(&mut self, input: ChargeEstimateInput) -> Result<(), ChargeEstimateState> {
+        if input.at < input.observed_at {
+            self.reset_with_reason(ChargeEstimateResetReason::TimestampOrder);
+            return Err(ChargeEstimateState::Failed(
+                ChargeEstimateError::TimestampOrder,
+            ));
+        }
+        if input.at.saturating_duration_since(input.observed_at) > input.freshness.max_age {
+            self.reset_with_reason(ChargeEstimateResetReason::StaleGap);
+            return Err(ChargeEstimateState::Stale);
+        }
         if self.session != Some(input.session) {
             if self.session.is_some() {
                 self.reset_with_reason(ChargeEstimateResetReason::SessionChanged);
@@ -893,42 +923,44 @@ impl ChargeEstimator {
             self.reset_with_reason(ChargeEstimateResetReason::ProfileChanged);
         }
         self.profile = Some(input.profile);
+        Ok(())
+    }
 
+    fn validate_evidence(
+        &mut self,
+        input: ChargeEstimateInput,
+    ) -> Result<ValidatedChargeSample, ChargeEstimateState> {
         if !input.charge_mode.verification.is_trusted() || !input.charge_mode.value.is_active() {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::NotCharging,
-            };
+            return Err(unavailable(ChargeEstimateUnavailableReason::NotCharging));
         }
         if !input.flow.verification.is_trusted() {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
-            };
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+            ));
         }
         if !input.flow.value.is_charging() {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::ContradictoryInputs,
-            };
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::ContradictoryInputs,
+            ));
         }
         let Some(battery_current) = input.battery_current else {
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::CurrentMissing,
-            };
+            return Err(unavailable(ChargeEstimateUnavailableReason::CurrentMissing));
         };
         if !battery_current.verification.is_trusted() {
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
-            };
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::CurrentDirectionUnverified,
+            ));
         }
         let current = i64::from(battery_current.value.as_milliamps()).unsigned_abs();
         let current = i64::try_from(current).unwrap_or(i64::MAX);
         if current < MIN_CHARGE_CURRENT_MILLIAMPS {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::CurrentTooSmall,
-            };
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::CurrentTooSmall,
+            ));
         }
         let current_negative = battery_current.value.as_milliamps().is_negative();
         if self
@@ -936,74 +968,50 @@ impl ChargeEstimator {
             .is_some_and(|previous| previous != current_negative)
         {
             self.reset_with_reason(ChargeEstimateResetReason::CurrentEvidenceChanged);
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::ContradictoryInputs,
-            };
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::ContradictoryInputs,
+            ));
         }
         if !input.usable_capacity.verification.is_trusted()
             || input.usable_capacity.as_milliamp_hours() == 0
         {
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::CapacityMissing,
-            };
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::CapacityMissing,
+            ));
         }
-        let (level, level_confidence) = match input.battery_level {
-            BatteryLevelBasis::Reported(level) => {
-                if !level.verification.is_trusted() || level.quality != ValueQuality::Known {
-                    return ChargeEstimateState::Unavailable {
-                        reason: ChargeEstimateUnavailableReason::BatteryLevelMissing,
-                    };
-                }
-                (level.value, EstimateConfidence::High)
-            }
-            BatteryLevelBasis::ProfileEstimated {
-                level,
-                profile,
-                confidence,
-            } => {
-                if profile.get() == 0 || !level.verification.is_trusted() {
-                    return ChargeEstimateState::Unavailable {
-                        reason: ChargeEstimateUnavailableReason::UnsupportedProfile,
-                    };
-                }
-                (level.value, confidence)
-            }
-            BatteryLevelBasis::Unavailable => {
-                return ChargeEstimateState::Unavailable {
-                    reason: ChargeEstimateUnavailableReason::BatteryLevelMissing,
-                };
-            }
-        };
-        if level.as_percent() >= 99 {
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::FullOrNearFull,
-            };
-        }
-        if let Some(temperature) = input.battery_temperature {
-            let millicelsius = temperature.value.as_millicelsius();
-            if !(-10_000..=50_000).contains(&millicelsius) {
-                return ChargeEstimateState::Unavailable {
-                    reason: ChargeEstimateUnavailableReason::TemperatureOutOfModel,
-                };
-            }
-        }
+        let level_confidence = validate_battery_level(input.battery_level)?;
+        validate_battery_temperature(input.battery_temperature)?;
+        Ok(ValidatedChargeSample {
+            current,
+            current_negative,
+            battery_current,
+            level_confidence,
+        })
+    }
 
+    fn prepare_sample(
+        &mut self,
+        input: ChargeEstimateInput,
+        sample: ValidatedChargeSample,
+    ) -> Result<(), ChargeEstimateState> {
         if let Some(previous) = self.window.last {
             if input.observed_at < previous {
                 self.reset_with_reason(ChargeEstimateResetReason::TimestampOrder);
-                return ChargeEstimateState::Failed(ChargeEstimateError::TimestampOrder);
+                return Err(ChargeEstimateState::Failed(
+                    ChargeEstimateError::TimestampOrder,
+                ));
             }
             if input.observed_at.saturating_duration_since(previous) > input.freshness.max_age {
                 self.reset_with_reason(ChargeEstimateResetReason::StaleGap);
-                return ChargeEstimateState::Stale;
+                return Err(ChargeEstimateState::Stale);
             }
         }
         if self
             .last_current_source
-            .is_some_and(|source| source != battery_current.source)
+            .is_some_and(|source| source != sample.battery_current.source)
             || self
                 .last_current_verification
-                .is_some_and(|verification| verification != battery_current.verification)
+                .is_some_and(|verification| verification != sample.battery_current.verification)
             || self
                 .last_charge_mode_source
                 .is_some_and(|source| source != input.charge_mode.source)
@@ -1019,15 +1027,14 @@ impl ChargeEstimator {
         {
             self.reset_with_reason(ChargeEstimateResetReason::CapacityChanged);
         }
+        Ok(())
+    }
 
-        self.window.observe(input.observed_at, current);
-        self.last_current_negative = Some(current_negative);
-        self.last_current_source = Some(battery_current.source);
-        self.last_current_verification = Some(battery_current.verification);
-        self.last_charge_mode_source = Some(input.charge_mode.source);
-        self.last_charge_mode_verification = Some(input.charge_mode.verification);
-        self.capacity = Some(input.usable_capacity);
-
+    fn current_state(
+        &self,
+        input: ChargeEstimateInput,
+        level_confidence: EstimateConfidence,
+    ) -> ChargeEstimateState {
         let observed_for = input
             .observed_at
             .saturating_duration_since(self.window.start.unwrap_or(input.observed_at));
@@ -1043,9 +1050,7 @@ impl ChargeEstimator {
             return ChargeEstimateState::Failed(ChargeEstimateError::ArithmeticOverflow);
         };
         if !current_rate.is_stable() {
-            return ChargeEstimateState::Unavailable {
-                reason: ChargeEstimateUnavailableReason::UnstableCurrent,
-            };
+            return unavailable(ChargeEstimateUnavailableReason::UnstableCurrent);
         }
         match calculate_estimate(input, current_rate, level_confidence) {
             Ok(estimate) => ChargeEstimateState::Available(estimate),
@@ -1064,6 +1069,59 @@ impl ChargeEstimator {
         self.capacity = None;
         self.last_reset_reason = Some(reason);
     }
+}
+
+fn validate_battery_level(
+    basis: BatteryLevelBasis,
+) -> Result<EstimateConfidence, ChargeEstimateState> {
+    let (level, confidence) = match basis {
+        BatteryLevelBasis::Reported(level) => {
+            if !level.verification.is_trusted() || level.quality != ValueQuality::Known {
+                return Err(unavailable(
+                    ChargeEstimateUnavailableReason::BatteryLevelMissing,
+                ));
+            }
+            (level.value, EstimateConfidence::High)
+        }
+        BatteryLevelBasis::ProfileEstimated {
+            level,
+            profile,
+            confidence,
+        } => {
+            if profile.get() == 0 || !level.verification.is_trusted() {
+                return Err(unavailable(
+                    ChargeEstimateUnavailableReason::UnsupportedProfile,
+                ));
+            }
+            (level.value, confidence)
+        }
+        BatteryLevelBasis::Unavailable => {
+            return Err(unavailable(
+                ChargeEstimateUnavailableReason::BatteryLevelMissing,
+            ));
+        }
+    };
+    if level.as_percent() >= 99 {
+        return Err(unavailable(ChargeEstimateUnavailableReason::FullOrNearFull));
+    }
+    Ok(confidence)
+}
+
+fn validate_battery_temperature(
+    temperature: Option<Measured<Temperature>>,
+) -> Result<(), ChargeEstimateState> {
+    if temperature.is_some_and(|temperature| {
+        !(-10_000..=50_000).contains(&temperature.value.as_millicelsius())
+    }) {
+        return Err(unavailable(
+            ChargeEstimateUnavailableReason::TemperatureOutOfModel,
+        ));
+    }
+    Ok(())
+}
+
+const fn unavailable(reason: ChargeEstimateUnavailableReason) -> ChargeEstimateState {
+    ChargeEstimateState::Unavailable { reason }
 }
 
 fn calculate_estimate(
@@ -1543,9 +1601,8 @@ mod tests {
                 true,
             ))
         );
-        assert_eq!(observe(&mut estimator, 60_000, 99_000, 10_000), None);
-        let restored = observe(&mut estimator, 61_000, 99_000, 10_000)
-            .expect("fresh samples should reuse the learned resistance");
+        let restored = observe(&mut estimator, 60_000, 99_000, 10_000)
+            .expect("the first fresh sample should reuse the learned resistance");
         assert_eq!(restored.delta.as_millivolts(), -1_000);
         assert_eq!(restored.observations, 1);
     }

@@ -864,9 +864,6 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
     let evidence = mobile_begode_identity_probe_evidence(&probe);
     let reported_model = probe.reported_model.as_deref();
     let reported_code_name = probe.reported_code_name.as_deref();
-    let reported_imu = probe.reported_imu.as_deref();
-    let reported_firmware_version = probe.reported_firmware_version.as_deref();
-    let reported_serial = probe.reported_serial.as_deref();
     let missing_probe_response = probe.missing_probe_response;
     let malformed_probe_response = probe.malformed_probe_response;
     let support = mobile_begode_identity_probe_support(
@@ -876,17 +873,7 @@ pub fn mobile_discovery_candidate_from_begode_identity_probe(
         malformed_probe_response,
     );
     let supported = support == DiscoveryCandidateSupport::Supported;
-    let detail = mobile_begode_identity_probe_detail(
-        supported,
-        reported_model,
-        reported_code_name,
-        reported_imu,
-        reported_firmware_version,
-        reported_serial,
-        probe.nominal_voltage_hint_mv,
-        missing_probe_response,
-        malformed_probe_response,
-    );
+    let detail = mobile_begode_identity_probe_detail(supported, &probe);
 
     DiscoveryCandidate {
         platform_identifier,
@@ -1252,41 +1239,33 @@ fn mobile_begode_identity_probe_evidence(probe: &MobileBegodeIdentityProbeDto) -
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn mobile_begode_identity_probe_detail(
     supported: bool,
-    reported_model: Option<&str>,
-    reported_code_name: Option<&str>,
-    reported_imu: Option<&str>,
-    reported_firmware_version: Option<&str>,
-    reported_serial: Option<&str>,
-    nominal_voltage_hint_mv: Option<u32>,
-    missing_probe_response: Option<MobilePendingProbeDto>,
-    malformed_probe_response: Option<MobilePendingProbeDto>,
+    probe: &MobileBegodeIdentityProbeDto,
 ) -> String {
     let mut parts = Vec::new();
-    if let Some(model) = reported_model {
+    if let Some(model) = probe.reported_model.as_deref() {
         parts.push(format!("reported model {model}"));
     }
-    if let Some(code_name) = reported_code_name {
+    if let Some(code_name) = probe.reported_code_name.as_deref() {
         parts.push(format!("code {code_name}"));
     }
-    if let Some(imu) = reported_imu {
+    if let Some(imu) = probe.reported_imu.as_deref() {
         parts.push(format!("imu {imu}"));
     }
-    if let Some(firmware_version) = reported_firmware_version {
+    if let Some(firmware_version) = probe.reported_firmware_version.as_deref() {
         parts.push(format!("firmware {firmware_version}"));
     }
-    if let Some(serial) = reported_serial {
+    if let Some(serial) = probe.reported_serial.as_deref() {
         parts.push(format!("serial {serial}"));
     }
-    if let Some(voltage_hint_mv) = nominal_voltage_hint_mv {
+    if let Some(voltage_hint_mv) = probe.nominal_voltage_hint_mv {
         parts.push(format!("voltage hint {voltage_hint_mv}mV"));
     }
-    if let Some(missing_probe_response) = missing_probe_response {
+    if let Some(missing_probe_response) = probe.missing_probe_response {
         parts.push(format!("missing {missing_probe_response:?} response"));
     }
-    if let Some(malformed_probe_response) = malformed_probe_response {
+    if let Some(malformed_probe_response) = probe.malformed_probe_response {
         parts.push(format!("malformed {malformed_probe_response:?} response"));
     }
     if supported {
@@ -3444,9 +3423,8 @@ struct CaptureMetadata {
     annotations: Vec<String>,
 }
 
-#[allow(clippy::large_enum_variant)]
 enum CaptureWriterMessage {
-    Record(PevcapRecord),
+    Record(Box<PevcapRecord>),
     Metadata(CaptureMetadata),
     Flush,
     Finish(SyncSender<Result<(), String>>),
@@ -3479,7 +3457,7 @@ impl CaptureWriter {
         let thread_state = Arc::clone(&state);
         let join = thread::Builder::new()
             .name("cutout-pevcap-writer".into())
-            .spawn(move || run_capture_writer(path, header, receiver, thread_state))
+            .spawn(move || run_capture_writer(&path, header, &receiver, &thread_state))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             sender,
@@ -3553,14 +3531,13 @@ fn capture_header(
     .map_err(|error| format!("invalid capture header: {error}"))
 }
 
-#[allow(clippy::needless_pass_by_value)]
 fn run_capture_writer(
-    path: PathBuf,
+    path: &Path,
     mut header: PevcapHeader,
-    receiver: Receiver<CaptureWriterMessage>,
-    state: Arc<CaptureWriterState>,
+    receiver: &Receiver<CaptureWriterMessage>,
+    state: &CaptureWriterState,
 ) {
-    let result = write_capture_stream(&path, &mut header, &receiver, &state);
+    let result = write_capture_stream(path, &mut header, receiver, state);
     if let Err(error) = result {
         state.fail(error);
     }
@@ -4007,7 +3984,7 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Record(record)))
+            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Record(Box::new(record))))
     }
 }
 
@@ -4142,21 +4119,33 @@ impl From<RawTelemetryReadbackDto> for MobileRawTelemetryReadbackDto {
 }
 
 fn raw_telemetry_from_mobile(value: MobileRawTelemetryReadbackDto) -> RawTelemetryReadback {
-    let mut fields = [None; 8];
-    for (slot, field) in fields.iter_mut().zip(value.fields) {
-        *slot = Some(RawFieldValue::new(field.id, field.value));
+    let mut raw = RawTelemetryReadback::default();
+    for field in value.fields.into_iter().take(raw.fields.capacity()) {
+        if raw
+            .fields
+            .try_push(RawFieldValue::new(field.id, field.value))
+            .is_err()
+        {
+            break;
+        }
     }
-    let mut float_fields = [None; 32];
-    for (slot, field) in float_fields.iter_mut().zip(value.float_fields) {
-        *slot = Some(cutout_core::RawFloatFieldValue {
-            id: field.id,
-            value_bits: field.value_bits,
-        });
+    for field in value
+        .float_fields
+        .into_iter()
+        .take(raw.float_fields.capacity())
+    {
+        if raw
+            .float_fields
+            .try_push(cutout_core::RawFloatFieldValue {
+                id: field.id,
+                value_bits: field.value_bits,
+            })
+            .is_err()
+        {
+            break;
+        }
     }
-    RawTelemetryReadback {
-        fields,
-        float_fields,
-    }
+    raw
 }
 
 impl From<SettingsEntry> for MobileSettingsEntryDto {
@@ -4267,7 +4256,6 @@ fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedRea
     })
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn round_f64_to_i32(value: f64) -> i32 {
     if value.is_nan() {
         return 0;
@@ -4278,7 +4266,21 @@ fn round_f64_to_i32(value: f64) -> i32 {
     if value >= f64::from(i32::MAX) {
         return i32::MAX;
     }
-    value.round() as i32
+    let rounded = value.round();
+    let mut low = i64::from(i32::MIN);
+    let mut high = i64::from(i32::MAX);
+    while low <= high {
+        let midpoint = low + (high - low) / 2;
+        let Ok(candidate) = i32::try_from(midpoint) else {
+            return 0;
+        };
+        match f64::from(candidate).total_cmp(&rounded) {
+            std::cmp::Ordering::Less => low = midpoint + 1,
+            std::cmp::Ordering::Greater => high = midpoint - 1,
+            std::cmp::Ordering::Equal => return candidate,
+        }
+    }
+    0
 }
 
 fn speed_from_deci_kmh(value: i64) -> Option<CoreSpeed> {
@@ -4638,124 +4640,75 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
     }
 }
 
+impl MobileSessionOutputDto {
+    fn empty(kind: MobileSessionOutputKindDto) -> Self {
+        Self {
+            kind,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            ingest: None,
+            settings_readback: None,
+            fault_history_readback: None,
+            bms_snapshot: None,
+            raw_telemetry: None,
+            veteran_protocol_model_id: None,
+        }
+    }
+
+    fn transport(kind: MobileSessionOutputKindDto, channel: Vec<u8>, bytes: Vec<u8>) -> Self {
+        let mut output = Self::empty(kind);
+        output.channel = channel;
+        output.bytes = bytes;
+        output
+    }
+
+    fn read_only(payload: ReadOnlyOutputPayload) -> Self {
+        let mut output = Self::empty(MobileSessionOutputKindDto::Event);
+        match payload {
+            ReadOnlyOutputPayload::Settings(settings) => {
+                output.kind = MobileSessionOutputKindDto::SettingsReadback;
+                output.settings_readback = Some(settings.into());
+            }
+            ReadOnlyOutputPayload::FaultHistory(fault_history) => {
+                output.kind = MobileSessionOutputKindDto::FaultHistoryReadback;
+                output.fault_history_readback = Some(fault_history.into());
+            }
+            ReadOnlyOutputPayload::Battery(battery) => {
+                output.kind = MobileSessionOutputKindDto::BmsSnapshot;
+                output.bms_snapshot = Some(battery.into());
+            }
+            ReadOnlyOutputPayload::RawTelemetry(raw) => {
+                output.raw_telemetry = Some(raw.into());
+            }
+            ReadOnlyOutputPayload::Firmware(_) | ReadOnlyOutputPayload::Diagnostics(_) => {}
+        }
+        output
+    }
+}
+
 impl From<SessionOutputDto> for MobileSessionOutputDto {
-    #[allow(clippy::too_many_lines)]
     fn from(output: SessionOutputDto) -> Self {
         match output {
-            SessionOutputDto::Transport(TransportActionDto::Subscribe { channel }) => Self {
-                kind: MobileSessionOutputKindDto::Subscribe,
-                channel: channel.to_vec(),
-                bytes: Vec::new(),
-                ingest: None,
-                settings_readback: None,
-                fault_history_readback: None,
-                bms_snapshot: None,
-                raw_telemetry: None,
-                veteran_protocol_model_id: None,
-            },
-            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => Self {
-                kind: MobileSessionOutputKindDto::Write,
-                channel: channel.to_vec(),
-                bytes,
-                ingest: None,
-                settings_readback: None,
-                fault_history_readback: None,
-                bms_snapshot: None,
-                raw_telemetry: None,
-                veteran_protocol_model_id: None,
-            },
-            SessionOutputDto::Transport(TransportActionDto::Disconnect) => Self {
-                kind: MobileSessionOutputKindDto::Disconnect,
-                channel: Vec::new(),
-                bytes: Vec::new(),
-                ingest: None,
-                settings_readback: None,
-                fault_history_readback: None,
-                bms_snapshot: None,
-                raw_telemetry: None,
-                veteran_protocol_model_id: None,
-            },
-            SessionOutputDto::ReadOnly(response) => match response.payload {
-                ReadOnlyOutputPayload::Settings(settings) => Self {
-                    kind: MobileSessionOutputKindDto::SettingsReadback,
-                    channel: Vec::new(),
-                    bytes: Vec::new(),
-                    ingest: None,
-                    settings_readback: Some(settings.into()),
-                    fault_history_readback: None,
-                    bms_snapshot: None,
-                    raw_telemetry: None,
-                    veteran_protocol_model_id: None,
-                },
-                ReadOnlyOutputPayload::FaultHistory(fault_history) => Self {
-                    kind: MobileSessionOutputKindDto::FaultHistoryReadback,
-                    channel: Vec::new(),
-                    bytes: Vec::new(),
-                    ingest: None,
-                    settings_readback: None,
-                    fault_history_readback: Some(fault_history.into()),
-                    bms_snapshot: None,
-                    raw_telemetry: None,
-                    veteran_protocol_model_id: None,
-                },
-                ReadOnlyOutputPayload::Battery(battery) => Self {
-                    kind: MobileSessionOutputKindDto::BmsSnapshot,
-                    channel: Vec::new(),
-                    bytes: Vec::new(),
-                    ingest: None,
-                    settings_readback: None,
-                    fault_history_readback: None,
-                    bms_snapshot: Some(battery.into()),
-                    raw_telemetry: None,
-                    veteran_protocol_model_id: None,
-                },
-                ReadOnlyOutputPayload::RawTelemetry(raw) => Self {
-                    kind: MobileSessionOutputKindDto::Event,
-                    channel: Vec::new(),
-                    bytes: Vec::new(),
-                    ingest: None,
-                    settings_readback: None,
-                    fault_history_readback: None,
-                    bms_snapshot: None,
-                    raw_telemetry: Some(raw.into()),
-                    veteran_protocol_model_id: None,
-                },
-                ReadOnlyOutputPayload::Firmware(_) | ReadOnlyOutputPayload::Diagnostics(_) => {
-                    Self {
-                        kind: MobileSessionOutputKindDto::Event,
-                        channel: Vec::new(),
-                        bytes: Vec::new(),
-                        ingest: None,
-                        settings_readback: None,
-                        fault_history_readback: None,
-                        bms_snapshot: None,
-                        raw_telemetry: None,
-                        veteran_protocol_model_id: None,
-                    }
-                }
-            },
-            SessionOutputDto::Event(_) => Self {
-                kind: MobileSessionOutputKindDto::Event,
-                channel: Vec::new(),
-                bytes: Vec::new(),
-                ingest: None,
-                settings_readback: None,
-                fault_history_readback: None,
-                bms_snapshot: None,
-                raw_telemetry: None,
-                veteran_protocol_model_id: None,
-            },
-            SessionOutputDto::NotificationIngest(outcome) => Self {
-                kind: MobileSessionOutputKindDto::NotificationIngest,
-                channel: Vec::new(),
-                bytes: Vec::new(),
-                ingest: Some(outcome.into()),
-                settings_readback: None,
-                fault_history_readback: None,
-                bms_snapshot: None,
-                raw_telemetry: None,
-                veteran_protocol_model_id: None,
-            },
+            SessionOutputDto::Transport(TransportActionDto::Subscribe { channel }) => {
+                Self::transport(
+                    MobileSessionOutputKindDto::Subscribe,
+                    channel.to_vec(),
+                    Vec::new(),
+                )
+            }
+            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. }) => {
+                Self::transport(MobileSessionOutputKindDto::Write, channel.to_vec(), bytes)
+            }
+            SessionOutputDto::Transport(TransportActionDto::Disconnect) => {
+                Self::empty(MobileSessionOutputKindDto::Disconnect)
+            }
+            SessionOutputDto::ReadOnly(response) => Self::read_only(response.payload),
+            SessionOutputDto::Event(_) => Self::empty(MobileSessionOutputKindDto::Event),
+            SessionOutputDto::NotificationIngest(outcome) => {
+                let mut output = Self::empty(MobileSessionOutputKindDto::NotificationIngest);
+                output.ingest = Some(outcome.into());
+                output
+            }
         }
     }
 }
@@ -5209,6 +5162,18 @@ impl MobileChargeEstimator {
         })
     }
 
+    /// Selects the Rust-owned battery profile for a supported EUC model.
+    pub fn configure_electric_unicycle_profile(&self, model: DiscoveryElectricUnicycleModel) {
+        match model {
+            DiscoveryElectricUnicycleModel::Aero => {
+                self.configure_nosfet_aero_30s2p_samsung_50s_profile();
+            }
+            DiscoveryElectricUnicycleModel::Falcon => {
+                self.configure_begode_falcon_24s2p_samsung_50s_profile();
+            }
+        }
+    }
+
     /// Configures the confirmed NOSFET Aero pack basis: 30s2p Samsung 50S,
     /// with a 10 Ah profile capacity. Charge-flow polarity remains unverified
     /// until the LIBCU-521 hardware matrix is complete.
@@ -5252,6 +5217,15 @@ impl MobileChargeEstimator {
             state.voltage_sag.reset_observations();
         }
         state.profile = Some(profile);
+    }
+
+    /// Applies the optional charge basis carried by a device-specific VESC profile.
+    pub fn configure_vesc_board_profile(&self, board_profile: VescBoardProfile) {
+        if let Some(profile) = board_profile.charge_profile {
+            self.configure_profile(profile);
+        } else {
+            self.clear_profile();
+        }
     }
 
     /// Removes the usable pack profile and resets bounded history.
@@ -5919,6 +5893,15 @@ pub struct VescBoardProfile {
     /// Number of series cells in the pack.
     pub battery_cells: u8,
 
+    /// Number of parallel cells in each series group.
+    pub battery_parallel_cells: u8,
+
+    /// Physical cell model, independent of the generic voltage curve family.
+    pub battery_cell_model: VescBatteryCellModel,
+
+    /// Optional verified usable-capacity basis for charge estimation.
+    pub charge_profile: Option<MobileChargeProfileDto>,
+
     /// Whether the controller reports battery current directly.
     pub reports_battery_current: bool,
 }
@@ -5958,6 +5941,16 @@ pub enum VescBatteryType {
 
     /// A battery type not modeled by libcutout yet.
     Other,
+}
+
+/// Cell identity retained for device-specific VESC pack configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum VescBatteryCellModel {
+    /// Cell model is not known.
+    Unknown,
+
+    /// Murata/Sony US18650VTC6.
+    SonyVtc6,
 }
 
 /// Mobile-facing wrapper for a generic VESC read-only session.
@@ -7378,34 +7371,32 @@ mod tests {
         );
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[test]
-    fn mobile_session_output_maps_battery_readback_to_bms_snapshot() {
-        let reported_voltage = |value| VoltageReadingDto {
+    fn battery_readback_output_fixture() -> SessionOutputDto {
+        let voltage = |value| VoltageReadingDto {
             value,
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
             verification: VerificationStatusDto::HardwareVerified,
         };
-        let reported_current = |value| BatteryCurrentReadingDto {
+        let current = |value| BatteryCurrentReadingDto {
             value,
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
             verification: VerificationStatusDto::HardwareVerified,
         };
-        let reported_temperature = |value| TemperatureReadingDto {
+        let temperature = |value| TemperatureReadingDto {
             value,
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
             verification: VerificationStatusDto::HardwareVerified,
         };
-        let reported_level = |value| BatteryLevelReadingDto {
+        let level = |value| BatteryLevelReadingDto {
             value,
             source: ValueSourceDto::Reported,
             quality: ValueQualityDto::Known,
             verification: VerificationStatusDto::HardwareVerified,
         };
-        let output = SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
+        SessionOutputDto::ReadOnly(cutout_core::ReadOnlyOutput {
             command_kind: CommandKindDto::RequestBatteryInfo,
             payload: ReadOnlyOutputPayload::Battery(BatteryReadbackDto {
                 availability: BatteryReadbackAvailabilityDto::Available,
@@ -7418,29 +7409,24 @@ mod tests {
                         kind: BatteryPageKindDto::Temperature,
                         verification: VerificationStatusDto::HardwareVerified,
                     },
-                    voltage: Some(reported_voltage(81_600)),
-                    current: Some(reported_current(-1_250)),
-                    bms_pack_current_0: Some(reported_current(-1_100)),
-                    bms_pack_current_1: Some(reported_current(-150)),
-                    level_reported: Some(reported_level(72)),
+                    voltage: Some(voltage(81_600)),
+                    current: Some(current(-1_250)),
+                    bms_pack_current_0: Some(current(-1_100)),
+                    bms_pack_current_1: Some(current(-150)),
+                    level_reported: Some(level(72)),
                     level_estimated: None,
-                    temperature: Some(reported_temperature(31_000)),
-                    temperatures: vec![
-                        None,
-                        Some(reported_temperature(37_800)),
-                        Some(reported_temperature(35_200)),
-                    ],
-                    cell_voltages: vec![
-                        reported_voltage(3_633),
-                        reported_voltage(3_626),
-                        reported_voltage(3_634),
-                    ],
+                    temperature: Some(temperature(31_000)),
+                    temperatures: vec![None, Some(temperature(37_800)), Some(temperature(35_200))],
+                    cell_voltages: vec![voltage(3_633), voltage(3_626), voltage(3_634)],
                     raw_state: None,
                 }),
             }),
-        });
+        })
+    }
 
-        let mobile = MobileSessionOutputDto::from(output);
+    #[test]
+    fn mobile_session_output_maps_battery_readback_to_bms_snapshot() {
+        let mobile = MobileSessionOutputDto::from(battery_readback_output_fixture());
 
         assert_eq!(mobile.kind, MobileSessionOutputKindDto::BmsSnapshot);
         assert!(mobile.channel.is_empty());
@@ -8468,6 +8454,9 @@ mod tests {
             wheel_circumference: Distance { value: 2_100 },
             battery_type: VescBatteryType::LiIon,
             battery_cells: 20,
+            battery_parallel_cells: 1,
+            battery_cell_model: VescBatteryCellModel::Unknown,
+            charge_profile: None,
             reports_battery_current: true,
         });
 
@@ -8505,7 +8494,58 @@ mod tests {
         assert!(snapshot.battery_current.is_some());
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[test]
+    fn vesc_board_profile_carries_device_specific_pack_and_charge_basis() {
+        let estimator = MobileChargeEstimator::new();
+        let board_profile = VescBoardProfile {
+            motor_pole_pairs: 15,
+            gear_ratio_denominator: 1,
+            wheel_circumference: Distance { value: 2_100 },
+            battery_type: VescBatteryType::LiIon,
+            battery_cells: 15,
+            battery_parallel_cells: 2,
+            battery_cell_model: VescBatteryCellModel::SonyVtc6,
+            charge_profile: Some(MobileChargeProfileDto {
+                session_id: 1,
+                profile_id: 15_002,
+                capacity_milliamp_hours: 6_000,
+                capacity_source: MobileChargeCapacitySourceDto::ProtocolProfile,
+                verification: MobileVerificationStatusDto::SourceVerified,
+                charge_flow_verification: MobileVerificationStatusDto::HardwareVerified,
+            }),
+            reports_battery_current: true,
+        };
+
+        estimator.configure_vesc_board_profile(board_profile);
+        let state = estimator.update(MobileChargeEstimateInputDto {
+            at: MobileMonotonicMillisDto { milliseconds: 0 },
+            snapshot: charge_estimator_snapshot(0, PowerFlowDirection::Charging),
+            freshness: MobileDurationDto {
+                milliseconds: 30_000,
+            },
+        });
+
+        assert_eq!(
+            state.kind,
+            MobileChargeEstimateStateKindDto::CollectingSamples
+        );
+    }
+
+    fn capture_phone_location_fixture() -> MobilePhoneLocationSampleDto {
+        MobilePhoneLocationSampleDto {
+            wall_clock_unix_ms: 1_700_000_000_008,
+            latitude_degrees: 39.739_235_8,
+            longitude_degrees: -104.990_251,
+            altitude_meters: 1_609.344,
+            horizontal_accuracy_meters: 0.8,
+            vertical_accuracy_meters: 1.2,
+            speed_meters_per_second: 4.470_400_25,
+            speed_accuracy_meters_per_second: 0.25,
+            course_degrees: 271.5,
+            course_accuracy_degrees: 3.0,
+        }
+    }
+
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let path = std::env::temp_dir().join(format!(
@@ -8559,18 +8599,7 @@ mod tests {
                     value_bits: 0x3f80_0001,
                 }],
             }),
-            Some(MobilePhoneLocationSampleDto {
-                wall_clock_unix_ms: 1_700_000_000_008,
-                latitude_degrees: 39.739_235_8,
-                longitude_degrees: -104.990_251,
-                altitude_meters: 1_609.344,
-                horizontal_accuracy_meters: 0.8,
-                vertical_accuracy_meters: 1.2,
-                speed_meters_per_second: 4.470_400_25,
-                speed_accuracy_meters_per_second: 0.25,
-                course_degrees: 271.5,
-                course_accuracy_degrees: 3.0,
-            }),
+            Some(capture_phone_location_fixture()),
         ));
         assert!(builder.record_link_down(ms(9)));
         assert!(builder.add_annotation("route=vesc".into()));
@@ -8586,12 +8615,12 @@ mod tests {
             .expect("stream writer output is PEVCAP");
         assert_eq!(capture.records.len(), 2);
         let notification = &capture.records[0];
-        let telemetry = notification.telemetry.expect("raw telemetry is correlated");
-        assert_eq!(telemetry.fields[0].expect("integer field").value, 989);
-        assert_eq!(
-            telemetry.float_fields[0].expect("float field").value_bits,
-            0x3f80_0001
-        );
+        let telemetry = notification
+            .telemetry
+            .as_ref()
+            .expect("raw telemetry is correlated");
+        assert_eq!(telemetry.fields[0].value, 989);
+        assert_eq!(telemetry.float_fields[0].value_bits, 0x3f80_0001);
         let location = notification.phone_location.expect("location is correlated");
         assert_eq!(
             location.latitude_degrees.to_bits(),

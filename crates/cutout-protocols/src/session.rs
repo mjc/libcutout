@@ -510,30 +510,22 @@ impl VescNotificationDecoder {
             board_profile: Some(board_profile),
         }
     }
-}
 
-impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
-    fn reset(&mut self) {
-        self.stream = VescReadOnlyStreamDecoder::new();
-        self.refloat_stream = RefloatStreamDecoder::new();
-    }
-
-    #[allow(clippy::too_many_lines)]
-    fn handle_notification(
+    fn handle_refloat_notification(
         &mut self,
         family: ProtocolFamily,
         channel: GattChannel,
         bytes: &[u8],
         monotonic_ms: MonotonicTimestamp,
         output: &mut Vec<SessionOutput>,
-    ) {
+    ) -> bool {
         match self.refloat_stream.feed_result(bytes) {
             Ok(RefloatStreamResult::Replies(replies)) => {
                 self.stream = VescReadOnlyStreamDecoder::new();
                 let reports_battery_current = self
                     .board_profile
                     .is_some_and(|profile| profile.reports_battery_current);
-                for reply in &replies {
+                for reply in &*replies {
                     push_refloat_reply(reply, monotonic_ms, reports_battery_current, output);
                 }
                 output.push(SessionOutput::NotificationIngest(
@@ -545,14 +537,14 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         SemanticEventCount::from_events(replies.len()),
                     ),
                 ));
-                return;
+                true
             }
             Ok(RefloatStreamResult::Buffered)
             | Err(
                 RefloatCodecError::UnexpectedVescCommand
                 | RefloatCodecError::UnexpectedPackageInterface
                 | RefloatCodecError::UnsupportedCommand,
-            ) => {}
+            ) => false,
             Err(_) => {
                 push_parser_error(ParserError::MalformedFrame, output);
                 output.push(SessionOutput::NotificationIngest(
@@ -564,8 +556,28 @@ impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
                         ParserError::MalformedFrame,
                     ),
                 ));
-                return;
+                true
             }
+        }
+    }
+}
+
+impl ReadOnlyNotificationDecoder for VescNotificationDecoder {
+    fn reset(&mut self) {
+        self.stream = VescReadOnlyStreamDecoder::new();
+        self.refloat_stream = RefloatStreamDecoder::new();
+    }
+
+    fn handle_notification(
+        &mut self,
+        family: ProtocolFamily,
+        channel: GattChannel,
+        bytes: &[u8],
+        monotonic_ms: MonotonicTimestamp,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        if self.handle_refloat_notification(family, channel, bytes, monotonic_ms, output) {
+            return;
         }
 
         match self.stream.feed_result(bytes) {
@@ -753,34 +765,28 @@ fn vesc_values_to_delta(
 fn vesc_values_to_raw_telemetry(values: &VescValuesTelemetry) -> RawTelemetryReadback {
     RawTelemetryReadback {
         fields: [
-            Some(RawFieldValue::new(
-                VESC_RAW_ERPM_FIELD_ID,
-                i64::from(values.rpm.as_erpm()),
-            )),
-            Some(RawFieldValue::new(
+            RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, i64::from(values.rpm.as_erpm())),
+            RawFieldValue::new(
                 VESC_RAW_TACHOMETER_FIELD_ID,
                 i64::from(values.tachometer.as_counts()),
-            )),
-            Some(RawFieldValue::new(
+            ),
+            RawFieldValue::new(
                 VESC_RAW_CONTROLLER_ID_FIELD_ID,
                 i64::from(values.controller_id.get()),
-            )),
-            Some(RawFieldValue::new(
+            ),
+            RawFieldValue::new(
                 VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID,
                 i64::from(vesc_fault_code_raw(values.fault_code)),
-            )),
-            Some(RawFieldValue::new(
+            ),
+            RawFieldValue::new(
                 VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID,
                 i64::from(values.tachometer_absolute.as_counts()),
-            )),
-            Some(RawFieldValue::new(
-                VESC_RAW_STATUS_FIELD_ID,
-                i64::from(values.status),
-            )),
-            None,
-            None,
-        ],
-        float_fields: values.raw_float_fields,
+            ),
+            RawFieldValue::new(VESC_RAW_STATUS_FIELD_ID, i64::from(values.status)),
+        ]
+        .into_iter()
+        .collect(),
+        float_fields: values.raw_float_fields.clone(),
     }
 }
 
@@ -1336,7 +1342,7 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
             push_encoded_read_request::<M>(&request, output);
         }
         Some(RequestDisposition::Writes(requests)) => {
-            for request in &requests {
+            for request in requests.iter() {
                 push_encoded_read_request::<M>(request, output);
             }
         }
@@ -2409,27 +2415,24 @@ mod tests {
             panic!("expected raw telemetry response");
         };
         assert_eq!(
-            raw.fields[0].expect("erpm"),
+            raw.fields[0],
             RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 989)
         );
         assert_eq!(
-            raw.fields[1].expect("tachometer"),
+            raw.fields[1],
             RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -21_973)
         );
         assert_eq!(
-            raw.fields[2].expect("controller id"),
+            raw.fields[2],
             RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 20)
         );
         assert_eq!(
-            raw.fields[3].expect("fault"),
+            raw.fields[3],
             RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
         );
-        assert_eq!(
-            raw.fields[4].expect("absolute tachometer").id,
-            VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID
-        );
-        assert_eq!(raw.fields[5].expect("status").id, VESC_RAW_STATUS_FIELD_ID);
-        assert_eq!(raw.float_fields.iter().flatten().count(), 19);
+        assert_eq!(raw.fields[4].id, VESC_RAW_ABSOLUTE_TACHOMETER_FIELD_ID);
+        assert_eq!(raw.fields[5].id, VESC_RAW_STATUS_FIELD_ID);
+        assert_eq!(raw.float_fields.len(), 19);
     }
 
     #[test]
@@ -2469,25 +2472,19 @@ mod tests {
         else {
             panic!("expected raw telemetry response");
         };
+        assert_eq!(raw.fields[0], RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 0));
         assert_eq!(
-            raw.fields[0].expect("erpm"),
-            RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 0)
-        );
-        assert_eq!(
-            raw.fields[1].expect("tachometer"),
+            raw.fields[1],
             RawFieldValue::new(VESC_RAW_TACHOMETER_FIELD_ID, -2)
         );
-        assert_eq!(raw.float_fields.iter().flatten().count(), 19);
+        assert_eq!(raw.float_fields.len(), 19);
+        assert_eq!(raw.float_fields[0].value_bits, 26.7_f32.to_bits());
         assert_eq!(
-            raw.float_fields[0].expect("MOSFET temperature").value_bits,
-            26.7_f32.to_bits()
-        );
-        assert_eq!(
-            raw.fields[2].expect("controller id"),
+            raw.fields[2],
             RawFieldValue::new(VESC_RAW_CONTROLLER_ID_FIELD_ID, 23)
         );
         assert_eq!(
-            raw.fields[3].expect("fault"),
+            raw.fields[3],
             RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 0)
         );
     }
@@ -2549,7 +2546,7 @@ mod tests {
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::AbsOverCurrent,
                 status: 0,
-                raw_float_fields: [None; 32],
+                raw_float_fields: ArrayVec::new(),
             }),
             ms(42),
             None,
@@ -2569,7 +2566,7 @@ mod tests {
             panic!("expected VESC raw telemetry response");
         };
         assert_eq!(
-            raw.fields[3].expect("current fault code"),
+            raw.fields[3],
             RawFieldValue::new(VESC_RAW_CURRENT_FAULT_CODE_FIELD_ID, 1)
         );
     }
@@ -2616,7 +2613,7 @@ mod tests {
             panic!("expected raw telemetry response");
         };
         assert_eq!(
-            raw.fields[0].expect("erpm"),
+            raw.fields[0],
             RawFieldValue::new(VESC_RAW_ERPM_FIELD_ID, 989)
         );
     }
@@ -2685,7 +2682,7 @@ mod tests {
                 controller_id: cutout_core::VescControllerId::new(7),
                 fault_code: VescFaultCode::None,
                 status: 0,
-                raw_float_fields: [None; 32],
+                raw_float_fields: ArrayVec::new(),
             }),
             ms(42),
             Some(board_profile),

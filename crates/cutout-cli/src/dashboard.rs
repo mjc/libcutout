@@ -863,7 +863,7 @@ impl PopulatedRawTelemetryFieldCount {
     }
 
     fn from_raw_telemetry(raw: &RawTelemetryReadback) -> Self {
-        Self::new(raw.fields.into_iter().flatten().count())
+        Self::new(raw.fields.len())
     }
 }
 
@@ -5261,19 +5261,13 @@ mod tests {
                 None,
             ],
         };
-        let raw = RawTelemetryReadback {
-            fields: [
-                Some(RawFieldValue::new(0x8001, 989)),
-                None,
-                Some(RawFieldValue::new(0x8002, -21_973)),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-            float_fields: [None; 32],
-        };
+        let mut raw = RawTelemetryReadback::default();
+        raw.fields
+            .try_push(RawFieldValue::new(0x8001, 989))
+            .expect("bounded fixture");
+        raw.fields
+            .try_push(RawFieldValue::new(0x8002, -21_973))
+            .expect("bounded fixture");
 
         assert_eq!(
             PopulatedDiagnosticDetailCount::from_diagnostics(diagnostics),

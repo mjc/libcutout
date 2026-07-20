@@ -157,7 +157,6 @@ pub enum VescCanReadOnlyRequest {
 
 /// Owned VESC read-only reply.
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum VescReadOnlyReply {
     /// Firmware build information.
     FirmwareInfo {
@@ -191,7 +190,7 @@ pub enum VescReadOnlyReply {
 }
 
 /// Owned VESC values telemetry subset used by the generic read-only session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VescValuesTelemetry {
     /// MOSFET/controller temperature.
     pub controller_temperature: Temperature,
@@ -227,7 +226,7 @@ pub struct VescValuesTelemetry {
     pub status: u8,
 
     /// Every floating-point field returned by `COMM_GET_VALUES`, preserving exact bits.
-    pub raw_float_fields: [Option<RawFloatFieldValue>; 32],
+    pub raw_float_fields: ArrayVec<RawFloatFieldValue, 19>,
 }
 
 /// Motor pole-pair count used to convert VESC eRPM to mechanical RPM.
@@ -537,9 +536,8 @@ impl VescBatteryType {
     }
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 fn vesc_liion_level(cell_voltage: cutout_core::CellVoltage) -> BatteryLevel {
-    let norm = ((cell_voltage.as_microvolts() as f32 / 1_000.0) - 3_200.0) / 1_000.0;
+    let norm = ((f64::from(cell_voltage.as_microvolts()) / 1_000.0) - 3_200.0) / 1_000.0;
     let norm = norm.clamp(0.0, 1.0);
     let v2 = norm * norm;
     let v3 = v2 * norm;
@@ -547,7 +545,15 @@ fn vesc_liion_level(cell_voltage: cutout_core::CellVoltage) -> BatteryLevel {
     let v5 = v4 * norm;
     let capacity =
         -2.979_767 * v5 + 5.487_81 * v4 - 3.501_286 * v3 + 1.675_683 * v2 + 0.317_147 * norm;
-    BatteryLevel::from_percent_i32((capacity.clamp(0.0, 1.0) * 100.0).round() as i32)
+    let percent = rounded_percent(capacity.clamp(0.0, 1.0));
+    BatteryLevel::from_percent(percent)
+}
+
+fn rounded_percent(ratio: f64) -> u8 {
+    let scaled = ratio.clamp(0.0, 1.0) * 100.0;
+    (0_u8..=100)
+        .find(|percent| scaled < f64::from(*percent) + 0.5)
+        .unwrap_or(100)
 }
 
 fn linear_cell_voltage_level(
@@ -654,7 +660,6 @@ impl Default for VescReadOnlyStreamDecoder {
     }
 }
 
-#[allow(clippy::indexing_slicing)]
 impl VescReadOnlyStreamDecoder {
     /// Creates an empty VESC stream decoder.
     #[must_use]
@@ -681,16 +686,27 @@ impl VescReadOnlyStreamDecoder {
         if bytes.len() > self.buffer.len().saturating_sub(self.write_position) {
             return Err(VescCodecError::DecodeFailed);
         }
-        self.buffer[self.write_position..self.write_position + bytes.len()].copy_from_slice(bytes);
-        self.write_position += bytes.len();
+        let write_end = self
+            .write_position
+            .checked_add(bytes.len())
+            .ok_or(VescCodecError::DecodeFailed)?;
+        self.buffer
+            .get_mut(self.write_position..write_end)
+            .ok_or(VescCodecError::DecodeFailed)?
+            .copy_from_slice(bytes);
+        self.write_position = write_end;
 
         let mut replies = ArrayVec::new();
         while self.read_position < self.write_position {
-            let frame = &self.buffer[self.read_position..self.write_position];
+            let frame = self
+                .buffer
+                .get(self.read_position..self.write_position)
+                .ok_or(VescCodecError::DecodeFailed)?;
             match frame_len(frame)? {
                 Some(len) => {
+                    let frame = frame.get(..len).ok_or(VescCodecError::DecodeFailed)?;
                     replies
-                        .try_push(decode_frame(&frame[..len])?)
+                        .try_push(decode_frame(frame)?)
                         .map_err(|_reply| VescCodecError::DecodeFailed)?;
                     self.read_position += len;
                 }
@@ -822,12 +838,11 @@ fn frame_len(bytes: &[u8]) -> Result<Option<usize>, VescCodecError> {
     frame_parts(bytes).map(|parts| parts.map(|(_payload_start, _payload_len, len)| len))
 }
 
-#[allow(clippy::indexing_slicing)]
 fn frame_parts(bytes: &[u8]) -> Result<Option<(usize, usize, usize)>, VescCodecError> {
     let Some(&start) = bytes.first() else {
         return Ok(None);
     };
-    let (payload_start, payload_len) = match start {
+    let (payload_start, payload_len): (usize, usize) = match start {
         VESC_FRAME_START_SHORT => {
             let Some(&len) = bytes.get(1) else {
                 return Ok(None);
@@ -838,21 +853,35 @@ fn frame_parts(bytes: &[u8]) -> Result<Option<(usize, usize, usize)>, VescCodecE
             let Some(len_bytes) = bytes.get(1..3) else {
                 return Ok(None);
             };
-            let len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]);
+            let len = len_bytes
+                .try_into()
+                .map(u16::from_be_bytes)
+                .map_err(|_| VescCodecError::DecodeFailed)?;
             (3, usize::from(len))
         }
         _ => return Err(VescCodecError::DecodeFailed),
     };
-    let checksum_start = payload_start + payload_len;
-    let total_len = checksum_start + 3;
+    let checksum_start = payload_start
+        .checked_add(payload_len)
+        .ok_or(VescCodecError::DecodeFailed)?;
+    let total_len = checksum_start
+        .checked_add(3)
+        .ok_or(VescCodecError::DecodeFailed)?;
     if bytes.len() < total_len {
         return Ok(None);
     }
-    if bytes[checksum_start + 2] != VESC_FRAME_END {
+    if bytes.get(total_len - 1) != Some(&VESC_FRAME_END) {
         return Err(VescCodecError::DecodeFailed);
     }
-    let expected = u16::from_be_bytes([bytes[checksum_start], bytes[checksum_start + 1]]);
-    let actual = vesc_crc16(&bytes[payload_start..checksum_start]);
+    let expected = bytes
+        .get(checksum_start..checksum_start + 2)
+        .and_then(|checksum| checksum.try_into().ok())
+        .map(u16::from_be_bytes)
+        .ok_or(VescCodecError::DecodeFailed)?;
+    let payload = bytes
+        .get(payload_start..checksum_start)
+        .ok_or(VescCodecError::DecodeFailed)?;
+    let actual = vesc_crc16(payload);
     if expected != actual {
         return Err(VescCodecError::DecodeFailed);
     }
@@ -888,7 +917,6 @@ fn decode_speed_geometry(body: &[u8]) -> Result<VescSpeedGeometry, VescCodecErro
     decode_setup_fields(setup).map(|(geometry, _next)| geometry)
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn decode_setup_fields(body: &[u8]) -> Result<(VescSpeedGeometry, usize), VescCodecError> {
     let motor_poles = *body.first().ok_or(VescCodecError::DecodeFailed)?;
     let gear_ratio = read_vesc_f32_auto(body, 1)?;
@@ -897,10 +925,17 @@ fn decode_setup_fields(body: &[u8]) -> Result<(VescSpeedGeometry, usize), VescCo
     if motor_pole_pairs == 0 || gear_ratio <= 0.0 || wheel_diameter_metres <= 0.0 {
         return Err(VescCodecError::DecodeFailed);
     }
+    let rounded_gear_ratio = gear_ratio.round();
+    if rounded_gear_ratio > f32::from(u8::MAX) {
+        return Err(VescCodecError::DecodeFailed);
+    }
+    let gear_ratio_denominator = (1..=u8::MAX)
+        .find(|candidate| (f32::from(*candidate) - rounded_gear_ratio).abs() < f32::EPSILON)
+        .ok_or(VescCodecError::DecodeFailed)?;
     Ok((
         VescSpeedGeometry {
             motor_pole_pairs: MotorPolePairs::new(motor_pole_pairs),
-            gear_ratio_denominator: GearRatioDenominator::new(gear_ratio.round() as u8),
+            gear_ratio_denominator: GearRatioDenominator::new(gear_ratio_denominator),
             wheel_circumference: Distance::from_metres_f32(
                 wheel_diameter_metres * core::f32::consts::PI,
             ),
@@ -1024,7 +1059,7 @@ impl From<vesc::Values> for VescValuesTelemetry {
     }
 }
 
-fn vesc_values_float_fields(values: vesc::Values) -> [Option<RawFloatFieldValue>; 32] {
+fn vesc_values_float_fields(values: vesc::Values) -> ArrayVec<RawFloatFieldValue, 19> {
     let values = [
         values.temp_mosfet,
         values.temp_motor,
@@ -1046,13 +1081,13 @@ fn vesc_values_float_fields(values: vesc::Values) -> [Option<RawFloatFieldValue>
         values.avg_voltage_d,
         values.avg_voltage_q,
     ];
-    let mut fields = [None; 32];
+    let mut fields = ArrayVec::new();
     for (index, value) in values.into_iter().enumerate() {
         let Some(id) = u16::try_from(index).ok().map(|index| 0x8100 + index) else {
             continue;
         };
-        if let Some(field) = fields.get_mut(index) {
-            *field = Some(RawFloatFieldValue::new(id, value));
+        if fields.try_push(RawFloatFieldValue::new(id, value)).is_err() {
+            break;
         }
     }
     fields

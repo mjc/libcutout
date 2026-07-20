@@ -3071,6 +3071,15 @@ public extension ElectricUnicycleModel {
             "Falcon"
         }
     }
+
+    var dto: DiscoveryElectricUnicycleModel {
+        switch self {
+        case .aero:
+            .aero
+        case .falcon:
+            .falcon
+        }
+    }
 }
 
 struct VoltageSagModelStore {
@@ -3151,11 +3160,7 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         case .falcon:
             .falcon(try FalconReadOnlySession())
         }
-        if model == .aero {
-            chargeEstimator.configureNosfetAero30s2pSamsung50sProfile()
-        } else if model == .falcon {
-            chargeEstimator.configureBegodeFalcon24s2pSamsung50sProfile()
-        }
+        chargeEstimator.configureElectricUnicycleProfile(model: model.dto)
         if
             let deviceIdentity,
             let model = voltageSagStore.load(for: deviceIdentity),
@@ -3313,6 +3318,7 @@ public final class VescOnewheelSession: @unchecked Sendable {
 
     public init(boardProfile: VescBoardProfile) {
         self.inner = VescReadOnlySession.withBoardProfile(boardProfile: boardProfile)
+        chargeEstimator.configureVescBoardProfile(boardProfile: boardProfile)
     }
 
     public var diagnostics: ParserDiagnostics {

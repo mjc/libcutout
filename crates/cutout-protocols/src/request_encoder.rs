@@ -26,7 +26,6 @@ pub struct EncodedRequest<P> {
 
 /// Explicit disposition for a family-specific request.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum RequestDisposition<P> {
     /// A probe that does not require a transport write.
     Passive {
@@ -38,10 +37,10 @@ pub enum RequestDisposition<P> {
     },
 
     /// A probe encoded as a bounded transport write.
-    Write(EncodedRequest<P>),
+    Write(Box<EncodedRequest<P>>),
 
     /// A probe encoded as a bounded sequence of transport writes.
-    Writes(ArrayVec<EncodedRequest<P>, 4>),
+    Writes(Box<ArrayVec<EncodedRequest<P>, 4>>),
 }
 
 /// Request encoder for NOSFET Aero/Veteran-family probes.
@@ -74,18 +73,18 @@ impl FalconRequestEncoder {
     #[must_use]
     pub fn encode(probe: FalconProbe) -> RequestDisposition<FalconProbe> {
         match probe {
-            FalconProbe::Identity => RequestDisposition::Write(EncodedRequest {
+            FalconProbe::Identity => RequestDisposition::Write(Box::new(EncodedRequest {
                 probe,
                 command: probe.command_kind(),
                 payload: request_payload(b"N"),
                 mode: WriteMode::WithoutResponse,
-            }),
-            FalconProbe::FirmwareInfo => RequestDisposition::Write(EncodedRequest {
+            })),
+            FalconProbe::FirmwareInfo => RequestDisposition::Write(Box::new(EncodedRequest {
                 probe,
                 command: probe.command_kind(),
                 payload: request_payload(b"V"),
                 mode: WriteMode::WithoutResponse,
-            }),
+            })),
             FalconProbe::Telemetry | FalconProbe::BatteryInfo => RequestDisposition::Passive {
                 probe,
                 command: probe.command_kind(),
@@ -128,7 +127,7 @@ impl VescRequestEncoder {
                         })
                         .ok()?;
                 }
-                return Some(RequestDisposition::Writes(requests));
+                return Some(RequestDisposition::Writes(Box::new(requests)));
             }
             CommandKind::RequestDiagnostics => VescReadOnlyRequest::Stats(
                 crate::VescStatsMask::SPEED_AVG
@@ -146,12 +145,12 @@ impl VescRequestEncoder {
         };
         let mut payload = ArrayVec::new();
         VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
-        Some(RequestDisposition::Write(EncodedRequest {
+        Some(RequestDisposition::Write(Box::new(EncodedRequest {
             probe: request,
             command: kind,
             payload,
             mode: WriteMode::WithoutResponse,
-        }))
+        })))
     }
 }
 
@@ -214,12 +213,12 @@ impl VescCanTarget {
         };
         let mut payload = ArrayVec::new();
         VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
-        Some(RequestDisposition::Write(EncodedRequest {
+        Some(RequestDisposition::Write(Box::new(EncodedRequest {
             probe: request,
             command: kind,
             payload,
             mode: WriteMode::WithoutResponse,
-        }))
+        })))
     }
 }
 
@@ -247,19 +246,15 @@ mod tests {
 
         assert!(matches!(
             identity,
-            RequestDisposition::Write(EncodedRequest {
-                command: CommandKind::RequestIdentity,
-                mode: WriteMode::WithoutResponse,
-                ..
-            })
+            RequestDisposition::Write(ref request)
+                if request.command == CommandKind::RequestIdentity
+                    && request.mode == WriteMode::WithoutResponse
         ));
         assert!(matches!(
             firmware,
-            RequestDisposition::Write(EncodedRequest {
-                command: CommandKind::RequestFirmwareInfo,
-                mode: WriteMode::WithoutResponse,
-                ..
-            })
+            RequestDisposition::Write(ref request)
+                if request.command == CommandKind::RequestFirmwareInfo
+                    && request.mode == WriteMode::WithoutResponse
         ));
         assert!(matches!(
             telemetry,
@@ -319,11 +314,9 @@ mod tests {
     fn falcon_encode_command_is_write_backed_for_identity() {
         assert!(matches!(
             FalconRequestEncoder::encode_command(CommandKind::RequestIdentity),
-            Some(RequestDisposition::Write(EncodedRequest {
-                command: CommandKind::RequestIdentity,
-                mode: WriteMode::WithoutResponse,
-                ..
-            }))
+            Some(RequestDisposition::Write(request))
+                if request.command == CommandKind::RequestIdentity
+                    && request.mode == WriteMode::WithoutResponse
         ));
     }
 

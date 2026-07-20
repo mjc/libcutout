@@ -2538,7 +2538,7 @@ fn print_refloat_replies_jsonl(
         match decoder.feed_result(bytes.as_raw_bytes()) {
             Ok(RefloatStreamResult::Buffered) => {}
             Ok(RefloatStreamResult::Replies(replies)) => {
-                for reply in replies {
+                for reply in *replies {
                     print_refloat_reply_summary(&reply);
                     if enabled {
                         info!("{}", serde_json::to_string(&refloat_reply_json(&reply))?);
@@ -2759,7 +2759,7 @@ fn render_read_only_response_jsonl(
             "sequence": sequence.get(),
             "command_kind": command_kind_name(response.command_kind()),
             "response": "raw_telemetry",
-            "fields": raw.fields.iter().flatten().copied().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
+            "fields": raw.fields.iter().copied().map(|field| raw_field_json(Some(field))).collect::<Vec<_>>(),
         })),
     }
 }

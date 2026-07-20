@@ -1205,11 +1205,10 @@ pub struct RawFloatFieldValueDto {
 impl From<RawTelemetryReadback> for RawTelemetryReadbackDto {
     fn from(raw: RawTelemetryReadback) -> Self {
         Self {
-            fields: raw.fields.into_iter().flatten().map(Into::into).collect(),
+            fields: raw.fields.into_iter().map(Into::into).collect(),
             float_fields: raw
                 .float_fields
                 .into_iter()
-                .flatten()
                 .map(|field| RawFloatFieldValueDto {
                     id: field.id,
                     value_bits: field.value_bits,
@@ -1791,7 +1790,6 @@ pub enum SessionEventDto {
     DiagnosticError(DiagnosticErrorDto),
 }
 
-#[allow(clippy::large_enum_variant)]
 enum SessionEventProjection {
     Event(SessionEventDto),
     ReadOnly(ReadOnlyResponse),
@@ -2418,16 +2416,12 @@ mod tests {
     fn read_only_raw_telemetry_output_owns_present_fields_only() {
         let response = ReadOnlyResponse::RawTelemetry(RawTelemetryReadback {
             fields: [
-                Some(RawFieldValue::new(0x8001, 989)),
-                None,
-                Some(RawFieldValue::new(0x8002, -21_973)),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ],
-            float_fields: [None; 32],
+                RawFieldValue::new(0x8001, 989),
+                RawFieldValue::new(0x8002, -21_973),
+            ]
+            .into_iter()
+            .collect(),
+            float_fields: arrayvec::ArrayVec::new(),
         });
 
         let output = ReadOnlyOutput::from(response);

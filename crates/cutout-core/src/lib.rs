@@ -6100,13 +6100,103 @@ pub struct DiagnosticReadback {
 
 /// Bounded protocol-native raw telemetry readback.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RawTelemetryReadback {
-    /// Raw telemetry field slots.
-    pub fields: [Option<RawFieldValue>; 8],
+    /// Present raw telemetry fields.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            serialize_with = "serialize_raw_fields",
+            deserialize_with = "deserialize_raw_fields"
+        )
+    )]
+    pub fields: ArrayVec<RawFieldValue, 8>,
 
-    /// Protocol-native float field slots, retained without narrowing.
-    pub float_fields: [Option<RawFloatFieldValue>; 32],
+    /// Present protocol-native float fields, retained without narrowing.
+    #[cfg_attr(
+        feature = "serde",
+        serde(
+            serialize_with = "serialize_raw_float_fields",
+            deserialize_with = "deserialize_raw_float_fields"
+        )
+    )]
+    pub float_fields: ArrayVec<RawFloatFieldValue, 19>,
+}
+
+#[cfg(feature = "serde")]
+fn serialize_raw_fields<S>(
+    fields: &ArrayVec<RawFieldValue, 8>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serialize_sparse_slots::<_, _, 8, 8>(fields, serializer)
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_raw_fields<'de, D>(deserializer: D) -> Result<ArrayVec<RawFieldValue, 8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_sparse_slots(deserializer)
+}
+
+#[cfg(feature = "serde")]
+fn serialize_raw_float_fields<S>(
+    fields: &ArrayVec<RawFloatFieldValue, 19>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serialize_sparse_slots::<_, _, 19, 32>(fields, serializer)
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_raw_float_fields<'de, D>(
+    deserializer: D,
+) -> Result<ArrayVec<RawFloatFieldValue, 19>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_sparse_slots(deserializer)
+}
+
+#[cfg(feature = "serde")]
+fn serialize_sparse_slots<T, S, const CAPACITY: usize, const WIRE_SLOTS: usize>(
+    fields: &ArrayVec<T, CAPACITY>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    T: serde::Serialize,
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeSeq;
+
+    let mut sequence = serializer.serialize_seq(Some(WIRE_SLOTS))?;
+    for index in 0..WIRE_SLOTS {
+        sequence.serialize_element(&fields.get(index))?;
+    }
+    sequence.end()
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_sparse_slots<'de, T, D, const CAPACITY: usize>(
+    deserializer: D,
+) -> Result<ArrayVec<T, CAPACITY>, D::Error>
+where
+    T: serde::Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    let slots = <Vec<Option<T>> as serde::Deserialize>::deserialize(deserializer)?;
+    let mut fields = ArrayVec::new();
+    for field in slots.into_iter().flatten().take(CAPACITY) {
+        if fields.try_push(field).is_err() {
+            break;
+        }
+    }
+    Ok(fields)
 }
 
 /// Generic read-only settings entry.
@@ -6326,7 +6416,6 @@ impl FaultHistoryReadback {
 
 /// Generic read-only response payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum ReadOnlyResponse {
     /// Firmware or protocol version response.
     Firmware(FirmwareInfo),
@@ -6730,7 +6819,6 @@ pub enum TransportAction {
 
 /// Semantic event emitted by a protocol session.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum DeviceEvent {
     /// Link-up event accepted by the session.
     LinkUp(LinkInfo),
@@ -6762,7 +6850,6 @@ pub enum DeviceEvent {
 
 /// Output emitted by a protocol session for the host to drain.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum SessionOutput {
     /// Transport action to execute outside the protocol engine.
     Transport(TransportAction),
@@ -7643,16 +7730,14 @@ mod tests {
     fn raw_telemetry_response_preserves_protocol_native_fields() {
         let response = crate::ReadOnlyResponse::RawTelemetry(crate::RawTelemetryReadback {
             fields: [
-                Some(crate::RawFieldValue::new(0x8001, 989)),
-                Some(crate::RawFieldValue::new(0x8002, -21_973)),
-                Some(crate::RawFieldValue::new(0x8003, 20)),
-                Some(crate::RawFieldValue::new(0x8004, 0)),
-                None,
-                None,
-                None,
-                None,
-            ],
-            float_fields: [None; 32],
+                crate::RawFieldValue::new(0x8001, 989),
+                crate::RawFieldValue::new(0x8002, -21_973),
+                crate::RawFieldValue::new(0x8003, 20),
+                crate::RawFieldValue::new(0x8004, 0),
+            ]
+            .into_iter()
+            .collect(),
+            float_fields: arrayvec::ArrayVec::new(),
         });
 
         assert_eq!(
@@ -7662,11 +7747,8 @@ mod tests {
         let crate::ReadOnlyResponse::RawTelemetry(raw) = response else {
             panic!("expected raw telemetry");
         };
-        assert_eq!(raw.fields[0], Some(crate::RawFieldValue::new(0x8001, 989)));
-        assert_eq!(
-            raw.fields[1],
-            Some(crate::RawFieldValue::new(0x8002, -21_973))
-        );
+        assert_eq!(raw.fields[0], crate::RawFieldValue::new(0x8001, 989));
+        assert_eq!(raw.fields[1], crate::RawFieldValue::new(0x8002, -21_973));
     }
 
     #[test]

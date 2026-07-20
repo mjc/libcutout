@@ -50,27 +50,25 @@ pub enum RefloatReadOnlyRequest {
 
 /// Parser-owned result for one Refloat stream feed.
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum RefloatStreamResult {
     /// The decoder accepted bytes but is still waiting for a complete reply.
     Buffered,
 
     /// The decoder completed one or more bounded read-only replies.
-    Replies(ArrayVec<RefloatReply, 4>),
+    Replies(Box<ArrayVec<RefloatReply, 4>>),
 }
 
 /// Refloat package reply.
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum RefloatReply {
     /// Package information.
     Info(RefloatInfo),
 
     /// Dynamic realtime field ids.
-    RealtimeFieldIds(RefloatRealtimeFieldIds),
+    RealtimeFieldIds(Box<RefloatRealtimeFieldIds>),
 
     /// Dynamic realtime data.
-    RealtimeData(RefloatRealtimeData),
+    RealtimeData(Box<RefloatRealtimeData>),
 }
 
 /// Refloat INFO v2 package information.
@@ -363,7 +361,7 @@ impl RefloatStreamDecoder {
         while let Some(frame) = self.take_next_frame()? {
             let reply = self.decode_frame(&frame)?;
             if let RefloatReply::RealtimeFieldIds(ids) = &reply {
-                self.field_ids = Some(ids.clone());
+                self.field_ids = Some((**ids).clone());
             }
             replies
                 .try_push(reply)
@@ -373,7 +371,7 @@ impl RefloatStreamDecoder {
         Ok(if replies.is_empty() {
             RefloatStreamResult::Buffered
         } else {
-            RefloatStreamResult::Replies(replies)
+            RefloatStreamResult::Replies(Box::new(replies))
         })
     }
 
@@ -616,10 +614,9 @@ fn parse_realtime_ids(bytes: &[u8]) -> Result<RefloatReply, RefloatCodecError> {
     let mut cursor = Cursor::new(bytes);
     let always = read_id_list(&mut cursor)?;
     let runtime = read_id_list(&mut cursor)?;
-    Ok(RefloatReply::RealtimeFieldIds(RefloatRealtimeFieldIds {
-        always,
-        runtime,
-    }))
+    Ok(RefloatReply::RealtimeFieldIds(Box::new(
+        RefloatRealtimeFieldIds { always, runtime },
+    )))
 }
 
 fn parse_realtime_data(
@@ -659,7 +656,7 @@ fn parse_realtime_data(
         (None, None, None)
     };
 
-    Ok(RefloatReply::RealtimeData(RefloatRealtimeData {
+    Ok(RefloatReply::RealtimeData(Box::new(RefloatRealtimeData {
         mask,
         extra_flags,
         time_ticks,
@@ -679,7 +676,7 @@ fn parse_realtime_data(
         active_alert_mask_low,
         active_alert_mask_high,
         firmware_fault_code,
-    }))
+    })))
 }
 
 fn read_id_list(
@@ -1452,7 +1449,7 @@ mod tests {
         if let RefloatStreamResult::Replies(replies) =
             decoder.feed_result(chunk).expect("live replay decodes")
         {
-            output.extend(replies);
+            output.extend(*replies);
         }
     }
 

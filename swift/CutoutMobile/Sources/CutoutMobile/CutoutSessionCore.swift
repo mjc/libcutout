@@ -49,6 +49,7 @@ public final class CutoutSessionCore: NSObject {
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
     private var chargeEstimateProfile: ChargeEstimateProfile?
+    private var vescBoardProfile: VescBoardProfile?
     private var isRecordOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
@@ -182,12 +183,27 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    /// Configures the board and battery facts selected for the active or next VESC connection.
+    public func configureVescBoard(profile: VescBoardProfile) {
+        onBleQueue {
+            vescBoardProfile = profile
+        }
+    }
+
+    /// Removes the selected VESC board and battery facts.
+    public func clearVescBoardProfile() {
+        onBleQueue {
+            vescBoardProfile = nil
+        }
+    }
+
     private func disconnectAndScanOnBleQueue() {
         suppressReconnect = true
         isRecordOnly = false
         selectedModel = nil
         selectedRoute = nil
         chargeEstimateProfile = nil
+        vescBoardProfile = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
         pendingBegodeProbeResponses.removeAll()
@@ -508,6 +524,9 @@ public final class CutoutSessionCore: NSObject {
                 deviceIdentity: advertisement?.peripheralIdentifier.rawValue
             )
         case .vescOnewheel:
+            if let vescBoardProfile {
+                return .vescOnewheel(boardProfile: vescBoardProfile)
+            }
             return .vescOnewheel()
         }
     }
