@@ -49,6 +49,11 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground.ignoresSafeArea())
+        .onChange(of: model.captureStatus) { _, status in
+            if let announcement = status?.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
         .onChange(of: model.phase) { _, phase in
             if let announcement = phase.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()

@@ -1,6 +1,63 @@
 import CutoutMobile
 import Foundation
 
+enum CaptureStatus: Equatable {
+    case recordingLocally(fileName: String)
+    case recording(label: String?, notificationCount: Int, fileName: String?)
+    case labelStarted(label: String, notificationCount: Int, fileName: String?)
+    case labelStopped(label: String, notificationCount: Int, fileName: String?)
+    case saved(fileName: String)
+    case failed
+
+    var displayText: String {
+        switch self {
+        case let .recordingLocally(fileName):
+            "Recording locally: \(fileName)"
+        case let .recording(label, notificationCount, fileName):
+            captureProgressText(label: label, notificationCount: notificationCount, fileName: fileName)
+        case let .labelStarted(label, notificationCount, fileName):
+            captureLabelText(label: label, action: "started", notificationCount: notificationCount, fileName: fileName)
+        case let .labelStopped(label, notificationCount, fileName):
+            captureLabelText(label: label, action: "stopped", notificationCount: notificationCount, fileName: fileName)
+        case let .saved(fileName):
+            "Saved capture: \(fileName)"
+        case .failed:
+            "Capture failed"
+        }
+    }
+
+    var accessibilityAnnouncement: String? {
+        switch self {
+        case let .labelStarted(label, _, _):
+            "\(label) capture started"
+        case let .labelStopped(label, _, _):
+            "\(label) capture stopped"
+        case .saved:
+            "Capture saved"
+        case .failed:
+            "Capture failed"
+        case .recordingLocally, .recording:
+            nil
+        }
+    }
+
+    private func captureProgressText(label: String?, notificationCount: Int, fileName: String?) -> String {
+        let prefix = label.map { "\($0):" } ?? "Recording:"
+        let suffix = fileName.map { " -> \($0)" } ?? ""
+        return "\(prefix) \(notificationCount) notifications\(suffix)"
+    }
+
+    private func captureLabelText(
+        label: String,
+        action: String,
+        notificationCount: Int,
+        fileName: String?
+    ) -> String {
+        guard let fileName else { return "\(label) \(action)" }
+        return "\(label) \(action): \(notificationCount) notifications -> \(fileName)"
+    }
+}
+
 @MainActor
 final class CutoutAppModel: ObservableObject {
     @Published private(set) var displayState = RideDisplayState()
@@ -14,7 +71,7 @@ final class CutoutAppModel: ObservableObject {
     @Published private(set) var phoneLocationReadback = PhoneLocationReadback(
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
-    @Published private(set) var captureStatusText: String?
+    @Published private(set) var captureStatus: CaptureStatus?
     @Published private(set) var isRecordOnlyCapture = false
     @Published private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     @Published private(set) var recordOnlyDeviceKind: String?
@@ -33,6 +90,10 @@ final class CutoutAppModel: ObservableObject {
 
     var vescRideSnapshot: VescRideSnapshot? {
         VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
+    }
+
+    var captureStatusText: String? {
+        captureStatus?.displayText
     }
 
     private let core = CutoutSessionCore()
@@ -146,11 +207,11 @@ final class CutoutAppModel: ObservableObject {
         guard activeCaptureLabels.insert(label).inserted else { return }
         captureLabel = label.title
         core.annotateCapture(label: "\(label.annotationValue)_start")
-        if let captureFileName {
-            captureStatusText = "\(label.title) started: \(captureNotificationCount) notifications -> \(captureFileName)"
-        } else {
-            captureStatusText = "\(label.title) started"
-        }
+        captureStatus = .labelStarted(
+            label: label.title,
+            notificationCount: captureNotificationCount,
+            fileName: captureFileName
+        )
     }
 
     func flushCapture() {
@@ -161,11 +222,11 @@ final class CutoutAppModel: ObservableObject {
         guard activeCaptureLabels.remove(label) != nil else { return }
         captureLabel = label.title
         core.annotateCapture(label: "\(label.annotationValue)_stop")
-        if let captureFileName {
-            captureStatusText = "\(label.title) stopped: \(captureNotificationCount) notifications -> \(captureFileName)"
-        } else {
-            captureStatusText = "\(label.title) stopped"
-        }
+        captureStatus = .labelStopped(
+            label: label.title,
+            notificationCount: captureNotificationCount,
+            fileName: captureFileName
+        )
     }
 
     func disconnectAndSearch() {
@@ -303,18 +364,20 @@ final class CutoutAppModel: ObservableObject {
         if message.hasPrefix("capture_file=") {
             captureFileName = URL(fileURLWithPath: String(message.dropFirst("capture_file=".count))).lastPathComponent
             captureNotificationCount = 0
-            captureStatusText = captureFileName.map { "Recording locally: \($0)" }
+            captureStatus = captureFileName.map(CaptureStatus.recordingLocally)
         } else if message.hasPrefix("record_only_notification=") || message.hasPrefix("notification=") {
             captureNotificationCount += 1
-            let suffix = captureFileName.map { " -> \($0)" } ?? ""
-            let prefix = captureLabel.map { "\($0):" } ?? "Recording:"
-            captureStatusText = "\(prefix) \(captureNotificationCount) notifications\(suffix)"
+            captureStatus = .recording(
+                label: captureLabel,
+                notificationCount: captureNotificationCount,
+                fileName: captureFileName
+            )
         } else if message.hasPrefix("capture_label=") {
             // UI already updated by labelCapture(_:).
         } else if message.hasPrefix("disconnected="), let captureFileName {
-            captureStatusText = "Saved capture: \(captureFileName)"
+            captureStatus = .saved(fileName: captureFileName)
         } else if message.hasPrefix("capture_error=") {
-            captureStatusText = "Capture failed"
+            captureStatus = .failed
         }
     }
 }

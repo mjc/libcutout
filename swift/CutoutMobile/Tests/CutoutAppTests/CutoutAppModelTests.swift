@@ -3,6 +3,26 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
+    func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
+        XCTAssertEqual(
+            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")
+                .accessibilityAnnouncement,
+            "Ride capture started"
+        )
+        XCTAssertEqual(
+            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: "ride.cutout")
+                .accessibilityAnnouncement,
+            "Ride capture stopped"
+        )
+        XCTAssertEqual(CaptureStatus.saved(fileName: "ride.cutout").accessibilityAnnouncement, "Capture saved")
+        XCTAssertEqual(CaptureStatus.failed.accessibilityAnnouncement, "Capture failed")
+        XCTAssertNil(
+            CaptureStatus.recording(label: "Ride", notificationCount: 200, fileName: "ride.cutout")
+                .accessibilityAnnouncement
+        )
+        XCTAssertNil(CaptureStatus.recordingLocally(fileName: "ride.cutout").accessibilityAnnouncement)
+    }
+
     @MainActor
     func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
         let model = CutoutAppModel()
