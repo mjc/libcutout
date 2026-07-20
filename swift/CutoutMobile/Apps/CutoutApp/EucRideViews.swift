@@ -1,3 +1,4 @@
+import Accessibility
 import CutoutMobile
 import Foundation
 import SwiftUI
@@ -5,6 +6,7 @@ import SwiftUI
 struct EucRideScreenView: View {
     let rideState: EucRideScreenState?
     let rideTitle: String?
+    let now: MonotonicMilliseconds
     let captureStatusText: String?
     let phoneLocationReadback: PhoneLocationReadback
     let disconnect: () -> Void
@@ -38,9 +40,6 @@ struct EucRideScreenView: View {
     private var warningState: EucRideWarningState? {
         guard let rideState else {
             return nil
-        }
-        guard let now = rideState.displayState.lastUpdate else {
-            return rideState.warningState
         }
         return rideState.warningState(at: now, staleAfter: MonotonicMilliseconds(2_000))
     }
@@ -124,6 +123,11 @@ struct EucRideScreenView: View {
             .padding(.top, 12 * scale)
         }
         .accessibilityElement(children: .contain)
+        .onChange(of: warningState?.severity) { _, severity in
+            if let announcement = severity?.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
     }
 }
 

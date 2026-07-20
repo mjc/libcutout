@@ -1,3 +1,4 @@
+import Accessibility
 import CutoutMobile
 import SwiftUI
 
@@ -233,5 +234,10 @@ struct VescRideScreenView: View {
             .padding(.top, 8 * scale)
         }
         .accessibilityElement(children: .contain)
+        .onChange(of: liveSnapshot?.warning) { _, warning in
+            if let announcement = warning?.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
     }
 }

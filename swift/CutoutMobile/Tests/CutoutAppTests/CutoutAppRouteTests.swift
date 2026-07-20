@@ -53,4 +53,52 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testSafetyAnnouncementsCoverTypedEscalationsWithoutTelemetryChatter() {
+        XCTAssertNil(EucRideWarningSeverity.normal.accessibilityAnnouncement)
+        XCTAssertEqual(
+            EucRideWarningSeverity.caution.accessibilityAnnouncement,
+            "Caution. Riding headroom is getting low."
+        )
+        XCTAssertEqual(
+            EucRideWarningSeverity.reduceAcceleration.accessibilityAnnouncement,
+            "Warning. Reduce acceleration."
+        )
+        XCTAssertEqual(
+            EucRideWarningSeverity.limpHome.accessibilityAnnouncement,
+            "Critical warning. Slow down and stop safely."
+        )
+        XCTAssertNil(EucRideWarningSeverity.unavailable.accessibilityAnnouncement)
+        XCTAssertNil(EucRideWarningSeverity.failed.accessibilityAnnouncement)
+
+        XCTAssertNil(VescRideWarning.none.accessibilityAnnouncement)
+        XCTAssertEqual(VescRideWarning.pushbackSoon.accessibilityAnnouncement, "Warning. Pushback soon.")
+        XCTAssertNil(VescRideWarning.unknown.accessibilityAnnouncement)
+    }
+
+    func testBmsAnnouncementUsesHighestTypedGroupSeverity() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "test",
+                seriesGroupCount: 3,
+                parallelCount: 1,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            groups: [
+                BmsGroupSnapshot(index: 0, alertLevel: .nominal),
+                BmsGroupSnapshot(index: 1, alertLevel: .critical),
+                BmsGroupSnapshot(index: 2, alertLevel: .warning),
+            ]
+        )
+
+        XCTAssertEqual(snapshot.accessibilityAlertLevel, .critical)
+        XCTAssertEqual(
+            snapshot.accessibilityAlertLevel.accessibilityAnnouncement,
+            "Critical battery warning. Check BMS details."
+        )
+        XCTAssertNil(BmsAlertLevel.nominal.accessibilityAnnouncement)
+        XCTAssertNil(BmsAlertLevel.unknown.accessibilityAnnouncement)
+    }
+
 }

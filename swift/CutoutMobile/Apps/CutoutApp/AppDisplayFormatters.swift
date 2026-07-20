@@ -97,3 +97,57 @@ extension SessionConnectionPhase {
         }
     }
 }
+
+extension EucRideWarningSeverity {
+    var accessibilityAnnouncement: String? {
+        switch self {
+        case .caution:
+            "Caution. Riding headroom is getting low."
+        case .reduceAcceleration:
+            "Warning. Reduce acceleration."
+        case .limpHome:
+            "Critical warning. Slow down and stop safely."
+        case .normal, .unavailable, .failed:
+            nil
+        }
+    }
+}
+
+extension VescRideWarning {
+    var accessibilityAnnouncement: String? {
+        switch self {
+        case .pushbackSoon:
+            "Warning. Pushback soon."
+        case .none, .unknown:
+            nil
+        }
+    }
+}
+
+extension BmsAlertLevel {
+    var accessibilityAnnouncement: String? {
+        switch self {
+        case .warning:
+            "Battery warning. Check BMS details."
+        case .critical:
+            "Critical battery warning. Check BMS details."
+        case .nominal, .unknown:
+            nil
+        }
+    }
+}
+
+extension BmsSnapshot {
+    var accessibilityAlertLevel: BmsAlertLevel {
+        if groups.contains(where: { $0.alertLevel == .critical }) {
+            return .critical
+        }
+        if groups.contains(where: { $0.alertLevel == .warning }) {
+            return .warning
+        }
+        if groups.contains(where: { $0.alertLevel == .nominal }) {
+            return .nominal
+        }
+        return .unknown
+    }
+}

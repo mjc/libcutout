@@ -64,6 +64,11 @@ struct ContentView: View {
             }
             openRideScreen(ifNeededFor: phase)
         }
+        .onChange(of: model.bmsSnapshot?.accessibilityAlertLevel) { _, level in
+            if let announcement = level?.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
     }
 
     private func pair(_ row: DevicePickerRow) {
@@ -101,23 +106,13 @@ struct ContentView: View {
     @ViewBuilder
     private var routedContent: some View {
         if let screen = screen(for: route) {
-            PevScreenContainer(
-                screen: screen,
-                rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
-                    ? nil
-                    : model.rideState,
-                rideTitle: model.selectedRideTitle,
-                settingsReadback: model.settingsReadback,
-                faultHistoryReadback: model.faultHistoryReadback,
-                bmsSnapshot: model.bmsSnapshot,
-                phoneLocationReadback: model.phoneLocationReadback,
-                vescSnapshot: model.vescRideSnapshot,
-                now: model.currentMonotonicTime,
-                connectionPhase: model.phase,
-                notificationCount: model.displayState.notificationCount,
-                captureStatusText: model.captureStatusText,
-                disconnect: disconnectAndReturnToPicker
-            )
+            if screen.id == .eucRide || screen.id == .vescRide {
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    screenContainer(screen, now: model.currentMonotonicTime)
+                }
+            } else {
+                screenContainer(screen, now: model.currentMonotonicTime)
+            }
         } else if route == .capture {
             CaptureRecordingScreen(
                 deviceKind: model.recordOnlyDeviceKind,
@@ -128,6 +123,26 @@ struct ContentView: View {
                 stopCaptureLabel: model.stopCaptureLabel
             )
         }
+    }
+
+    private func screenContainer(_ screen: PevScreen, now: MonotonicMilliseconds) -> some View {
+        PevScreenContainer(
+            screen: screen,
+            rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
+                ? nil
+                : model.rideState,
+            rideTitle: model.selectedRideTitle,
+            settingsReadback: model.settingsReadback,
+            faultHistoryReadback: model.faultHistoryReadback,
+            bmsSnapshot: model.bmsSnapshot,
+            phoneLocationReadback: model.phoneLocationReadback,
+            vescSnapshot: model.vescRideSnapshot,
+            now: now,
+            connectionPhase: model.phase,
+            notificationCount: model.displayState.notificationCount,
+            captureStatusText: model.captureStatusText,
+            disconnect: disconnectAndReturnToPicker
+        )
     }
 
     private var appSectionTitle: String {

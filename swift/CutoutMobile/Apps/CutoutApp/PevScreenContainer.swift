@@ -23,6 +23,7 @@ struct PevScreenContainer: View {
                 EucRideScreenView(
                     rideState: rideState,
                     rideTitle: rideTitle,
+                    now: now,
                     captureStatusText: captureStatusText,
                     phoneLocationReadback: phoneLocationReadback,
                     disconnect: disconnect,
@@ -37,15 +38,13 @@ struct PevScreenContainer: View {
                     bmsSnapshot: bmsSnapshot
                 )
             case .vescRide:
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    VescRideScreenView(
-                        liveSnapshot: vescSnapshot,
-                        phase: connectionPhase,
-                        now: now,
-                        captureStatusText: captureStatusText,
-                        disconnect: disconnect
-                    )
-                }
+                VescRideScreenView(
+                    liveSnapshot: vescSnapshot,
+                    phase: connectionPhase,
+                    now: now,
+                    captureStatusText: captureStatusText,
+                    disconnect: disconnect
+                )
             case .vescDebug:
                 VescDebugScreenView(
                     snapshot: vescSnapshot,
