@@ -95,8 +95,17 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
+public enum PevScreenTabID: Equatable, Hashable, Sendable {
+    case ride
+    case pack
+    case map
+    case tune
+    case debug
+    case logs
+}
+
 public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
-    public var id: String { title }
+    public let id: PevScreenTabID
 
     public let title: String
     public let isSelected: Bool
@@ -109,12 +118,14 @@ public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
     }
 
     public init(
+        id: PevScreenTabID,
         title: String,
         isSelected: Bool,
         destinationScreenID: PevScreenID? = nil,
         destinationTarget: PevNavigationTarget? = nil,
         disabledReason: String? = nil
     ) {
+        self.id = id
         self.title = title
         self.isSelected = isSelected
         self.destinationScreenID = destinationScreenID

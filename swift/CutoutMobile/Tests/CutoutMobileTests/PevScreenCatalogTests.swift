@@ -50,6 +50,15 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescDebug)[1].isSelected)
     }
 
+    func testTabIdentityDoesNotDependOnVisibleTitle() {
+        let ride = PevScreenTab(id: .ride, title: "Ride", isSelected: true)
+        let localizedRide = PevScreenTab(id: .ride, title: "Conduire", isSelected: true)
+        let differentRoleWithSameTitle = PevScreenTab(id: .debug, title: "Ride", isSelected: false)
+
+        XCTAssertEqual(ride.id, localizedRide.id)
+        XCTAssertNotEqual(ride.id, differentRoleWithSameTitle.id)
+    }
+
     func testDevicePickerScanningHasNoInventedRows() {
         let state = DevicePickerScanState.scanning
 
