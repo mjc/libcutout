@@ -425,7 +425,7 @@ pub enum ChargeEstimateResetReason {
     StaleGap,
     /// A sample timestamp moved backwards.
     TimestampOrder,
-    /// Current evidence changed provenance or verification.
+    /// Current evidence changed provenance, verification, or polarity.
     CurrentEvidenceChanged,
     /// The usable pack profile changed.
     CapacityChanged,
@@ -606,6 +606,7 @@ impl CurrentRateWindow {
 pub struct ChargeEstimator {
     session: Option<ChargeSessionIdentity>,
     window: CurrentRateWindow,
+    last_current_negative: Option<bool>,
     last_current_source: Option<ValueSource>,
     last_current_verification: Option<VerificationStatus>,
     last_charge_mode_source: Option<ValueSource>,
@@ -631,6 +632,7 @@ impl ChargeEstimator {
                 last_current: 0,
                 variability_q8: 0,
             },
+            last_current_negative: None,
             last_current_source: None,
             last_current_verification: None,
             last_charge_mode_source: None,
@@ -711,6 +713,16 @@ impl ChargeEstimator {
             self.reset_with_reason(ChargeEstimateResetReason::ChargingStopped);
             return ChargeEstimateState::Unavailable {
                 reason: ChargeEstimateUnavailableReason::CurrentTooSmall,
+            };
+        }
+        let current_negative = battery_current.value.as_milliamps().is_negative();
+        if self
+            .last_current_negative
+            .is_some_and(|previous| previous != current_negative)
+        {
+            self.reset_with_reason(ChargeEstimateResetReason::CurrentEvidenceChanged);
+            return ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::ContradictoryInputs,
             };
         }
         if !input.usable_capacity.verification.is_trusted()
@@ -794,6 +806,7 @@ impl ChargeEstimator {
         }
 
         self.window.observe(input.observed_at, current);
+        self.last_current_negative = Some(current_negative);
         self.last_current_source = Some(battery_current.source);
         self.last_current_verification = Some(battery_current.verification);
         self.last_charge_mode_source = Some(input.charge_mode.source);
@@ -827,6 +840,7 @@ impl ChargeEstimator {
 
     fn reset_with_reason(&mut self, reason: ChargeEstimateResetReason) {
         self.window.reset();
+        self.last_current_negative = None;
         self.last_current_source = None;
         self.last_current_verification = None;
         self.last_charge_mode_source = None;
@@ -953,6 +967,7 @@ impl VerificationStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn input(at: u64, current: i32, level: u8) -> ChargeEstimateInput {
         ChargeEstimateInput {
@@ -1014,6 +1029,11 @@ mod tests {
             assert_eq!(estimate.expected.as_minutes(), expected_minutes);
             assert!(estimate.lower <= estimate.expected);
             assert!(estimate.expected <= estimate.upper);
+            if (capacity, level, current) == (10_000, 50, -2_000) {
+                assert_eq!(estimate.lower.as_milliseconds(), 8_550_000);
+                assert_eq!(estimate.expected.as_milliseconds(), 9_000_000);
+                assert_eq!(estimate.upper.as_milliseconds(), 9_450_000);
+            }
         }
     }
 
@@ -1046,6 +1066,29 @@ mod tests {
         assert!(uncertain.lower <= baseline.lower);
         assert!(uncertain.upper >= baseline.upper);
         assert_eq!(uncertain.confidence, EstimateConfidence::Low);
+    }
+
+    #[test]
+    fn variable_but_stable_current_widens_bounds() {
+        let baseline = available_estimate(input(0, -2_000, 50));
+        let mut estimator = ChargeEstimator::new();
+        let mut sample = input(0, -2_000, 50);
+        let mut variable = None;
+        for (at, current) in [(0, -2_000), (15_000, -2_100), (30_000, -2_000)] {
+            sample.at = MonotonicTimestamp::new(at);
+            sample.observed_at = MonotonicTimestamp::new(at);
+            sample.battery_current =
+                Some(Measured::reported(BatteryCurrent::from_milliamps(current)));
+            variable = match estimator.update(sample) {
+                ChargeEstimateState::Available(estimate) => Some(estimate),
+                ChargeEstimateState::CollectingSamples { .. } => variable,
+                _ => None,
+            };
+        }
+        let variable = variable.expect("stable variable current should produce an estimate");
+
+        assert!(variable.lower < baseline.lower);
+        assert!(variable.upper > baseline.upper);
     }
 
     #[test]
@@ -1088,6 +1131,68 @@ mod tests {
                 reason: ChargeEstimateUnavailableReason::NotCharging,
             }
         );
+    }
+
+    #[test]
+    fn near_zero_current_is_unavailable() {
+        for current in [0, 99] {
+            let mut estimator = ChargeEstimator::new();
+            assert_eq!(
+                estimator.update(input(0, current, 50)),
+                ChargeEstimateState::Unavailable {
+                    reason: ChargeEstimateUnavailableReason::CurrentTooSmall,
+                }
+            );
+            assert_eq!(
+                estimator.last_reset_reason(),
+                Some(ChargeEstimateResetReason::ChargingStopped)
+            );
+        }
+    }
+
+    #[test]
+    fn current_polarity_change_resets_as_contradictory() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+        let _ = estimator.update(input(15_000, -2_000, 50));
+
+        assert_eq!(
+            estimator.update(input(30_000, 2_000, 50)),
+            ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::ContradictoryInputs,
+            }
+        );
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::CurrentEvidenceChanged)
+        );
+        assert!(matches!(
+            estimator.update(input(45_000, 2_000, 50)),
+            ChargeEstimateState::CollectingSamples { samples: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn charge_mode_change_resets_the_observation_window() {
+        let mut estimator = ChargeEstimator::new();
+        let _ = estimator.update(input(0, -2_000, 50));
+
+        let mut stopped = input(15_000, -2_000, 50);
+        stopped.charge_mode = Measured::reported(ChargeMode::NotCharging);
+        assert_eq!(
+            estimator.update(stopped),
+            ChargeEstimateState::Unavailable {
+                reason: ChargeEstimateUnavailableReason::NotCharging,
+            }
+        );
+        assert_eq!(
+            estimator.last_reset_reason(),
+            Some(ChargeEstimateResetReason::ChargingStopped)
+        );
+        assert!(matches!(
+            estimator.update(input(30_000, -2_000, 50)),
+            ChargeEstimateState::CollectingSamples { samples: 1, .. }
+        ));
     }
 
     #[test]
@@ -1190,5 +1295,89 @@ mod tests {
             estimator.last_reset_reason(),
             Some(ChargeEstimateResetReason::TimestampOrder)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn generated_estimates_have_ordered_nonnegative_bounded_durations(
+            capacity in 1_u32..=200_000,
+            level in 0_u8..=98,
+            current in 100_i32..=100_000,
+        ) {
+            let mut sample = input(0, -current, level);
+            sample.usable_capacity = UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(capacity),
+                CapacitySource::ProtocolProfile,
+                VerificationStatus::SourceAndHardwareVerified,
+            );
+            let estimate = available_estimate(sample);
+
+            prop_assert!(estimate.lower <= estimate.expected);
+            prop_assert!(estimate.expected <= estimate.upper);
+        }
+
+        #[test]
+        fn generated_fixed_current_estimates_are_monotonic_with_soc(
+            capacity in 1_u32..=200_000,
+            first_level in 0_u8..=98,
+            second_level in 0_u8..=98,
+            current in 100_i32..=100_000,
+        ) {
+            prop_assume!(first_level != second_level);
+            let (lower_level, higher_level) = if first_level < second_level {
+                (first_level, second_level)
+            } else {
+                (second_level, first_level)
+            };
+            let mut lower_soc = input(0, -current, lower_level);
+            lower_soc.usable_capacity = UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(capacity),
+                CapacitySource::ProtocolProfile,
+                VerificationStatus::SourceAndHardwareVerified,
+            );
+            let mut higher_soc = lower_soc;
+            higher_soc.battery_level = BatteryLevelBasis::reported(Measured::reported(
+                BatteryLevel::from_percent(higher_level),
+            ));
+
+            let lower_estimate = available_estimate(lower_soc);
+            let higher_estimate = available_estimate(higher_soc);
+
+            prop_assert!(higher_estimate.lower <= lower_estimate.lower);
+            prop_assert!(higher_estimate.expected <= lower_estimate.expected);
+            prop_assert!(higher_estimate.upper <= lower_estimate.upper);
+        }
+
+        #[test]
+        fn generated_uncertainty_never_narrows_estimate_bounds(
+            capacity in 1_u32..=200_000,
+            level in 0_u8..=98,
+            current in 100_i32..=100_000,
+        ) {
+            let mut baseline_input = input(0, -current, level);
+            baseline_input.usable_capacity = UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(capacity),
+                CapacitySource::ProtocolProfile,
+                VerificationStatus::SourceAndHardwareVerified,
+            );
+            let baseline = available_estimate(baseline_input);
+
+            let mut uncertain_input = baseline_input;
+            uncertain_input.battery_level = BatteryLevelBasis::profile_estimated(
+                Measured::reported(BatteryLevel::from_percent(level)),
+                ChargeProfileIdentity::new(1),
+                EstimateConfidence::Low,
+            );
+            uncertain_input.usable_capacity = UsablePackCapacity::new(
+                Capacity::from_milliamp_hours(capacity),
+                CapacitySource::Estimated,
+                VerificationStatus::SourceAndHardwareVerified,
+            );
+            let uncertain = available_estimate(uncertain_input);
+
+            prop_assert!(uncertain.lower <= baseline.lower);
+            prop_assert!(uncertain.upper >= baseline.upper);
+            prop_assert!(uncertain.confidence <= baseline.confidence);
+        }
     }
 }

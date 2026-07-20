@@ -684,7 +684,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
     public let samples: UInt16
     public let observedFor: ChargeEstimateDuration
 
-    fileprivate init(_ dto: MobileChargeEstimateStateDto) {
+    init(_ dto: MobileChargeEstimateStateDto) {
         self.kind = ChargeEstimateStateKind(dto.kind)
         self.estimate = dto.estimate.map(ChargeTimeEstimate.init)
         self.unavailableReason = dto.unavailableReason.map(ChargeEstimateUnavailableReason.init)
@@ -711,11 +711,11 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         case .available:
             estimate?.expected.displayText ?? "unavailable"
         case .collectingSamples:
-            "collecting"
+            "estimating"
         case .stale:
             "stale"
         case .unavailable:
-            "unavailable"
+            unavailableReason == .fullOrNearFull ? "near full" : "unavailable"
         case .failed:
             "failed"
         }
@@ -727,7 +727,7 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
             guard let estimate else { return "estimate unavailable" }
             return "\(estimate.kind.displayText), \(estimate.confidence.displayText) confidence"
         case .collectingSamples:
-            return "\(samples) sample\(samples == 1 ? "" : "s")"
+            return "estimating charge time · \(samples) sample\(samples == 1 ? "" : "s")"
         case .stale:
             return "waiting for fresh telemetry"
         case .unavailable:
@@ -3074,6 +3074,9 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             .aero(AeroReadOnlySession())
         case .falcon:
             .falcon(try FalconReadOnlySession())
+        }
+        if model == .aero {
+            chargeEstimator.configureNosfetAero30s2pSamsung50sProfile()
         }
     }
 

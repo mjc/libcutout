@@ -2,6 +2,32 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testChargeEstimateDisplayNamesPreserveCollectingAndNearFullStates() {
+        let collecting = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .collectingSamples,
+            estimate: nil,
+            unavailableReason: nil,
+            error: nil,
+            resetReason: nil,
+            samples: 2,
+            observedFor: MobileDurationDto(milliseconds: 15_000)
+        ))
+        XCTAssertEqual(collecting.displayValue, "estimating")
+        XCTAssertEqual(collecting.displayDetail, "estimating charge time · 2 samples")
+
+        let nearFull = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .unavailable,
+            estimate: nil,
+            unavailableReason: .fullOrNearFull,
+            error: nil,
+            resetReason: nil,
+            samples: 0,
+            observedFor: MobileDurationDto(milliseconds: 0)
+        ))
+        XCTAssertEqual(nearFull.displayValue, "near full")
+        XCTAssertEqual(nearFull.displayDetail, "near full")
+    }
+
     func testChargeEstimateAccessibilityCarriesKindAndConfidence() {
         let value = LiveActivityRideValue(
             label: "Charge",

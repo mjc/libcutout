@@ -5200,6 +5200,20 @@ impl MobileChargeEstimator {
         })
     }
 
+    /// Configures the confirmed NOSFET Aero pack basis: 30s2p Samsung 50S,
+    /// with a 10 Ah profile capacity. Charge-flow polarity remains unverified
+    /// until the LIBCU-521 hardware matrix is complete.
+    pub fn configure_nosfet_aero_30s2p_samsung_50s_profile(&self) {
+        self.configure_profile(MobileChargeProfileDto {
+            session_id: 43,
+            profile_id: 43,
+            capacity_milliamp_hours: 10_000,
+            capacity_source: MobileChargeCapacitySourceDto::ProtocolProfile,
+            verification: MobileVerificationStatusDto::SourceVerified,
+            charge_flow_verification: MobileVerificationStatusDto::Unverified,
+        });
+    }
+
     /// Replaces the usable pack profile and resets bounded history.
     pub fn configure_profile(&self, profile: MobileChargeProfileDto) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -8590,60 +8604,63 @@ mod tests {
         }
     }
 
+    fn charge_estimator_snapshot(
+        at: u64,
+        power_flow: PowerFlowDirection,
+    ) -> MobileTelemetrySnapshotDto {
+        MobileTelemetrySnapshotDto {
+            at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
+            speed: None,
+            operating_state: RideOperatingState::Charging,
+            voltage: Some(VoltageReading {
+                value: Voltage { value: 95_000 },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+            }),
+            battery_current: Some(BatteryCurrentReading {
+                value: BatteryCurrent { value: -2_000 },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+            }),
+            charge_mode: Some(MobileChargeModeReadingDto {
+                value: MobileChargeModeDto::Charging,
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+            }),
+            motor_current: None,
+            power: None,
+            power_flow: Some(power_flow),
+            voltage_sag: Some(VoltageDeltaReading {
+                value: VoltageDelta { value: -1_200 },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+            }),
+            controller_temperature: None,
+            motor_temperature: None,
+            battery_temperature: None,
+            pwm: None,
+            distance: None,
+            limp_home_range: None,
+            pitch: None,
+            balance_angle: None,
+            roll: None,
+            footpad: None,
+            battery_level_reported: Some(BatteryLevelReading {
+                value: BatteryLevel { value: 50 },
+                source: MobileValueSourceDto::Reported,
+                quality: MobileValueQualityDto::Known,
+                verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
+            }),
+            battery_level_estimated: None,
+        }
+    }
+
     #[test]
     fn charge_estimator_ffi_projects_estimates_and_sag() {
-        fn snapshot(at: u64, power_flow: PowerFlowDirection) -> MobileTelemetrySnapshotDto {
-            MobileTelemetrySnapshotDto {
-                at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
-                speed: None,
-                operating_state: RideOperatingState::Charging,
-                voltage: Some(VoltageReading {
-                    value: Voltage { value: 95_000 },
-                    source: MobileValueSourceDto::Reported,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
-                }),
-                battery_current: Some(BatteryCurrentReading {
-                    value: BatteryCurrent { value: -2_000 },
-                    source: MobileValueSourceDto::Reported,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
-                }),
-                charge_mode: Some(MobileChargeModeReadingDto {
-                    value: MobileChargeModeDto::Charging,
-                    source: MobileValueSourceDto::Reported,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
-                }),
-                motor_current: None,
-                power: None,
-                power_flow: Some(power_flow),
-                voltage_sag: Some(VoltageDeltaReading {
-                    value: VoltageDelta { value: -1_200 },
-                    source: MobileValueSourceDto::Reported,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
-                }),
-                controller_temperature: None,
-                motor_temperature: None,
-                battery_temperature: None,
-                pwm: None,
-                distance: None,
-                limp_home_range: None,
-                pitch: None,
-                balance_angle: None,
-                roll: None,
-                footpad: None,
-                battery_level_reported: Some(BatteryLevelReading {
-                    value: BatteryLevel { value: 50 },
-                    source: MobileValueSourceDto::Reported,
-                    quality: MobileValueQualityDto::Known,
-                    verification: MobileVerificationStatusDto::SourceAndHardwareVerified,
-                }),
-                battery_level_estimated: None,
-            }
-        }
-
         let estimator = MobileChargeEstimator::new();
         estimator.configure_profile(charge_profile(
             MobileVerificationStatusDto::HardwareVerified,
@@ -8651,7 +8668,7 @@ mod tests {
         let update = |at, power_flow| {
             estimator.update(MobileChargeEstimateInputDto {
                 at: MobileMonotonicMillisDto { milliseconds: at },
-                snapshot: snapshot(at, power_flow),
+                snapshot: charge_estimator_snapshot(at, power_flow),
                 voltage_sag: None,
                 freshness: MobileDurationDto {
                     milliseconds: 60_000,
@@ -8689,6 +8706,13 @@ mod tests {
         let gated = update(0, PowerFlowDirection::Charging);
         assert_eq!(
             gated.unavailable_reason,
+            Some(MobileChargeEstimateUnavailableReasonDto::CurrentDirectionUnverified)
+        );
+
+        estimator.configure_nosfet_aero_30s2p_samsung_50s_profile();
+        let default_profile = update(0, PowerFlowDirection::Charging);
+        assert_eq!(
+            default_profile.unavailable_reason,
             Some(MobileChargeEstimateUnavailableReasonDto::CurrentDirectionUnverified)
         );
     }
