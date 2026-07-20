@@ -1,6 +1,6 @@
 import CutoutMobile
 
-enum CutoutAppRoute: Equatable {
+enum CutoutAppRoute: Hashable {
     case devicePicker
     case eucRide
     case eucPack(PevScreenID)

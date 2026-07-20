@@ -18,6 +18,25 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .vescDebug), .vescDebug)
     }
 
+    func testRouteFocusIdentityDistinguishesEveryDestination() {
+        let routes: Set<CutoutAppRoute> = [
+            .devicePicker,
+            .eucRide,
+            .eucPack(.bmsOverview),
+            .eucPack(.bmsCellMap6S),
+            .eucPack(.bmsCellMap40S),
+            .eucPack(.bmsCellDetail),
+            .eucPack(.bmsUnknownTopology),
+            .eucPack(.bmsNoData),
+            .eucPack(.eucGarage),
+            .vescRide,
+            .vescDebug,
+            .capture,
+        ]
+
+        XCTAssertEqual(routes.count, 12)
+    }
+
     func testConnectionRoutesMatchRideSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.electricUnicycle), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: DevicePickerConnectionRoute.vescOnewheel), .vescRide)

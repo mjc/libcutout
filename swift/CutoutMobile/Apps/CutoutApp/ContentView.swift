@@ -6,6 +6,7 @@ import SwiftUI
 struct ContentView: View {
     let model: CutoutAppModel
     @State private var route: CutoutAppRoute
+    @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
 
     private let catalog = PevScreenCatalog.live
 
@@ -33,6 +34,8 @@ struct ContentView: View {
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .accessibilityLabel("Choose device")
+                .accessibilityFocused($focusedRoute, equals: .devicePicker)
             } else {
                 PevAppShell(
                     sectionTitle: appSectionTitle,
@@ -45,10 +48,16 @@ struct ContentView: View {
                 ) {
                     routedContent
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(appSectionTitle)
+                .accessibilityFocused($focusedRoute, equals: route)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground.ignoresSafeArea())
+        .onChange(of: route, initial: true) { _, route in
+            focusedRoute = route
+        }
         .onChange(of: model.captureStatus) { _, status in
             if let announcement = status?.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()
