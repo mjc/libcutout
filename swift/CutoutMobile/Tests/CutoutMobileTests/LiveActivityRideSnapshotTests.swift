@@ -200,11 +200,30 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.pwm, .available(label: "PWM", value: "54", unit: "%", source: .liveTelemetry))
         XCTAssertEqual(snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
         XCTAssertEqual(snapshot.headroom.value, "Headroom good")
+        XCTAssertEqual(snapshot.headroomSeverity, .nominal)
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "34", unit: "°C", source: .liveTelemetry))
         XCTAssertEqual(
             snapshot.chargeEstimate,
             .unavailable(label: "Charge", accessibilityDetail: "usable pack capacity unavailable")
         )
+    }
+
+    func testLowHeadroomUsesTypedReduceAccelerationSeverity() {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: liveRideState(
+                speed: 12_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 12_000),
+                    operatingState: .riding,
+                    pwm: DutyCycle(permille: 800)
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+
+        XCTAssertEqual(snapshot.headroomSeverity, .reduceAcceleration)
     }
 
     func testDistanceValueConvertsToKilometresWhenSpeedUnitIsMetric() {
@@ -377,6 +396,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.connectionState, .connected)
         XCTAssertEqual(snapshot.pwm.state, .notApplicable)
         XCTAssertEqual(snapshot.headroom.state, .notApplicable)
+        XCTAssertEqual(snapshot.headroomSeverity, .notApplicable)
     }
 
     func testPercentProgressComesFromAvailableAndStaleValues() {

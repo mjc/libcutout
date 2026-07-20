@@ -160,16 +160,25 @@ public struct PevLiveActivitySafetyFooter: View {
         self.compact = compact
     }
 
-    private var headroomIsWarning: Bool {
-        snapshot.headroom.value == "Reduce acceleration"
+    private var headroomPresentation: (systemName: String, tint: Color) {
+        switch snapshot.headroomSeverity {
+        case .reduceAcceleration:
+            ("exclamationmark.triangle.fill", PevLiveActivityPalette.warning)
+        case .nominal:
+            ("checkmark.circle.fill", PevLiveActivityPalette.connected)
+        case .notApplicable:
+            ("minus.circle", PevLiveActivityPalette.secondaryText)
+        case .unavailable, nil:
+            ("questionmark.circle", PevLiveActivityPalette.secondaryText)
+        }
     }
 
     public var body: some View {
         HStack(spacing: compact ? 6 : 8) {
             PevLiveActivityFooterChip(
-                systemName: headroomIsWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+                systemName: headroomPresentation.systemName,
                 value: snapshot.headroom,
-                tint: headroomIsWarning ? PevLiveActivityPalette.warning : PevLiveActivityPalette.connected
+                tint: headroomPresentation.tint
             )
             Divider().overlay(PevLiveActivityPalette.border)
                 .accessibilityHidden(true)

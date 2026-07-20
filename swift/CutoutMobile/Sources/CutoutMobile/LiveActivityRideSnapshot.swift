@@ -228,6 +228,13 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+public enum LiveActivityRideHeadroomSeverity: String, Codable, Equatable, Hashable, Sendable {
+    case nominal
+    case reduceAcceleration
+    case unavailable
+    case notApplicable
+}
+
 public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let identity: LiveActivityRideIdentity
     public let glyph: LiveActivityRideGlyph
@@ -241,6 +248,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let duration: LiveActivityRideValue
     public let distance: LiveActivityRideValue
     public let headroom: LiveActivityRideValue
+    public let headroomSeverity: LiveActivityRideHeadroomSeverity?
     public let beeps: LiveActivityRideValue
     public let temperature: LiveActivityRideValue
     public let chargeEstimate: LiveActivityRideValue
@@ -275,6 +283,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
             connectionState: connectionState
         )
         self.headroom = Self.headroomValue(rideState: rideState, connectionState: connectionState)
+        self.headroomSeverity = Self.headroomSeverity(rideState: rideState, connectionState: connectionState)
         self.beeps = .deferred(label: "Beeps")
         self.temperature = Self.temperatureValue(telemetry: rideState.telemetry, connectionState: connectionState)
         self.chargeEstimate = Self.chargeEstimateValue(rideState: rideState, connectionState: connectionState)
@@ -295,7 +304,8 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         headroom: LiveActivityRideValue,
         beeps: LiveActivityRideValue,
         temperature: LiveActivityRideValue,
-        chargeEstimate: LiveActivityRideValue? = nil
+        chargeEstimate: LiveActivityRideValue? = nil,
+        headroomSeverity: LiveActivityRideHeadroomSeverity? = nil
     ) {
         self.identity = identity
         self.glyph = glyph
@@ -309,6 +319,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.duration = duration
         self.distance = distance
         self.headroom = headroom
+        self.headroomSeverity = headroomSeverity
         self.beeps = beeps
         self.temperature = temperature
         self.chargeEstimate = chargeEstimate ?? .deferred(label: "Charge")
@@ -494,6 +505,23 @@ extension LiveActivityRideSnapshot {
             return .unavailable(label: "Headroom")
         case .notApplicable:
             return .notApplicable(label: "Headroom")
+        }
+    }
+
+    static func headroomSeverity(
+        rideState: EucRideScreenState,
+        connectionState: LiveActivityRideConnectionState
+    ) -> LiveActivityRideHeadroomSeverity {
+        guard connectionState == .connected || connectionState == .stale else { return .unavailable }
+
+        switch rideState.pwmHeadroomApplicability {
+        case .available:
+            guard rideState.pwmHeadroomPermille != nil else { return .unavailable }
+            return rideState.warningState.severity == .reduceAcceleration ? .reduceAcceleration : .nominal
+        case .unavailable:
+            return .unavailable
+        case .notApplicable:
+            return .notApplicable
         }
     }
 
