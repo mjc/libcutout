@@ -1,5 +1,6 @@
 import CutoutMobile
 import Foundation
+import Observation
 
 enum CaptureStatus: Equatable {
     case recordingLocally(fileName: String)
@@ -59,22 +60,23 @@ enum CaptureStatus: Equatable {
 }
 
 @MainActor
-final class CutoutAppModel: ObservableObject {
-    @Published private(set) var displayState = RideDisplayState()
-    @Published private(set) var phase = SessionConnectionPhase.starting
-    @Published private(set) var devicePickerScanState: DevicePickerScanState?
-    @Published private(set) var selectedRideTitle: String?
-    @Published private(set) var selectedConnectionRoute: DevicePickerConnectionRoute?
-    @Published private(set) var settingsReadback: SettingsReadback?
-    @Published private(set) var faultHistoryReadback: FaultHistoryReadback?
-    @Published private(set) var bmsSnapshot: BmsSnapshot?
-    @Published private(set) var phoneLocationReadback = PhoneLocationReadback(
+@Observable
+final class CutoutAppModel {
+    private(set) var displayState = RideDisplayState()
+    private(set) var phase = SessionConnectionPhase.starting
+    private(set) var devicePickerScanState: DevicePickerScanState?
+    private(set) var selectedRideTitle: String?
+    private(set) var selectedConnectionRoute: DevicePickerConnectionRoute?
+    private(set) var settingsReadback: SettingsReadback?
+    private(set) var faultHistoryReadback: FaultHistoryReadback?
+    private(set) var bmsSnapshot: BmsSnapshot?
+    private(set) var phoneLocationReadback = PhoneLocationReadback(
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
-    @Published private(set) var captureStatus: CaptureStatus?
-    @Published private(set) var isRecordOnlyCapture = false
-    @Published private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
-    @Published private(set) var recordOnlyDeviceKind: String?
+    private(set) var captureStatus: CaptureStatus?
+    private(set) var isRecordOnlyCapture = false
+    private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
+    private(set) var recordOnlyDeviceKind: String?
 
     var speed: SpeedReadout {
         displayState.speed

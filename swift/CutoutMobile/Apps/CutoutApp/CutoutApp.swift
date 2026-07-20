@@ -8,7 +8,7 @@ struct CutoutApp: App {
     #if os(macOS)
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
-    @StateObject private var model = CutoutAppModel()
+    @State private var model = CutoutAppModel()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {

@@ -4,7 +4,7 @@ import Foundation
 import SwiftUI
 
 struct ContentView: View {
-    @ObservedObject var model: CutoutAppModel
+    let model: CutoutAppModel
     @State private var route: CutoutAppRoute
 
     private let catalog = PevScreenCatalog.live
