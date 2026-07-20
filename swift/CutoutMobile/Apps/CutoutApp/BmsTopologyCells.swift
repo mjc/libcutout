@@ -34,9 +34,12 @@ struct BmsGroupCell: View {
 
     var body: some View {
         VStack(spacing: 8 * scale) {
-            Text("\(group.index)")
-                .font(.subheadline)
-                .foregroundStyle(PevColors.muted)
+            HStack(spacing: 4 * scale) {
+                Text("\(group.index)")
+                BmsAlertIndicator(alertLevel: group.alertLevel)
+            }
+            .font(.subheadline)
+            .foregroundStyle(PevColors.muted)
             Text(groupVoltageText(group))
                 .font(.title3.weight(.black))
                 .monospacedDigit()
@@ -68,9 +71,12 @@ struct BmsStripCell: View {
 
     var body: some View {
         VStack(spacing: 2 * scale) {
-            Text(String(format: "%02d", group.index))
-                .font(.caption2)
-                .foregroundStyle(PevColors.muted)
+            HStack(spacing: 2 * scale) {
+                Text(String(format: "%02d", group.index))
+                BmsAlertIndicator(alertLevel: group.alertLevel)
+            }
+            .font(.caption2)
+            .foregroundStyle(PevColors.muted)
             Text(groupVoltageText(group))
                 .font(.caption.weight(.black))
                 .monospacedDigit()
@@ -90,6 +96,40 @@ struct BmsStripCell: View {
             PevColors.orange
         case .nominal, .unknown:
             isHighlighted ? PevColors.orange : PevColors.green
+        }
+    }
+}
+
+struct BmsAlertIndicator: View {
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+
+    let alertLevel: BmsAlertLevel
+
+    static func systemImageName(
+        for alertLevel: BmsAlertLevel,
+        differentiateWithoutColor: Bool
+    ) -> String? {
+        guard differentiateWithoutColor else { return nil }
+        return switch alertLevel {
+        case .critical:
+            "exclamationmark.triangle.fill"
+        case .warning:
+            "exclamationmark.triangle"
+        case .unknown:
+            "questionmark.circle"
+        case .nominal:
+            nil
+        }
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if let systemImageName = Self.systemImageName(
+            for: alertLevel,
+            differentiateWithoutColor: differentiateWithoutColor
+        ) {
+            Image(systemName: systemImageName)
+                .accessibilityHidden(true)
         }
     }
 }
