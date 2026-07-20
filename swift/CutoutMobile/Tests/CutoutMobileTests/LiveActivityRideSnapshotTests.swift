@@ -2,6 +2,22 @@ import XCTest
 @testable import CutoutMobile
 
 final class LiveActivityRideSnapshotTests: XCTestCase {
+    func testChargeEstimateAccessibilityCarriesKindAndConfidence() {
+        let value = LiveActivityRideValue(
+            label: "Charge",
+            value: "45 min",
+            unit: nil,
+            accessibilityDetail: "at present current, medium confidence",
+            state: .available,
+            source: .derivedTelemetry
+        )
+
+        XCTAssertEqual(
+            value.accessibilityText,
+            "45 min, at present current, medium confidence"
+        )
+    }
+
     func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 
@@ -40,6 +56,10 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
         XCTAssertEqual(snapshot.headroom.value, "Headroom good")
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "34", unit: "°C", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.chargeEstimate,
+            .unavailable(label: "Charge", accessibilityDetail: "usable pack capacity unavailable")
+        )
     }
 
     func testDistanceValueConvertsToKilometresWhenSpeedUnitIsMetric() {
@@ -92,6 +112,10 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.connectionState, .connected)
         XCTAssertEqual(snapshot.speed.state, .unavailable)
         XCTAssertEqual(snapshot.battery.source, .derivedTelemetry)
+        XCTAssertEqual(
+            snapshot.chargeEstimate,
+            .unavailable(label: "Charge", accessibilityDetail: "usable pack capacity unavailable")
+        )
         XCTAssertEqual(snapshot.mode.state, .deferred)
         XCTAssertEqual(snapshot.duration.state, .deferred)
         XCTAssertEqual(snapshot.beeps.state, .deferred)

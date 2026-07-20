@@ -143,6 +143,7 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
 func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [PevDashboardTile] {
     let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: state.speedUnit)
     return [
+        chargeEstimateTile(from: state),
         telemetry.voltage.map { voltage in
             PevDashboardTile(
                 label: "pack",
@@ -174,6 +175,22 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
             )
         } ?? PevDashboardTile(label: "limp-home", value: "--", unit: distanceUnit, detail: "unavailable", accent: .cyan),
     ]
+}
+
+func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
+    let estimate = state.chargeEstimate
+    let detail = if let voltageSag = estimate.estimate?.voltageSag {
+        "\(decimalString(fromMillivolts: voltageSag.deltaMillivolts, fractionDigits: 1)) V sag · \(estimate.displayDetail)"
+    } else {
+        estimate.displayDetail
+    }
+    return PevDashboardTile(
+        label: "charge",
+        value: estimate.displayValue,
+        unit: "",
+        detail: detail,
+        accent: .green
+    )
 }
 
 func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
