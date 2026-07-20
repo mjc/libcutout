@@ -40,7 +40,7 @@ struct BmsInlineLayout: View {
             )
 
             VStack(alignment: .leading, spacing: 14 * scale) {
-                Text("controls")
+                Text("display modes")
                     .font(.system(size: 15 * scale, weight: .bold))
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
@@ -127,10 +127,19 @@ struct BmsScrollableLayout: View {
 struct BmsDetailLayout: View {
     let content: PevBmsContent
     let scale: CGFloat
+    @State private var selectedGroupIndex: Int?
+
+    init(content: PevBmsContent, scale: CGFloat) {
+        self.content = content
+        self.scale = scale
+        _selectedGroupIndex = State(
+            initialValue: content.selectedGroupIndex ?? content.snapshot.groups.first?.index
+        )
+    }
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var selectedGroup: BmsGroupSnapshot? {
-        snapshot.groups.first { $0.index == content.selectedGroupIndex }
+        snapshot.groups.first { $0.index == selectedGroupIndex } ?? snapshot.groups.first
     }
 
     private var columns: [GridItem] {
@@ -143,8 +152,9 @@ struct BmsDetailLayout: View {
                 ForEach(snapshot.groups) { group in
                     BmsGroupIndexCell(
                         group: group,
-                        isSelected: group.index == content.selectedGroupIndex,
-                        scale: scale
+                        isSelected: group.index == selectedGroup?.index,
+                        scale: scale,
+                        action: { selectedGroupIndex = group.index }
                     )
                 }
             }

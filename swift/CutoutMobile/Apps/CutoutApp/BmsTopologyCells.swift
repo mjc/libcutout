@@ -134,17 +134,21 @@ struct BmsGroupIndexCell: View {
     let group: BmsGroupSnapshot
     let isSelected: Bool
     let scale: CGFloat
+    let action: () -> Void
 
     var body: some View {
-        Text("\(group.index)")
-            .font(.system(size: 14 * scale, weight: .medium))
-            .foregroundStyle(PevColors.muted)
-            .frame(maxWidth: .infinity)
-            .frame(height: 34 * scale)
-            .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
-            .accessibilityLabel(group.accessibilityLabel)
-            .accessibilityValue(group.accessibilityValue)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        Button(action: action) {
+            Text("\(group.index)")
+                .font(.system(size: 14 * scale, weight: .medium))
+                .foregroundStyle(PevColors.muted)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+                .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(group.accessibilityLabel)
+        .accessibilityValue(group.accessibilityValue)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -154,12 +158,9 @@ struct BmsModeChip: View {
     let scale: CGFloat
 
     var body: some View {
-        Text(title)
+        Label(title, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
             .font(.system(size: 15 * scale, weight: .bold))
-            .foregroundStyle(isSelected ? .black : PevColors.primaryText)
-            .padding(.horizontal, 16 * scale)
-            .frame(height: 32 * scale)
-            .background(Capsule().fill(isSelected ? PevColors.yellow : PevColors.iconFill))
+            .foregroundStyle(isSelected ? PevColors.yellow : PevColors.primaryText)
             .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
