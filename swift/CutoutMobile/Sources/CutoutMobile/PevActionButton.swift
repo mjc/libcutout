@@ -79,6 +79,8 @@ public struct PevActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel(title)
     }
 }
 
@@ -99,6 +101,14 @@ public struct PevActionButtonLabel: View {
     public let fillDisabled: Color
     public let strokeEnabled: Color
     public let strokeDisabled: Color
+
+    var hitWidth: CGFloat? {
+        width.map { max($0, 44) }
+    }
+
+    var hitHeight: CGFloat {
+        max(height, 44)
+    }
 
     public init(
         title: String,
@@ -141,6 +151,7 @@ public struct PevActionButtonLabel: View {
             if let systemImageName {
                 Image(systemName: systemImageName)
                     .font(.system(size: 14 * scale, weight: .bold))
+                    .accessibilityHidden(true)
             }
             Text(title)
                 .font(.system(size: 13 * scale, weight: .bold))
@@ -148,7 +159,7 @@ public struct PevActionButtonLabel: View {
         .foregroundStyle(isEnabled ? foregroundEnabled : foregroundDisabled)
         .padding(.horizontal, horizontalPadding)
         .frame(maxWidth: fillsAvailableWidth ? .infinity : nil)
-        .frame(width: width, height: height)
+        .frame(width: hitWidth, height: hitHeight)
         .background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(isEnabled ? fillEnabled : fillDisabled)

@@ -95,7 +95,6 @@ struct DevicePickerView: View {
                                     ) {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
                                     }
-                                    .disabled(!hasRecordOnlyDeviceKind)
                                     .accessibilityIdentifier("device-picker.record.\(row.id)")
                                 }
                             }
@@ -130,7 +129,6 @@ struct DevicePickerView: View {
                                     ) {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
                                     }
-                                    .disabled(!hasRecordOnlyDeviceKind)
                                     .accessibilityIdentifier("device-picker.record.\(row.id)")
                                 }
                             }
@@ -165,7 +163,6 @@ struct DevicePickerView: View {
                                     ) {
                                         recordOnly(row, trimmedRecordOnlyDeviceKind)
                                     }
-                                    .disabled(!hasRecordOnlyDeviceKind)
                                     .accessibilityIdentifier("device-picker.record.\(row.id)")
                                 }
                             }
