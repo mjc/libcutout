@@ -24,8 +24,6 @@ struct BmsScreenView: View {
     }
 
     var body: some View {
-        let scale: CGFloat = 1
-
         Group {
             if content.kind == .noData {
                 BmsNoDataLayout(
@@ -33,22 +31,22 @@ struct BmsScreenView: View {
                     content: content,
                     rideState: rideState,
                     liveSnapshot: bmsSnapshot,
-                    scale: scale,
+                    scale: 1
                 )
             } else {
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 14 * scale) {
+                        VStack(alignment: .leading, spacing: 14) {
                             header
-                            chipRow(scale: scale)
+                            chipRow
                             contentSection()
                             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
-                                liveReadbackSection(snapshot: bmsSnapshot, scale: scale)
+                                liveReadbackSection(snapshot: bmsSnapshot)
                             }
                         }
-                        .padding(.horizontal, 23 * scale)
-                        .padding(.top, 31 * scale)
-                        .padding(.bottom, 18 * scale)
+                        .padding(.horizontal, 23)
+                        .padding(.top, 31)
+                        .padding(.bottom, 18)
                     }
                 }
             }
@@ -80,10 +78,10 @@ struct BmsScreenView: View {
         PevScreenTitleBlock(title: screen.title, subtitle: "CutOut · BMS")
     }
 
-    private func chipRow(scale: CGFloat) -> some View {
+    private var chipRow: some View {
         PevDashboardGrid(
-            columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 10 * scale)],
-            spacing: 10 * scale
+            columns: [GridItem(.adaptive(minimum: 100), spacing: 10)],
+            spacing: 10
         ) {
             ForEach(content.chips) { chip in
                 BmsChip(
@@ -94,10 +92,10 @@ struct BmsScreenView: View {
         }
     }
 
-    private func liveReadbackSection(snapshot: BmsSnapshot, scale: CGFloat) -> some View {
+    private func liveReadbackSection(snapshot: BmsSnapshot) -> some View {
         BmsDiagnosticsSection(
             snapshot: snapshot,
-            scale: scale,
+            scale: 1,
             isExpanded: $showsDiagnostics
         )
     }
