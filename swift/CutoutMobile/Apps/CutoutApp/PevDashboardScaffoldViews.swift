@@ -57,7 +57,7 @@ struct PevDashboardScaffold<Content: View>: View {
     private func scaffoldContent(scale: CGFloat, columns: [GridItem]) -> some View {
         VStack(alignment: .leading, spacing: contentSpacing * scale) {
             if showsHeader {
-                PevDashboardHeader(sectionTitle: sectionTitle, scale: scale)
+                PevDashboardHeader(sectionTitle: sectionTitle)
             }
 
             content(scale, columns)
@@ -103,8 +103,7 @@ struct PevAppShell<Content: View>: View {
 
         VStack(spacing: 0) {
             PevDashboardHeader(
-                sectionTitle: sectionTitle,
-                scale: scale
+                sectionTitle: sectionTitle
             ) {
                 PevRideDisconnectButton(scale: scale, action: disconnect)
             }
@@ -169,23 +168,20 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let sectionTitle: String
-    let scale: CGFloat
     let leadingAccessory: LeadingAccessory
 
     init(
         sectionTitle: String,
-        scale: CGFloat,
         @ViewBuilder leadingAccessory: () -> LeadingAccessory
     ) {
         self.sectionTitle = sectionTitle
-        self.scale = scale
         self.leadingAccessory = leadingAccessory()
     }
 
     var body: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 8 * scale) {
+                VStack(alignment: .leading, spacing: 8) {
                     leading
                     section
                 }
@@ -214,8 +210,8 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
 }
 
 extension PevDashboardHeader where LeadingAccessory == PevDashboardBrand {
-    init(sectionTitle: String, scale: CGFloat) {
-        self.init(sectionTitle: sectionTitle, scale: scale) {
+    init(sectionTitle: String) {
+        self.init(sectionTitle: sectionTitle) {
             PevDashboardBrand()
         }
     }
