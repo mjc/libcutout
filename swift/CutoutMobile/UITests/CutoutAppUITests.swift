@@ -57,7 +57,21 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertGreaterThan(captureKind.frame.height, 0)
         XCTAssertGreaterThanOrEqual(screen.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(screen.frame.maxY, window.frame.maxY + 2)
+
+        for _ in 0..<4 where captureKind.frame.maxY > window.frame.maxY {
+            screen.swipeUp()
+        }
+
+        XCTAssertTrue(captureKind.isHittable)
+        XCTAssertGreaterThanOrEqual(captureKind.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(captureKind.frame.maxY, window.frame.maxY + 2)
+    }
+
+    func testProductionPickerPassesAccessibilityAudit() throws {
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        try app.performAccessibilityAudit()
     }
 
     func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() {
@@ -81,6 +95,13 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertGreaterThan(captureKind.frame.height, 0)
         XCTAssertGreaterThanOrEqual(screen.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(screen.frame.maxY, window.frame.maxY + 2)
+
+        for _ in 0..<4 where captureKind.frame.maxY > window.frame.maxY {
+            screen.swipeUp()
+        }
+
+        XCTAssertTrue(captureKind.isHittable)
+        XCTAssertGreaterThanOrEqual(captureKind.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(captureKind.frame.maxY, window.frame.maxY + 2)
     }
 

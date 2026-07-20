@@ -11,6 +11,7 @@ struct PevScreenTitleBlock: View {
             Text(title)
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(PevColors.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityHeading(.h1)
             Text(subtitle)
                 .font(.subheadline.weight(.semibold))

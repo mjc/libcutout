@@ -220,6 +220,7 @@ public struct PevDashboardSectionLabel: View {
         Text(title)
             .font(font)
             .foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true)
             .accessibilityAddTraits(.isHeader)
     }
 }
@@ -298,7 +299,9 @@ public struct PevDashboardScanningPill: View {
         HStack {
             Text(title)
                 .font(.headline.weight(.bold))
-            Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+            Spacer(minLength: 12 * scale)
             HStack(spacing: 9 * scale) {
                 ForEach(0..<3, id: \.self) { index in
                     Circle()

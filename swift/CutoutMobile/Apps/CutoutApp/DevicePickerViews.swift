@@ -22,7 +22,7 @@ struct DevicePickerView: View {
         PevDashboardScaffold(
             sectionTitle: "setup",
             bottomPadding: 24,
-            allowsVerticalScroll: false,
+            allowsVerticalScroll: true,
             contentSpacing: 18,
             horizontalPadding: 18
         ) { scale, _ in
@@ -61,35 +61,32 @@ struct DevicePickerView: View {
                     .accessibilityIdentifier("device-picker.capture-kind")
             }
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18 * scale) {
-                    deviceSection(
-                        title: "Supported now",
-                        rows: sections.supported,
-                        allowsPairing: true,
-                        scale: scale
-                    )
-                    deviceSection(
-                        title: "Probe first",
-                        rows: sections.probeRecommended,
-                        allowsPairing: false,
-                        scale: scale
-                    )
-                    deviceSection(
-                        title: "Record only",
-                        rows: sections.unsupported,
-                        allowsPairing: false,
-                        scale: scale
-                    )
+            VStack(alignment: .leading, spacing: 18 * scale) {
+                deviceSection(
+                    title: "Supported now",
+                    rows: sections.supported,
+                    allowsPairing: true,
+                    scale: scale
+                )
+                deviceSection(
+                    title: "Probe first",
+                    rows: sections.probeRecommended,
+                    allowsPairing: false,
+                    scale: scale
+                )
+                deviceSection(
+                    title: "Record only",
+                    rows: sections.unsupported,
+                    allowsPairing: false,
+                    scale: scale
+                )
 
-                    if let manualRow = sections.manual {
-                        ManualPickerRow(row: manualRow, scale: scale)
-                            .padding(.top, 32 * scale)
-                    }
+                if let manualRow = sections.manual {
+                    ManualPickerRow(row: manualRow, scale: scale)
+                        .padding(.top, 32 * scale)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(.white)
         .accessibilityElement(children: .contain)
