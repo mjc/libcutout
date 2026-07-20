@@ -224,6 +224,34 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.headroomSeverity, .reduceAcceleration)
+        XCTAssertEqual(snapshot.compactTrailingValue, snapshot.headroom)
+        XCTAssertEqual(
+            snapshot.minimalAccessibilitySummary,
+            "Aero connected, connected, Speed, 26.8, mph, Headroom, Reduce acceleration"
+        )
+    }
+
+    func testNominalCompactPresentationKeepsBatteryAndOmitsRedundantHeadroom() {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: liveRideState(
+                speed: 12_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 12_000),
+                    operatingState: .riding,
+                    pwm: DutyCycle(permille: 540),
+                    batteryLevelReported: BatteryLevel(value: 68)
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+
+        XCTAssertEqual(snapshot.compactTrailingValue, snapshot.battery)
+        XCTAssertEqual(
+            snapshot.minimalAccessibilitySummary,
+            "Aero connected, connected, Speed, 26.8, mph"
+        )
     }
 
     func testDistanceValueConvertsToKilometresWhenSpeedUnitIsMetric() {

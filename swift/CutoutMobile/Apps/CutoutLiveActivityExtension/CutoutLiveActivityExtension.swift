@@ -69,22 +69,25 @@ private struct CutoutRideLiveActivityWidget: Widget {
                 .accessibilityValue(context.state.snapshot.speed.accessibilityValue)
             } compactTrailing: {
                 HStack(spacing: 4) {
-                    Text(context.state.snapshot.battery.displayValue)
-                        .font(.caption.weight(.semibold))
+                    if context.state.snapshot.headroomSeverity == .reduceAcceleration {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(PevLiveActivityPalette.warning)
+                    } else {
+                        Text(context.state.snapshot.compactTrailingValue.displayValue)
+                            .font(.caption.weight(.semibold))
+                    }
                     Circle()
                         .fill(context.state.snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                         .frame(width: 5, height: 5)
                         .accessibilityHidden(true)
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(context.state.snapshot.battery.label)
-                .accessibilityValue(context.state.snapshot.battery.accessibilityValue)
+                .accessibilityLabel(context.state.snapshot.compactTrailingValue.label)
+                .accessibilityValue(context.state.snapshot.compactTrailingValue.accessibilityValue)
             } minimal: {
                 PevLiveActivityBrandMark(size: 16)
                     .accessibilityLabel("Cutout ride")
-                    .accessibilityValue(
-                        "\(context.state.snapshot.identity.displayLabel), \(context.state.snapshot.connectionState.accessibilityValue)"
-                    )
+                    .accessibilityValue(context.state.snapshot.minimalAccessibilitySummary)
             }
         }
     }

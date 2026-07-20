@@ -340,6 +340,22 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
             chargeEstimate,
         ]
     }
+
+    public var compactTrailingValue: LiveActivityRideValue {
+        headroomSeverity == .reduceAcceleration ? headroom : battery
+    }
+
+    public var minimalAccessibilitySummary: String {
+        var parts = [
+            identity.displayLabel,
+            connectionState.accessibilityValue,
+            "\(speed.label), \(speed.accessibilityValue)",
+        ]
+        if headroomSeverity == .reduceAcceleration {
+            parts.append("\(headroom.label), \(headroom.accessibilityValue)")
+        }
+        return parts.joined(separator: ", ")
+    }
 }
 
 extension LiveActivityRideSnapshot {
