@@ -566,12 +566,14 @@ extension LiveActivityRideSnapshot {
                 accessibilityDetail: estimate.displayDetail
             )
         case .stale:
-            return .stale(
+            return value(
                 label: "Charge",
                 value: estimate.displayValue,
                 unit: nil,
-                accessibilityDetail: estimate.displayDetail,
-                source: .derivedTelemetry
+                source: .derivedTelemetry,
+                connectionState: connectionState,
+                state: .stale,
+                accessibilityDetail: estimate.displayDetail
             )
         case .unavailable:
             if estimate.unavailableReason == .fullOrNearFull {
@@ -596,6 +598,7 @@ extension LiveActivityRideSnapshot {
         unit: String?,
         source: LiveActivityRideValueSource,
         connectionState: LiveActivityRideConnectionState,
+        state: LiveActivityRideValueState? = nil,
         accessibilityDetail: String? = nil
     ) -> LiveActivityRideValue {
         if (source == .liveTelemetry || source == .derivedTelemetry)
@@ -614,7 +617,7 @@ extension LiveActivityRideSnapshot {
             value: value,
             unit: unit,
             accessibilityDetail: accessibilityDetail,
-            state: connectionState == .stale ? .stale : .available,
+            state: state ?? (connectionState == .stale ? .stale : .available),
             source: source
         )
     }

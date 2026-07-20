@@ -600,6 +600,76 @@ public enum ChargeEstimateStateKind: Equatable, Hashable, Sendable {
     }
 }
 
+public enum BatteryLevelBasis: Equatable, Hashable, Sendable {
+    case reported
+    case profileEstimated
+
+    fileprivate init(_ dto: MobileBatteryLevelBasisDto) {
+        switch dto {
+        case .reported: self = .reported
+        case .profileEstimated: self = .profileEstimated
+        }
+    }
+}
+
+public enum ChargeCapacitySource: Equatable, Hashable, Sendable {
+    case protocolProfile
+    case hardwareMeasured
+    case estimated
+
+    fileprivate init(_ dto: MobileChargeCapacitySourceDto) {
+        switch dto {
+        case .protocolProfile: self = .protocolProfile
+        case .hardwareMeasured: self = .hardwareMeasured
+        case .estimated: self = .estimated
+        }
+    }
+
+    fileprivate var dto: MobileChargeCapacitySourceDto {
+        switch self {
+        case .protocolProfile: .protocolProfile
+        case .hardwareMeasured: .hardwareMeasured
+        case .estimated: .estimated
+        }
+    }
+}
+
+public enum ChargeEstimateError: Equatable, Hashable, Sendable {
+    case timestampOrder
+    case arithmeticOverflow
+
+    fileprivate init(_ dto: MobileChargeEstimateErrorDto) {
+        switch dto {
+        case .timestampOrder: self = .timestampOrder
+        case .arithmeticOverflow: self = .arithmeticOverflow
+        }
+    }
+}
+
+public enum ChargeEstimateResetReason: Equatable, Hashable, Sendable {
+    case sessionChanged
+    case chargingStopped
+    case staleGap
+    case timestampOrder
+    case currentEvidenceChanged
+    case capacityChanged
+    case profileChanged
+    case manual
+
+    fileprivate init(_ dto: MobileChargeEstimateResetReasonDto) {
+        switch dto {
+        case .sessionChanged: self = .sessionChanged
+        case .chargingStopped: self = .chargingStopped
+        case .staleGap: self = .staleGap
+        case .timestampOrder: self = .timestampOrder
+        case .currentEvidenceChanged: self = .currentEvidenceChanged
+        case .capacityChanged: self = .capacityChanged
+        case .profileChanged: self = .profileChanged
+        case .manual: self = .manual
+        }
+    }
+}
+
 public struct ChargeEstimateDuration: Equatable, Hashable, Sendable {
     public let milliseconds: UInt64
 
@@ -663,9 +733,9 @@ public struct ChargeTimeEstimate: Equatable, Hashable, Sendable {
     public let confidence: ChargeEstimateConfidence
     public let currentRate: ChargeCurrentRateSummary
     public let batteryLevel: BatteryLevel
-    public let batteryLevelBasis: MobileBatteryLevelBasisDto
+    public let batteryLevelBasis: BatteryLevelBasis
     public let batteryProfileID: UInt32?
-    public let capacitySource: MobileChargeCapacitySourceDto
+    public let capacitySource: ChargeCapacitySource
     public let voltageSag: ChargeVoltageSagEstimate?
     public let calculatedAt: MonotonicMilliseconds
     public let validUntil: MonotonicMilliseconds
@@ -678,9 +748,9 @@ public struct ChargeTimeEstimate: Equatable, Hashable, Sendable {
         self.confidence = ChargeEstimateConfidence(dto.confidence)
         self.currentRate = ChargeCurrentRateSummary(dto.currentRate)
         self.batteryLevel = dto.batteryLevel.value
-        self.batteryLevelBasis = dto.batteryLevelBasis
+        self.batteryLevelBasis = BatteryLevelBasis(dto.batteryLevelBasis)
         self.batteryProfileID = dto.batteryProfileId
-        self.capacitySource = dto.capacitySource
+        self.capacitySource = ChargeCapacitySource(dto.capacitySource)
         self.voltageSag = dto.voltageSag.map(ChargeVoltageSagEstimate.init)
         self.calculatedAt = MonotonicMilliseconds(dto.calculatedAt.milliseconds)
         self.validUntil = MonotonicMilliseconds(dto.validUntil.milliseconds)
@@ -692,8 +762,8 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
     public let estimate: ChargeTimeEstimate?
     public let voltageSag: ChargeVoltageSagEstimate?
     public let unavailableReason: ChargeEstimateUnavailableReason?
-    public let error: MobileChargeEstimateErrorDto?
-    public let resetReason: MobileChargeEstimateResetReasonDto?
+    public let error: ChargeEstimateError?
+    public let resetReason: ChargeEstimateResetReason?
     public let samples: UInt16
     public let observedFor: ChargeEstimateDuration
 
@@ -702,8 +772,8 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         self.estimate = dto.estimate.map(ChargeTimeEstimate.init)
         self.voltageSag = dto.voltageSag.map(ChargeVoltageSagEstimate.init)
         self.unavailableReason = dto.unavailableReason.map(ChargeEstimateUnavailableReason.init)
-        self.error = dto.error
-        self.resetReason = dto.resetReason
+        self.error = dto.error.map(ChargeEstimateError.init)
+        self.resetReason = dto.resetReason.map(ChargeEstimateResetReason.init)
         self.samples = dto.samples
         self.observedFor = ChargeEstimateDuration(dto.observedFor)
     }
@@ -757,7 +827,7 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
     public let sessionID: UInt64
     public let profileID: UInt32
     public let capacityMilliampHours: UInt32
-    public let capacitySource: MobileChargeCapacitySourceDto
+    public let capacitySource: ChargeCapacitySource
     public let verification: VerificationState
     /// Independent charge-flow/polarity evidence; keep unverified until LIBCU-521 closes.
     public let chargeFlowVerification: VerificationState
@@ -766,7 +836,7 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
         sessionID: UInt64,
         profileID: UInt32,
         capacityMilliampHours: UInt32,
-        capacitySource: MobileChargeCapacitySourceDto,
+        capacitySource: ChargeCapacitySource,
         verification: VerificationState,
         chargeFlowVerification: VerificationState
     ) {
@@ -783,7 +853,7 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
             sessionId: sessionID,
             profileId: profileID,
             capacityMilliampHours: capacityMilliampHours,
-            capacitySource: capacitySource,
+            capacitySource: capacitySource.dto,
             verification: verification.dto,
             chargeFlowVerification: chargeFlowVerification.dto
         )

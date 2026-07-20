@@ -46,6 +46,86 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
     }
 
+    func testStaleChargeEstimateIsHiddenWhileDisconnected() {
+        let staleEstimate = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .stale,
+            estimate: nil,
+            voltageSag: nil,
+            unavailableReason: nil,
+            error: nil,
+            resetReason: nil,
+            samples: 3,
+            observedFor: MobileDurationDto(milliseconds: 30_000)
+        ))
+        let rideState = liveRideState(
+            speed: nil,
+            telemetry: TelemetrySnapshot(chargeEstimate: staleEstimate)
+        )
+
+        let disconnected = LiveActivityRideSnapshot.chargeEstimateValue(
+            rideState: rideState,
+            connectionState: .disconnected
+        )
+        XCTAssertEqual(disconnected.state, .unavailable)
+        XCTAssertEqual(disconnected.value, "--")
+
+        let connected = LiveActivityRideSnapshot.chargeEstimateValue(
+            rideState: rideState,
+            connectionState: .connected
+        )
+        XCTAssertEqual(connected.state, .stale)
+        XCTAssertEqual(connected.value, "stale")
+    }
+
+    func testChargeEstimatePublicSurfaceWrapsGeneratedEnums() throws {
+        let estimate = MobileChargeTimeEstimateDto(
+            lower: MobileDurationDto(milliseconds: 1_000),
+            expected: MobileDurationDto(milliseconds: 2_000),
+            upper: MobileDurationDto(milliseconds: 3_000),
+            kind: .atPresentCurrent,
+            confidence: .medium,
+            currentRate: MobileCurrentRateSummaryDto(
+                meanMilliamps: 2_000,
+                minimumMilliamps: 1_900,
+                maximumMilliamps: 2_100,
+                variabilityPermille: 100
+            ),
+            batteryLevel: BatteryLevelReading(
+                value: BatteryLevel(value: 65),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            batteryLevelBasis: .profileEstimated,
+            batteryProfileId: 42,
+            capacitySource: .hardwareMeasured,
+            voltageSag: nil,
+            calculatedAt: MobileMonotonicMillisDto(milliseconds: 4_000),
+            validUntil: MobileMonotonicMillisDto(milliseconds: 5_000)
+        )
+        let state = ChargeEstimateState(MobileChargeEstimateStateDto(
+            kind: .available,
+            estimate: estimate,
+            voltageSag: nil,
+            unavailableReason: nil,
+            error: .arithmeticOverflow,
+            resetReason: .profileChanged,
+            samples: 5,
+            observedFor: MobileDurationDto(milliseconds: 30_000)
+        ))
+
+        let wrappedEstimate = try XCTUnwrap(state.estimate)
+        let basis: BatteryLevelBasis = wrappedEstimate.batteryLevelBasis
+        let capacitySource: ChargeCapacitySource = wrappedEstimate.capacitySource
+        let error: ChargeEstimateError? = state.error
+        let resetReason: ChargeEstimateResetReason? = state.resetReason
+
+        XCTAssertEqual(basis, .profileEstimated)
+        XCTAssertEqual(capacitySource, .hardwareMeasured)
+        XCTAssertEqual(error, .arithmeticOverflow)
+        XCTAssertEqual(resetReason, .profileChanged)
+    }
+
     func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 
