@@ -2,8 +2,14 @@ import CutoutMobile
 import SwiftUI
 
 struct BmsChip: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     let title: String
     let accent: PevAccent
+
+    static func usesGlassEffect(reduceTransparency: Bool) -> Bool {
+        !reduceTransparency
+    }
 
     var body: some View {
         Text(title)
@@ -16,7 +22,7 @@ struct BmsChip: View {
 
     @ViewBuilder
     private var chipBackground: some View {
-        if #available(iOS 26, macOS 26, *) {
+        if #available(iOS 26, macOS 26, *), Self.usesGlassEffect(reduceTransparency: reduceTransparency) {
             Capsule()
                 .fill(accent.color)
                 .glassEffect(.regular.tint(accent.color.opacity(0.78)), in: .capsule)

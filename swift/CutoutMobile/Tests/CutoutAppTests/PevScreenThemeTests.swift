@@ -35,4 +35,10 @@ final class PevScreenThemeTests: XCTestCase {
             differentiateWithoutColor: true
         ))
     }
+
+    @MainActor
+    func testBmsChipGlassRespectsReduceTransparency() {
+        XCTAssertTrue(BmsChip.usesGlassEffect(reduceTransparency: false))
+        XCTAssertFalse(BmsChip.usesGlassEffect(reduceTransparency: true))
+    }
 }
