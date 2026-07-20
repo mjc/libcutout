@@ -634,7 +634,7 @@ public struct ChargeVoltageSagEstimate: Equatable, Hashable, Sendable {
     public let loadCurrent: BatteryCurrent
     public let loadCurrentSource: ReadbackSource
     public let loadCurrentQuality: ReadbackQuality
-    public let loadCurrentVerification: MobileVerificationStatusDto
+    public let loadCurrentVerification: VerificationState
     public let effectiveResistanceMilliohms: UInt32
     public let observations: UInt16
     public let confidence: ChargeEstimateConfidence
@@ -646,7 +646,7 @@ public struct ChargeVoltageSagEstimate: Equatable, Hashable, Sendable {
         self.loadCurrent = dto.loadCurrent.value
         self.loadCurrentSource = ReadbackSource(dto.loadCurrent.source)
         self.loadCurrentQuality = ReadbackQuality(dto.loadCurrent.quality)
-        self.loadCurrentVerification = dto.loadCurrent.verification
+        self.loadCurrentVerification = VerificationState(dto.loadCurrent.verification)
         self.effectiveResistanceMilliohms = dto.effectiveResistanceMilliohms
         self.observations = dto.observations
         self.confidence = ChargeEstimateConfidence(dto.confidence)
@@ -3123,6 +3123,7 @@ struct VoltageSagModelStore {
     }
 
     func remove(for deviceIdentity: String) {
+        guard !deviceIdentity.isEmpty else { return }
         defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
     }
 }

@@ -420,9 +420,12 @@ impl VoltageSagEstimator {
             voltage: input.voltage,
             battery_current: input.battery_current,
         };
+        let current = u64::from(sample.battery_current.value.as_milliamps().unsigned_abs());
         let Some(previous) = self.last else {
             self.seed(sample);
-            return None;
+            return (self.observations > 0 && current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
+                .then(|| self.project(input, current))
+                .flatten();
         };
         let elapsed = input.at.saturating_duration_since(previous.at);
         if input.at < previous.at
@@ -438,7 +441,6 @@ impl VoltageSagEstimator {
             return None;
         }
 
-        let current = u64::from(sample.battery_current.value.as_milliamps().unsigned_abs());
         let previous_current =
             u64::from(previous.battery_current.value.as_milliamps().unsigned_abs());
         let current_polarity = (current >= MIN_SAG_CURRENT_STEP_MILLIAMPS)
@@ -799,10 +801,10 @@ impl CurrentRateWindow {
             return None;
         }
         let mean = (self.mean_q8.saturating_add(128)) / 256;
-        let span = self.maximum.saturating_sub(self.minimum);
-        let variability = span
+        let variability = self
+            .variability_q8
             .saturating_mul(1_000)
-            .checked_div(mean)
+            .checked_div(self.mean_q8)
             .unwrap_or(i64::MAX)
             .clamp(0, i64::from(u16::MAX));
         Some(CurrentRateSummary {
@@ -1082,12 +1084,7 @@ fn calculate_estimate(
         .and_then(|value| value.checked_add(99))
         .and_then(|value| value.checked_div(100))
         .ok_or(ChargeEstimateError::ArithmeticOverflow)?;
-    let current_milliamps = u128::from(current_rate.mean.as_milliamps().unsigned_abs());
-    let expected_milliseconds = remaining_milliamp_hours
-        .checked_mul(MILLISECONDS_PER_MILLIAMP_HOUR)
-        .and_then(|value| value.checked_add(current_milliamps.saturating_sub(1)))
-        .and_then(|value| value.checked_div(current_milliamps))
-        .ok_or(ChargeEstimateError::ArithmeticOverflow)?;
+    let expected_milliseconds = duration_at_current(remaining_milliamp_hours, current_rate.mean)?;
     let expected = u64::try_from(expected_milliseconds)
         .map(Duration::from_milliseconds)
         .map_err(|_| ChargeEstimateError::ArithmeticOverflow)?;
@@ -1116,8 +1113,10 @@ fn calculate_estimate(
     );
     let lower_factor = 1_000_u64.saturating_sub(widen_permille.min(900));
     let upper_factor = 1_000_u64.saturating_add(widen_permille);
-    let lower = scaled_duration(expected_milliseconds, lower_factor)?;
-    let upper = scaled_duration(expected_milliseconds, upper_factor)?;
+    let fastest_milliseconds = duration_at_current(remaining_milliamp_hours, current_rate.maximum)?;
+    let slowest_milliseconds = duration_at_current(remaining_milliamp_hours, current_rate.minimum)?;
+    let lower = scaled_duration(fastest_milliseconds, lower_factor)?;
+    let upper = scaled_duration(slowest_milliseconds, upper_factor)?;
 
     let confidence = if level_confidence == EstimateConfidence::High
         && input.usable_capacity.source != CapacitySource::Estimated
@@ -1148,6 +1147,18 @@ fn calculate_estimate(
         calculated_at: input.at,
         valid_until,
     })
+}
+
+fn duration_at_current(
+    remaining_milliamp_hours: u128,
+    current: BatteryCurrent,
+) -> Result<u128, ChargeEstimateError> {
+    let current_milliamps = u128::from(current.as_milliamps().unsigned_abs());
+    remaining_milliamp_hours
+        .checked_mul(MILLISECONDS_PER_MILLIAMP_HOUR)
+        .and_then(|value| value.checked_add(current_milliamps.saturating_sub(1)))
+        .and_then(|value| value.checked_div(current_milliamps))
+        .ok_or(ChargeEstimateError::ArithmeticOverflow)
 }
 
 fn scaled_duration(value: u128, factor_permille: u64) -> Result<Duration, ChargeEstimateError> {
@@ -1302,6 +1313,41 @@ mod tests {
 
         assert!(variable.lower < baseline.lower);
         assert!(variable.upper > baseline.upper);
+    }
+
+    #[test]
+    fn bounded_current_window_recovers_after_a_transient_ages_out() {
+        let mut estimator = ChargeEstimator::new();
+        let mut state = ChargeEstimateState::Unavailable {
+            reason: ChargeEstimateUnavailableReason::UnstableCurrent,
+        };
+
+        for (index, current) in std::iter::once(-4_000)
+            .chain(std::iter::repeat_n(-2_000, 20))
+            .enumerate()
+        {
+            let at = u64::try_from(index).unwrap() * 15_000;
+            state = estimator.update(input(at, current, 50));
+        }
+
+        assert!(matches!(state, ChargeEstimateState::Available(_)));
+    }
+
+    #[test]
+    fn upper_bound_covers_the_slowest_observed_charge_rate() {
+        let estimate = calculate_estimate(
+            input(30_000, -1_000, 50),
+            CurrentRateSummary {
+                mean: BatteryCurrent::from_milliamps(1_000),
+                minimum: BatteryCurrent::from_milliamps(800),
+                maximum: BatteryCurrent::from_milliamps(1_000),
+                variability_permille: 200,
+            },
+            EstimateConfidence::High,
+        )
+        .unwrap();
+
+        assert!(estimate.upper >= Duration::from_seconds(22_500));
     }
 
     #[test]
@@ -1515,6 +1561,46 @@ mod tests {
         assert_eq!(estimator.model(), Some(model));
         estimator.reset();
         assert_eq!(estimator.model(), None);
+    }
+
+    #[test]
+    fn restored_sag_model_projects_from_the_first_current_sample() {
+        let mut estimator = VoltageSagEstimator::new();
+        assert!(estimator.restore_model(VoltageSagModel::new(
+            EffectiveResistance::from_milliohms(100),
+            8,
+            true,
+        )));
+
+        let sag = estimator
+            .update(VoltageSagInput {
+                at: MonotonicTimestamp::new(1_000),
+                voltage: Measured::reported(Voltage::from_millivolts(99_000)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(10_000)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+            .expect("a restored model and current are sufficient to project sag");
+
+        assert_eq!(sag.delta.as_millivolts(), -1_000);
+    }
+
+    #[test]
+    fn unlearned_sag_model_uses_connection_under_load_only_as_a_baseline() {
+        let mut estimator = VoltageSagEstimator::new();
+        let observe = |estimator: &mut VoltageSagEstimator, at, voltage, current| {
+            estimator.update(VoltageSagInput {
+                at: MonotonicTimestamp::new(at),
+                voltage: Measured::reported(Voltage::from_millivolts(voltage)),
+                battery_current: Measured::reported(BatteryCurrent::from_milliamps(current)),
+                freshness: TelemetryFreshness::new(Duration::from_seconds(30)),
+            })
+        };
+
+        assert_eq!(observe(&mut estimator, 0, 99_000, 10_000), None);
+        let sag = observe(&mut estimator, 1_000, 98_000, 20_000)
+            .expect("the next load step should teach the model");
+        assert_eq!(sag.effective_resistance.as_milliohms(), 100);
+        assert_eq!(sag.delta.as_millivolts(), -2_000);
     }
 
     #[test]

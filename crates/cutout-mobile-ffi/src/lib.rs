@@ -5241,9 +5241,10 @@ impl MobileChargeEstimator {
     /// Replaces the usable pack profile and resets bounded history.
     pub fn configure_profile(&self, profile: MobileChargeProfileDto) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let incompatible_profile = state
-            .profile
-            .is_some_and(|current| current.profile_id != profile.profile_id);
+        let incompatible_profile = state.profile.is_some_and(|current| {
+            current.profile_id != profile.profile_id
+                || current.capacity_milliamp_hours != profile.capacity_milliamp_hours
+        });
         state.estimator.reset();
         if incompatible_profile {
             state.voltage_sag.reset();
@@ -8852,9 +8853,8 @@ mod tests {
 
         let restored = MobileChargeEstimator::new();
         assert!(restored.restore_voltage_sag_model(model));
-        assert_eq!(update(&restored, 60_000, 99_000, 10_000).voltage_sag, None);
         assert_eq!(
-            update(&restored, 61_000, 99_000, 10_000)
+            update(&restored, 60_000, 99_000, 10_000)
                 .voltage_sag
                 .expect("restored model should project sag")
                 .delta_millivolts,
@@ -8862,6 +8862,26 @@ mod tests {
         );
         restored.clear_voltage_sag_model();
         assert_eq!(restored.voltage_sag_model(), None);
+    }
+
+    #[test]
+    fn voltage_sag_model_is_cleared_for_an_incompatible_pack_replacement() {
+        let estimator = MobileChargeEstimator::new();
+        let mut profile = charge_profile(MobileVerificationStatusDto::HardwareVerified);
+        estimator.configure_profile(profile);
+        assert!(
+            estimator.restore_voltage_sag_model(MobileVoltageSagModelDto {
+                schema_version: 1,
+                effective_resistance_milliohms: 100,
+                observations: 8,
+                hardware_verified: true,
+            })
+        );
+
+        profile.capacity_milliamp_hours = 5_000;
+        estimator.configure_profile(profile);
+
+        assert_eq!(estimator.voltage_sag_model(), None);
     }
 
     #[test]
