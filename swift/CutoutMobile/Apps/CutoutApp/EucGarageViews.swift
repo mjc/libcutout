@@ -51,11 +51,7 @@ struct EucGarageScreenView: View {
             PevScreenTitleBlock(
                 title: screen.title,
                 subtitle: screen.subtitle,
-                scale: scale,
-                titleFontSize: 31,
-                subtitleFontSize: 14,
-                titleMinimumScaleFactor: 0.76,
-                subtitleLineLimit: 2
+                scale: scale
             )
 
             PevDashboardGrid(columns: columns, spacing: 16 * scale) {

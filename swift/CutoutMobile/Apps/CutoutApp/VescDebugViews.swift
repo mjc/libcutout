@@ -38,11 +38,7 @@ struct VescDebugScreenView: View {
             PevScreenTitleBlock(
                 title: snapshot?.title ?? "VESC Debug",
                 subtitle: captureStatusText ?? phase.displayText,
-                scale: scale,
-                titleFontSize: 29,
-                subtitleFontSize: 14,
-                titleMinimumScaleFactor: 0.8,
-                subtitleLineLimit: 2
+                scale: scale
             )
 
             PevDashboardGrid(columns: columns, spacing: 20 * scale) {

@@ -58,11 +58,7 @@ struct CaptureRecordingScreen: View {
         PevScreenTitleBlock(
             title: deviceKind ?? "Capture session",
             subtitle: "Capture session",
-            scale: scale,
-            titleFontSize: 34,
-            subtitleFontSize: 15,
-            titleMinimumScaleFactor: 0.72,
-            subtitleLineLimit: 1
+            scale: scale
         )
     }
 

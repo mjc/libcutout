@@ -2,6 +2,9 @@ import CutoutMobile
 import SwiftUI
 
 struct PevRideHeroSection: View {
+    @ScaledMetric(relativeTo: .largeTitle) private var speedFontSize: CGFloat = 104
+    @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize: CGFloat = 27
+
     let title: String
     let subtitle: String
     let statusFill: Color
@@ -12,18 +15,16 @@ struct PevRideHeroSection: View {
     let scale: CGFloat
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12 * scale) {
-            Text(title)
-                .font(.system(size: 18 * scale, weight: .bold))
-                .foregroundStyle(PevColors.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Spacer(minLength: 8 * scale)
-            PevDashboardStatusPill(
-                title: subtitle,
-                scale: scale,
-                fill: statusFill
-            )
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12 * scale) {
+                titleText
+                Spacer(minLength: 8 * scale)
+                statusPill
+            }
+            VStack(alignment: .leading, spacing: 8 * scale) {
+                titleText
+                statusPill
+            }
         }
         .padding(.top, 8 * scale)
 
@@ -41,21 +42,40 @@ struct PevRideHeroSection: View {
         VStack(alignment: .center, spacing: 2 * scale) {
             HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
                 Text(speedValue)
-                    .font(.system(size: 104 * scale, weight: .black))
+                    .font(.system(size: speedFontSize * scale, weight: .black))
                     .monospacedDigit()
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
                 if !speedUnit.isEmpty {
                     Text(speedUnit)
-                        .font(.system(size: 27 * scale, weight: .bold))
+                        .font(.system(size: speedUnitFontSize * scale, weight: .bold))
                         .foregroundStyle(PevColors.muted)
                 }
             }
             Text(speedCaption)
-                .font(.system(size: 13 * scale, weight: .bold))
+                .font(.caption.weight(.bold))
                 .foregroundStyle(PevColors.muted)
         }
         .frame(maxWidth: .infinity)
         .foregroundStyle(PevColors.primaryText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(speedCaption)
+        .accessibilityValue([speedValue, speedUnit].filter { !$0.isEmpty }.joined(separator: " "))
+        .accessibilityIdentifier("ride.hero.speed")
+    }
+
+    private var titleText: some View {
+        Text(title)
+            .font(.headline)
+            .foregroundStyle(PevColors.primaryText)
+            .accessibilityHeading(.h1)
+    }
+
+    private var statusPill: some View {
+        PevDashboardStatusPill(
+            title: subtitle,
+            scale: scale,
+            fill: statusFill
+        )
     }
 }

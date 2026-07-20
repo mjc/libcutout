@@ -29,11 +29,7 @@ struct DevicePickerView: View {
             PevScreenTitleBlock(
                 title: "Choose device",
                 subtitle: "Nearby Bluetooth devices",
-                scale: scale,
-                titleFontSize: 34,
-                subtitleFontSize: 15,
-                titleMinimumScaleFactor: 0.78,
-                subtitleLineLimit: 2
+                scale: scale
             )
 
             PevDashboardScanningPill(
