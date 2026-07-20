@@ -6,38 +6,25 @@ struct BmsNoDataHeader: View {
     let scale: CGFloat
 
     var body: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6 * scale) {
-                Text(screen.title)
-                    .font(.system(size: 24 * scale, weight: .bold))
-                Text(screen.subtitle)
-                    .font(.system(size: 11 * scale, weight: .medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .foregroundStyle(PevColors.muted)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12 * scale) {
+                titleBlock
+                Spacer(minLength: 0)
+                statusPill
             }
-
-            Spacer(minLength: 12 * scale)
-
-            HStack(spacing: 10 * scale) {
-                Circle()
-                    .fill(PevColors.yellow)
-                    .frame(width: 10 * scale, height: 10 * scale)
-                Text(screen.secondaryValue)
-                    .font(.system(size: 11 * scale, weight: .medium))
-                    .foregroundStyle(PevColors.primaryText.opacity(0.92))
+            VStack(alignment: .leading, spacing: 10 * scale) {
+                titleBlock
+                statusPill
             }
-            .padding(.horizontal, 12 * scale)
-            .frame(height: 30 * scale)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(PevColors.cardFill)
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(PevColors.cardStroke, lineWidth: 1)
-                    )
-            )
         }
+    }
+
+    private var titleBlock: some View {
+        PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle, scale: scale)
+    }
+
+    private var statusPill: some View {
+        PevDashboardStatusPill(title: screen.secondaryValue, scale: scale, fill: PevColors.yellow)
     }
 }
 
@@ -52,14 +39,15 @@ struct BmsNoDataWarningCard: View {
                     .font(.system(size: 28 * scale, weight: .bold))
                     .foregroundStyle(PevColors.yellow)
                     .frame(width: 28 * scale, height: 28 * scale)
+                    .accessibilityHidden(true)
 
                 Text(snapshot.noDataWarningTitle)
-                    .font(.system(size: 15 * scale, weight: .black))
+                    .font(.headline)
                     .foregroundStyle(PevColors.yellow)
             }
             ForEach(snapshot.noDataWarningLines, id: \.self) { line in
                 Text(line)
-                    .font(.system(size: 14 * scale, weight: .medium))
+                    .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.9))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -75,6 +63,10 @@ struct BmsNoDataWarningCard: View {
                         .stroke(Color(red: 0.318, green: 0.188, blue: 0.208), lineWidth: 1.2)
                 )
         )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(snapshot.noDataWarningTitle)
+        .accessibilityValue(snapshot.noDataWarningLines.joined(separator: ". "))
+        .accessibilityIdentifier("bms.no-data.warning")
     }
 }
 
@@ -86,52 +78,67 @@ struct BmsNoDataPackEstimateCard: View {
     let scale: CGFloat
 
     var body: some View {
-        HStack(alignment: .top, spacing: 14 * scale) {
-            VStack(alignment: .leading, spacing: 8 * scale) {
-                PevDashboardSectionLabel(title: "PACK ESTIMATE", scale: scale, fontSize: 12, weight: .bold)
-                HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
-                    Text(percentText)
-                        .font(.system(size: 64 * scale, weight: .black))
-                        .monospacedDigit()
-                    Text("%")
-                        .font(.system(size: 18 * scale, weight: .bold))
-                        .foregroundStyle(PevColors.muted)
-                }
-                Text(detail)
-                    .font(.system(size: 10 * scale, weight: .medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .foregroundStyle(PevColors.muted)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 14 * scale) {
+                estimate
+                confidence
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            VStack(alignment: .leading, spacing: 8 * scale) {
-                PevDashboardSectionLabel(title: "CONFIDENCE", scale: scale, fontSize: 12, weight: .bold)
-                Text(confidenceTitle)
-                    .font(.system(size: 22 * scale, weight: .black))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Text(confidenceDetail)
-                    .font(.system(size: 11 * scale, weight: .medium))
-                    .foregroundStyle(PevColors.muted)
+            VStack(alignment: .leading, spacing: 14 * scale) {
+                estimate
+                confidence
             }
-            .padding(.horizontal, 10 * scale)
-            .padding(.vertical, 14 * scale)
-            .frame(width: 112 * scale, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
-                    .fill(PevColors.cardFill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
-                            .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
-                            .foregroundStyle(PevColors.cardStroke)
-                    )
-            )
         }
         .padding(.horizontal, 20 * scale)
         .padding(.vertical, 18 * scale)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
+    }
+
+    private var estimate: some View {
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            PevDashboardSectionLabel(title: "PACK ESTIMATE", scale: scale, fontSize: 12, weight: .bold)
+            HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+                Text(percentText)
+                    .font(.system(size: 64 * scale, weight: .black))
+                    .monospacedDigit()
+                Text("%")
+                    .font(.system(size: 18 * scale, weight: .bold))
+                    .foregroundStyle(PevColors.muted)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Pack estimate")
+        .accessibilityValue("\(percentText) percent. \(detail)")
+    }
+
+    private var confidence: some View {
+        VStack(alignment: .leading, spacing: 8 * scale) {
+            PevDashboardSectionLabel(title: "CONFIDENCE", scale: scale, fontSize: 12, weight: .bold)
+            Text(confidenceTitle)
+                .font(.title2.weight(.black))
+            Text(confidenceDetail)
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+        }
+        .padding(.horizontal, 10 * scale)
+        .padding(.vertical, 14 * scale)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
+                .fill(PevColors.cardFill)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
+                        .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
+                        .foregroundStyle(PevColors.cardStroke)
+                )
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Confidence")
+        .accessibilityValue("\(confidenceTitle). \(confidenceDetail)")
     }
 }
 
@@ -146,7 +153,10 @@ struct BmsNoDataTelemetryCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14 * scale) {
             PevDashboardSectionLabel(title: "WHAT WE CAN SEE", scale: scale, fontSize: 12, weight: .bold)
-            HStack(alignment: .top, spacing: 18 * scale) {
+            PevDashboardGrid(
+                columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 18 * scale)],
+                spacing: 18 * scale
+            ) {
                 BmsNoDataMetric(value: voltageValue, unit: "V", label: "pack voltage", scale: scale)
                 BmsNoDataMetric(value: rideSagValue, unit: rideSagUnit, label: "ride sag", scale: scale)
                 BmsNoDataMetric(value: loadValue, unit: loadUnit, label: "load now", scale: scale)
@@ -168,10 +178,8 @@ struct BmsNoDataUnknownsCard: View {
             PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", scale: scale, fontSize: 12, weight: .bold)
             ForEach(rows, id: \.self) { row in
                 Text(row)
-                    .font(.system(size: 14 * scale, weight: .medium))
+                    .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.92))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
                     .padding(.horizontal, 12 * scale)
                     .frame(maxWidth: .infinity, minHeight: 30 * scale, alignment: .leading)
                     .background(
@@ -205,24 +213,11 @@ struct BmsNoDataRidingRuleCard: View {
         VStack(alignment: .leading, spacing: 10 * scale) {
             PevDashboardSectionLabel(title: "RIDING RULE", scale: scale, fontSize: 12, weight: .bold)
             Text(title)
-                .font(.system(size: 13 * scale, weight: .medium))
-                .lineLimit(2)
-                .minimumScaleFactor(0.84)
+                .font(.body)
                 .foregroundStyle(PevColors.primaryText.opacity(0.9))
-            Capsule()
-                .fill(PevColors.cardStroke)
-                .frame(height: 6 * scale)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [PevColors.yellow, PevColors.orange],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .frame(width: 300 * scale * clampedProgress)
-                }
+            ProgressView(value: clampedProgress)
+                .tint(PevColors.yellow)
+                .accessibilityLabel("Riding rule progress")
         }
         .padding(.horizontal, 20 * scale)
         .padding(.vertical, 18 * scale)

@@ -19,9 +19,12 @@ struct BmsNoDataMetric: View {
                     .foregroundStyle(PevColors.muted)
             }
             Text(label)
-                .font(.system(size: 12 * scale, weight: .medium))
+                .font(.caption)
                 .foregroundStyle(PevColors.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue([value, unit].filter { !$0.isEmpty }.joined(separator: " "))
     }
 }

@@ -65,26 +65,27 @@ struct BmsUnknownLayout: View {
 
             VStack(alignment: .leading, spacing: 10 * scale) {
                 Text("next capture flow")
-                    .font(.system(size: 15 * scale, weight: .bold))
+                    .font(.headline)
                     .foregroundStyle(PevColors.muted)
+                    .accessibilityHeading(.h2)
                 Text(snapshot.captureActionTitle ?? "--")
-                    .font(.system(size: 25 * scale, weight: .black))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.84)
+                    .font(.title2.weight(.black))
                 Text(snapshot.unknownTopologyCaptureDetail)
-                    .font(.system(size: 13 * scale, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                 Text(snapshot.captureActionState ?? "")
-                    .font(.system(size: 15 * scale, weight: .bold))
+                    .font(.headline)
                     .foregroundStyle(PevColors.primaryText.opacity(0.82))
                     .padding(.horizontal, 18 * scale)
-                    .frame(height: 34 * scale)
+                    .frame(minHeight: 44 * scale)
                     .background(Capsule().fill(PevColors.muted.opacity(0.33)))
             }
             .padding(.horizontal, 18 * scale)
             .padding(.vertical, 18 * scale)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("bms.unknown.capture-flow")
         }
     }
 }
