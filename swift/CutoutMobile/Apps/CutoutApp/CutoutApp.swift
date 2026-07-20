@@ -21,6 +21,7 @@ struct CutoutApp: App {
     var body: some Scene {
         WindowGroup("CutoutApp") {
             rootView
+                .preferredColorScheme(.dark)
                 .task {
                     model.start()
                 }
