@@ -44,6 +44,26 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
     }
 
+    func testFootpadReadoutBuildsACompleteDefaultAccessibilityValue() {
+        let readout = makeFootpadReadout()
+
+        XCTAssertEqual(
+            readout.accessibilityValueText,
+            "left, 1.2 volts, right, unavailable, engaged"
+        )
+    }
+
+    func testFootpadReadoutAcceptsTypedAvailabilitySemantics() {
+        let readout = makeFootpadReadout(
+            accessibilityValue: "left, 1.2 volts, available, right, unavailable, engaged"
+        )
+
+        XCTAssertEqual(
+            readout.accessibilityValueText,
+            "left, 1.2 volts, available, right, unavailable, engaged"
+        )
+    }
+
     private func makeProgressBar(progress: Double) -> PevDashboardProgressBar {
         PevDashboardProgressBar(
             label: "Headroom",
@@ -54,6 +74,25 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             labelColor: .primary,
             valueColor: .primary,
             scale: 1
+        )
+    }
+
+    private func makeFootpadReadout(
+        accessibilityValue: String? = nil
+    ) -> PevDashboardFootpadReadout {
+        PevDashboardFootpadReadout(
+            leftLabel: "left",
+            leftValue: "1.2 volts",
+            rightLabel: "right",
+            rightValue: "unavailable",
+            detail: "engaged",
+            accent: .cyan,
+            fill: .gray,
+            stroke: .gray,
+            textColor: .primary,
+            secondaryTextColor: .secondary,
+            scale: 1,
+            accessibilityValue: accessibilityValue
         )
     }
 }

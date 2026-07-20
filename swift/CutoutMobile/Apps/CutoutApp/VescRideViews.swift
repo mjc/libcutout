@@ -219,11 +219,9 @@ struct VescRideScreenView: View {
                     stroke: PevColors.cardStroke,
                     textColor: PevColors.primaryText,
                     secondaryTextColor: PevColors.muted,
-                    scale: scale
+                    scale: scale,
+                    accessibilityValue: vescFootpadAccessibilityValue(footpad)
                 )
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("footpad")
-                .accessibilityValue(vescFootpadAccessibilityValue(footpad))
                 .padding(.top, 8 * scale)
             }
 
