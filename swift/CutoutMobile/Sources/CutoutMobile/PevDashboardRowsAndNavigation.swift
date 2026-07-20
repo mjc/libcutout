@@ -431,6 +431,7 @@ public struct PevDashboardTabStrip: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, minHeight: 44)
         .disabled(!tab.isEnabled || tab.destinationTarget == nil)
+        .keyboardShortcut(KeyEquivalent(tab.id.keyboardShortcut), modifiers: .command)
         .accessibilityIdentifier(tab.accessibilityIdentifier)
     }
 
