@@ -24,7 +24,7 @@ struct DevicePickerView: View {
             bottomPadding: 24,
             allowsVerticalScroll: true,
             contentSpacing: 18,
-            horizontalPadding: 18
+            horizontalPadding: 24
         ) { scale, _ in
             PevScreenTitleBlock(
                 title: "Choose device",

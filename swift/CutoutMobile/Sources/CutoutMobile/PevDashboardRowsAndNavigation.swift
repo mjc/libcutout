@@ -208,7 +208,7 @@ public struct PevDashboardSectionLabel: View {
 
     public init(
         title: String,
-        font: Font = .headline,
+        font: Font = .subheadline.weight(.semibold),
         color: Color = PevDashboardColors.mutedText
     ) {
         self.title = title

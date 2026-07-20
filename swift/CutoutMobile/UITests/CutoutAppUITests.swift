@@ -55,6 +55,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(captureKind.frame.isEmpty)
         XCTAssertGreaterThan(captureKind.frame.width, 0)
         XCTAssertGreaterThan(captureKind.frame.height, 0)
+        XCTAssertEqual(captureKind.frame.minX - window.frame.minX, 24, accuracy: 2)
+        XCTAssertEqual(window.frame.maxX - captureKind.frame.maxX, 24, accuracy: 2)
         XCTAssertGreaterThanOrEqual(screen.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(screen.frame.maxY, window.frame.maxY + 2)
 
