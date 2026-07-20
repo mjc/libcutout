@@ -3,18 +3,17 @@ import SwiftUI
 
 struct BmsOverviewLayout: View {
     let content: PevBmsContent
-    let scale: CGFloat
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14 * scale) {
+        VStack(alignment: .leading, spacing: 14) {
             summaryCard
 
             if hasCellVoltageEvidence {
                 PevDashboardGrid(
-                    columns: [GridItem(.adaptive(minimum: 140 * scale), spacing: 14 * scale)],
-                    spacing: 14 * scale
+                    columns: [GridItem(.adaptive(minimum: 140), spacing: 14)],
+                    spacing: 14
                 ) {
                     if let averageGroupVoltage {
                         PevDashboardMetricTile(
@@ -23,7 +22,7 @@ struct BmsOverviewLayout: View {
                             unit: "V",
                             detail: "",
                             accent: PevColors.green,
-                            scale: scale,
+                            scale: 1,
                             detailColor: PevColors.green
                         )
                     }
@@ -34,7 +33,7 @@ struct BmsOverviewLayout: View {
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
                             accent: PevColors.orange,
-                            scale: scale,
+                            scale: 1,
                             detailColor: PevColors.orange
                         )
                     }
@@ -48,7 +47,7 @@ struct BmsOverviewLayout: View {
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
                     accent: PevColors.green,
-                    scale: scale,
+                    scale: 1,
                     detailColor: PevColors.green
                 )
             }
@@ -59,7 +58,7 @@ struct BmsOverviewLayout: View {
                     value: balancingSummary,
                     detail: snapshot.balancingDetail ?? "",
                     accent: PevColors.orange,
-                    scale: scale
+                    scale: 1
                 )
             }
 
@@ -70,7 +69,7 @@ struct BmsOverviewLayout: View {
                     detail: snapshot.faultDetail ?? "",
                     accent: PevColors.orange,
                     stroke: Color(red: 0.92, green: 0.33, blue: 0.35),
-                    scale: scale
+                    scale: 1
                 )
             }
         }
@@ -86,7 +85,7 @@ struct BmsOverviewLayout: View {
                 detail: snapshot.topology.layoutLabel,
                 progress: energyProgress,
                 accent: PevColors.yellow,
-                scale: scale
+                scale: 1
             )
         } else {
             PevDashboardWideCard(
@@ -94,7 +93,7 @@ struct BmsOverviewLayout: View {
                 value: voltageText(snapshot.voltage) == "--" ? snapshot.availability.displayText : "\(voltageText(snapshot.voltage)) V",
                 detail: snapshot.topology.layoutLabel,
                 accent: PevColors.green,
-                scale: scale
+                scale: 1
             )
         }
     }

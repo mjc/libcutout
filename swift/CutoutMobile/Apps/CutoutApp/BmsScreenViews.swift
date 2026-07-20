@@ -62,7 +62,7 @@ struct BmsScreenView: View {
     private func contentSection(scale: CGFloat) -> some View {
         switch content.kind {
         case .overview:
-            BmsOverviewLayout(content: content, scale: scale)
+            BmsOverviewLayout(content: content)
         case .cellMapInline:
             BmsInlineLayout(content: content)
         case .cellMapScrollable:
