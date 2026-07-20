@@ -50,6 +50,7 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
         XCTAssertTrue(captureKind.exists)
+        XCTAssertEqual(captureKind.label, "Device kind for capture")
         XCTAssertFalse(window.frame.isEmpty)
         XCTAssertFalse(screen.frame.isEmpty)
         XCTAssertFalse(captureKind.frame.isEmpty)

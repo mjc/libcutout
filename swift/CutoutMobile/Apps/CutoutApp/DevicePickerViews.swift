@@ -9,6 +9,7 @@ struct DevicePickerView: View {
     let pair: (DevicePickerRow) -> Void
     let recordOnly: (DevicePickerRow, String) -> Void
     @State private var recordOnlyDeviceKind = ""
+    @FocusState private var isCaptureKindFocused: Bool
 
     private var renderedScanState: DevicePickerScanState {
         scanState ?? .scanning
@@ -57,6 +58,11 @@ struct DevicePickerView: View {
                     .padding(.horizontal, 14)
                     .frame(minHeight: 46)
                     .background(PevDashboardCardBackground(cornerRadius: 8))
+                    .focused($isCaptureKindFocused)
+                    .submitLabel(.done)
+                    .onSubmit { isCaptureKindFocused = false }
+                    .accessibilityLabel("Device kind for capture")
+                    .accessibilityHint("Enter the device family and model, for example euc nosfet aeon")
                     .accessibilityIdentifier("device-picker.capture-kind")
             }
 
@@ -134,6 +140,7 @@ struct DevicePickerView: View {
         ) {
             recordOnly(row, trimmedRecordOnlyDeviceKind)
         }
+        .accessibilityHint(hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture")
         .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
 
