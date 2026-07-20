@@ -1378,10 +1378,10 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
 fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Vec<SessionOutput>) {
     match M::encode_read_command(kind) {
         Some(RequestDisposition::Write(request)) => {
-            push_encoded_read_request::<M>(&request, output);
+            push_encoded_read_request::<M>(request, output);
         }
         Some(RequestDisposition::Writes(requests)) => {
-            for request in requests.iter() {
+            for request in requests {
                 push_encoded_read_request::<M>(request, output);
             }
         }
@@ -1399,16 +1399,14 @@ fn push_read_request<M: SupportsReadRequests>(kind: CommandKind, output: &mut Ve
 }
 
 fn push_encoded_read_request<M: SupportsReadRequests>(
-    request: &EncodedRequest<M::Probe>,
+    request: EncodedRequest<M::Probe>,
     output: &mut Vec<SessionOutput>,
 ) {
-    if let Ok(bytes) = WritePayload::try_from_slice(request.payload.as_slice()) {
-        output.push(SessionOutput::Transport(TransportAction::Write {
-            channel: M::WRITE_CHANNEL,
-            bytes,
-            mode: request.mode,
-        }));
-    }
+    output.push(SessionOutput::Transport(TransportAction::Write {
+        channel: M::WRITE_CHANNEL,
+        bytes: request.payload,
+        mode: request.mode,
+    }));
 }
 
 /// Generic read-only session shell for one statically-known model.

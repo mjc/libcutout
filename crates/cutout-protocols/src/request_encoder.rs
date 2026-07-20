@@ -1,12 +1,12 @@
 use arrayvec::ArrayVec;
-use cutout_core::{CommandKind, RequestKey, RequestTarget, VescControllerId, WriteMode};
-
-use crate::{
-    AeroProbe, FalconProbe, RefloatReadOnlyRequest, VESC_MAX_FRAME_LEN, VescCanReadOnlyRequest,
-    VescReadOnlyCodec, VescReadOnlyRequest,
+use cutout_core::{
+    CommandKind, RequestKey, RequestTarget, VescControllerId, WriteMode, WritePayload,
 };
 
-const MAX_REQUEST_LEN: usize = VESC_MAX_FRAME_LEN;
+use crate::{
+    AeroProbe, FalconProbe, RefloatReadOnlyRequest, VescCanReadOnlyRequest, VescReadOnlyCodec,
+    VescReadOnlyRequest,
+};
 
 /// Bounded encoded request payload plus correlation metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,7 +18,7 @@ pub struct EncodedRequest<P> {
     pub command: CommandKind,
 
     /// Bounded request bytes.
-    pub payload: ArrayVec<u8, MAX_REQUEST_LEN>,
+    pub payload: WritePayload,
 
     /// GATT write mode required by this request.
     pub mode: WriteMode,
@@ -37,10 +37,10 @@ pub enum RequestDisposition<P> {
     },
 
     /// A probe encoded as a bounded transport write.
-    Write(Box<EncodedRequest<P>>),
+    Write(EncodedRequest<P>),
 
     /// A probe encoded as a bounded sequence of transport writes.
-    Writes(Box<ArrayVec<EncodedRequest<P>, 4>>),
+    Writes(ArrayVec<EncodedRequest<P>, 4>),
 }
 
 /// Request encoder for NOSFET Aero/Veteran-family probes.
@@ -73,18 +73,18 @@ impl FalconRequestEncoder {
     #[must_use]
     pub fn encode(probe: FalconProbe) -> RequestDisposition<FalconProbe> {
         match probe {
-            FalconProbe::Identity => RequestDisposition::Write(Box::new(EncodedRequest {
+            FalconProbe::Identity => RequestDisposition::Write(EncodedRequest {
                 probe,
                 command: probe.command_kind(),
                 payload: request_payload(b"N"),
                 mode: WriteMode::WithoutResponse,
-            })),
-            FalconProbe::FirmwareInfo => RequestDisposition::Write(Box::new(EncodedRequest {
+            }),
+            FalconProbe::FirmwareInfo => RequestDisposition::Write(EncodedRequest {
                 probe,
                 command: probe.command_kind(),
                 payload: request_payload(b"V"),
                 mode: WriteMode::WithoutResponse,
-            })),
+            }),
             FalconProbe::Telemetry | FalconProbe::BatteryInfo => RequestDisposition::Passive {
                 probe,
                 command: probe.command_kind(),
@@ -116,18 +116,18 @@ impl VescRequestEncoder {
                     VescReadOnlyRequest::MotorConfig,
                     VescReadOnlyRequest::Values,
                 ] {
-                    let mut payload = ArrayVec::new();
-                    VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
+                    let mut encoded = ArrayVec::new();
+                    VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
                     requests
                         .try_push(EncodedRequest {
                             probe: request,
                             command: kind,
-                            payload,
+                            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
                             mode: WriteMode::WithoutResponse,
                         })
                         .ok()?;
                 }
-                return Some(RequestDisposition::Writes(Box::new(requests)));
+                return Some(RequestDisposition::Writes(requests));
             }
             CommandKind::RequestDiagnostics => VescReadOnlyRequest::Stats(
                 crate::VescStatsMask::SPEED_AVG
@@ -143,14 +143,14 @@ impl VescRequestEncoder {
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
-        let mut payload = ArrayVec::new();
-        VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
-        Some(RequestDisposition::Write(Box::new(EncodedRequest {
+        let mut encoded = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
+        Some(RequestDisposition::Write(EncodedRequest {
             probe: request,
             command: kind,
-            payload,
+            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
             mode: WriteMode::WithoutResponse,
-        })))
+        }))
     }
 }
 
@@ -211,23 +211,21 @@ impl VescCanTarget {
             controller_id: self.controller_id,
             request,
         };
-        let mut payload = ArrayVec::new();
-        VescReadOnlyCodec::encode_request(request, &mut payload).ok()?;
-        Some(RequestDisposition::Write(Box::new(EncodedRequest {
+        let mut encoded = ArrayVec::new();
+        VescReadOnlyCodec::encode_request(request, &mut encoded).ok()?;
+        Some(RequestDisposition::Write(EncodedRequest {
             probe: request,
             command: kind,
-            payload,
+            payload: WritePayload::try_from_slice(encoded.as_slice()).ok()?,
             mode: WriteMode::WithoutResponse,
-        })))
+        }))
     }
 }
 
-fn request_payload(bytes: &[u8]) -> ArrayVec<u8, MAX_REQUEST_LEN> {
-    let mut payload = ArrayVec::new();
-    for byte in bytes {
-        let pushed = payload.try_push(*byte);
-        debug_assert!(pushed.is_ok());
-    }
+fn request_payload(bytes: &[u8]) -> WritePayload {
+    let Ok(payload) = WritePayload::try_from_slice(bytes) else {
+        unreachable!("bounded protocol request exceeds the transport maximum");
+    };
     payload
 }
 

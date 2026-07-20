@@ -7,13 +7,14 @@ use std::sync::{
 };
 
 use cutout_core::{
-    LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput, TransportWriteLimit,
+    CommandKind, LinkInfo, MonotonicTimestamp, ProtocolSession, SessionInput, SessionOutput,
+    TransportWriteLimit,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FRAME_LEN, BegodeFalconModel, BegodeFrameParseResult,
-    BegodeFrameReassembler, NosfetAeroModel, ReadOnlyModelSpec, ReadOnlySession,
-    VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL, VescGenericModel, VescReadOnlyStreamDecoder,
-    VescReadOnlyStreamResult,
+    BegodeFrameReassembler, FalconRequestEncoder, NosfetAeroModel, ReadOnlyModelSpec,
+    ReadOnlySession, VESC_NOTIFY_CHANNEL, VETERAN_DATA_CHANNEL, VescGenericModel,
+    VescReadOnlyStreamDecoder, VescReadOnlyStreamResult, VescRequestEncoder,
 };
 
 struct CountingAllocator;
@@ -118,6 +119,15 @@ fn protocol_parser_owned_results_do_not_allocate() {
     veteran_parser_owned_results_do_not_allocate();
     begode_parser_owned_results_do_not_allocate();
     vesc_parser_owned_results_do_not_allocate();
+}
+
+#[test]
+fn read_request_encoders_do_not_allocate() {
+    assert_no_allocations("read request encoding", || {
+        assert!(FalconRequestEncoder::encode_command(CommandKind::RequestIdentity).is_some());
+        assert!(VescRequestEncoder::encode_command(CommandKind::RequestTelemetry).is_some());
+        assert!(VescRequestEncoder::encode_command(CommandKind::RequestDiagnostics).is_some());
+    });
 }
 
 fn veteran_parser_owned_results_do_not_allocate() {
