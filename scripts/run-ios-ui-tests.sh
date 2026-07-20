@@ -27,14 +27,12 @@ project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
 is_device_destination=0
 derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-${CUTOUT_IOS_SIMULATOR_DERIVED_DATA:-$root/target/xcode-simulator-tests}}"
-rust_lib="$root/target/aarch64-apple-ios-sim/debug/libcutout_mobile_ffi.a"
 signing_args=()
 provisioning_args=()
 
 if [[ "$destination" == platform=iOS,* ]]; then
   is_device_destination=1
   derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-tests}"
-  rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   signing_args=(
     CODE_SIGNING_ALLOWED=YES
     CODE_SIGNING_REQUIRED=YES
@@ -64,7 +62,6 @@ rm -rf "$derived_data"
     -derivedDataPath "$derived_data" \
     ONLY_ACTIVE_ARCH=YES \
     ARCHS=arm64 \
-    OTHER_LDFLAGS="$rust_lib -liconv" \
     "${signing_args[@]}" \
     "${provisioning_args[@]}" \
     "${xcodebuild_args[@]}" \
