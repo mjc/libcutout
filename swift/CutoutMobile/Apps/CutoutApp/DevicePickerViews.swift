@@ -23,7 +23,7 @@ struct DevicePickerView: View {
             sectionTitle: "setup",
             bottomPadding: 24,
             allowsVerticalScroll: true,
-            contentSpacing: 18,
+            contentSpacing: 10,
             horizontalPadding: 24
         ) { scale, _ in
             PevScreenTitleBlock(
