@@ -136,6 +136,7 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
         chargeEstimateTile(from: state),
         telemetry.voltage.map { voltage in
             PevDashboardTile(
+                kind: .packVoltage,
                 label: "pack",
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
@@ -143,26 +144,28 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
                     ?? "sag unavailable",
                 accent: .cyan
             )
-        } ?? PevDashboardTile(label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
+        } ?? PevDashboardTile(kind: .packVoltage, label: "pack", value: "--", unit: "V", detail: "unavailable", accent: .cyan),
         livePowerTile(from: telemetry),
         (telemetry.controllerTemperature != nil || telemetry.motorTemperature != nil || telemetry.batteryTemperature != nil)
             ? PevDashboardTile(
+                kind: .thermal,
                 label: "thermal",
                 value: liveThermalValue(telemetry: telemetry),
                 unit: "°C",
                 detail: liveThermalDetail(telemetry: telemetry),
                 accent: .green
             )
-            : PevDashboardTile(label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
+            : PevDashboardTile(kind: .thermal, label: "thermal", value: "--", unit: "°C", detail: "unavailable", accent: .green),
         state.limpHomeRange.map { range in
             PevDashboardTile(
+                kind: .limpHomeRange,
                 label: "limp-home",
                 value: decimalString(fromMillimetres: range.value, unit: distanceUnit, fractionDigits: 1),
                 unit: distanceUnit,
                 detail: "typed range estimate",
                 accent: .cyan
             )
-        } ?? PevDashboardTile(label: "limp-home", value: "--", unit: distanceUnit, detail: "unavailable", accent: .cyan),
+        } ?? PevDashboardTile(kind: .limpHomeRange, label: "limp-home", value: "--", unit: distanceUnit, detail: "unavailable", accent: .cyan),
     ]
 }
 
@@ -174,6 +177,7 @@ func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
         estimate.displayDetail
     }
     return PevDashboardTile(
+        kind: .chargeEstimate,
         label: "charge",
         value: estimate.displayValue,
         unit: "",
@@ -197,6 +201,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
        current.value != 0 {
         let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
         return PevDashboardTile(
+            kind: .power,
             label: "power",
             value: decimalString(
                 fromMilliwatts: milliwatts,
@@ -210,6 +215,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
 
     if let power = telemetry.power {
         return PevDashboardTile(
+            kind: .power,
             label: "power",
             value: decimalString(
                 fromMilliwatts: power.value,
@@ -221,7 +227,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
         )
     }
 
-    return PevDashboardTile(label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
+    return PevDashboardTile(kind: .power, label: "power", value: "--", unit: "kW", detail: "unavailable", accent: .yellow)
 }
 
 func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> String {
@@ -249,7 +255,7 @@ func unavailableSafetyBars(from bars: [PevSafetyBar]) -> [PevSafetyBar] {
 
 func unavailableDashboardTiles(from tiles: [PevDashboardTile]) -> [PevDashboardTile] {
     tiles.map {
-        PevDashboardTile(label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
+        PevDashboardTile(kind: $0.kind, label: $0.label, value: "--", unit: $0.unit, detail: "unavailable", accent: $0.accent)
     }
 }
 

@@ -125,6 +125,7 @@ struct EucGarageScreenView: View {
 
         let readout = SpeedReadout(millimetersPerSecond: speed.value)
         return PevDashboardTile(
+            kind: tile.kind,
             label: tile.label,
             value: readout.displayValue,
             unit: readout.displayUnit,
@@ -153,6 +154,7 @@ struct EucGarageScreenView: View {
         }
 
         return PevDashboardTile(
+            kind: tile.kind,
             label: tile.label,
             value: value,
             unit: unit,
@@ -166,6 +168,7 @@ struct EucGarageScreenView: View {
         availability: ReadbackAvailability
     ) -> PevDashboardTile {
         PevDashboardTile(
+            kind: tile.kind,
             label: tile.label,
             value: "--",
             unit: tile.unit,

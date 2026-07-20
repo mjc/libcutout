@@ -67,6 +67,7 @@ struct EucRideScreenView: View {
     private var gpsSpeedTile: PevDashboardTile {
         let now = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
         return PevDashboardTile(
+            kind: .gpsSpeed,
             label: "GPS speed",
             value: phoneLocationReadback.speed.displayValue,
             unit: phoneLocationReadback.speed.millimetersPerSecond == nil ? "" : phoneLocationReadback.speed.displayUnit,

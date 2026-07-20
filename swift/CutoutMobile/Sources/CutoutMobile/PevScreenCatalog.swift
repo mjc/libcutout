@@ -58,7 +58,13 @@ public struct PevWarningCard: Equatable, Hashable, Sendable {
 }
 
 public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
-    case metric
+    case chargeEstimate
+    case packVoltage
+    case power
+    case thermal
+    case limpHomeRange
+    case gpsSpeed
+    case batteryVoltage
     case beepMargin
     case tiltback
     case pedalMode
@@ -66,10 +72,12 @@ public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
     case motorCurrent
     case boardAngle
     case controller
+    case dutyCycle
+    case headroom
 }
 
 public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
-    public var id: String { label }
+    public var id: PevDashboardTileKind { kind }
 
     public let kind: PevDashboardTileKind
     public let label: String
@@ -79,7 +87,7 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public let accent: PevAccent
 
     public init(
-        kind: PevDashboardTileKind = .metric,
+        kind: PevDashboardTileKind,
         label: String,
         value: String,
         unit: String,

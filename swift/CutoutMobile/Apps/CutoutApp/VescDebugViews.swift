@@ -10,10 +10,38 @@ struct VescDebugScreenView: View {
     private var tiles: [PevDashboardTile] {
         guard let snapshot else { return [] }
         return [
-            PevDashboardTile(label: "duty", value: snapshot.dutyCycle.map { RideUnits.percentText(abs(Int($0.permille)) / 10) } ?? "--", unit: "%", detail: "motor duty cycle", accent: .orange),
-            PevDashboardTile(label: "headroom", value: percentText(snapshot.dutyHeadroom), unit: "%", detail: "remaining duty", accent: .yellow),
-            PevDashboardTile(label: "board", value: angleText(snapshot.boardAngle), unit: "°", detail: "balance \(angleText(snapshot.balanceAngle))°", accent: .cyan),
-            PevDashboardTile(label: "controller", value: temperatureText(snapshot.controllerTemperature), unit: "°C", detail: "motor \(temperatureText(snapshot.motorTemperature)) °C", accent: .green),
+            PevDashboardTile(
+                kind: .dutyCycle,
+                label: "duty",
+                value: snapshot.dutyCycle.map { RideUnits.percentText(abs(Int($0.permille)) / 10) } ?? "--",
+                unit: "%",
+                detail: "motor duty cycle",
+                accent: .orange
+            ),
+            PevDashboardTile(
+                kind: .headroom,
+                label: "headroom",
+                value: percentText(snapshot.dutyHeadroom),
+                unit: "%",
+                detail: "remaining duty",
+                accent: .yellow
+            ),
+            PevDashboardTile(
+                kind: .boardAngle,
+                label: "board",
+                value: angleText(snapshot.boardAngle),
+                unit: "°",
+                detail: "balance \(angleText(snapshot.balanceAngle))°",
+                accent: .cyan
+            ),
+            PevDashboardTile(
+                kind: .controller,
+                label: "controller",
+                value: temperatureText(snapshot.controllerTemperature),
+                unit: "°C",
+                detail: "motor \(temperatureText(snapshot.motorTemperature)) °C",
+                accent: .green
+            ),
         ]
     }
 

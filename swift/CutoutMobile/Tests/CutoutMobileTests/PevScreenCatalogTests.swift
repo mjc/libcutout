@@ -59,6 +59,36 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertNotEqual(ride.id, differentRoleWithSameTitle.id)
     }
 
+    func testDashboardTileIdentityDoesNotDependOnVisibleLabel() {
+        let battery = PevDashboardTile(
+            kind: .batteryCurrent,
+            label: "battery current",
+            value: "12",
+            unit: "A",
+            detail: "live telemetry",
+            accent: .yellow
+        )
+        let localizedBattery = PevDashboardTile(
+            kind: .batteryCurrent,
+            label: "courant de batterie",
+            value: "12",
+            unit: "A",
+            detail: "télémétrie en direct",
+            accent: .yellow
+        )
+        let motorWithSameLabel = PevDashboardTile(
+            kind: .motorCurrent,
+            label: "battery current",
+            value: "12",
+            unit: "A",
+            detail: "live telemetry",
+            accent: .orange
+        )
+
+        XCTAssertEqual(battery.id, localizedBattery.id)
+        XCTAssertNotEqual(battery.id, motorWithSameLabel.id)
+    }
+
     func testDevicePickerScanningHasNoInventedRows() {
         let state = DevicePickerScanState.scanning
 

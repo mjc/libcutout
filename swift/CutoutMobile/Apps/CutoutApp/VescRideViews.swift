@@ -97,6 +97,7 @@ struct VescRideScreenView: View {
         guard let liveSnapshot else { return [] }
         return [
             PevDashboardTile(
+                kind: .batteryVoltage,
                 label: "voltage",
                 value: voltageText(liveSnapshot.batteryVoltage),
                 unit: "V",
@@ -104,6 +105,7 @@ struct VescRideScreenView: View {
                 accent: .yellow
             ),
             PevDashboardTile(
+                kind: .motorCurrent,
                 label: "motor current",
                 value: phaseCurrentText(liveSnapshot.motorCurrent),
                 unit: "A",
@@ -111,6 +113,7 @@ struct VescRideScreenView: View {
                 accent: .orange
             ),
             PevDashboardTile(
+                kind: .boardAngle,
                 label: "board angle",
                 value: angleText(liveSnapshot.boardAngle),
                 unit: "°",
@@ -118,6 +121,7 @@ struct VescRideScreenView: View {
                 accent: .cyan
             ),
             PevDashboardTile(
+                kind: .controller,
                 label: "controller",
                 value: temperatureText(liveSnapshot.controllerTemperature),
                 unit: "°C",
