@@ -5,7 +5,6 @@ struct PevDashboardScaffold<Content: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let sectionTitle: String
-    let headerLeadingAccessory: ((CGFloat) -> AnyView)?
     let bottomPadding: CGFloat
     let allowsVerticalScroll: Bool
     let columnSpacing: CGFloat
@@ -16,7 +15,6 @@ struct PevDashboardScaffold<Content: View>: View {
 
     init(
         sectionTitle: String,
-        headerLeadingAccessory: ((CGFloat) -> AnyView)? = nil,
         bottomPadding: CGFloat,
         allowsVerticalScroll: Bool = true,
         columnSpacing: CGFloat = 26,
@@ -26,7 +24,6 @@ struct PevDashboardScaffold<Content: View>: View {
         @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
-        self.headerLeadingAccessory = headerLeadingAccessory
         self.bottomPadding = bottomPadding
         self.allowsVerticalScroll = allowsVerticalScroll
         self.columnSpacing = columnSpacing
@@ -60,7 +57,7 @@ struct PevDashboardScaffold<Content: View>: View {
     private func scaffoldContent(scale: CGFloat, columns: [GridItem]) -> some View {
         VStack(alignment: .leading, spacing: contentSpacing * scale) {
             if showsHeader {
-                PevDashboardHeader(sectionTitle: sectionTitle, scale: scale, leadingAccessory: headerLeadingAccessory.map { $0(scale) })
+                PevDashboardHeader(sectionTitle: sectionTitle, scale: scale)
             }
 
             content(scale, columns)
@@ -107,9 +104,10 @@ struct PevAppShell<Content: View>: View {
         VStack(spacing: 0) {
             PevDashboardHeader(
                 sectionTitle: sectionTitle,
-                scale: scale,
-                leadingAccessory: AnyView(PevRideDisconnectButton(scale: scale, action: disconnect))
-            )
+                scale: scale
+            ) {
+                PevRideDisconnectButton(scale: scale, action: disconnect)
+            }
             .padding(.horizontal, 24 * scale)
 
             if let connectionStatus = connectionStatus {
@@ -167,12 +165,22 @@ struct PevAppShell<Content: View>: View {
     }
 }
 
-struct PevDashboardHeader: View {
+struct PevDashboardHeader<LeadingAccessory: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let sectionTitle: String
     let scale: CGFloat
-    let leadingAccessory: AnyView?
+    let leadingAccessory: LeadingAccessory
+
+    init(
+        sectionTitle: String,
+        scale: CGFloat,
+        @ViewBuilder leadingAccessory: () -> LeadingAccessory
+    ) {
+        self.sectionTitle = sectionTitle
+        self.scale = scale
+        self.leadingAccessory = leadingAccessory()
+    }
 
     var body: some View {
         Group {
@@ -195,18 +203,28 @@ struct PevDashboardHeader: View {
 
     @ViewBuilder
     private var leading: some View {
-        if let leadingAccessory {
-            leadingAccessory
-        } else {
-            Text("CutOut")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(PevColors.yellow)
-        }
+        leadingAccessory
     }
 
     private var section: some View {
         Text(sectionTitle)
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(PevColors.muted)
+    }
+}
+
+extension PevDashboardHeader where LeadingAccessory == PevDashboardBrand {
+    init(sectionTitle: String, scale: CGFloat) {
+        self.init(sectionTitle: sectionTitle, scale: scale) {
+            PevDashboardBrand()
+        }
+    }
+}
+
+struct PevDashboardBrand: View {
+    var body: some View {
+        Text("CutOut")
+            .font(.headline.weight(.bold))
+            .foregroundStyle(PevColors.yellow)
     }
 }
