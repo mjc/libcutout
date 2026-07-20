@@ -65,15 +65,14 @@ struct BmsGroupCell: View {
     var body: some View {
         VStack(spacing: 8 * scale) {
             Text("\(group.index)")
-                .font(.system(size: 14 * scale, weight: .medium))
+                .font(.subheadline)
                 .foregroundStyle(PevColors.muted)
             Text(groupVoltageText(group))
-                .font(.system(size: 20 * scale, weight: .black))
+                .font(.title3.weight(.black))
                 .monospacedDigit()
-                .minimumScaleFactor(0.84)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 70 * scale)
+        .frame(minHeight: 70 * scale)
         .background(PevDashboardCardBackground(cornerRadius: 10 * scale, stroke: strokeColor, lineWidth: 1.2))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(group.accessibilityLabel)
@@ -100,14 +99,13 @@ struct BmsStripCell: View {
     var body: some View {
         VStack(spacing: 2 * scale) {
             Text(String(format: "%02d", group.index))
-                .font(.system(size: 8 * scale, weight: .medium))
+                .font(.caption2)
                 .foregroundStyle(PevColors.muted)
             Text(groupVoltageText(group))
-                .font(.system(size: 9 * scale, weight: .black))
+                .font(.caption.weight(.black))
                 .monospacedDigit()
-                .minimumScaleFactor(0.7)
         }
-        .frame(width: 31 * scale, height: 44 * scale)
+        .frame(maxWidth: .infinity, minHeight: 60 * scale)
         .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: strokeColor, lineWidth: 1.2))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(group.accessibilityLabel)
@@ -135,7 +133,7 @@ struct BmsGroupIndexCell: View {
     var body: some View {
         Button(action: action) {
             Text("\(group.index)")
-                .font(.system(size: 14 * scale, weight: .medium))
+                .font(.body)
                 .foregroundStyle(PevColors.muted)
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)
@@ -150,13 +148,11 @@ struct BmsGroupIndexCell: View {
 
 struct BmsModeChip: View {
     let title: String
-    let isSelected: Bool
-    let scale: CGFloat
 
     var body: some View {
-        Label(title, systemImage: isSelected ? "checkmark.circle.fill" : "circle")
-            .font(.system(size: 15 * scale, weight: .bold))
-            .foregroundStyle(isSelected ? PevColors.yellow : PevColors.primaryText)
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        Text(title)
+            .font(.body.weight(.bold))
+            .foregroundStyle(PevColors.primaryText)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
     }
 }

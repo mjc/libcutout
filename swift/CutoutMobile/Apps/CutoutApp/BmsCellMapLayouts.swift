@@ -18,7 +18,7 @@ struct BmsInlineLayout: View {
             )
 
             PevDashboardGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 12 * scale), count: 3),
+                columns: [GridItem(.adaptive(minimum: 96), spacing: 12 * scale)],
                 spacing: 14 * scale
             ) {
                 ForEach(snapshot.groups) { group in
@@ -41,16 +41,19 @@ struct BmsInlineLayout: View {
 
             VStack(alignment: .leading, spacing: 14 * scale) {
                 Text("display modes")
-                    .font(.system(size: 15 * scale, weight: .bold))
+                    .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
-                HStack(spacing: 10 * scale) {
+                PevDashboardGrid(
+                    columns: [GridItem(.adaptive(minimum: 100), spacing: 10 * scale)],
+                    spacing: 10 * scale
+                ) {
                     ForEach(content.modeTitles, id: \.self) { title in
-                        BmsModeChip(title: title, isSelected: title == content.modeTitles.first, scale: scale)
+                        BmsModeChip(title: title)
                     }
                 }
                 Text(snapshot.cellMapInteractionHint)
-                    .font(.system(size: 13 * scale, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
             }
             .padding(.horizontal, 18 * scale)
@@ -68,7 +71,7 @@ struct BmsScrollableLayout: View {
     private var snapshot: BmsSnapshot { content.snapshot }
 
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.fixed(31 * scale), spacing: 5 * scale), count: 10)
+        [GridItem(.adaptive(minimum: 72), spacing: 8 * scale)]
     }
 
     var body: some View {
@@ -102,18 +105,16 @@ struct BmsScrollableLayout: View {
 
             VStack(alignment: .leading, spacing: 10 * scale) {
                 Text("display modes")
-                    .font(.system(size: 15 * scale, weight: .bold))
+                    .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
                 Text(content.modeTitles.joined(separator: " • "))
-                    .font(.system(size: 19 * scale, weight: .black))
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.8)
+                    .font(.headline.weight(.black))
                 Text(snapshot.scrollableCellMapRule)
-                    .font(.system(size: 13 * scale, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
                 Text(snapshot.scrollableCellMapFocusHint)
-                    .font(.system(size: 13 * scale, weight: .black))
+                    .font(.subheadline.weight(.black))
                     .foregroundStyle(PevColors.yellow)
             }
             .padding(.horizontal, 18 * scale)
@@ -143,7 +144,7 @@ struct BmsDetailLayout: View {
     }
 
     private var columns: [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 10 * scale), count: 5)
+        [GridItem(.adaptive(minimum: 52), spacing: 10 * scale)]
     }
 
     var body: some View {
@@ -162,22 +163,21 @@ struct BmsDetailLayout: View {
             if let selectedGroup {
                 VStack(alignment: .leading, spacing: 15 * scale) {
                     Text("group \(selectedGroup.index)")
-                        .font(.system(size: 15 * scale, weight: .bold))
+                        .font(.headline)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityAddTraits(.isHeader)
                     Text(groupVoltageText(selectedGroup))
-                        .font(.system(size: 58 * scale, weight: .black))
+                        .font(.largeTitle.weight(.black))
                         .monospacedDigit()
                         .accessibilityLabel(selectedGroup.accessibilityLabel)
                         .accessibilityValue(selectedGroup.accessibilityValue)
                     Text(snapshot.detailGroupStatus(for: selectedGroup.index))
-                        .font(.system(size: 14 * scale, weight: .black))
+                        .font(.headline.weight(.black))
                         .foregroundStyle(PevColors.orange)
 
                     PevDashboardGrid(
                         columns: [
-                            GridItem(.flexible(), spacing: 14 * scale),
-                            GridItem(.flexible(), spacing: 14 * scale),
+                            GridItem(.adaptive(minimum: 140), spacing: 14 * scale),
                         ],
                         spacing: 14 * scale
                     ) {
