@@ -11,9 +11,8 @@ struct BmsDiagnosticsSection: View {
             PevDashboardKeyValueRows(
                 rows: snapshot.readbackRows
                     .filter { $0.label != "page" && $0.label != "page verification" }
-                    .enumerated()
-                    .map { offset, row in
-                        PevDashboardKeyValueRow(id: "\(offset)-\(row.label)", label: row.label, value: row.value)
+                    .map { row in
+                        PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
                     },
                 scale: scale,
                 fill: PevColors.cardFill,
@@ -26,10 +25,10 @@ struct BmsDiagnosticsSection: View {
         } label: {
             VStack(alignment: .leading, spacing: 3 * scale) {
                 Text("BMS diagnostics")
-                    .font(.system(size: 15 * scale, weight: .black))
+                    .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
                 Text("raw readback, available when we need to debug")
-                    .font(.system(size: 11 * scale, weight: .bold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(PevColors.muted)
             }
         }
@@ -37,6 +36,7 @@ struct BmsDiagnosticsSection: View {
         .padding(.horizontal, 16 * scale)
         .padding(.vertical, 14 * scale)
         .background(PevDashboardCardBackground(cornerRadius: 20 * scale))
+        .accessibilityIdentifier("bms.diagnostics")
     }
 }
 
@@ -46,14 +46,7 @@ struct SettingsReadbackRows: View {
 
     var body: some View {
         PevDashboardReadbackRows(
-            rows: readback.entries.enumerated().map { offset, entry in
-                PevDashboardReadbackRow(
-                    id: "\(offset)-\(entry.field.id)",
-                    label: "setting \(entry.field.id)",
-                    value: "\(entry.field.value)",
-                    detail: entry.provenanceText
-                )
-            },
+            rows: readback.dashboardRows,
             scale: scale,
             emptyLabel: "settings",
             emptyValue: readback.availability.displayText
@@ -83,6 +76,17 @@ struct FaultHistoryReadbackRows: View {
 extension SettingsReadback {
     var shouldRender: Bool {
         availability != .available || !entries.isEmpty
+    }
+
+    var dashboardRows: [PevDashboardReadbackRow] {
+        entries.map { entry in
+            PevDashboardReadbackRow(
+                id: "setting-\(entry.field.id)",
+                label: "setting \(entry.field.id)",
+                value: "\(entry.field.value)",
+                detail: entry.provenanceText
+            )
+        }
     }
 }
 

@@ -72,16 +72,16 @@ struct EucGarageScreenView: View {
 
             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
                 Text("Read-only pack health")
-                    .font(.system(size: 16 * scale, weight: .black))
+                    .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
+                    .accessibilityHeading(.h2)
 
                 PevDashboardKeyValueRows(
                     rows: bmsSnapshot.readbackRows
                         .filter { $0.label != "page" && $0.label != "page verification" }
-                        .enumerated()
-                        .map { offset, row in
-                            PevDashboardKeyValueRow(id: "\(offset)-\(row.label)", label: row.label, value: row.value)
+                        .map { row in
+                            PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
                         },
                     scale: scale,
                     fill: PevColors.cardFill,
@@ -94,18 +94,20 @@ struct EucGarageScreenView: View {
 
             if let settingsReadback, settingsReadback.shouldRender {
                 Text("Read-only settings")
-                    .font(.system(size: 16 * scale, weight: .black))
+                    .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
+                    .accessibilityHeading(.h2)
 
                 SettingsReadbackRows(readback: settingsReadback, scale: scale)
             }
 
             if let faultHistoryReadback, faultHistoryReadback.shouldRender {
                 Text("Read-only fault history")
-                    .font(.system(size: 16 * scale, weight: .black))
+                    .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
                     .padding(.top, 12 * scale)
+                    .accessibilityHeading(.h2)
 
                 FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: scale)
             }
