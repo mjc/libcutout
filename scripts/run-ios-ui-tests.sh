@@ -30,6 +30,30 @@ derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-${CUTOUT_IOS_SIMULATOR_DERIVED_
 signing_args=()
 provisioning_args=()
 
+assert_rust_ffi_is_static() {
+  local binary
+  local binaries=()
+
+  shopt -s nullglob
+  binaries=(
+    "$derived_data"/Build/Products/*-iphone*/CutoutApp.app/CutoutApp
+    "$derived_data"/Build/Products/*-iphone*/CutoutApp.app/PlugIns/CutoutLiveActivityExtension.appex/CutoutLiveActivityExtension
+  )
+  shopt -u nullglob
+
+  if (( ${#binaries[@]} == 0 )); then
+    echo "No Cutout app executable was produced for Rust FFI linkage validation" >&2
+    return 1
+  fi
+
+  for binary in "${binaries[@]}"; do
+    if /usr/bin/otool -L "$binary" | /usr/bin/grep -q 'libcutout_mobile_ffi'; then
+      echo "$binary dynamically links libcutout_mobile_ffi; link the static archive instead" >&2
+      return 1
+    fi
+  done
+}
+
 if [[ "$destination" == platform=iOS,* ]]; then
   is_device_destination=1
   derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-tests}"
@@ -82,3 +106,5 @@ rm -rf "$derived_data"
       test-without-building
   fi
 )
+
+assert_rust_ffi_is_static
