@@ -54,6 +54,9 @@ struct BmsBottomTab: View {
         }
         .buttonStyle(.plain)
         .disabled(action == nil)
+        .frame(minHeight: 44)
+        .accessibilityValue(isSelected ? "Selected" : action == nil ? "Unavailable" : "Available")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -76,6 +79,10 @@ struct BmsGroupCell: View {
         .frame(maxWidth: .infinity)
         .frame(height: 70 * scale)
         .background(PevDashboardCardBackground(cornerRadius: 10 * scale, stroke: strokeColor, lineWidth: 1.2))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(group.accessibilityLabel)
+        .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var strokeColor: Color {
@@ -106,6 +113,9 @@ struct BmsStripCell: View {
         }
         .frame(width: 31 * scale, height: 44 * scale)
         .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: strokeColor, lineWidth: 1.2))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(group.accessibilityLabel)
+        .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
     }
 
     private var strokeColor: Color {
@@ -132,6 +142,9 @@ struct BmsGroupIndexCell: View {
             .frame(maxWidth: .infinity)
             .frame(height: 34 * scale)
             .background(PevDashboardCardBackground(cornerRadius: 8 * scale, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
+            .accessibilityLabel(group.accessibilityLabel)
+            .accessibilityValue(group.accessibilityValue)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -147,5 +160,6 @@ struct BmsModeChip: View {
             .padding(.horizontal, 16 * scale)
             .frame(height: 32 * scale)
             .background(Capsule().fill(isSelected ? PevColors.yellow : PevColors.iconFill))
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

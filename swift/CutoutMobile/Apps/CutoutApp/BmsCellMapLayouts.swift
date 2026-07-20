@@ -43,6 +43,7 @@ struct BmsInlineLayout: View {
                 Text("controls")
                     .font(.system(size: 15 * scale, weight: .bold))
                     .foregroundStyle(PevColors.muted)
+                    .accessibilityAddTraits(.isHeader)
                 HStack(spacing: 10 * scale) {
                     ForEach(content.modeTitles, id: \.self) { title in
                         BmsModeChip(title: title, isSelected: title == content.modeTitles.first, scale: scale)
@@ -103,6 +104,7 @@ struct BmsScrollableLayout: View {
                 Text("display modes")
                     .font(.system(size: 15 * scale, weight: .bold))
                     .foregroundStyle(PevColors.muted)
+                    .accessibilityAddTraits(.isHeader)
                 Text(content.modeTitles.joined(separator: " • "))
                     .font(.system(size: 19 * scale, weight: .black))
                     .lineLimit(2)
@@ -152,9 +154,12 @@ struct BmsDetailLayout: View {
                     Text("group \(selectedGroup.index)")
                         .font(.system(size: 15 * scale, weight: .bold))
                         .foregroundStyle(PevColors.muted)
+                        .accessibilityAddTraits(.isHeader)
                     Text(groupVoltageText(selectedGroup))
                         .font(.system(size: 58 * scale, weight: .black))
                         .monospacedDigit()
+                        .accessibilityLabel(selectedGroup.accessibilityLabel)
+                        .accessibilityValue(selectedGroup.accessibilityValue)
                     Text(snapshot.detailGroupStatus(for: selectedGroup.index))
                         .font(.system(size: 14 * scale, weight: .black))
                         .foregroundStyle(PevColors.orange)

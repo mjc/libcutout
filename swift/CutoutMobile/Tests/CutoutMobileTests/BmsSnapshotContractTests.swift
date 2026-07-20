@@ -2,6 +2,27 @@ import XCTest
 @testable import CutoutMobile
 
 final class BmsSnapshotContractTests: XCTestCase {
+    func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {
+        let group = BmsGroupSnapshot(
+            index: 7,
+            label: "left pack",
+            voltage: Voltage(value: 4_071),
+            isBalancing: true,
+            alertLevel: .warning,
+            detail: "sagging under load"
+        )
+
+        XCTAssertEqual(group.accessibilityLabel, "Cell group 7, left pack")
+        XCTAssertEqual(
+            group.accessibilityValue,
+            "4.071 volts, warning, balancing, sagging under load"
+        )
+
+        let unavailable = BmsGroupSnapshot(index: 8, alertLevel: .unknown)
+        XCTAssertEqual(unavailable.accessibilityLabel, "Cell group 8")
+        XCTAssertEqual(unavailable.accessibilityValue, "voltage unavailable, status unknown")
+    }
+
     func testSnapshotPreservesSplitPackIdentityAndGroupMetadata() {
         let snapshot = BmsSnapshot(
             topology: BmsTopology(
