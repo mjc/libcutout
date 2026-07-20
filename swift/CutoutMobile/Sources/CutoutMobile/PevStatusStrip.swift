@@ -31,10 +31,8 @@ public struct PevStatusStrip: View {
                 .frame(width: 10 * scale, height: 10 * scale)
                 .accessibilityHidden(true)
             Text(text)
-                .font(.system(size: 13 * scale, weight: .semibold))
+                .font(.subheadline.weight(.semibold))
                 .foregroundStyle(foreground)
-                .lineLimit(2)
-                .minimumScaleFactor(0.78)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16 * scale)

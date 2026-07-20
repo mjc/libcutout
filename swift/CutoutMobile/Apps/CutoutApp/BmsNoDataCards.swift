@@ -99,10 +99,10 @@ struct BmsNoDataPackEstimateCard: View {
             PevDashboardSectionLabel(title: "PACK ESTIMATE", font: .caption.weight(.bold))
             HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
                 Text(percentText)
-                    .font(.system(size: 64 * scale, weight: .black))
+                    .font(.largeTitle.weight(.black))
                     .monospacedDigit()
                 Text("%")
-                    .font(.system(size: 18 * scale, weight: .bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(PevColors.muted)
             }
             Text(detail)

@@ -40,16 +40,14 @@ struct PevRideHeroSection: View {
         }
 
         VStack(alignment: .center, spacing: 2 * scale) {
-            HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
-                Text(speedValue)
-                    .font(.system(size: speedFontSize * scale, weight: .black))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                if !speedUnit.isEmpty {
-                    Text(speedUnit)
-                        .font(.system(size: speedUnitFontSize * scale, weight: .bold))
-                        .foregroundStyle(PevColors.muted)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
+                    speed
+                    unit
+                }
+                VStack(spacing: 2 * scale) {
+                    speed
+                    unit
                 }
             }
             Text(speedCaption)
@@ -77,5 +75,20 @@ struct PevRideHeroSection: View {
             scale: scale,
             fill: statusFill
         )
+    }
+
+    private var speed: some View {
+        Text(speedValue)
+            .font(.system(size: speedFontSize * scale, weight: .black))
+            .monospacedDigit()
+    }
+
+    @ViewBuilder
+    private var unit: some View {
+        if !speedUnit.isEmpty {
+            Text(speedUnit)
+                .font(.system(size: speedUnitFontSize * scale, weight: .bold))
+                .foregroundStyle(PevColors.muted)
+        }
     }
 }

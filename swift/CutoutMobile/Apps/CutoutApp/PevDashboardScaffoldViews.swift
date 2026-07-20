@@ -171,99 +171,46 @@ struct PevAppShell<Content: View>: View {
 }
 
 struct PevDashboardHeader: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let sectionTitle: String
     let scale: CGFloat
     let leadingAccessory: AnyView?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            if let leadingAccessory {
-                leadingAccessory
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8 * scale) {
+                    leading
+                    section
+                }
             } else {
-                Text("CutOut")
-                    .font(.system(size: 18 * scale, weight: .bold))
-                    .foregroundStyle(PevColors.yellow)
+                HStack(alignment: .firstTextBaseline) {
+                    leading
+                    Spacer()
+                    section
+                }
             }
-            Spacer()
-            Text(sectionTitle)
-                .font(.system(size: 15 * scale, weight: .semibold))
-                .foregroundStyle(PevColors.muted)
         }
         .padding(.top, 10 * scale)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.top.navigation")
     }
-}
 
-struct PevDashboardIdentityTextBlock: View {
-    let title: String
-    let detail: String
-    let scale: CGFloat
-    let titleFontSize: CGFloat
-    let detailFontSize: CGFloat
-    let titleMinimumScaleFactor: CGFloat
-    let detailMinimumScaleFactor: CGFloat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
-            Text(title)
-                .font(.system(size: titleFontSize * scale, weight: .black))
-                .foregroundStyle(PevColors.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(titleMinimumScaleFactor)
-            Text(detail)
-                .font(.system(size: detailFontSize * scale, weight: .bold))
-                .foregroundStyle(PevColors.muted)
-                .lineLimit(1)
-                .minimumScaleFactor(detailMinimumScaleFactor)
+    @ViewBuilder
+    private var leading: some View {
+        if let leadingAccessory {
+            leadingAccessory
+        } else {
+            Text("CutOut")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(PevColors.yellow)
         }
     }
-}
 
-struct PevDashboardIdentityCard: View {
-    let title: String
-    let detail: String
-    let scale: CGFloat
-    let titleFontSize: CGFloat
-    let detailFontSize: CGFloat
-    let titleMinimumScaleFactor: CGFloat
-    let detailMinimumScaleFactor: CGFloat
-    let trailingStatus: String?
-    let trailingStatusFill: Color
-    let trailingStatusForeground: Color
-    let trailingStatusWidth: CGFloat
-    let trailingStatusHeight: CGFloat
-    let cornerRadius: CGFloat
-    let height: CGFloat
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12 * scale) {
-            PevDashboardIdentityTextBlock(
-                title: title,
-                detail: detail,
-                scale: scale,
-                titleFontSize: titleFontSize,
-                detailFontSize: detailFontSize,
-                titleMinimumScaleFactor: titleMinimumScaleFactor,
-                detailMinimumScaleFactor: detailMinimumScaleFactor
-            )
-            .layoutPriority(1)
-
-            if let trailingStatus {
-                PevDashboardStatusPill(
-                    title: trailingStatus,
-                    scale: scale,
-                    fill: trailingStatusFill,
-                    foreground: trailingStatusForeground,
-                    horizontalPadding: trailingStatusWidth,
-                    height: trailingStatusHeight,
-                    fixedHorizontal: true
-                )
-            }
-        }
-        .padding(.horizontal, 22 * scale)
-        .frame(height: height * scale)
-        .frame(maxWidth: .infinity)
-        .background(PevDashboardCardBackground(cornerRadius: cornerRadius * scale))
+    private var section: some View {
+        Text(sectionTitle)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(PevColors.muted)
     }
 }
