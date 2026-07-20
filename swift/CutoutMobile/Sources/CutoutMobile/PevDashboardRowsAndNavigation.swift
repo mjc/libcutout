@@ -431,7 +431,7 @@ public struct PevDashboardTabStrip: View {
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, minHeight: 44)
         .disabled(!tab.isEnabled || tab.destinationTarget == nil)
-        .accessibilityIdentifier("dashboard.nav.\(tab.title.lowercased())")
+        .accessibilityIdentifier(tab.accessibilityIdentifier)
     }
 
     private func tabLabel(_ tab: PevScreenTab) -> some View {

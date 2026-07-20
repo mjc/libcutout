@@ -110,7 +110,7 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
-public enum PevScreenTabID: Equatable, Hashable, Sendable {
+public enum PevScreenTabID: String, Equatable, Hashable, Sendable {
     case ride
     case pack
     case map
@@ -130,6 +130,10 @@ public struct PevScreenTab: Equatable, Hashable, Sendable, Identifiable {
 
     public var isEnabled: Bool {
         disabledReason == nil
+    }
+
+    public var accessibilityIdentifier: String {
+        "dashboard.nav.\(id.rawValue)"
     }
 
     public init(

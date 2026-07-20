@@ -57,6 +57,9 @@ final class PevScreenCatalogTests: XCTestCase {
 
         XCTAssertEqual(ride.id, localizedRide.id)
         XCTAssertNotEqual(ride.id, differentRoleWithSameTitle.id)
+        XCTAssertEqual(ride.accessibilityIdentifier, "dashboard.nav.ride")
+        XCTAssertEqual(ride.accessibilityIdentifier, localizedRide.accessibilityIdentifier)
+        XCTAssertNotEqual(ride.accessibilityIdentifier, differentRoleWithSameTitle.accessibilityIdentifier)
     }
 
     func testDashboardTileIdentityDoesNotDependOnVisibleLabel() {
