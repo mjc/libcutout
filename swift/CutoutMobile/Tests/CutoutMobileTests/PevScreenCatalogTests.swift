@@ -182,7 +182,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(presented.bmsContent?.modeTitles, ["balance view"])
     }
 
-    func testBmsPresentationIdentityDoesNotDependOnVisibleText() {
+    func testBmsPresentationIdentityDoesNotDependOnOrder() {
         let chips = [
             PevBmsChip(id: .topology, title: "Same label", accent: .yellow),
             PevBmsChip(id: .bmsStatus, title: "Same label", accent: .green),
@@ -198,12 +198,12 @@ final class PevScreenCatalogTests: XCTestCase {
                 confidence: .unverified
             )),
             chips: chips,
-            modeTitles: ["Same label", "Same label"]
+            modes: [.rawTable, .overview]
         )
 
         XCTAssertNotEqual(chips[0].id, chips[1].id)
-        XCTAssertEqual(content.modes.map(\.id), [0, 1])
-        XCTAssertEqual(content.modeTitles, ["Same label", "Same label"])
+        XCTAssertEqual(content.modes.map(\.id), [.rawTable, .overview])
+        XCTAssertEqual(content.modeTitles, ["raw table", "overview"])
     }
 
     func testPresentedBmsScreenKeepsExplicitRouteIdentity() throws {

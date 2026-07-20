@@ -2327,25 +2327,25 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         faultDetail ?? topology.layoutLabel
     }
 
-    public var inlineCellMapModeTitles: [String] {
-        var titles = ["balance view"]
+    public var inlineCellMapModes: [PevBmsMode] {
+        var modes: [PevBmsMode] = [.balanceView]
         if groups.contains(where: { $0.temperature != nil }) {
-            titles.append("temps")
+            modes.append(.temperatures)
         }
         if !faults.isEmpty || !flaggedGroups.isEmpty {
-            titles.append("faults")
+            modes.append(.faults)
         }
-        return titles
+        return modes
     }
 
-    public var scrollableCellMapModeTitles: [String] {
-        var titles = ["overview", "strip", "raw table"]
+    public var scrollableCellMapModes: [PevBmsMode] {
+        var modes: [PevBmsMode] = [.overview, .strip, .rawTable]
         if groups.contains(where: { $0.temperature != nil }) {
-            titles.append("temps")
+            modes.append(.temperatures)
         } else if !faults.isEmpty || !flaggedGroups.isEmpty {
-            titles.append("faults")
+            modes.append(.faults)
         }
-        return titles
+        return modes
     }
 
     public var cellMapInteractionHint: String {

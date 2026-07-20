@@ -370,8 +370,10 @@ final class BmsSnapshotContractTests: XCTestCase {
             }
         )
 
-        XCTAssertEqual(snapshot.inlineCellMapModeTitles, ["balance view", "temps", "faults"])
-        XCTAssertEqual(snapshot.scrollableCellMapModeTitles, ["overview", "strip", "raw table", "temps"])
+        XCTAssertEqual(snapshot.inlineCellMapModes, [.balanceView, .temperatures, .faults])
+        XCTAssertEqual(snapshot.scrollableCellMapModes, [.overview, .strip, .rawTable, .temperatures])
+        XCTAssertEqual(snapshot.inlineCellMapModes.map(\.title), ["balance view", "temps", "faults"])
+        XCTAssertEqual(snapshot.scrollableCellMapModes.map(\.title), ["overview", "strip", "raw table", "temps"])
         XCTAssertEqual(snapshot.cellMapInteractionHint, "tap a group for history, IR estimate, and BMS raw fields")
         XCTAssertEqual(snapshot.scrollableCellMapRule, "40 groups need overview before exact cells")
         XCTAssertEqual(snapshot.scrollableCellMapFocusHint, "show flagged groups before the raw table")

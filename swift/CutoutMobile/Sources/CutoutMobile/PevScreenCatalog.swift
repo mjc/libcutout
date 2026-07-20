@@ -185,9 +185,26 @@ public struct PevBmsChip: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
-public struct PevBmsMode: Identifiable, Equatable, Hashable, Sendable {
-    public let id: Int
-    public let title: String
+public enum PevBmsMode: String, Identifiable, Equatable, Hashable, Sendable {
+    case balanceView
+    case temperatures
+    case faults
+    case overview
+    case strip
+    case rawTable
+
+    public var id: Self { self }
+
+    public var title: String {
+        switch self {
+        case .balanceView: "balance view"
+        case .temperatures: "temps"
+        case .faults: "faults"
+        case .overview: "overview"
+        case .strip: "strip"
+        case .rawTable: "raw table"
+        }
+    }
 }
 
 public struct PevBmsContent: Equatable, Hashable, Sendable {
@@ -208,14 +225,14 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
         chips: [PevBmsChip] = [],
         highlightedGroupIndices: [Int] = [],
         selectedGroupIndex: Int? = nil,
-        modeTitles: [String] = []
+        modes: [PevBmsMode] = []
     ) {
         self.kind = kind
         self.snapshot = snapshot
         self.chips = chips
         self.highlightedGroupIndices = highlightedGroupIndices
         self.selectedGroupIndex = selectedGroupIndex
-        self.modes = modeTitles.enumerated().map { PevBmsMode(id: $0.offset, title: $0.element) }
+        self.modes = modes
     }
 
     public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
@@ -229,7 +246,7 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
             : nil
         let highlightedGroupIndices = selectedGroupIndex.map { [$0] } ?? liveSnapshot.lowestGroupIndex.map { [$0] } ?? []
         let chips = resolvedKind.liveChips(snapshot: liveSnapshot, selectedGroupIndex: selectedGroupIndex)
-        let modeTitles = resolvedKind.liveModeTitles(snapshot: liveSnapshot)
+        let modes = resolvedKind.liveModes(snapshot: liveSnapshot)
 
         return Self(
             kind: resolvedKind,
@@ -237,7 +254,7 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
             chips: chips,
             highlightedGroupIndices: highlightedGroupIndices,
             selectedGroupIndex: selectedGroupIndex,
-            modeTitles: modeTitles
+            modes: modes
         )
     }
 }
@@ -355,12 +372,12 @@ private extension PevBmsScreenKind {
         }
     }
 
-    func liveModeTitles(snapshot: BmsSnapshot) -> [String] {
+    func liveModes(snapshot: BmsSnapshot) -> [PevBmsMode] {
         switch self {
         case .cellMapInline:
-            snapshot.inlineCellMapModeTitles
+            snapshot.inlineCellMapModes
         case .cellMapScrollable:
-            snapshot.scrollableCellMapModeTitles
+            snapshot.scrollableCellMapModes
         case .overview, .cellDetail, .unknownTopology, .noData:
             []
         }
