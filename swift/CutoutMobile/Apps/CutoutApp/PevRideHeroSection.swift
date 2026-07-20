@@ -5,20 +5,24 @@ enum PevRideHeroStyle {
     case electricUnicycle
     case vescOnewheel
 
+    static let electricUnicycleSpeedPointSize: CGFloat = 138
+    static let vescOnewheelSpeedPointSize: CGFloat = 124
+    static let unitPointSize: CGFloat = 24
+
     var speedPointSize: CGFloat {
         switch self {
-        case .electricUnicycle: 138
-        case .vescOnewheel: 124
+        case .electricUnicycle: Self.electricUnicycleSpeedPointSize
+        case .vescOnewheel: Self.vescOnewheelSpeedPointSize
         }
     }
-
-    var unitPointSize: CGFloat { 24 }
 }
 
 struct PevRideHeroSection: View {
-    @ScaledMetric(relativeTo: .largeTitle) private var speedFontSize: CGFloat = 0
-    @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize: CGFloat = 0
+    @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle.electricUnicycleSpeedPointSize
+    @ScaledMetric(relativeTo: .largeTitle) private var vescSpeedFontSize = PevRideHeroStyle.vescOnewheelSpeedPointSize
+    @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize = PevRideHeroStyle.unitPointSize
 
+    let style: PevRideHeroStyle
     let title: String
     let subtitle: String
     let statusFill: Color
@@ -26,55 +30,25 @@ struct PevRideHeroSection: View {
     let speedValue: String
     let speedUnit: String
     let speedCaption: String
-    let scale: CGFloat
-
-    init(
-        style: PevRideHeroStyle,
-        title: String,
-        subtitle: String,
-        statusFill: Color,
-        captureStatusText: String?,
-        speedValue: String,
-        speedUnit: String,
-        speedCaption: String,
-        scale: CGFloat
-    ) {
-        _speedFontSize = ScaledMetric(
-            wrappedValue: style.speedPointSize,
-            relativeTo: .largeTitle
-        )
-        _speedUnitFontSize = ScaledMetric(
-            wrappedValue: style.unitPointSize,
-            relativeTo: .title2
-        )
-        self.title = title
-        self.subtitle = subtitle
-        self.statusFill = statusFill
-        self.captureStatusText = captureStatusText
-        self.speedValue = speedValue
-        self.speedUnit = speedUnit
-        self.speedCaption = speedCaption
-        self.scale = scale
-    }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 12 * scale) {
+            HStack(alignment: .center, spacing: 12) {
                 titleText
-                Spacer(minLength: 8 * scale)
+                Spacer(minLength: 8)
                 statusPill
             }
-            VStack(alignment: .leading, spacing: 8 * scale) {
+            VStack(alignment: .leading, spacing: 8) {
                 titleText
                 statusPill
             }
         }
-        .padding(.top, 8 * scale)
+        .padding(.top, 8)
 
         if let captureStatusText {
             PevStatusStrip(
                 text: captureStatusText,
-                scale: scale,
+                scale: 1,
                 indicatorColor: PevColors.green,
                 background: PevColors.cardFill,
                 foreground: PevColors.primaryText,
@@ -82,13 +56,13 @@ struct PevRideHeroSection: View {
             )
         }
 
-        VStack(alignment: .center, spacing: 2 * scale) {
+        VStack(alignment: .center, spacing: 2) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 9 * scale) {
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
                     speed
                     unit
                 }
-                VStack(spacing: 2 * scale) {
+                VStack(spacing: 2) {
                     speed
                     unit
                 }
@@ -115,7 +89,7 @@ struct PevRideHeroSection: View {
     private var statusPill: some View {
         PevDashboardStatusPill(
             title: subtitle,
-            scale: scale,
+            scale: 1,
             fill: statusFill
         )
     }
@@ -124,6 +98,13 @@ struct PevRideHeroSection: View {
         Text(speedValue)
             .font(.system(size: speedFontSize, weight: .black))
             .monospacedDigit()
+    }
+
+    private var speedFontSize: CGFloat {
+        switch style {
+        case .electricUnicycle: eucSpeedFontSize
+        case .vescOnewheel: vescSpeedFontSize
+        }
     }
 
     @ViewBuilder

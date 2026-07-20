@@ -56,8 +56,7 @@ struct PevRideDashboardShell<Content: View>: View {
                 captureStatusText: captureStatusText,
                 speedValue: speedValue,
                 speedUnit: speedUnit,
-                speedCaption: speedCaption,
-                scale: scale
+                speedCaption: speedCaption
             )
 
             content(scale, columns)
