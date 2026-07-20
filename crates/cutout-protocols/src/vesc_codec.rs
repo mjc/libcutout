@@ -794,6 +794,28 @@ pub enum VescFaultCode {
     Other(u8),
 }
 
+impl VescFaultCode {
+    /// Decodes a VESC fault-code wire value without discarding unknown codes.
+    #[must_use]
+    pub const fn from_raw(value: u8) -> Self {
+        match value {
+            0 => Self::None,
+            4 => Self::AbsOverCurrent,
+            other => Self::Other(other),
+        }
+    }
+
+    /// Returns the original VESC fault-code wire value.
+    #[must_use]
+    pub const fn as_raw(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::AbsOverCurrent => 4,
+            Self::Other(value) => value,
+        }
+    }
+}
+
 /// Error returned by the private VESC codec adapter.
 #[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
 pub enum VescCodecError {
@@ -1155,7 +1177,7 @@ fn decode_values(
         values.tachometer_absolute = TachometerReading::from_counts(reader.read_i32()?);
     }
     if present_fields.contains(VescValuesMask::FAULT_CODE) {
-        values.fault_code = vesc::FaultCode::from(reader.read_u8()?).into();
+        values.fault_code = VescFaultCode::from_raw(reader.read_u8()?);
     }
     if present_fields.contains(VescValuesMask::PID_POS) {
         values.motor_position = MotorPosition::from_microdegrees(reader.read_i32()?);
@@ -1405,16 +1427,6 @@ impl From<vesc::Stats> for VescStatsTelemetry {
     }
 }
 
-impl From<vesc::FaultCode> for VescFaultCode {
-    fn from(code: vesc::FaultCode) -> Self {
-        match code {
-            vesc::FaultCode::None => Self::None,
-            vesc::FaultCode::AbsOverCurrent => Self::AbsOverCurrent,
-            other => Self::Other(other as u8),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1591,6 +1603,20 @@ mod tests {
             VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload)),
             Err(VescCodecError::DecodeFailed)
         ));
+    }
+
+    #[test]
+    fn selective_values_preserve_unknown_fault_code_bytes() {
+        let mut payload = vec![VESC_COMM_GET_VALUES_SELECTIVE];
+        payload.extend_from_slice(&VescValuesMask::FAULT_CODE.bits().to_be_bytes());
+        payload.push(200);
+
+        let reply = VescReadOnlyCodec::decode_reply(&frame_from_payload(&payload))
+            .expect("unknown fault code decodes");
+        let VescReadOnlyReply::Values(values) = reply else {
+            panic!("expected values reply");
+        };
+        assert_eq!(values.fault_code, VescFaultCode::Other(200));
     }
 
     #[test]
