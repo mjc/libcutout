@@ -3,7 +3,6 @@ import SwiftUI
 public struct PevActionButton: View {
     public let title: String
     public let systemImageName: String?
-    public let scale: CGFloat
     public let isEnabled: Bool
     public let fillsAvailableWidth: Bool
     public let width: CGFloat?
@@ -22,7 +21,6 @@ public struct PevActionButton: View {
     public init(
         title: String,
         systemImageName: String?,
-        scale: CGFloat,
         isEnabled: Bool,
         fillsAvailableWidth: Bool,
         width: CGFloat?,
@@ -40,7 +38,6 @@ public struct PevActionButton: View {
     ) {
         self.title = title
         self.systemImageName = systemImageName
-        self.scale = scale
         self.isEnabled = isEnabled
         self.fillsAvailableWidth = fillsAvailableWidth
         self.width = width
@@ -62,7 +59,6 @@ public struct PevActionButton: View {
             PevActionButtonLabel(
                 title: title,
                 systemImageName: systemImageName,
-                scale: scale,
                 isEnabled: isEnabled,
                 fillsAvailableWidth: fillsAvailableWidth,
                 width: width,
@@ -90,7 +86,6 @@ public struct PevActionButtonLabel: View {
 
     public let title: String
     public let systemImageName: String?
-    public let scale: CGFloat
     public let isEnabled: Bool
     public let fillsAvailableWidth: Bool
     public let width: CGFloat?
@@ -116,7 +111,6 @@ public struct PevActionButtonLabel: View {
     public init(
         title: String,
         systemImageName: String?,
-        scale: CGFloat,
         isEnabled: Bool,
         fillsAvailableWidth: Bool,
         width: CGFloat?,
@@ -133,7 +127,6 @@ public struct PevActionButtonLabel: View {
     ) {
         self.title = title
         self.systemImageName = systemImageName
-        self.scale = scale
         self.isEnabled = isEnabled
         self.fillsAvailableWidth = fillsAvailableWidth
         self.width = width
@@ -172,7 +165,7 @@ public struct PevActionButtonLabel: View {
                         .stroke(
                             isEnabled ? strokeEnabled : strokeDisabled,
                             lineWidth: pevDashboardResolvedLineWidth(
-                                base: 1 * scale,
+                                base: 1,
                                 contrast: colorSchemeContrast
                             )
                         )

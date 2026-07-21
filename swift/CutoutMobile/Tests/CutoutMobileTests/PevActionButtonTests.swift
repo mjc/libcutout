@@ -26,7 +26,6 @@ final class PevActionButtonTests: XCTestCase {
         PevActionButtonLabel(
             title: "Action",
             systemImageName: "record.circle",
-            scale: 1,
             isEnabled: true,
             fillsAvailableWidth: width == nil,
             width: width,

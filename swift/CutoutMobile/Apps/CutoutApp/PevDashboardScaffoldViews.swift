@@ -84,15 +84,13 @@ struct PevAppShell<Content: View>: View {
     }
 
     var body: some View {
-        let scale: CGFloat = 1
-
         VStack(spacing: 0) {
             PevDashboardHeader(
                 sectionTitle: sectionTitle
             ) {
-                PevRideDisconnectButton(scale: scale, action: disconnect)
+                PevRideDisconnectButton(action: disconnect)
             }
-            .padding(.horizontal, 24 * scale)
+            .padding(.horizontal, 24)
 
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

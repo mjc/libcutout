@@ -123,7 +123,6 @@ struct DevicePickerView: View {
         PevActionButton(
             title: row.captureActionTitle,
             systemImageName: "record.circle",
-            scale: 1,
             isEnabled: hasRecordOnlyDeviceKind,
             fillsAvailableWidth: true,
             width: nil,

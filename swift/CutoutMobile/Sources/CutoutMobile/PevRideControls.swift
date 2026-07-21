@@ -1,11 +1,9 @@
 import SwiftUI
 
 public struct PevRideDisconnectButton: View {
-    let scale: CGFloat
     let action: () -> Void
 
-    public init(scale: CGFloat, action: @escaping () -> Void) {
-        self.scale = scale
+    public init(action: @escaping () -> Void) {
         self.action = action
     }
 
@@ -13,13 +11,12 @@ public struct PevRideDisconnectButton: View {
         PevActionButton(
             title: "Disconnect",
             systemImageName: nil,
-            scale: scale,
             isEnabled: true,
             fillsAvailableWidth: false,
             width: nil,
-            height: 30 * scale,
-            cornerRadius: 8 * scale,
-            horizontalPadding: 12 * scale,
+            height: 30,
+            cornerRadius: 8,
+            horizontalPadding: 12,
             iconSpacing: 0,
             foregroundEnabled: .yellow,
             foregroundDisabled: .yellow,
