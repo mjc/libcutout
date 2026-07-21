@@ -43,31 +43,25 @@ final class CutoutAppUITests: XCTestCase {
         }
     }
 
-    func testProductionPickerSurfaceIsAccessible() {
-        let window = app.windows.firstMatch
+    func testPickerExposesAccessibleCaptureControls() {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
         let captureKind = app.textFields["device-picker.capture-kind"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
 
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
         XCTAssertTrue(captureKind.exists)
         XCTAssertEqual(captureKind.label, "Device kind for capture")
-        XCTAssertFalse(window.frame.isEmpty)
-        XCTAssertFalse(screen.frame.isEmpty)
-        XCTAssertFalse(captureKind.frame.isEmpty)
-        XCTAssertGreaterThan(captureKind.frame.width, 0)
-        XCTAssertGreaterThan(captureKind.frame.height, 0)
-        XCTAssertEqual(captureKind.frame.minX - window.frame.minX, 24, accuracy: 2)
-        XCTAssertEqual(window.frame.maxX - captureKind.frame.maxX, 24, accuracy: 2)
-        XCTAssertGreaterThanOrEqual(screen.frame.minY, window.frame.minY - 2)
-        XCTAssertLessThanOrEqual(screen.frame.maxY, window.frame.maxY + 2)
-
-        for _ in 0..<4 where captureKind.frame.maxY > window.frame.maxY {
-            screen.swipeUp()
-        }
-
         XCTAssertTrue(captureKind.isHittable)
-        XCTAssertGreaterThanOrEqual(captureKind.frame.minY, window.frame.minY - 2)
-        XCTAssertLessThanOrEqual(captureKind.frame.maxY, window.frame.maxY + 2)
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
+        XCTAssertFalse(recordButton.isEnabled)
+
+        captureKind.tap()
+        captureKind.typeText("vesc floatwheel")
+
+        XCTAssertEqual(captureKind.value as? String, "vesc floatwheel")
+        XCTAssertTrue(recordButton.isEnabled)
     }
 
     func testProductionPickerPassesAccessibilityAudit() throws {
@@ -108,11 +102,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertLessThanOrEqual(captureKind.frame.maxY, window.frame.maxY + 2)
     }
 
-    func testConnectedVescSurfaceHasOneCanonicalBottomNavigation() throws {
+    func testVescUseOpensAnAccessibleLiveRide() throws {
         try assertConnectedSurface(for: .vesc)
     }
 
-    func testConnectedEucSurfaceHasOneCanonicalBottomNavigation() throws {
+    func testEucUseOpensAnAccessibleLiveRide() throws {
         try assertConnectedSurface(for: .euc)
     }
 
@@ -128,33 +122,42 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
         XCTAssertEqual(screen.identifier, family.screenIdentifier)
+        XCTAssertFalse(app.descendants(matching: .any)["device-picker.screen"].exists)
 
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
-        XCTAssertTrue(speed.exists)
-        XCTAssertNotEqual(speed.value as? String, "--")
-        XCTAssertFalse((speed.value as? String ?? "").isEmpty)
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        let liveTelemetry = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let speed = object as? XCUIElement,
+                      let value = speed.value as? String
+                else { return false }
+                return speed.exists && !value.isEmpty && value != "unavailable"
+            },
+            object: speed
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [liveTelemetry], timeout: 20),
+            .completed,
+            "The \(family.name) Ride screen never exposed live speed through accessibility"
+        )
 
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.exists)
         XCTAssertEqual(app.tabBars.count, 1)
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.top.navigation"].exists)
 
-        let window = app.windows.firstMatch
-        XCTAssertLessThanOrEqual(tabBar.frame.maxY, window.frame.maxY + 2)
-        XCTAssertGreaterThan(tabBar.frame.height, 0)
-
         for tab in family.tabNames {
             let element = app.descendants(matching: .any)["dashboard.nav.\(tab)"]
             XCTAssertTrue(element.exists)
-            XCTAssertFalse(element.frame.isEmpty)
-            XCTAssertGreaterThan(element.frame.width, 0)
-            XCTAssertGreaterThan(element.frame.height, 0)
+            XCTAssertTrue(element.isHittable)
             XCTAssertEqual(element.isSelected, tab == "ride")
         }
 
         for unavailableTab in family.unavailableTabNames {
             XCTAssertFalse(app.descendants(matching: .any)["dashboard.nav.\(unavailableTab)"].exists)
         }
+
+        try app.performAccessibilityAudit()
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
@@ -191,7 +194,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTFail("The visible \(family.name) Use button is not hittable")
             return false
         }
-        button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        button.tap()
         return true
     }
 }
