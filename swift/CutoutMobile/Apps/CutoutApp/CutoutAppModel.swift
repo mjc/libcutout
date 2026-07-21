@@ -143,8 +143,8 @@ final class CutoutAppModel {
         core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
-        core.onRecord = { [weak self] message in
-            self?.updateCaptureStatus(from: message)
+        core.onCaptureEvent = { [weak self] event in
+            self?.applyCaptureEvent(event)
         }
     }
 
@@ -444,23 +444,23 @@ final class CutoutAppModel {
         return true
     }
 
-    private func updateCaptureStatus(from message: String) {
-        if message.hasPrefix("capture_file=") {
-            captureFileName = URL(fileURLWithPath: String(message.dropFirst("capture_file=".count))).lastPathComponent
+    func applyCaptureEvent(_ event: CaptureEvent) {
+        switch event {
+        case let .started(fileURL):
+            captureFileName = fileURL.lastPathComponent
             captureNotificationCount = 0
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)
-        } else if message.hasPrefix("record_only_notification=") || message.hasPrefix("notification=") {
+        case .notificationRecorded:
             captureNotificationCount += 1
             captureStatus = .recording(
                 label: captureLabel,
                 notificationCount: captureNotificationCount,
                 fileName: captureFileName
             )
-        } else if message.hasPrefix("capture_label=") {
-            // UI already updated by labelCapture(_:).
-        } else if message.hasPrefix("disconnected="), let captureFileName {
-            captureStatus = .saved(fileName: captureFileName)
-        } else if message.hasPrefix("capture_error=") {
+        case let .finished(fileURL):
+            captureFileName = fileURL.lastPathComponent
+            captureStatus = .saved(fileName: fileURL.lastPathComponent)
+        case .failed:
             captureStatus = .failed
         }
     }

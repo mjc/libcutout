@@ -18,6 +18,13 @@ func protocolIdentityFallbackDisplayName(
     }
 }
 
+public enum CaptureEvent: Equatable, Sendable {
+    case started(fileURL: URL)
+    case notificationRecorded
+    case finished(fileURL: URL)
+    case failed
+}
+
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
@@ -33,6 +40,7 @@ public final class CutoutSessionCore: NSObject {
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     public var onRecord: ((String) -> Void)?
+    public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
@@ -59,6 +67,7 @@ public final class CutoutSessionCore: NSObject {
     private var suppressReconnect = false
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureBuilder: MobilePevcapCaptureBuilder?
+    private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private var deviceDetectionSession = DeviceDetectionSession()
     private var pendingBegodeProbeResponses = Set<DeviceDetectionPendingProbe>()
@@ -557,7 +566,11 @@ public final class CutoutSessionCore: NSObject {
         }
         markOutstandingBegodeProbeResponsesMissing()
         _ = captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
+        let completedCaptureURL = captureFileURL
         finishCaptureWriter()
+        if let completedCaptureURL {
+            publishCaptureEvent(.finished(fileURL: completedCaptureURL))
+        }
         let wasRecordOnly = isRecordOnly
         let reconnectRoute = selectedRoute
         isRecordOnly = false
@@ -697,6 +710,10 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onProtocolIdentityCandidateChange?(value) }
     }
 
+    private func publishCaptureEvent(_ event: CaptureEvent) {
+        publishOnMain { self.onCaptureEvent?(event) }
+    }
+
     private func captureFrame(
         direction: String,
         characteristic: CBUUID,
@@ -712,6 +729,7 @@ public final class CutoutSessionCore: NSObject {
         case "notify":
             guard let serviceUuid = service.flatMap(BluetoothUuid.init(coreBluetoothUuid:)) else {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
+                publishCaptureEvent(.failed)
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
                 return
             }
@@ -761,10 +779,15 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = builder
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
+            captureBuilder = nil
+            captureFileURL = nil
+            publishCaptureEvent(.failed)
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
         }
+        captureFileURL = url
         record("capture_file=\(url.path)")
+        publishCaptureEvent(.started(fileURL: url))
         updateCaptureIdentity()
     }
 
@@ -772,6 +795,7 @@ public final class CutoutSessionCore: NSObject {
         guard !accepted else { return true }
         let status = captureBuilder?.writerStatus()
         record("capture_error=writer_failed \(status?.lastError ?? "unknown")")
+        publishCaptureEvent(.failed)
         setPhase(.failed(.sessionFailed("capture writer queue overrun")))
         finishCaptureWriter()
         return false
@@ -779,6 +803,9 @@ public final class CutoutSessionCore: NSObject {
 
     private func finishCaptureWriter() {
         guard let builder = captureBuilder else { return }
+        captureBuilder = nil
+        captureFileURL = nil
+        captureStartedAt = nil
         DispatchQueue.global(qos: .utility).async {
             _ = builder.finishWriter()
         }
@@ -1094,6 +1121,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 bytes: value
             )
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+            publishCaptureEvent(.notificationRecorded)
             return
         }
         guard let liveOwner else {
@@ -1119,6 +1147,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
+            publishCaptureEvent(.notificationRecorded)
             record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
             record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
             record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")

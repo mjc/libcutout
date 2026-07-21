@@ -38,6 +38,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureStatusConsumesTypedCoreEvents() {
+        let model = CutoutAppModel()
+        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
+
+        model.applyCaptureEvent(.started(fileURL: fileURL))
+        XCTAssertEqual(model.captureStatus, .recordingLocally(fileName: "ride.cutout"))
+
+        model.applyCaptureEvent(.notificationRecorded)
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 1, fileName: "ride.cutout")
+        )
+
+        model.applyCaptureEvent(.finished(fileURL: fileURL))
+        XCTAssertEqual(model.captureStatus, .saved(fileName: "ride.cutout"))
+
+        model.applyCaptureEvent(.failed)
+        XCTAssertEqual(model.captureStatus, .failed)
+    }
+
+    @MainActor
     func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
         let model = CutoutAppModel()
 
