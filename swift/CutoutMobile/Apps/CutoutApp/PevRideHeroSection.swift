@@ -222,12 +222,13 @@ struct PevRideHeroSection: View {
         }
 
         VStack(alignment: .center, spacing: 2) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .firstTextBaseline, spacing: 9) {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 2) {
                     speed
                     unit
                 }
-                VStack(spacing: 2) {
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
                     speed
                     unit
                 }
