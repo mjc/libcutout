@@ -133,13 +133,13 @@ struct DevicePickerView: View {
             fillEnabled: PevColors.warningFill,
             fillDisabled: PevColors.disabledFill,
             strokeEnabled: PevColors.warningStroke,
-            strokeDisabled: PevColors.cardStroke
+            strokeDisabled: PevColors.cardStroke,
+            accessibilityLabelText: row.captureActionAccessibilityLabel,
+            accessibilityHintText: hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture",
+            accessibilityIdentifierText: "device-picker.record.\(row.id)"
         ) {
             recordOnly(row, trimmedRecordOnlyDeviceKind)
         }
-        .accessibilityLabel(row.captureActionAccessibilityLabel)
-        .accessibilityHint(hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture")
-        .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
 
     private var isConnecting: Bool {

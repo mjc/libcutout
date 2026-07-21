@@ -24,8 +24,8 @@ public struct PevRideDisconnectButton: View {
             fillDisabled: PevDashboardColors.cardFill,
             strokeEnabled: PevDashboardColors.cardStroke,
             strokeDisabled: PevDashboardColors.cardStroke,
+            accessibilityIdentifierText: "dashboard.disconnect",
             action: action
         )
-        .accessibilityIdentifier("dashboard.disconnect")
     }
 }

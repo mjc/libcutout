@@ -16,6 +16,9 @@ public struct PevActionButton: View {
     public let fillDisabled: Color
     public let strokeEnabled: Color
     public let strokeDisabled: Color
+    public let accessibilityLabelText: String?
+    public let accessibilityHintText: String?
+    public let accessibilityIdentifierText: String?
     public let action: () -> Void
 
     public init(
@@ -34,6 +37,9 @@ public struct PevActionButton: View {
         fillDisabled: Color,
         strokeEnabled: Color,
         strokeDisabled: Color,
+        accessibilityLabelText: String? = nil,
+        accessibilityHintText: String? = nil,
+        accessibilityIdentifierText: String? = nil,
         action: @escaping () -> Void
     ) {
         self.title = title
@@ -51,6 +57,9 @@ public struct PevActionButton: View {
         self.fillDisabled = fillDisabled
         self.strokeEnabled = strokeEnabled
         self.strokeDisabled = strokeDisabled
+        self.accessibilityLabelText = accessibilityLabelText
+        self.accessibilityHintText = accessibilityHintText
+        self.accessibilityIdentifierText = accessibilityIdentifierText
         self.action = action
     }
 
@@ -73,11 +82,14 @@ public struct PevActionButton: View {
                 strokeEnabled: strokeEnabled,
                 strokeDisabled: strokeDisabled
             )
+            .accessibilityHidden(true)
         }
         .buttonStyle(.plain)
         .frame(minWidth: 44, minHeight: 44)
         .disabled(!isEnabled)
-        .accessibilityLabel(title)
+        .accessibilityLabel(accessibilityLabelText ?? title)
+        .accessibilityHint(accessibilityHintText ?? "")
+        .accessibilityIdentifier(accessibilityIdentifierText ?? "")
     }
 }
 
@@ -151,6 +163,7 @@ public struct PevActionButtonLabel: View {
             }
             Text(title)
                 .font(.callout.weight(.bold))
+                .accessibilityHidden(true)
         }
         .foregroundStyle(isEnabled ? foregroundEnabled : foregroundDisabled)
         .padding(.horizontal, horizontalPadding)
