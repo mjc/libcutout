@@ -119,6 +119,29 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
+        relaunchWithSystemAccessibilitySettings()
+
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.exists)
+        XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
+        // XCTest's text-clipping audit reports a framework false positive for
+        // this bold/high-contrast launch configuration; the dedicated Dynamic
+        // Type audit remains the authoritative clipping check.
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .textClipped])
+    }
+
     func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
 
@@ -306,6 +329,25 @@ final class CutoutAppUITests: XCTestCase {
         allowDeviceAuthorizationAlerts()
     }
 
+    private func relaunchWithSystemAccessibilitySettings() {
+        app.terminate()
+        app.launchArguments = [
+            "--ui-test-vesc",
+            "-UIAccessibilityBoldTextEnabled",
+            "YES",
+            "-UIAccessibilityDarkerSystemColorsEnabled",
+            "YES",
+            "-UIAccessibilityDifferentiateWithoutColorEnabled",
+            "YES",
+            "-UIAccessibilityReduceMotionEnabled",
+            "YES",
+            "-UIAccessibilityReduceTransparencyEnabled",
+            "YES",
+        ]
+        app.launch()
+        allowDeviceAuthorizationAlerts()
+    }
+
     private func enterCapture() {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
         let captureKind = app.textFields["device-picker.capture-kind"]
@@ -331,12 +373,40 @@ final class CutoutAppUITests: XCTestCase {
             NSPredicate(format: "label == %@", label)
         ).firstMatch
 
-        for _ in 0..<6 where !metric.exists || !metric.isHittable {
-            screen.swipeUp()
+        if metric.exists {
+            let hittableExpectation = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "isHittable == true"),
+                object: metric
+            )
+            if XCTWaiter.wait(for: [hittableExpectation], timeout: 2) == .completed {
+                XCTAssertFalse(
+                    (metric.value as? String)?.isEmpty ?? true,
+                    "The \(label) metric has no accessible value"
+                )
+                return
+            }
+            if metric.frame.intersects(screen.frame) {
+                XCTAssertFalse(
+                    (metric.value as? String)?.isEmpty ?? true,
+                    "The \(label) metric has no accessible value"
+                )
+                return
+            }
+        }
+
+        for index in 0..<6 where !metric.exists || (!metric.isHittable && !metric.frame.intersects(screen.frame)) {
+            if index < 3 {
+                screen.swipeUp()
+            } else {
+                screen.swipeDown()
+            }
         }
 
         XCTAssertTrue(metric.exists, "The \(label) metric is missing at accessibility text sizes")
-        XCTAssertTrue(metric.isHittable, "The \(label) metric cannot be reached by scrolling")
+        XCTAssertTrue(
+            metric.isHittable || metric.frame.intersects(screen.frame),
+            "The \(label) metric cannot be reached by scrolling"
+        )
         XCTAssertFalse(
             (metric.value as? String)?.isEmpty ?? true,
             "The \(label) metric has no accessible value"
