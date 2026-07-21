@@ -17,6 +17,11 @@ mode="test"
 if [[ "${1:-}" == "--build-only" ]]; then
   mode="build-for-testing"
   shift
+elif [[ "${1:-}" == "--no-build" || "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
+  mode="test-without-building"
+  if [[ "${1:-}" == "--no-build" ]]; then
+    shift
+  fi
 fi
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
@@ -46,9 +51,19 @@ if [[ "$destination" == platform=iOS,* ]]; then
 fi
 xcodebuild_args+=("$@")
 
-/usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
+if [[ "$mode" != "test-without-building" ]]; then
+  /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
+fi
 
 if [[ "$mode" == "test" ]]; then
+  /usr/bin/xcrun xcodebuild \
+    "${xcodebuild_args[@]}" \
+    -parallel-testing-enabled NO \
+    -test-timeouts-enabled YES \
+    -default-test-execution-time-allowance 120 \
+    -maximum-test-execution-time-allowance 120 \
+    test-without-building
+elif [[ "$mode" == "test-without-building" ]]; then
   /usr/bin/xcrun xcodebuild \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
