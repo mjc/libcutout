@@ -86,22 +86,22 @@ final class PevScreenThemeTests: XCTestCase {
     }
 
     @MainActor
-    func testBmsAlertIndicatorAppearsOnlyWhenColorCannotCarrySeverity() {
-        XCTAssertNil(BmsAlertIndicator.systemImageName(
+    func testBmsAlertIndicatorAlwaysShowsNonNominalSeverity() {
+        XCTAssertEqual(BmsAlertIndicator.systemImageName(
             for: .critical,
             differentiateWithoutColor: false
-        ))
+        ), "exclamationmark.triangle")
         XCTAssertEqual(BmsAlertIndicator.systemImageName(
             for: .critical,
             differentiateWithoutColor: true
         ), "exclamationmark.triangle.fill")
         XCTAssertEqual(BmsAlertIndicator.systemImageName(
             for: .warning,
-            differentiateWithoutColor: true
+            differentiateWithoutColor: false
         ), "exclamationmark.triangle")
         XCTAssertEqual(BmsAlertIndicator.systemImageName(
             for: .unknown,
-            differentiateWithoutColor: true
+            differentiateWithoutColor: false
         ), "questionmark.circle")
         XCTAssertNil(BmsAlertIndicator.systemImageName(
             for: .nominal,

@@ -108,10 +108,9 @@ struct BmsAlertIndicator: View {
         for alertLevel: BmsAlertLevel,
         differentiateWithoutColor: Bool
     ) -> String? {
-        guard differentiateWithoutColor else { return nil }
         return switch alertLevel {
         case .critical:
-            "exclamationmark.triangle.fill"
+            differentiateWithoutColor ? "exclamationmark.triangle.fill" : "exclamationmark.triangle"
         case .warning:
             "exclamationmark.triangle"
         case .unknown:
