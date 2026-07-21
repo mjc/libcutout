@@ -156,6 +156,6 @@ struct PevDashboardBrand: View {
     var body: some View {
         Text("CutOut")
             .font(.headline.weight(.bold))
-            .foregroundStyle(PevColors.yellow)
+            .foregroundStyle(PevColors.brand)
     }
 }

@@ -17,6 +17,7 @@ struct PevScreenTitleBlock: View {
                 .foregroundStyle(PevColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .accessibilityElement(children: .contain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
