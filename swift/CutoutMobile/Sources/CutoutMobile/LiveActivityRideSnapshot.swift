@@ -36,6 +36,11 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
             label
         }
     }
+
+    public func accessibilityValue(for connectionState: LiveActivityRideConnectionState) -> String {
+        let spokenIdentity = source == .unavailable ? "Device" : label
+        return "\(spokenIdentity), \(connectionState.accessibilityValue)"
+    }
 }
 
 public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashable, Sendable {
@@ -347,8 +352,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
 
     public var minimalAccessibilitySummary: String {
         var parts = [
-            identity.displayLabel,
-            connectionState.accessibilityValue,
+            identity.accessibilityValue(for: connectionState),
             "\(speed.label), \(speed.accessibilityValue)",
         ]
         if headroomSeverity == .reduceAcceleration {

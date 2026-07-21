@@ -92,9 +92,7 @@ public struct PevLiveActivityHeader: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Cutout ride")
-        .accessibilityValue(
-            "\(snapshot.identity.displayLabel), \(snapshot.connectionState.accessibilityValue)"
-        )
+        .accessibilityValue(snapshot.identity.accessibilityValue(for: snapshot.connectionState))
     }
 }
 

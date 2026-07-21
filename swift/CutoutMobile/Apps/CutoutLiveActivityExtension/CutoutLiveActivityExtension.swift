@@ -47,7 +47,9 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Device")
                     .accessibilityValue(
-                        "\(context.state.snapshot.identity.displayLabel), \(context.state.snapshot.connectionState.accessibilityValue)"
+                        context.state.snapshot.identity.accessibilityValue(
+                            for: context.state.snapshot.connectionState
+                        )
                     )
                 }
                 DynamicIslandExpandedRegion(.bottom) {

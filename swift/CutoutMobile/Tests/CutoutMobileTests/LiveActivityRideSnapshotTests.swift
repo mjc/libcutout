@@ -169,6 +169,17 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
         XCTAssertEqual(identity.source, .productionDevice)
         XCTAssertEqual(identity.displayLabel, "Little FOCer BT connected")
+        XCTAssertEqual(
+            identity.accessibilityValue(for: .connected),
+            "Little FOCer BT, connected"
+        )
+    }
+
+    func testUnavailableIdentitySpokenStateAvoidsDuplicateUnavailableWord() {
+        XCTAssertEqual(
+            LiveActivityRideIdentity.unavailable.accessibilityValue(for: .unavailable),
+            "Device, unavailable"
+        )
     }
 
     func testPopulatedLiveSnapshotMapsVisibleFieldsFromTypedRideState() {
@@ -243,7 +254,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.compactTrailingValue, snapshot.headroom)
         XCTAssertEqual(
             snapshot.minimalAccessibilitySummary,
-            "Aero connected, connected, Speed, 26.8, mph, Headroom, Reduce acceleration"
+            "Aero, connected, Speed, 26.8, mph, Headroom, Reduce acceleration"
         )
     }
 
@@ -266,7 +277,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.compactTrailingValue, snapshot.battery)
         XCTAssertEqual(
             snapshot.minimalAccessibilitySummary,
-            "Aero connected, connected, Speed, 26.8, mph"
+            "Aero, connected, Speed, 26.8, mph"
         )
     }
 
