@@ -1,193 +1,100 @@
 # Mobile FFI Boundary
 
-Cutout currently has Rust-owned DTOs and concrete protocol wrapper types, but it
-does not yet have a generated UniFFI boundary. The existing surface is ready for
-that boundary:
+`cutout-mobile-ffi` is the UniFFI boundary between the Rust protocol engine and
+the Swift and Kotlin clients. Rust owns the transport-independent DTOs and
+concrete protocol sessions; platform code owns Bluetooth and UI concerns.
 
-- `cutout-core` owns transport-independent DTOs such as `SessionInputDto`,
-  `SessionOutputDto`, `TelemetrySnapshotDto`, `ParserDiagnosticsDto`, and
-  `ControlRefusalDto`.
-- `cutout-protocols` owns concrete wrapper types that can name protocol models:
-  `ConcreteAeroReadOnlySession` and `ConcreteFalconReadOnlySession`.
-- Concrete wrappers avoid generics, trait objects, borrowed buffers, async
-  streams, and platform transport types in their public mobile-facing methods.
-- `ingest_checked` returns `ConcreteSessionStepResultDto`, preserving owned
-  output DTOs and stable `ConcreteSessionErrorDto` values for unsupported
-  commands.
-
-## Generator Commands
-
-The repository now has a `cutout-mobile-ffi` crate with `cdylib`/`staticlib`
-output and a workspace-local `cutout-uniffi-bindgen` runner. The exported
-UniFFI surface intentionally uses mobile-local DTOs so `cutout-core` and
-`cutout-protocols` do not depend on UniFFI.
-
-Generate bindings from the checked-in FFI surface with:
-
-```console
-cargo build -p cutout-mobile-ffi
-cargo run -p cutout-uniffi-bindgen -- generate \
-  --library target/debug/libcutout_mobile_ffi.dylib \
-  --language swift \
-  --no-format \
-  --out-dir target/uniffi/swift
-cargo run -p cutout-uniffi-bindgen -- generate \
-  --library target/debug/libcutout_mobile_ffi.dylib \
-  --language kotlin \
-  --no-format \
-  --out-dir target/uniffi/kotlin
-```
-
-On Linux the library extension is `.so`; on Windows it is `.dll`.
-
-## Smoke Checks
-
-The repository smoke script generates Swift and Kotlin bindings from the
-checked-in FFI surface, compiles tiny generated-language clients, and runs them:
-
-```console
-./scripts/smoke-mobile-bindings.sh
-```
-
-The smoke clients prove the same behavior in Swift and Kotlin:
-
-- construct Aero and Falcon read-only sessions;
-- feed `LinkUp` and command DTO inputs;
-- feed owned notification bytes from a captured Aero frame through Rust;
-- export a small PEVCAP JSONL capture with preserved provenance annotations,
-  advertised services, GATT fingerprints, and resolved identity metadata;
-- drain owned output DTOs;
-- query current telemetry snapshot and parser diagnostics;
-- observe a typed unsupported-command error from `ingest_checked`;
-- observe a typed unsupported Falcon profile construction error.
-
-These checks should compile generated Swift and Kotlin code rather than scanning
-Rust source text.
-
-## Swift Package Smoke
-
-The repository also has a SwiftPM packaging smoke for the first ergonomic
-Aero/Falcon library surface:
-
-```console
-./scripts/smoke-swift-package.sh
-```
-
-The script builds `cutout-mobile-ffi`, generates Swift UniFFI bindings into a
-temporary package, assembles the generated `cutout_mobile_ffiFFI` C module in
-SwiftPM's expected layout, and runs a Swift executable that imports
-`CutoutMobile`.
-
-The checked-in package source under `swift/CutoutMobile` intentionally contains
-only hand-written facade code and package metadata. Generated UniFFI files stay
-under `target/` so app-facing Swift remains reviewable while the FFI bindings
-continue to come from the Rust crate.
-
-## Swift SourceKit Workspace
-
-The checked-in Swift package depends on generated UniFFI bindings, so tools that
-expect a complete SwiftPM workspace should prepare the local package before
-asking SourceKit for diagnostics:
-
-```console
-./scripts/prepare-swift-sourcekit-workspace.sh
-```
-
-The script builds `cutout-mobile-ffi`, generates ignored Swift UniFFI bindings
-under `swift/CutoutMobile/Sources/CutoutMobile/Generated`, lays out the ignored
-`cutout_mobile_ffiFFI` system-library target, and verifies the package with
-`swift package describe`. On Darwin it clears `SDKROOT` and `DEVELOPER_DIR` for
-the Swift command so Xcode's Swift toolchain does not accidentally pair with a
-Nix Apple SDK.
-
-By default this prepares the checked-in Swift package in place:
+The Swift app consumes a checked-in Cargo Swift package:
 
 ```text
-swift/CutoutMobile
+crates/cutout-mobile-ffi/CutoutMobileFFI
+├── Package.swift
+├── Sources/CutoutMobileFFI/cutout_mobile_ffi.swift
+└── cutout_mobile_ffiFFI.xcframework
 ```
 
-The generated bindings, header, and module map remain ignored in that package.
-Xcode, SwiftPM tests, and SourceKit all consume this same workspace.
+The XCFramework contains static iOS device, iOS simulator, and macOS slices.
+`swift/CutoutMobile/Package.swift` depends on that package by local path, so
+SwiftPM, Xcode, SourceKit, tests, and app builds all use the same artifacts.
+Normal Swift work does not build Rust, generate bindings, set dynamic-library
+paths, or pass custom linker flags.
 
-For Serena/SourceKit diagnostics, activate Serena on the Swift package root
-after running the preparation script:
+## Regenerating the Swift package
 
-```text
-swift/CutoutMobile
-```
-
-The repository root remains the right Serena project for Rust work, but
-SourceKit needs the SwiftPM package root to resolve generated UniFFI types such
-as `RideOperatingState` and `Power`.
-
-## App Commands
-
-Use these commands for the native Cutout app workflow. They all assume the
-repository dev shell:
+Regenerate the package only after changing the Rust FFI surface or Rust code
+that must ship in the app:
 
 ```console
-nix develop -c ./scripts/test-swift-package.sh
-nix develop -c ./scripts/run-cutout-app.sh --launch-smoke
+nix develop -c sh -c '
+  cd crates/cutout-mobile-ffi
+  exec cargo swift package \
+    --platforms ios@18 macos@15 \
+    --release \
+    --name CutoutMobileFFI \
+    --lib-type static \
+    --skip-toolchains-check \
+    --accept-all \
+    --swift-tools-version 6.0 \
+    --silent
+'
+```
+
+Cargo Swift 0.11 cannot spell the Xcode 27 platform enum in its generated
+manifest, so the generated binary package uses compatible iOS 18 and macOS 15
+floors. The app package and Xcode targets still require iOS 27 and macOS 27.
+
+Commit the regenerated `CutoutMobileFFI` directory with the Rust change. Do not
+copy its sources or archives into the app package.
+
+## Checks
+
+Run the Swift package tests and executable smoke directly:
+
+```console
+nix develop -c swift test --package-path swift/CutoutMobile
+nix develop -c ./scripts/smoke-swift-package.sh
+```
+
+Build the real iOS UI-test graph without running UI automation:
+
+```console
+nix develop -c ./scripts/run-ios-ui-tests.sh --build-only
+```
+
+The Kotlin smoke remains a generation test because Kotlin does not consume the
+Swift XCFramework:
+
+```console
+nix develop -c ./scripts/smoke-kotlin-bindings.sh
+```
+
+These checks exercise typed Aero, Falcon, and VESC sessions, captured
+notification bytes, telemetry snapshots, parser diagnostics, command refusal,
+and PEVCAP behavior through the generated boundary.
+
+## SourceKit and app commands
+
+No preparation step is required. Activate Serena at the repository root and
+diagnose files under `swift/CutoutMobile`; the checked-in dependency makes the
+package complete in a clean clone.
+
+Useful app commands are:
+
+```console
 nix develop -c ./scripts/smoke-ios-app-metadata.sh
 nix develop -c ./scripts/run-ios-app-on-mac.sh
 CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-phone.sh
 ```
 
-`scripts/test-swift-package.sh` runs the generated Swift package tests with the
-Darwin-safe Swift environment and UniFFI linker flags. Pass `--filter NAME` for
-a focused XCTest filter while keeping the same generated workspace path.
+The Mac command builds the iPhone app for Apple Silicon Mac and opens it. The
+phone command builds, installs, and launches on a connected unlocked device.
+Signing stays local through `CUTOUT_IOS_DEVELOPMENT_TEAM` and optional
+`CUTOUT_IOS_APP_BUNDLE_ID`; the project does not commit a personal team.
 
-`scripts/run-cutout-app.sh --launch-smoke` builds and launches the native macOS
-SwiftUI `CutoutApp` executable from a generated SwiftPM workspace, exits from
-the app launch delegate, and prints `cutout_app_launch=ok`. Omit
-`--launch-smoke` to keep the Mac app running interactively.
+`scripts/export-ios-ad-hoc.sh` archives and exports a release-testing IPA. It
+uses Xcode's current export method and the signing environment documented in
+the script.
 
-`scripts/smoke-ios-app-metadata.sh` builds the iPhone app bundle and checks the
-bundle metadata that previously drifted, including portrait orientation and
-Bluetooth usage text.
-
-`scripts/run-ios-app-on-mac.sh` builds the real iPhoneOS app bundle for
-Apple Silicon Mac and prints its product path. Set `CUTOUT_IOS_ON_MAC_DESTINATION`
-to override the Xcode destination. The product is still an unsigned
-`Debug-iphoneos` bundle, so this command is bundle-build proof; local Mac launch
-proof comes from `scripts/run-cutout-app.sh --launch-smoke`.
-
-`scripts/run-ios-app-on-phone.sh` builds, installs, and launches the app
-on a connected booted iOS device. Signing stays local: provide
-`CUTOUT_IOS_DEVELOPMENT_TEAM`, and optionally `CUTOUT_IOS_APP_BUNDLE_ID`, in
-your shell or a private env file. The Xcode project intentionally does not
-commit a personal `DEVELOPMENT_TEAM`. The build helper deletes the expected
-device product before invoking `xcodebuild`, then deletes it again on failure,
-so a failed fresh build cannot silently install an older product from
-`target/xcode-device-signed`.
-
-`scripts/export-ios-ad-hoc.sh` archives the iPhone app and exports an ad hoc
-IPA. Xcode 27 names this export method `release-testing`, which replaces the
- older `ad-hoc` label; the script keeps the repo surface named "ad hoc" while
- emitting the current export method underneath. This path still depends on local
- Apple signing state: set `CUTOUT_IOS_DEVELOPMENT_TEAM`, optionally
- `CUTOUT_IOS_APP_BUNDLE_ID`, and either have a logged-in Xcode account with an
- eligible profile, provide App Store Connect API key env vars
- (`CUTOUT_APPSTORE_AUTH_KEY_PATH`, `CUTOUT_APPSTORE_AUTH_KEY_ID`,
- `CUTOUT_APPSTORE_AUTH_KEY_ISSUER_ID`), or provide a manually installed
- distribution profile via `CUTOUT_IOS_AD_HOC_PROFILE`. For manual export,
- `CUTOUT_IOS_AD_HOC_CERTIFICATE` defaults to `Apple Distribution`, and the
- helper flips the export plist to `signingStyle=manual`. The script prints the
- archive path, export directory, and final `.ipa` path when export succeeds.
-
-### Current Xcode Beta Warning Noise
-
-The app command surface is clean for project-owned warnings, but Xcode beta still
-emits two tooling-owned warning classes that should not be hidden by filtering
-stderr:
-
-- `warning: unhandled Platform key FamilyPlatforms` /
-  `warning: unhandled Platform key FamilyDisplayName` appear while SwiftPM/Xcode
-  tooling reads the Xcode beta platform metadata. Reproduce with
-  `nix develop -c ./scripts/smoke-swift-package.sh` or any iOS bundle command.
-  Owner: Xcode beta / Nix Apple SDK tooling boundary.
-- `appintentsmetadataprocessor` and `appintentsnltrainingprocessor` still run
-  during iOS app builds even though the app has no AppIntents dependency, and
-  report no extracted app shortcuts. Reproduce with
-  `nix develop -c ./scripts/smoke-ios-app-metadata.sh`. Owner: Xcode beta iOS
-  app build pipeline.
+Xcode beta may still emit App Intents metadata warnings even though the app has
+no App Intents dependency. Those warnings come from Xcode's build pipeline and
+must not be hidden by filtering stderr.

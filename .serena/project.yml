@@ -113,7 +113,7 @@ added_modes:
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
-initial_prompt: "For Swift SourceKit diagnostics, first run `nix develop --command ./scripts/prepare-swift-sourcekit-workspace.sh` from the repo root so the generated UniFFI files exist. The root `Package.swift` is a SourceKit workspace manifest that points at the checked-in Swift package paths; repo-native Swift builds and tests still run through `swift/CutoutMobile/Package.swift` and the existing scripts."
+initial_prompt: "Use `nix develop` for all repository commands. The canonical Swift package is `swift/CutoutMobile/Package.swift`; it consumes the checked-in Cargo Swift package at `crates/cutout-mobile-ffi/CutoutMobileFFI`. SwiftPM, Xcode, SourceKit, tests, and app builds use that package directly—do not regenerate bindings or add custom linker flags during normal Swift work."
 
 # time budget (seconds) per tool call for the retrieval of additional symbol information
 # such as docstrings or parameter information.
