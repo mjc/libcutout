@@ -66,6 +66,14 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
     }
 }
 
+public enum LiveActivityRideFreshnessPolicy {
+    public static let staleAfter: TimeInterval = 2
+
+    public static func staleDate(after now: Date) -> Date {
+        now.addingTimeInterval(staleAfter)
+    }
+}
+
 public enum LiveActivityRideGlyph: String, Codable, Equatable, Hashable, Sendable {
     case electricUnicycle
     case floatwheelAtom

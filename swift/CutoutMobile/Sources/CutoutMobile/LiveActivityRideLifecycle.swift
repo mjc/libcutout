@@ -1,3 +1,5 @@
+import Foundation
+
 public enum LiveActivityRideLifecycleEndReason: String, Codable, Equatable, Hashable, Sendable {
     case disconnected
     case sessionEnded
@@ -177,7 +179,10 @@ private actor LiveActivityRideActivityKitState {
     }
 
     private func content(snapshot: LiveActivityRideSnapshot) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
-        ActivityContent(state: .init(snapshot: snapshot), staleDate: nil)
+        ActivityContent(
+            state: .init(snapshot: snapshot),
+            staleDate: LiveActivityRideFreshnessPolicy.staleDate(after: Date())
+        )
     }
 }
 #else

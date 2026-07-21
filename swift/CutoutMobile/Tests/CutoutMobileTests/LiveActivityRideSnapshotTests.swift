@@ -164,6 +164,15 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
     }
 
+    func testLiveActivityStaleDateUsesTheTypedFreshnessWindow() {
+        let now = Date(timeIntervalSince1970: 10_000)
+
+        XCTAssertEqual(
+            LiveActivityRideFreshnessPolicy.staleDate(after: now),
+            Date(timeIntervalSince1970: 10_002)
+        )
+    }
+
     func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 
