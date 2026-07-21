@@ -160,7 +160,6 @@ struct VescRideScreenView: View {
                     detailColor: PevColors.primaryText,
                     fill: PevColors.cardFill,
                     stroke: PevColors.cardStroke,
-                    scale: 1,
                     cornerRadius: 24
                 )
                 .padding(.top, 12)
@@ -176,8 +175,7 @@ struct VescRideScreenView: View {
                     track: PevColors.cardStroke,
                     labelColor: PevColors.muted,
                     valueColor: PevColors.yellow,
-                    detailColor: PevColors.muted,
-                    scale: 1
+                    detailColor: PevColors.muted
                 )
                     .padding(.top, 12)
             } else if liveSnapshot == nil && phase == .live {
@@ -188,7 +186,6 @@ struct VescRideScreenView: View {
                     detailColor: PevColors.primaryText,
                     fill: PevColors.purple.opacity(0.18),
                     stroke: PevColors.purple.opacity(0.55),
-                    scale: 1,
                     cornerRadius: 24
                 )
                     .padding(.top, 12)
@@ -202,7 +199,6 @@ struct VescRideScreenView: View {
                     detailColor: PevColors.primaryText,
                     fill: PevColors.purple.opacity(0.18),
                     stroke: PevColors.purple.opacity(0.55),
-                    scale: 1,
                     cornerRadius: 24
                 )
                     .padding(.top, 10)

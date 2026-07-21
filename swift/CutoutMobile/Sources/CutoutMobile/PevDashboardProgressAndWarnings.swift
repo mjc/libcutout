@@ -8,7 +8,6 @@ public struct PevDashboardProgressBar: View {
     let track: Color
     let labelColor: Color
     let valueColor: Color
-    let scale: CGFloat
     let height: CGFloat
 
     var clampedProgress: Double {
@@ -23,7 +22,6 @@ public struct PevDashboardProgressBar: View {
         track: Color,
         labelColor: Color,
         valueColor: Color,
-        scale: CGFloat,
         height: CGFloat = 17
     ) {
         self.label = label
@@ -33,12 +31,11 @@ public struct PevDashboardProgressBar: View {
         self.track = track
         self.labelColor = labelColor
         self.valueColor = valueColor
-        self.scale = scale
         self.height = height
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 7 * scale) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text(label)
                     .font(.subheadline.weight(.semibold))
@@ -59,7 +56,7 @@ public struct PevDashboardProgressBar: View {
                         .frame(width: clampedProgress * proxy.size.width)
                 }
             }
-            .frame(height: height * scale)
+            .frame(height: height)
         }
         .accessibilityRepresentation {
             ProgressView(value: clampedProgress)
@@ -81,7 +78,6 @@ public struct PevDashboardProgressCard: View {
     let labelColor: Color
     let valueColor: Color
     let detailColor: Color
-    let scale: CGFloat
 
     public init(
         label: String,
@@ -94,8 +90,7 @@ public struct PevDashboardProgressCard: View {
         track: Color,
         labelColor: Color,
         valueColor: Color,
-        detailColor: Color,
-        scale: CGFloat
+        detailColor: Color
     ) {
         self.label = label
         self.value = value
@@ -108,11 +103,10 @@ public struct PevDashboardProgressCard: View {
         self.labelColor = labelColor
         self.valueColor = valueColor
         self.detailColor = detailColor
-        self.scale = scale
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 11 * scale) {
+        VStack(alignment: .leading, spacing: 11) {
             PevDashboardProgressBar(
                 label: label,
                 value: value,
@@ -120,8 +114,7 @@ public struct PevDashboardProgressCard: View {
                 accent: accent,
                 track: track,
                 labelColor: labelColor,
-                valueColor: valueColor,
-                scale: scale
+                valueColor: valueColor
             )
 
             if !detail.isEmpty {
@@ -130,12 +123,12 @@ public struct PevDashboardProgressCard: View {
                     .foregroundStyle(detailColor)
             }
         }
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, 17 * scale)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 17)
         .frame(maxWidth: .infinity)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: 25 * scale,
+                cornerRadius: 25,
                 fill: fill,
                 stroke: stroke
             )
@@ -155,7 +148,6 @@ public struct PevDashboardWarningCard: View {
     let detailColor: Color
     let fill: Color
     let stroke: Color
-    let scale: CGFloat
     let cornerRadius: CGFloat
 
     public init(
@@ -165,7 +157,6 @@ public struct PevDashboardWarningCard: View {
         detailColor: Color,
         fill: Color,
         stroke: Color,
-        scale: CGFloat,
         cornerRadius: CGFloat = 23
     ) {
         self.title = title
@@ -174,12 +165,11 @@ public struct PevDashboardWarningCard: View {
         self.detailColor = detailColor
         self.fill = fill
         self.stroke = stroke
-        self.scale = scale
         self.cornerRadius = cornerRadius
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 7 * scale) {
+        VStack(alignment: .leading, spacing: 7) {
             Text(title)
                 .font(.title3.weight(.black))
                 .foregroundStyle(accent)
@@ -187,12 +177,12 @@ public struct PevDashboardWarningCard: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(detailColor)
         }
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, 16 * scale)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: cornerRadius * scale,
+                cornerRadius: cornerRadius,
                 fill: fill,
                 stroke: stroke
             )

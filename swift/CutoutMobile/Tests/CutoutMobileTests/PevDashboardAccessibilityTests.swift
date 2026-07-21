@@ -118,8 +118,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             accent: .yellow,
             track: .gray,
             labelColor: .primary,
-            valueColor: .primary,
-            scale: 1
+            valueColor: .primary
         )
     }
 

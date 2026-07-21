@@ -93,8 +93,7 @@ struct EucRideScreenView: View {
                         accent: bar.accent.color,
                         track: PevColors.cardFill,
                         labelColor: PevColors.muted,
-                        valueColor: bar.accent.color,
-                        scale: 1
+                        valueColor: bar.accent.color
                     )
                 }
             }
@@ -106,8 +105,7 @@ struct EucRideScreenView: View {
                     accent: eucWarningAccent(for: warningSeverity),
                     detailColor: PevColors.warningText,
                     fill: PevColors.warningFill,
-                    stroke: PevColors.warningStroke,
-                    scale: 1
+                    stroke: PevColors.warningStroke
                 )
                     .padding(.top, 14)
             }
