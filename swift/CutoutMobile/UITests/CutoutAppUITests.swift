@@ -196,6 +196,23 @@ final class CutoutAppUITests: XCTestCase {
             .completed,
             "The \(family.name) Ride screen never exposed live speed through accessibility"
         )
+        if family == .vesc {
+            let spokenSpeed = try XCTUnwrap(speed.value as? String)
+            for qualifier in ["available", "vehicle telemetry"] {
+                XCTAssertTrue(
+                    spokenSpeed.contains(qualifier),
+                    "The VESC speed accessibility value is missing \(qualifier): \(spokenSpeed)"
+                )
+            }
+            XCTAssertTrue(
+                ["fresh", "stale", "freshness unavailable"].contains(where: spokenSpeed.contains),
+                "The VESC speed accessibility value has no freshness: \(spokenSpeed)"
+            )
+            XCTAssertTrue(
+                ["nominal", "caution", "critical", "severity unavailable"].contains(where: spokenSpeed.contains),
+                "The VESC speed accessibility value has no severity: \(spokenSpeed)"
+            )
+        }
 
         let tabBar = app.tabBars.firstMatch
         XCTAssertTrue(tabBar.exists)
