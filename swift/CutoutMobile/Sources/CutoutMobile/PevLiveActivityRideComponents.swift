@@ -66,6 +66,11 @@ public struct PevLiveActivityBrandMark: View {
 }
 
 public struct PevLiveActivityHeader: View {
+    @ScaledMetric(relativeTo: .caption) private var compactWordmarkSize: CGFloat = 12
+    @ScaledMetric(relativeTo: .subheadline) private var expandedWordmarkSize: CGFloat = 13
+    @ScaledMetric(relativeTo: .caption2) private var compactIdentitySize: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption) private var expandedIdentitySize: CGFloat = 12
+
     let snapshot: LiveActivityRideSnapshot
     let compact: Bool
 
@@ -78,10 +83,10 @@ public struct PevLiveActivityHeader: View {
         HStack(alignment: .center, spacing: 8) {
             PevLiveActivityBrandMark(size: compact ? 16 : 18)
             Text("CUTOUT")
-                .font(.system(size: compact ? 12 : 13, weight: .bold))
+                .font(.system(size: compact ? compactWordmarkSize : expandedWordmarkSize, weight: .bold))
             Spacer(minLength: 8)
             Text(snapshot.identity.displayLabel)
-                .font(.system(size: compact ? 10 : 12, weight: .medium))
+                .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -97,6 +102,9 @@ public struct PevLiveActivityHeader: View {
 }
 
 public struct PevLiveActivitySpeedGauge: View {
+    @ScaledMetric(relativeTo: .title2) private var speedScale: CGFloat = 1
+    @ScaledMetric(relativeTo: .caption) private var unitScale: CGFloat = 1
+
     let snapshot: LiveActivityRideSnapshot
     let diameter: CGFloat
 
@@ -125,11 +133,11 @@ public struct PevLiveActivitySpeedGauge: View {
                 .rotationEffect(.degrees(38))
             VStack(spacing: 0) {
                 Text(snapshot.speed.displayValue)
-                    .font(.system(size: diameter * 0.35, weight: .bold, design: .rounded))
+                    .font(.system(size: diameter * 0.35 * speedScale, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text(snapshot.speed.unit ?? "mph")
-                    .font(.system(size: diameter * 0.13, weight: .medium))
+                    .font(.system(size: diameter * 0.13 * unitScale, weight: .medium))
                     .foregroundStyle(PevLiveActivityPalette.secondaryText)
             }
         }
@@ -195,6 +203,11 @@ public struct PevLiveActivityMetricGrid: View {
 }
 
 public struct PevLiveActivitySafetyFooter: View {
+    @ScaledMetric(relativeTo: .caption2) private var compactFontSize: CGFloat = 9
+    @ScaledMetric(relativeTo: .caption2) private var expandedFontSize: CGFloat = 10
+    @ScaledMetric(relativeTo: .caption2) private var compactHeight: CGFloat = 14
+    @ScaledMetric(relativeTo: .caption2) private var expandedHeight: CGFloat = 16
+
     let snapshot: LiveActivityRideSnapshot
     let compact: Bool
 
@@ -233,12 +246,14 @@ public struct PevLiveActivitySafetyFooter: View {
                 .accessibilityHidden(true)
             PevLiveActivityFooterChip(systemName: "thermometer.medium", value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
         }
-        .font(.system(size: compact ? 9 : 10, weight: .medium))
-        .frame(height: compact ? 14 : 16)
+        .font(.system(size: compact ? compactFontSize : expandedFontSize, weight: .medium))
+        .frame(height: compact ? compactHeight : expandedHeight)
     }
 }
 
 public struct PevLiveActivityFooterChip: View {
+    @ScaledMetric(relativeTo: .caption2) private var iconSize: CGFloat = 10
+
     let systemName: String
     let value: LiveActivityRideValue
     let tint: Color
@@ -252,7 +267,7 @@ public struct PevLiveActivityFooterChip: View {
     public var body: some View {
         HStack(spacing: 4) {
             Image(systemName: systemName)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: iconSize, weight: .semibold))
                 .foregroundStyle(tint)
                 .accessibilityHidden(true)
             Text(value.displayValue)

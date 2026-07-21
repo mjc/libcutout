@@ -1,6 +1,10 @@
 import SwiftUI
 
 public struct PevLiveActivityValueCell: View {
+    @ScaledMetric(relativeTo: .caption2) private var compactLabelSize: CGFloat = 7
+    @ScaledMetric(relativeTo: .body) private var compactValueSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2) private var compactUnitSize: CGFloat = 7
+
     let value: LiveActivityRideValue
     let tint: Color
     let textColor: Color
@@ -35,19 +39,19 @@ public struct PevLiveActivityValueCell: View {
 
         VStack(alignment: .leading, spacing: compact ? 2 : 4) {
             Text(value.label)
-                .font(compact ? .system(size: 7, weight: .bold) : .caption2.weight(.semibold))
+                .font(compact ? .system(size: compactLabelSize, weight: .bold) : .caption2.weight(.semibold))
                 .foregroundStyle(secondaryTextColor)
                 .textCase(compact ? .uppercase : nil)
 
             HStack(alignment: .firstTextBaseline, spacing: compact ? 3 : 4) {
                 Text(value.displayValue)
-                    .font(compact ? .system(size: 11, weight: .semibold, design: .rounded) : .headline.weight(.semibold))
+                    .font(compact ? .system(size: compactValueSize, weight: .semibold, design: .rounded) : .headline.weight(.semibold))
                     .foregroundStyle(value.state == .available ? availableValueColor : secondaryTextColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if let unit = value.unit {
                     Text(unit)
-                        .font(compact ? .system(size: 7, weight: .semibold) : .caption.weight(.semibold))
+                        .font(compact ? .system(size: compactUnitSize, weight: .semibold) : .caption.weight(.semibold))
                         .foregroundStyle(secondaryTextColor)
                 }
             }

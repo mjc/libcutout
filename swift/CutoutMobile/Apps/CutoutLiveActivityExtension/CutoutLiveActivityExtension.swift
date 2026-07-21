@@ -24,10 +24,10 @@ private struct CutoutRideLiveActivityWidget: Widget {
                         HStack(spacing: 5) {
                             PevLiveActivityBrandMark(size: 15)
                             Text("CUTOUT")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.caption.weight(.bold))
                         }
                         Text("CUTOUT")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.caption.weight(.bold))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // The brand mark and wordmark are one visual identity;
@@ -39,7 +39,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     HStack(spacing: 5) {
                         Text(context.state.snapshot.identity.displayLabel)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.caption2.weight(.medium))
                             .foregroundStyle(PevLiveActivityPalette.secondaryText)
                             .lineLimit(1)
                             .minimumScaleFactor(0.75)
