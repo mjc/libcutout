@@ -212,12 +212,27 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
             .joined(separator: ", ")
     }
 
+    public var accessibilityProvenance: String? {
+        switch source {
+        case .liveTelemetry:
+            "vehicle telemetry"
+        case .derivedTelemetry:
+            "derived telemetry"
+        case .sessionState:
+            "session state"
+        case .appLifecycle:
+            "app state"
+        case .explicitlyUnavailable, .notApplicable, .deferred:
+            nil
+        }
+    }
+
     public var accessibilityValue: String {
         switch state {
         case .available:
-            [value, unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            [value, unit, accessibilityProvenance, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         case .stale:
-            [value, unit, accessibilityDetail, "stale"].compactMap { $0 }.joined(separator: ", ")
+            [value, unit, accessibilityProvenance, accessibilityDetail, "stale"].compactMap { $0 }.joined(separator: ", ")
         case .unavailable:
             ["unavailable", unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         case .notApplicable:

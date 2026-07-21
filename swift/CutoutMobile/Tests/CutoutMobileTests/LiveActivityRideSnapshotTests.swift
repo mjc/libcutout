@@ -139,7 +139,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
                 unit: "volts",
                 source: .liveTelemetry
             ).accessibilityValue,
-            "84, volts"
+            "84, volts, vehicle telemetry"
         )
         XCTAssertEqual(
             LiveActivityRideValue.stale(
@@ -148,7 +148,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
                 unit: "volts",
                 source: .liveTelemetry
             ).accessibilityValue,
-            "83, volts, stale"
+            "83, volts, vehicle telemetry, stale"
         )
         XCTAssertEqual(
             LiveActivityRideValue.unavailable(label: "Voltage").accessibilityValue,
@@ -176,6 +176,25 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(
             LiveActivityRideValue.deferred(label: "Battery", unit: "%").accessibilityValue,
             "waiting for data, %"
+        )
+    }
+
+    func testSafetyMetricSpokenValuesIncludeTypedProvenance() {
+        XCTAssertTrue(
+            LiveActivityRideValue.available(
+                label: "Speed",
+                value: "27.0",
+                unit: "mph",
+                source: .liveTelemetry
+            ).accessibilityValue.contains("vehicle telemetry")
+        )
+        XCTAssertTrue(
+            LiveActivityRideValue.stale(
+                label: "Headroom",
+                value: "Reduce acceleration",
+                unit: nil,
+                source: .derivedTelemetry
+            ).accessibilityValue.contains("derived telemetry")
         )
     }
 
@@ -318,7 +337,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.compactTrailingValue, snapshot.headroom)
         XCTAssertEqual(
             snapshot.minimalAccessibilitySummary,
-            "Aero, connected, Speed, 26.8, mph, Headroom, Reduce acceleration"
+            "Aero, connected, Speed, 26.8, mph, vehicle telemetry, Headroom, Reduce acceleration, derived telemetry"
         )
     }
 
@@ -341,7 +360,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.compactTrailingValue, snapshot.battery)
         XCTAssertEqual(
             snapshot.minimalAccessibilitySummary,
-            "Aero, connected, Speed, 26.8, mph"
+            "Aero, connected, Speed, 26.8, mph, vehicle telemetry"
         )
     }
 
