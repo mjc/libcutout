@@ -22,7 +22,6 @@ struct BmsOverviewLayout: View {
                             unit: "V",
                             detail: "",
                             accent: PevColors.green,
-                            scale: 1,
                             detailColor: PevColors.green
                         )
                     }
@@ -33,7 +32,6 @@ struct BmsOverviewLayout: View {
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
                             accent: PevColors.orange,
-                            scale: 1,
                             detailColor: PevColors.orange
                         )
                     }
@@ -47,7 +45,6 @@ struct BmsOverviewLayout: View {
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
                     accent: PevColors.green,
-                    scale: 1,
                     detailColor: PevColors.green
                 )
             }

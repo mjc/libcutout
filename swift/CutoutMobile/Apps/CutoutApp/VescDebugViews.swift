@@ -70,7 +70,7 @@ struct VescDebugScreenView: View {
 
             PevDashboardGrid(columns: columns, spacing: 20) {
                 ForEach(tiles) { tile in
-                    PevDashboardMetricTile(tile, scale: 1, cornerRadius: 16, minHeight: 104)
+                    PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 104)
                 }
             }
             .padding(.top, 8)

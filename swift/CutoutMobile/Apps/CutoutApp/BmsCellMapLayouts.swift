@@ -181,7 +181,6 @@ struct BmsDetailLayout: View {
                             unit: "°C",
                             detail: "",
                             accent: PevColors.green,
-                            scale: 1,
                             detailColor: PevColors.green
                         )
                         PevDashboardMetricTile(
@@ -190,7 +189,6 @@ struct BmsDetailLayout: View {
                             unit: "mΩ",
                             detail: "",
                             accent: PevColors.green,
-                            scale: 1,
                             detailColor: PevColors.green
                         )
                     }

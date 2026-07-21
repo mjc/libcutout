@@ -6,7 +6,6 @@ public struct PevDashboardMetricTile: View {
     let unit: String
     let detail: String
     let accent: Color
-    let scale: CGFloat
     let fill: Color
     let stroke: Color
     let labelColor: Color
@@ -26,7 +25,6 @@ public struct PevDashboardMetricTile: View {
         unit: String = "",
         detail: String = "",
         accent: Color,
-        scale: CGFloat,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         labelColor: Color = PevDashboardColors.mutedText,
@@ -41,7 +39,6 @@ public struct PevDashboardMetricTile: View {
         self.unit = unit
         self.detail = detail
         self.accent = accent
-        self.scale = scale
         self.fill = fill
         self.stroke = stroke
         self.labelColor = labelColor
@@ -53,17 +50,17 @@ public struct PevDashboardMetricTile: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(label)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(labelColor)
 
-            HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.title3.weight(.black))
                     .foregroundStyle(valueColor)
                     .monospacedDigit()
-                Spacer(minLength: 4 * scale)
+                Spacer(minLength: 4)
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.subheadline.weight(.black))
@@ -78,12 +75,12 @@ public struct PevDashboardMetricTile: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 16 * scale)
-        .padding(.vertical, 14 * scale)
-        .frame(maxWidth: .infinity, minHeight: minHeight * scale, alignment: .topLeading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: cornerRadius * scale,
+                cornerRadius: cornerRadius,
                 fill: fill,
                 stroke: stroke
             )

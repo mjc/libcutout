@@ -10,8 +10,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             value: "84",
             unit: "volts",
             detail: "stale",
-            accent: .yellow,
-            scale: 1
+            accent: .yellow
         )
 
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")

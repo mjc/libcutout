@@ -61,7 +61,6 @@ struct EucGarageScreenView: View {
                         unit: tile.unit,
                         detail: tile.detail,
                         accent: tile.accent.color,
-                        scale: 1,
                         cornerRadius: 16,
                         minHeight: 104
                     )

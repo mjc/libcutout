@@ -228,7 +228,7 @@ struct VescRideScreenView: View {
 
             PevDashboardGrid(columns: columns, spacing: 12) {
                 ForEach(dashboardTiles) { tile in
-                    PevDashboardMetricTile(tile, scale: 1, cornerRadius: 16, minHeight: 96)
+                    PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 96)
                 }
             }
             .padding(.top, 8)

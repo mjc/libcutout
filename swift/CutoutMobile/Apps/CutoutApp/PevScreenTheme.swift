@@ -69,7 +69,6 @@ extension PevAccent {
 extension PevDashboardMetricTile {
     init(
         _ tile: PevDashboardTile,
-        scale: CGFloat,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         labelColor: Color = PevDashboardColors.mutedText,
@@ -85,7 +84,6 @@ extension PevDashboardMetricTile {
             unit: tile.unit,
             detail: tile.detail,
             accent: tile.accent.color,
-            scale: scale,
             fill: fill,
             stroke: stroke,
             labelColor: labelColor,
