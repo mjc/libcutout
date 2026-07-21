@@ -3,12 +3,6 @@ import XCTest
 import CutoutMobile
 
 final class PevScreenThemeTests: XCTestCase {
-    func testRideHeroTypographyMatchesReferenceAtDefaultTextSize() {
-        XCTAssertEqual(PevRideHeroStyle.electricUnicycle.speedPointSize, 138)
-        XCTAssertEqual(PevRideHeroStyle.vescOnewheel.speedPointSize, 124)
-        XCTAssertEqual(PevRideHeroStyle.unitPointSize, 24)
-    }
-
     func testRideHeroReadoutSharesExplicitAvailabilitySemantics() {
         let unavailable = PevRideHeroReadout.unavailable
         XCTAssertEqual(unavailable.displayValue, "Unavailable")

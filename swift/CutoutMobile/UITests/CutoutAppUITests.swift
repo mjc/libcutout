@@ -68,16 +68,11 @@ final class CutoutAppUITests: XCTestCase {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
 
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        try app.performAccessibilityAudit()
+        try performCompleteAccessibilityAudit()
     }
 
     func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() {
-        app.terminate()
-        app.launchArguments = [
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryAccessibilityXXXL",
-        ]
-        app.launch()
+        relaunchAtAccessibilityDynamicType()
 
         let window = app.windows.firstMatch
         let screen = app.descendants(matching: .any)["device-picker.screen"]
@@ -106,11 +101,19 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc)
     }
 
+    func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        relaunchAtAccessibilityDynamicType()
+        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+    }
+
     func testEucUseOpensAnAccessibleLiveRide() throws {
         try assertConnectedSurface(for: .euc)
     }
 
-    private func assertConnectedSurface(for family: ConnectedDeviceFamily) throws {
+    private func assertConnectedSurface(
+        for family: ConnectedDeviceFamily,
+        requiredMetricLabel: String? = nil
+    ) throws {
         let pairingAttempted = pairAvailableDevice(family)
 
         guard pairingAttempted else {
@@ -157,6 +160,43 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertFalse(app.descendants(matching: .any)["dashboard.nav.\(unavailableTab)"].exists)
         }
 
+        if let requiredMetricLabel {
+            assertMetricIsReachable(requiredMetricLabel, in: screen)
+        }
+
+        try performCompleteAccessibilityAudit()
+    }
+
+    private func relaunchAtAccessibilityDynamicType() {
+        app.terminate()
+        app.launchArguments = [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        allowDeviceAuthorizationAlerts()
+    }
+
+    private func assertMetricIsReachable(_ label: String, in screen: XCUIElement) {
+        let metric = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", label)
+        ).firstMatch
+
+        for _ in 0..<6 where !metric.exists || !metric.isHittable {
+            screen.swipeUp()
+        }
+
+        XCTAssertTrue(metric.exists, "The \(label) metric is missing at accessibility text sizes")
+        XCTAssertTrue(metric.isHittable, "The \(label) metric cannot be reached by scrolling")
+        XCTAssertFalse(
+            (metric.value as? String)?.isEmpty ?? true,
+            "The \(label) metric has no accessible value"
+        )
+    }
+
+    private func performCompleteAccessibilityAudit() throws {
+        continueAfterFailure = true
+        defer { continueAfterFailure = false }
         try app.performAccessibilityAudit()
     }
 
