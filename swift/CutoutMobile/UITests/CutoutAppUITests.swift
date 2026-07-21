@@ -57,6 +57,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(captureKind.label, "Device kind for capture")
         XCTAssertTrue(captureKind.isHittable)
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(recordButton.label.contains("Refloat VESC"))
         XCTAssertFalse(recordButton.isEnabled)
 
         captureKind.tap()

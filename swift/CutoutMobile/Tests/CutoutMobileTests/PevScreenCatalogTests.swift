@@ -130,6 +130,30 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertNil(state.sections.manual)
     }
 
+    func testDevicePickerActionsHaveUniqueSpokenNamesForDuplicateModels() {
+        let first = DevicePickerRow(
+            id: "0000-00A1",
+            title: "Twin Board",
+            subtitle: "VESC",
+            detail: "first nearby board",
+            state: .supported(action: "Use"),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let second = DevicePickerRow(
+            id: "0000-00B2",
+            title: "Twin Board",
+            subtitle: "VESC",
+            detail: "second nearby board",
+            state: .supported(action: "Use"),
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        XCTAssertEqual(first.useActionAccessibilityLabel, "Use Twin Board, device 00A1")
+        XCTAssertEqual(first.captureActionAccessibilityLabel, "Start capture for Twin Board, device 00A1")
+        XCTAssertNotEqual(first.useActionAccessibilityLabel, second.useActionAccessibilityLabel)
+        XCTAssertNotEqual(first.captureActionAccessibilityLabel, second.captureActionAccessibilityLabel)
+    }
+
     func testDevicePickerRowsDeriveFromDiscoveryCandidates() {
         let supported = DevicePickerDiscoveryCandidate(
             platformIdentifier: "live-euc",

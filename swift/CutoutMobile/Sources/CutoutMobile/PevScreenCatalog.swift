@@ -483,6 +483,19 @@ public extension DevicePickerRow {
     var captureActionTitle: String {
         isProbeRecommended ? "Start probe" : "Start capture"
     }
+
+    var useActionAccessibilityLabel: String {
+        "Use \(accessibilityDeviceName)"
+    }
+
+    var captureActionAccessibilityLabel: String {
+        "\(captureActionTitle) for \(accessibilityDeviceName)"
+    }
+
+    private var accessibilityDeviceName: String {
+        guard id != title else { return title }
+        return "\(title), device \(id.suffix(4).uppercased())"
+    }
 }
 
 public extension DevicePickerRowState {

@@ -140,6 +140,7 @@ struct DevicePickerView: View {
         ) {
             recordOnly(row, trimmedRecordOnlyDeviceKind)
         }
+        .accessibilityLabel(row.captureActionAccessibilityLabel)
         .accessibilityHint(hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture")
         .accessibilityIdentifier("device-picker.record.\(row.id)")
     }

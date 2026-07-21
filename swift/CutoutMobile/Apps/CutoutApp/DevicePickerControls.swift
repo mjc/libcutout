@@ -59,7 +59,7 @@ struct PickerDeviceRow: View {
             .buttonStyle(.plain)
             .frame(minWidth: 44, minHeight: 44)
             .accessibilityIdentifier("device-picker.use.\(row.id)")
-            .accessibilityLabel("Use \(row.title)")
+            .accessibilityLabel(row.useActionAccessibilityLabel)
             .accessibilityHint("Connect to this device")
         } else {
             statusPill
