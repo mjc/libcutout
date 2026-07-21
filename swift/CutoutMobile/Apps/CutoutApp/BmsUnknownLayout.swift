@@ -13,8 +13,7 @@ struct BmsUnknownLayout: View {
                 value: snapshot.faultSummary ?? "--",
                 detail: snapshot.faultDetail ?? "",
                 accent: PevColors.orange,
-                stroke: PevColors.orange,
-                scale: 1
+                stroke: PevColors.orange
             )
 
             PevDashboardGrid(

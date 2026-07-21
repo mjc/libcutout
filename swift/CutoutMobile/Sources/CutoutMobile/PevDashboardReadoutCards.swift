@@ -103,7 +103,6 @@ public struct PevDashboardHeroCard: View {
     let track: Color
     let textColor: Color
     let secondaryTextColor: Color
-    let scale: CGFloat
 
     var clampedProgress: Double {
         max(0, min(1, progress))
@@ -124,8 +123,7 @@ public struct PevDashboardHeroCard: View {
         stroke: Color = PevDashboardColors.cardStroke,
         track: Color = PevDashboardColors.cardStroke,
         textColor: Color = PevDashboardColors.primaryText,
-        secondaryTextColor: Color = PevDashboardColors.mutedText,
-        scale: CGFloat
+        secondaryTextColor: Color = PevDashboardColors.mutedText
     ) {
         self.eyebrow = eyebrow
         self.value = value
@@ -138,15 +136,14 @@ public struct PevDashboardHeroCard: View {
         self.track = track
         self.textColor = textColor
         self.secondaryTextColor = secondaryTextColor
-        self.scale = scale
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 2 * scale) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(eyebrow)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(secondaryTextColor)
-            HStack(alignment: .firstTextBaseline, spacing: 8 * scale) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(value)
                     .font(.largeTitle.weight(.black))
                     .foregroundStyle(textColor)
@@ -166,14 +163,14 @@ public struct PevDashboardHeroCard: View {
                         .frame(width: clampedProgress * proxy.size.width)
                 }
             }
-            .frame(height: 12 * scale)
+            .frame(height: 12)
         }
-        .padding(.horizontal, 18 * scale)
-        .padding(.vertical, 16 * scale)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: 24 * scale,
+                cornerRadius: 24,
                 fill: fill,
                 stroke: stroke
             )
@@ -195,7 +192,6 @@ public struct PevDashboardWideCard: View {
     let stroke: Color
     let textColor: Color
     let secondaryTextColor: Color
-    let scale: CGFloat
 
     var accessibilityLabelText: String {
         title ?? value
@@ -215,8 +211,7 @@ public struct PevDashboardWideCard: View {
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         textColor: Color = PevDashboardColors.primaryText,
-        secondaryTextColor: Color = PevDashboardColors.mutedText,
-        scale: CGFloat
+        secondaryTextColor: Color = PevDashboardColors.mutedText
     ) {
         self.title = title
         self.value = value
@@ -226,11 +221,10 @@ public struct PevDashboardWideCard: View {
         self.stroke = stroke
         self.textColor = textColor
         self.secondaryTextColor = secondaryTextColor
-        self.scale = scale
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 7 * scale) {
+        VStack(alignment: .leading, spacing: 7) {
             if let title {
                 Text(title)
                     .font(.subheadline.weight(.bold))
@@ -245,12 +239,12 @@ public struct PevDashboardWideCard: View {
                     .foregroundStyle(accent)
             }
         }
-        .padding(.horizontal, 18 * scale)
-        .padding(.vertical, 18 * scale)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: 24 * scale,
+                cornerRadius: 24,
                 fill: fill,
                 stroke: stroke,
                 lineWidth: 1.2

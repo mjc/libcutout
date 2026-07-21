@@ -12,8 +12,7 @@ struct BmsInlineLayout: View {
                 title: "topology fits inline",
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel,
-                accent: PevColors.green,
-                scale: 1
+                accent: PevColors.green
             )
 
             PevDashboardGrid(
@@ -33,8 +32,7 @@ struct BmsInlineLayout: View {
                 title: "range of interest",
                 value: snapshot.cellMapSpreadSummary,
                 detail: snapshot.cellMapFocusSummary,
-                accent: PevColors.cyan,
-                scale: 1
+                accent: PevColors.cyan
             )
 
             VStack(alignment: .leading, spacing: 14) {
@@ -77,8 +75,7 @@ struct BmsScrollableLayout: View {
                 title: "large packs use grouped overview first",
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel,
-                accent: PevColors.cyan,
-                scale: 1
+                accent: PevColors.cyan
             )
 
             PevDashboardGrid(columns: columns, spacing: 8) {
@@ -95,8 +92,7 @@ struct BmsScrollableLayout: View {
                 value: snapshot.cellMapFocusSummary,
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
                 accent: PevColors.orange,
-                stroke: PevColors.orange,
-                scale: 1
+                stroke: PevColors.orange
             )
 
             VStack(alignment: .leading, spacing: 10) {
@@ -197,8 +193,7 @@ struct BmsDetailLayout: View {
                         title: nil,
                         value: "trend: \(snapshot.detailGroupTrend(for: selectedGroup.index))",
                         detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index),
-                        accent: PevColors.yellow,
-                        scale: 1
+                        accent: PevColors.yellow
                     )
                 }
                 .padding(.horizontal, 18)

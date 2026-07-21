@@ -29,8 +29,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             unit: "percent",
             detail: "charging",
             progress: 1.4,
-            accent: .green,
-            scale: 1
+            accent: .green
         )
 
         XCTAssertEqual(card.clampedProgress, 1)
@@ -42,8 +41,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             title: nil,
             value: "Trend stable",
             detail: "No change",
-            accent: .yellow,
-            scale: 1
+            accent: .yellow
         )
 
         XCTAssertEqual(card.accessibilityLabelText, "Trend stable")

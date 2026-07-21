@@ -54,8 +54,7 @@ struct BmsOverviewLayout: View {
                     title: "balancing",
                     value: balancingSummary,
                     detail: snapshot.balancingDetail ?? "",
-                    accent: PevColors.orange,
-                    scale: 1
+                    accent: PevColors.orange
                 )
             }
 
@@ -65,8 +64,7 @@ struct BmsOverviewLayout: View {
                     value: faultSummary,
                     detail: snapshot.faultDetail ?? "",
                     accent: PevColors.orange,
-                    stroke: Color(red: 0.92, green: 0.33, blue: 0.35),
-                    scale: 1
+                    stroke: Color(red: 0.92, green: 0.33, blue: 0.35)
                 )
             }
         }
@@ -81,16 +79,14 @@ struct BmsOverviewLayout: View {
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
                 progress: energyProgress,
-                accent: PevColors.yellow,
-                scale: 1
+                accent: PevColors.yellow
             )
         } else {
             PevDashboardWideCard(
                 title: "pack telemetry",
                 value: voltageText(snapshot.voltage) == "--" ? snapshot.availability.displayText : "\(voltageText(snapshot.voltage)) V",
                 detail: snapshot.topology.layoutLabel,
-                accent: PevColors.green,
-                scale: 1
+                accent: PevColors.green
             )
         }
     }
