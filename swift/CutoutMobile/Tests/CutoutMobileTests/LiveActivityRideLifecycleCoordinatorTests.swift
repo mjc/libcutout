@@ -67,6 +67,21 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(fastSnapshot.speed.value, "123.4")
         XCTAssertEqual(fastSnapshot.speed.unit, "mph")
     }
+
+    func testIdentityChangeEndsPreviousActivityBeforeStartingReplacement() {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let first = liveSnapshot(label: "First ride", speedMph: 19.8)
+        let replacement = liveSnapshot(label: "Second ride", speedMph: 19.8)
+
+        coordinator.reconcile(snapshot: first, shouldBeActive: true)
+        coordinator.reconcile(snapshot: replacement, shouldBeActive: true)
+
+        XCTAssertEqual(
+            manager.events,
+            [.start(first), .end(.sessionEnded), .start(replacement)]
+        )
+    }
 }
 
 private final class RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecycleManaging {

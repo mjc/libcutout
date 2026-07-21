@@ -45,6 +45,13 @@ public final class LiveActivityRideLifecycleCoordinator {
             return
         }
 
+        if lastSnapshot?.identity != snapshot.identity {
+            manager.end(reason: .sessionEnded)
+            manager.start(snapshot: snapshot)
+            lastSnapshot = snapshot
+            return
+        }
+
         guard lastSnapshot != snapshot else {
             return
         }
@@ -127,14 +134,22 @@ private actor LiveActivityRideActivityKitState {
             return
         }
 
-        if let existing = Activity<LiveActivityRideAttributes>.activities.first {
+        let existingActivities = Activity<LiveActivityRideAttributes>.activities
+        if let existing = existingActivities.first(where: { $0.attributes.identity == snapshot.identity }) {
             activity = existing
             await update(snapshot: snapshot)
+            for otherActivity in existingActivities where otherActivity.id != existing.id {
+                await otherActivity.end(otherActivity.content, dismissalPolicy: .immediate)
+            }
             return
         }
 
         if activity != nil {
-            await update(snapshot: snapshot)
+            if let activeActivity = activity {
+                await activeActivity.end(activeActivity.content, dismissalPolicy: .immediate)
+            }
+            activity = nil
+            await start(snapshot: snapshot)
             return
         }
 
