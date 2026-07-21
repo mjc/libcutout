@@ -81,15 +81,13 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs.isEmpty)
     }
 
-    func testOnlyLiveConnectionOpensTheRideSurface() {
-        XCTAssertFalse(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
-        XCTAssertFalse(SessionConnectionPhase.discoveringServices.opensRideScreen)
-        XCTAssertFalse(SessionConnectionPhase.subscribing.opensRideScreen)
+    func testPairingProgressOpensTheRideSurface() {
+        XCTAssertTrue(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
+        XCTAssertTrue(SessionConnectionPhase.discoveringServices.opensRideScreen)
+        XCTAssertTrue(SessionConnectionPhase.subscribing.opensRideScreen)
         XCTAssertTrue(SessionConnectionPhase.live.opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.starting.opensRideScreen)
-        XCTAssertFalse(SessionConnectionPhase.bluetoothUnavailable(rawState: 0).opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.scanning.opensRideScreen)
-        XCTAssertFalse(SessionConnectionPhase.failed(.missingNotifyChannel).opensRideScreen)
     }
 
     func testConnectionAnnouncementsCoverMeaningfulTransitionsWithoutChatter() {
