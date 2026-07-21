@@ -1,42 +1,6 @@
 // swift-tools-version: 6.0
 
-import Foundation
 import PackageDescription
-
-private func repositoryRoot(from manifestPath: String) -> URL {
-    var directory = URL(fileURLWithPath: manifestPath).deletingLastPathComponent()
-    while directory.path != "/" {
-        if FileManager.default.fileExists(atPath: directory.appending(path: "Cargo.toml").path) {
-            return directory
-        }
-        directory.deleteLastPathComponent()
-    }
-    preconditionFailure("CutoutMobile must be built from inside the libcutout repository")
-}
-
-private let hostRustLibraryDirectory = repositoryRoot(from: #filePath)
-    .appending(path: "target/debug")
-    .path
-
-#if os(Linux)
-private let hostRustLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags([
-        "-L\(hostRustLibraryDirectory)",
-        "-lcutout_mobile_ffi",
-        "-Xlinker", "-rpath",
-        "-Xlinker", hostRustLibraryDirectory,
-    ]),
-]
-#else
-private let hostRustLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags([
-        "-L\(hostRustLibraryDirectory)",
-        "-lcutout_mobile_ffi",
-        "-Xlinker", "-rpath",
-        "-Xlinker", hostRustLibraryDirectory,
-    ], .when(platforms: [.macOS])),
-]
-#endif
 
 let package = Package(
     name: "CutoutMobile",
@@ -47,19 +11,26 @@ let package = Package(
     products: [
         .library(name: "CutoutMobile", targets: ["CutoutMobile"]),
     ],
+    dependencies: [
+        .package(path: "../../crates/cutout-mobile-ffi/CutoutMobileFFI"),
+    ],
     targets: [
-        .systemLibrary(
-            name: "cutout_mobile_ffiFFI",
-            path: "Sources/cutout_mobile_ffiFFI"
-        ),
         .target(
             name: "CutoutMobile",
-            dependencies: ["cutout_mobile_ffiFFI"],
-            linkerSettings: hostRustLinkerSettings
+            dependencies: [
+                .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
+            ],
+            exclude: ["Generated"],
+            linkerSettings: [
+                .linkedLibrary("iconv", .when(platforms: [.iOS, .macOS])),
+            ]
         ),
         .testTarget(
             name: "CutoutMobileTests",
-            dependencies: ["CutoutMobile"],
+            dependencies: [
+                "CutoutMobile",
+                .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
+            ],
             path: "Tests/CutoutMobileTests"
         ),
         .testTarget(

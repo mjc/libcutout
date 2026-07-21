@@ -1,4 +1,5 @@
 import XCTest
+import CutoutMobileFFI
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 #endif

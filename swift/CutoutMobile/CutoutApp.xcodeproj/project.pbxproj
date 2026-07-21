@@ -459,16 +459,6 @@
 				INFOPLIST_FILE = Apps/CutoutApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -494,16 +484,6 @@
 				INFOPLIST_FILE = Apps/CutoutApp/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -562,16 +542,6 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp.liveactivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -601,16 +571,6 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-					"$(PROJECT_DIR)/../../target/aarch64-apple-ios-sim/debug/libcutout_mobile_ffi.a",
-					"-liconv",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.cutout.cutoutapp.liveactivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

@@ -1,4 +1,5 @@
 import XCTest
+import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class DeviceDetectionSessionTests: XCTestCase {

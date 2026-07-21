@@ -1,3 +1,15 @@
+import CutoutMobileFFI
+
+public typealias Angle = CutoutMobileFFI.Angle
+public typealias BatteryCurrent = CutoutMobileFFI.BatteryCurrent
+public typealias BatteryLevel = CutoutMobileFFI.BatteryLevel
+public typealias MobilePhoneLocationSnapshotDto = CutoutMobileFFI.MobilePhoneLocationSnapshotDto
+public typealias PhaseCurrent = CutoutMobileFFI.PhaseCurrent
+public typealias PowerFlowDirection = CutoutMobileFFI.PowerFlowDirection
+public typealias Speed = CutoutMobileFFI.Speed
+public typealias Temperature = CutoutMobileFFI.Temperature
+public typealias Voltage = CutoutMobileFFI.Voltage
+public typealias VoltageDelta = CutoutMobileFFI.VoltageDelta
 import Foundation
 
 public struct MonotonicMilliseconds: Equatable, Hashable, Sendable {

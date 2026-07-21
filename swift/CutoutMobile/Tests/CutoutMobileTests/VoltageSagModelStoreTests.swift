@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class VoltageSagModelStoreTests: XCTestCase {

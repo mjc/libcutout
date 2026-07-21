@@ -1,3 +1,4 @@
+import CutoutMobileFFI
 import Foundation
 
 public enum LiveActivityRideIdentitySource: String, Codable, Equatable, Hashable, Sendable {

@@ -1,5 +1,6 @@
 import CoreBluetooth
 import CoreLocation
+import CutoutMobileFFI
 import Foundation
 
 func protocolIdentityFallbackDisplayName(
