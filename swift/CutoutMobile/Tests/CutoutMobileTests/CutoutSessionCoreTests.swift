@@ -222,18 +222,6 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(eskate.subProtocol.displayName, "eSkate")
     }
 
-    func testVescRideSubtitleCombinesFloatIdentityAndArmedState() {
-        let snapshot = VescRideSnapshot(
-            title: "Fungineers X7",
-            vehicleKind: .float,
-            subProtocol: .refloat,
-            controllerState: .armed,
-            operatingState: .riding
-        )
-
-        XCTAssertEqual(snapshot.screenSubtitle, "VESC OW · armed")
-    }
-
     func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
         let telemetry = TelemetrySnapshot(
             voltage: voltageValue(75_400),

@@ -2,44 +2,6 @@ import CutoutMobile
 import Foundation
 import Observation
 
-enum CutoutAppLaunchFixture: Equatable {
-    case vescLive
-
-    init?(arguments: [String]) {
-        guard arguments.contains("--ui-test-vesc-live") else { return nil }
-        self = .vescLive
-    }
-
-    var initialRoute: CutoutAppRoute {
-        switch self {
-        case .vescLive: .vescRide
-        }
-    }
-
-    var vescRideSnapshot: VescRideSnapshot {
-        switch self {
-        case .vescLive:
-            VescRideSnapshot(
-                title: "Fungineers X7",
-                vehicleKind: .float,
-                subProtocol: .refloat,
-                controllerState: .armed,
-                operatingState: .riding,
-                warning: .pushbackSoon,
-                boardSpeed: Speed(value: 8_494),
-                dutyCycle: DutyCycle(permille: 820),
-                dutyHeadroom: BatteryLevel(value: 18),
-                batteryCurrent: BatteryCurrent(value: 38_000),
-                powerFlow: .discharge,
-                motorCurrent: PhaseCurrent(value: 71_000),
-                boardAngle: Angle(value: -1_800),
-                controllerTemperature: Temperature(value: 54_000),
-                motorTemperature: Temperature(value: 49_000)
-            )
-        }
-    }
-}
-
 enum CaptureStatus: Equatable {
     case recordingLocally(fileName: String)
     case recording(label: String?, notificationCount: Int, fileName: String?)
@@ -129,7 +91,7 @@ final class CutoutAppModel {
     }
 
     var vescRideSnapshot: VescRideSnapshot? {
-        launchVescRideSnapshot ?? VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
+        VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
     }
 
     var captureStatusText: String? {
@@ -137,7 +99,6 @@ final class CutoutAppModel {
     }
 
     private let core = CutoutSessionCore()
-    private let launchVescRideSnapshot: VescRideSnapshot?
     private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
     private let selectedDeviceStore = DevicePickerSelectionStore()
     private var liveActivityIdentity: LiveActivityRideIdentity?
@@ -149,13 +110,7 @@ final class CutoutAppModel {
     private var captureLabel: String?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
-    init(launchFixture: CutoutAppLaunchFixture? = nil) {
-        launchVescRideSnapshot = launchFixture?.vescRideSnapshot
-        if let launchFixture {
-            phase = .live
-            selectedRideTitle = launchFixture.vescRideSnapshot.title
-            selectedConnectionRoute = .vescOnewheel
-        }
+    init() {
         core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
             self?.syncLiveActivity()
