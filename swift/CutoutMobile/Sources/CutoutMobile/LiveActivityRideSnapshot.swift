@@ -219,11 +219,11 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         case .stale:
             [value, unit, accessibilityDetail, "stale"].compactMap { $0 }.joined(separator: ", ")
         case .unavailable:
-            ["unavailable", accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            ["unavailable", unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         case .notApplicable:
-            "not applicable"
+            ["not applicable", unit].compactMap { $0 }.joined(separator: ", ")
         case .deferred:
-            ["waiting for data", accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            ["waiting for data", unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         }
     }
 

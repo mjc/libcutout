@@ -164,6 +164,21 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
     }
 
+    func testUnavailableStatesKeepTheirTypedUnitInSpokenValues() {
+        XCTAssertEqual(
+            LiveActivityRideValue.unavailable(label: "Voltage", unit: "V").accessibilityValue,
+            "unavailable, V"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.notApplicable(label: "PWM", unit: "%").accessibilityValue,
+            "not applicable, %"
+        )
+        XCTAssertEqual(
+            LiveActivityRideValue.deferred(label: "Battery", unit: "%").accessibilityValue,
+            "waiting for data, %"
+        )
+    }
+
     func testLiveActivityStaleDateUsesTheTypedFreshnessWindow() {
         let now = Date(timeIntervalSince1970: 10_000)
 
