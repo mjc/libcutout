@@ -213,6 +213,11 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescRidePassesAccessibilityAuditInRightToLeftLayout() throws {
+        relaunchAtRightToLeftAccessibilityDynamicType()
+        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+    }
+
     func testVescDebugPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
         guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
@@ -334,6 +339,21 @@ final class CutoutAppUITests: XCTestCase {
             "--ui-test-vesc",
             "-AppleInterfaceStyle",
             "Light",
+        ]
+        app.launch()
+        allowDeviceAuthorizationAlerts()
+    }
+
+    private func relaunchAtRightToLeftAccessibilityDynamicType() {
+        app.terminate()
+        app.launchArguments = [
+            "--ui-test-vesc",
+            "-AppleLanguages",
+            "(ar)",
+            "-AppleLocale",
+            "ar_SA",
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
         ]
         app.launch()
         allowDeviceAuthorizationAlerts()
