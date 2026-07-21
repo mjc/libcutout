@@ -58,11 +58,9 @@ public struct PevDashboardProgressBar: View {
             }
             .frame(height: height)
         }
-        .accessibilityRepresentation {
-            ProgressView(value: clampedProgress)
-                .accessibilityLabel(label)
-                .accessibilityValue(value)
-        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityValue(value)
     }
 }
 
@@ -133,11 +131,9 @@ public struct PevDashboardProgressCard: View {
                 stroke: stroke
             )
         )
-        .accessibilityRepresentation {
-            ProgressView(value: max(0, min(1, progress)))
-                .accessibilityLabel(label)
-                .accessibilityValue(detail.isEmpty ? value : "\(value), \(detail)")
-        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityValue(detail.isEmpty ? value : "\(value), \(detail)")
     }
 }
 

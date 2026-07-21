@@ -239,7 +239,7 @@ struct PevRideHeroSection: View {
         }
         .frame(maxWidth: .infinity)
         .foregroundStyle(PevColors.primaryText)
-        .accessibilityElement(children: .ignore)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel(speedCaption)
         .accessibilityValue(speedReadout.accessibilityValue)
         .accessibilityIdentifier("ride.hero.speed")
