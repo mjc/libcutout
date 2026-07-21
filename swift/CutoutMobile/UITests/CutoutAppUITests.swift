@@ -65,6 +65,11 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertEqual(captureKind.value as? String, "vesc floatwheel")
         XCTAssertTrue(recordButton.isEnabled)
+
+        let done = app.keyboards.buttons["Done"]
+        if done.waitForExistence(timeout: 1) {
+            done.tap()
+        }
     }
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
