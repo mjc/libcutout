@@ -1470,7 +1470,17 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var screenSubtitle: String {
-        switch operatingState {
+        let vehicleIdentity = vehicleKind == .float ? "VESC OW" : vehicleKind.displayName
+        switch controllerState {
+        case .armed:
+            return "\(vehicleIdentity) · armed"
+        case .disarmed:
+            return "\(vehicleIdentity) · disarmed"
+        case .unknown:
+            break
+        }
+
+        return switch operatingState {
         case .parked:
             "Parked"
         case .standing:

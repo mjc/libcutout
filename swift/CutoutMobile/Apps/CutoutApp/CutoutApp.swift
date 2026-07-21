@@ -9,8 +9,9 @@ struct CutoutApp: App {
     #if os(macOS)
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
-    @State private var model = CutoutAppModel()
-    @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
+    @State private var model: CutoutAppModel
+    @State private var navigationPath: [CutoutAppRoute]
+    private let startsSession: Bool
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -18,6 +19,13 @@ struct CutoutApp: App {
             print("cutout_app=ok")
             Foundation.exit(EXIT_SUCCESS)
         }
+
+        let launchFixture = CutoutAppLaunchFixture(arguments: CommandLine.arguments)
+        _model = State(initialValue: CutoutAppModel(launchFixture: launchFixture))
+        _navigationPath = State(initialValue: CutoutAppRoute.navigationPath(
+            for: launchFixture?.initialRoute ?? .initialRoute()
+        ))
+        startsSession = launchFixture == nil
     }
 
     var body: some Scene {
@@ -25,6 +33,7 @@ struct CutoutApp: App {
             rootView
                 .preferredColorScheme(.dark)
                 .task {
+                    guard startsSession else { return }
                     model.start()
                 }
                 .onChange(of: scenePhase) {

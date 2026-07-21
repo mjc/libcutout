@@ -3,6 +3,21 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
+    @MainActor
+    func testVescLaunchFixtureUsesTheProductionTypedSnapshot() {
+        let model = CutoutAppModel(launchFixture: .vescLive)
+
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+        XCTAssertEqual(model.vescRideSnapshot?.title, "Fungineers X7")
+        XCTAssertEqual(model.vescRideSnapshot?.screenSubtitle, "VESC OW · armed")
+        XCTAssertEqual(model.vescRideSnapshot?.boardSpeed, Speed(value: 8_494))
+        XCTAssertEqual(model.vescRideSnapshot?.batteryCurrent, BatteryCurrent(value: 38_000))
+        XCTAssertEqual(model.vescRideSnapshot?.motorCurrent, PhaseCurrent(value: 71_000))
+        XCTAssertEqual(model.vescRideSnapshot?.boardAngle, Angle(value: -1_800))
+        XCTAssertEqual(model.vescRideSnapshot?.controllerTemperature, Temperature(value: 54_000))
+    }
+
     func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
         XCTAssertEqual(
             CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")
