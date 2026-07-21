@@ -5,8 +5,8 @@ enum PevRideHeroStyle {
     case electricUnicycle
     case vescOnewheel
 
-    static let electricUnicycleSpeedPointSize: CGFloat = 138
-    static let vescOnewheelSpeedPointSize: CGFloat = 124
+    static let electricUnicycleSpeedPointSize: CGFloat = 104
+    static let vescOnewheelSpeedPointSize: CGFloat = 96
     static let unitPointSize: CGFloat = 24
 
     var speedPointSize: CGFloat {
