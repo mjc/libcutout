@@ -134,7 +134,6 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             stroke: .gray,
             textColor: .primary,
             secondaryTextColor: .secondary,
-            scale: 1,
             accessibilityValue: accessibilityValue
         )
     }

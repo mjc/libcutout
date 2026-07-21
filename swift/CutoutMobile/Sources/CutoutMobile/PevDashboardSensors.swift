@@ -14,7 +14,6 @@ public struct PevDashboardFootpadReadout: View {
     let stroke: Color
     let textColor: Color
     let secondaryTextColor: Color
-    let scale: CGFloat
     let accessibilityValueText: String
 
     public init(
@@ -29,7 +28,6 @@ public struct PevDashboardFootpadReadout: View {
         stroke: Color,
         textColor: Color,
         secondaryTextColor: Color,
-        scale: CGFloat,
         accessibilityValue: String? = nil
     ) {
         self.title = title
@@ -43,7 +41,6 @@ public struct PevDashboardFootpadReadout: View {
         self.stroke = stroke
         self.textColor = textColor
         self.secondaryTextColor = secondaryTextColor
-        self.scale = scale
         accessibilityValueText = accessibilityValue ?? [
             leftLabel,
             leftValue,
@@ -54,7 +51,7 @@ public struct PevDashboardFootpadReadout: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(title)
                     .font(.caption.weight(.bold))
@@ -66,30 +63,30 @@ public struct PevDashboardFootpadReadout: View {
             }
 
             if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 10 * scale) {
+                VStack(alignment: .leading, spacing: 10) {
                     footpadSide(label: leftLabel, value: leftValue)
                     footpadSide(label: rightLabel, value: rightValue)
                 }
             } else {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10 * scale) {
+                    HStack(spacing: 10) {
                         footpadSide(label: leftLabel, value: leftValue)
                         footpadSide(label: rightLabel, value: rightValue)
                     }
 
-                    VStack(alignment: .leading, spacing: 10 * scale) {
+                    VStack(alignment: .leading, spacing: 10) {
                         footpadSide(label: leftLabel, value: leftValue)
                         footpadSide(label: rightLabel, value: rightValue)
                     }
                 }
             }
         }
-        .padding(.horizontal, 14 * scale)
-        .padding(.vertical, 10 * scale)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: 14 * scale,
+                cornerRadius: 14,
                 fill: fill,
                 stroke: stroke
             )
@@ -100,8 +97,8 @@ public struct PevDashboardFootpadReadout: View {
     }
 
     private func footpadSide(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3 * scale) {
-            HStack(spacing: 5 * scale) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
                 Text(label)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(secondaryTextColor)
