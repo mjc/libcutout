@@ -19,9 +19,6 @@ let package = Package(
             name: "CutoutMobile",
             dependencies: [
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
-            ],
-            linkerSettings: [
-                .linkedLibrary("iconv", .when(platforms: [.iOS, .macOS])),
             ]
         ),
         .testTarget(
