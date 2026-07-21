@@ -14,7 +14,6 @@ struct BmsDiagnosticsSection: View {
                     .map { row in
                         PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
                     },
-                scale: scale,
                 fill: PevColors.cardFill,
                 stroke: PevColors.cardStroke,
                 labelColor: PevColors.muted,
@@ -42,12 +41,10 @@ struct BmsDiagnosticsSection: View {
 
 struct SettingsReadbackRows: View {
     let readback: SettingsReadback
-    let scale: CGFloat
 
     var body: some View {
         PevDashboardReadbackRows(
             rows: readback.dashboardRows,
-            scale: scale,
             emptyLabel: "settings",
             emptyValue: readback.availability.displayText
         )
@@ -56,7 +53,6 @@ struct SettingsReadbackRows: View {
 
 struct FaultHistoryReadbackRows: View {
     let readback: FaultHistoryReadback
-    let scale: CGFloat
 
     var body: some View {
         PevDashboardReadbackRows(
@@ -67,8 +63,7 @@ struct FaultHistoryReadbackRows: View {
                     value: readback.valueText,
                     detail: readback.detailText
                 ),
-            ],
-            scale: scale
+            ]
         )
     }
 }

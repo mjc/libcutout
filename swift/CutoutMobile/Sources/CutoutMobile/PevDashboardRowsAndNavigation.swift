@@ -18,7 +18,6 @@ public struct PevDashboardKeyValueRows: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let rows: [PevDashboardKeyValueRow]
-    let scale: CGFloat
     let fill: Color
     let stroke: Color
     let labelColor: Color
@@ -28,7 +27,6 @@ public struct PevDashboardKeyValueRows: View {
 
     public init(
         rows: [PevDashboardKeyValueRow],
-        scale: CGFloat,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         labelColor: Color = PevDashboardColors.mutedText,
@@ -37,7 +35,6 @@ public struct PevDashboardKeyValueRows: View {
         verticalPadding: CGFloat = 12
     ) {
         self.rows = rows
-        self.scale = scale
         self.fill = fill
         self.stroke = stroke
         self.labelColor = labelColor
@@ -51,7 +48,7 @@ public struct PevDashboardKeyValueRows: View {
             ForEach(rows) { row in
                 Group {
                     if dynamicTypeSize.isAccessibilitySize {
-                        VStack(alignment: .leading, spacing: 4 * scale) {
+                        VStack(alignment: .leading, spacing: 4) {
                             keyValueLabel(row)
                             keyValueValue(row)
                         }
@@ -63,7 +60,7 @@ public struct PevDashboardKeyValueRows: View {
                         }
                     }
                 }
-                .frame(minHeight: 31 * scale)
+                .frame(minHeight: 31)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(row.label)
                 .accessibilityValue(row.value)
@@ -76,11 +73,11 @@ public struct PevDashboardKeyValueRows: View {
                 }
             }
         }
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, verticalPadding * scale)
+        .padding(.horizontal, 22)
+        .padding(.vertical, verticalPadding)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: cornerRadius * scale,
+                cornerRadius: cornerRadius,
                 fill: fill,
                 stroke: stroke
             )
@@ -120,18 +117,15 @@ public struct PevDashboardReadbackRows: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let rows: [PevDashboardReadbackRow]
-    let scale: CGFloat
     let emptyLabel: String?
     let emptyValue: String?
 
     public init(
         rows: [PevDashboardReadbackRow],
-        scale: CGFloat,
         emptyLabel: String? = nil,
         emptyValue: String? = nil
     ) {
         self.rows = rows
-        self.scale = scale
         self.emptyLabel = emptyLabel
         self.emptyValue = emptyValue
     }
@@ -141,15 +135,14 @@ public struct PevDashboardReadbackRows: View {
             if rows.isEmpty, let emptyLabel, let emptyValue {
                 PevDashboardKeyValueRows(
                     rows: [PevDashboardKeyValueRow(id: emptyLabel, label: emptyLabel, value: emptyValue)],
-                    scale: scale,
                     verticalPadding: 6
                 )
             } else {
                 ForEach(rows) { row in
-                    VStack(alignment: .leading, spacing: 5 * scale) {
+                    VStack(alignment: .leading, spacing: 5) {
                         Group {
                             if dynamicTypeSize.isAccessibilitySize {
-                                VStack(alignment: .leading, spacing: 4 * scale) {
+                                VStack(alignment: .leading, spacing: 4) {
                                     readbackLabel(row)
                                     readbackValue(row)
                                 }
@@ -166,7 +159,7 @@ public struct PevDashboardReadbackRows: View {
                             .foregroundStyle(PevDashboardColors.mutedText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.vertical, 10 * scale)
+                    .padding(.vertical, 10)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(row.label)
                     .accessibilityValue(
@@ -180,9 +173,9 @@ public struct PevDashboardReadbackRows: View {
                             .accessibilityHidden(true)
                     }
                 }
-                .padding(.horizontal, 22 * scale)
-                .padding(.vertical, 6 * scale)
-                .background(PevDashboardCardBackground(cornerRadius: 22 * scale))
+                .padding(.horizontal, 22)
+                .padding(.vertical, 6)
+                .background(PevDashboardCardBackground(cornerRadius: 22))
             }
         }
     }

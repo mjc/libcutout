@@ -81,7 +81,6 @@ struct EucGarageScreenView: View {
                         .map { row in
                             PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
                         },
-                    scale: 1,
                     fill: PevColors.cardFill,
                     stroke: PevColors.cardStroke,
                     labelColor: PevColors.muted,
@@ -97,7 +96,7 @@ struct EucGarageScreenView: View {
                     .padding(.top, 12)
                     .accessibilityHeading(.h2)
 
-                SettingsReadbackRows(readback: settingsReadback, scale: 1)
+                SettingsReadbackRows(readback: settingsReadback)
             }
 
             if let faultHistoryReadback, faultHistoryReadback.shouldRender {
@@ -107,7 +106,7 @@ struct EucGarageScreenView: View {
                     .padding(.top, 12)
                     .accessibilityHeading(.h2)
 
-                FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: 1)
+                FaultHistoryReadbackRows(readback: faultHistoryReadback)
             }
 
         }

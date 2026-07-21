@@ -77,7 +77,6 @@ struct VescDebugScreenView: View {
 
             PevDashboardKeyValueRows(
                 rows: rows,
-                scale: 1,
                 fill: PevColors.cardFill,
                 stroke: PevColors.cardStroke,
                 labelColor: PevColors.muted,
