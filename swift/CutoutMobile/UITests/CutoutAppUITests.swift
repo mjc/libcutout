@@ -373,6 +373,8 @@ final class CutoutAppUITests: XCTestCase {
             "YES",
             "-UIAccessibilityReduceTransparencyEnabled",
             "YES",
+            "-UIAccessibilityGrayscaleEnabled",
+            "YES",
         ]
         app.launch()
         allowDeviceAuthorizationAlerts()
