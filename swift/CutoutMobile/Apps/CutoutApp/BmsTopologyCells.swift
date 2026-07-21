@@ -35,7 +35,6 @@ struct BmsChip: View {
 struct BmsGroupCell: View {
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
-    let isSelected: Bool
 
     var body: some View {
         VStack(spacing: 8) {
@@ -55,13 +54,9 @@ struct BmsGroupCell: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(group.accessibilityLabel)
         .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     private var strokeColor: Color {
-        if isSelected {
-            return PevColors.yellow
-        }
         if isHighlighted {
             return PevColors.orange
         }

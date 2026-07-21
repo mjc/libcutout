@@ -22,8 +22,7 @@ struct BmsInlineLayout: View {
                 ForEach(snapshot.groups) { group in
                     BmsGroupCell(
                         group: group,
-                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
-                        isSelected: false
+                        isHighlighted: content.highlightedGroupIndices.contains(group.index)
                     )
                 }
             }
