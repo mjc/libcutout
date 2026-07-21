@@ -83,8 +83,8 @@ struct EucRideScreenView: View {
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
             speedCaption: "speed",
-        ) { scale, columns in
-            VStack(spacing: 10 * scale) {
+        ) { columns in
+            VStack(spacing: 10) {
                 ForEach(safetyBars) { bar in
                     PevDashboardProgressBar(
                         label: bar.label,
@@ -94,7 +94,7 @@ struct EucRideScreenView: View {
                         track: PevColors.cardFill,
                         labelColor: PevColors.muted,
                         valueColor: bar.accent.color,
-                        scale: scale
+                        scale: 1
                     )
                 }
             }
@@ -107,18 +107,18 @@ struct EucRideScreenView: View {
                     detailColor: PevColors.warningText,
                     fill: PevColors.warningFill,
                     stroke: PevColors.warningStroke,
-                    scale: scale
+                    scale: 1
                 )
-                    .padding(.top, 14 * scale)
+                    .padding(.top, 14)
             }
 
-            PevDashboardGrid(columns: columns, spacing: 12 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 12) {
                 ForEach(dashboardTiles) { tile in
-                    PevDashboardMetricTile(tile, scale: scale, cornerRadius: 16, minHeight: 104)
+                    PevDashboardMetricTile(tile, scale: 1, cornerRadius: 16, minHeight: 104)
                 }
-                PevDashboardMetricTile(gpsSpeedTile, scale: scale, cornerRadius: 16, minHeight: 104)
+                PevDashboardMetricTile(gpsSpeedTile, scale: 1, cornerRadius: 16, minHeight: 104)
             }
-            .padding(.top, 12 * scale)
+            .padding(.top, 12)
         }
         .accessibilityElement(children: .contain)
         .onChange(of: warningState?.severity) { _, severity in

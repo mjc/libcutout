@@ -11,7 +11,7 @@ struct PevDashboardScaffold<Content: View>: View {
     let contentSpacing: CGFloat
     let horizontalPadding: CGFloat
     let showsHeader: Bool
-    private let content: (CGFloat, [GridItem]) -> Content
+    private let content: ([GridItem]) -> Content
 
     init(
         sectionTitle: String,
@@ -21,7 +21,7 @@ struct PevDashboardScaffold<Content: View>: View {
         contentSpacing: CGFloat = 16,
         horizontalPadding: CGFloat = 24,
         showsHeader: Bool = true,
-        @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
+        @ViewBuilder content: @escaping ([GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
         self.bottomPadding = bottomPadding
@@ -34,7 +34,6 @@ struct PevDashboardScaffold<Content: View>: View {
     }
 
     var body: some View {
-        let scale: CGFloat = 1
         let minimumColumnWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 240 : 150
         let columns = [
             GridItem(.adaptive(minimum: minimumColumnWidth), spacing: columnSpacing),
@@ -43,10 +42,10 @@ struct PevDashboardScaffold<Content: View>: View {
         Group {
             if allowsVerticalScroll {
                 ScrollView(.vertical, showsIndicators: false) {
-                    scaffoldContent(scale: scale, columns: columns)
+                    scaffoldContent(columns: columns)
                 }
             } else {
-                scaffoldContent(scale: scale, columns: columns)
+                scaffoldContent(columns: columns)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -54,16 +53,16 @@ struct PevDashboardScaffold<Content: View>: View {
         .foregroundStyle(PevColors.primaryText)
     }
 
-    private func scaffoldContent(scale: CGFloat, columns: [GridItem]) -> some View {
-        VStack(alignment: .leading, spacing: contentSpacing * scale) {
+    private func scaffoldContent(columns: [GridItem]) -> some View {
+        VStack(alignment: .leading, spacing: contentSpacing) {
             if showsHeader {
                 PevDashboardHeader(sectionTitle: sectionTitle)
             }
 
-            content(scale, columns)
+            content(columns)
         }
-        .padding(.horizontal, horizontalPadding * scale)
-        .padding(.bottom, bottomPadding * scale)
+        .padding(.horizontal, horizontalPadding)
+        .padding(.bottom, bottomPadding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }

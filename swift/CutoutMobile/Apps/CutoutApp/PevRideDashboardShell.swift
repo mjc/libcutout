@@ -11,7 +11,7 @@ struct PevRideDashboardShell<Content: View>: View {
     let speedReadout: PevRideHeroReadout
     let speedCaption: String
     let allowsVerticalScroll: Bool
-    let content: (CGFloat, [GridItem]) -> Content
+    let content: ([GridItem]) -> Content
 
     init(
         sectionTitle: String,
@@ -23,7 +23,7 @@ struct PevRideDashboardShell<Content: View>: View {
         speedReadout: PevRideHeroReadout,
         speedCaption: String,
         allowsVerticalScroll: Bool = true,
-        @ViewBuilder content: @escaping (CGFloat, [GridItem]) -> Content
+        @ViewBuilder content: @escaping ([GridItem]) -> Content
     ) {
         self.sectionTitle = sectionTitle
         self.heroStyle = heroStyle
@@ -44,7 +44,7 @@ struct PevRideDashboardShell<Content: View>: View {
             allowsVerticalScroll: allowsVerticalScroll,
             columnSpacing: 12,
             showsHeader: false
-        ) { scale, columns in
+        ) { columns in
             PevRideHeroSection(
                 style: heroStyle,
                 title: title,
@@ -55,7 +55,7 @@ struct PevRideDashboardShell<Content: View>: View {
                 speedCaption: speedCaption
             )
 
-            content(scale, columns)
+            content(columns)
         }
     }
 }

@@ -26,7 +26,7 @@ struct DevicePickerView: View {
             allowsVerticalScroll: true,
             contentSpacing: 10,
             horizontalPadding: 24
-        ) { _, _ in
+        ) { _ in
             PevScreenTitleBlock(
                 title: "Choose device",
                 subtitle: "Nearby Bluetooth devices"

@@ -150,7 +150,7 @@ struct VescRideScreenView: View {
             speedReadout: speedReadout,
             speedCaption: "board speed",
             allowsVerticalScroll: true,
-        ) { scale, columns in
+        ) { columns in
 
             if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
                 PevDashboardWarningCard(
@@ -160,10 +160,10 @@ struct VescRideScreenView: View {
                     detailColor: PevColors.primaryText,
                     fill: PevColors.cardFill,
                     stroke: PevColors.cardStroke,
-                    scale: scale,
+                    scale: 1,
                     cornerRadius: 24
                 )
-                .padding(.top, 12 * scale)
+                .padding(.top, 12)
             } else if let dutyHeadroom {
                 PevDashboardProgressCard(
                     label: "Duty headroom",
@@ -177,9 +177,9 @@ struct VescRideScreenView: View {
                     labelColor: PevColors.muted,
                     valueColor: PevColors.yellow,
                     detailColor: PevColors.muted,
-                    scale: scale
+                    scale: 1
                 )
-                    .padding(.top, 12 * scale)
+                    .padding(.top, 12)
             } else if liveSnapshot == nil && phase == .live {
                 PevDashboardWarningCard(
                     title: "Telemetry pending",
@@ -188,10 +188,10 @@ struct VescRideScreenView: View {
                     detailColor: PevColors.primaryText,
                     fill: PevColors.purple.opacity(0.18),
                     stroke: PevColors.purple.opacity(0.55),
-                    scale: scale,
+                    scale: 1,
                     cornerRadius: 24
                 )
-                    .padding(.top, 12 * scale)
+                    .padding(.top, 12)
             }
 
             if let warningCard {
@@ -202,10 +202,10 @@ struct VescRideScreenView: View {
                     detailColor: PevColors.primaryText,
                     fill: PevColors.purple.opacity(0.18),
                     stroke: PevColors.purple.opacity(0.55),
-                    scale: scale,
+                    scale: 1,
                     cornerRadius: 24
                 )
-                    .padding(.top, 10 * scale)
+                    .padding(.top, 10)
             }
 
             if let footpad = liveSnapshot?.footpad {
@@ -220,18 +220,18 @@ struct VescRideScreenView: View {
                     stroke: PevColors.cardStroke,
                     textColor: PevColors.primaryText,
                     secondaryTextColor: PevColors.muted,
-                    scale: scale,
+                    scale: 1,
                     accessibilityValue: vescFootpadAccessibilityValue(footpad)
                 )
-                .padding(.top, 8 * scale)
+                .padding(.top, 8)
             }
 
-            PevDashboardGrid(columns: columns, spacing: 12 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 12) {
                 ForEach(dashboardTiles) { tile in
-                    PevDashboardMetricTile(tile, scale: scale, cornerRadius: 16, minHeight: 96)
+                    PevDashboardMetricTile(tile, scale: 1, cornerRadius: 16, minHeight: 96)
                 }
             }
-            .padding(.top, 8 * scale)
+            .padding(.top, 8)
         }
         .accessibilityElement(children: .contain)
         .onChange(of: liveSnapshot?.warning) { _, warning in

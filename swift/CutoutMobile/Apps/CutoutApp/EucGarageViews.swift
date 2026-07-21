@@ -47,13 +47,13 @@ struct EucGarageScreenView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24, showsHeader: false) { scale, columns in
+        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24, showsHeader: false) { columns in
             PevScreenTitleBlock(
                 title: screen.title,
                 subtitle: screen.subtitle
             )
 
-            PevDashboardGrid(columns: columns, spacing: 16 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 16) {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(
                         label: tile.label,
@@ -61,19 +61,19 @@ struct EucGarageScreenView: View {
                         unit: tile.unit,
                         detail: tile.detail,
                         accent: tile.accent.color,
-                        scale: scale,
+                        scale: 1,
                         cornerRadius: 16,
                         minHeight: 104
                     )
                 }
             }
-            .padding(.top, 6 * scale)
+            .padding(.top, 6)
 
             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
                 Text("Read-only pack health")
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 12 * scale)
+                    .padding(.top, 12)
                     .accessibilityHeading(.h2)
 
                 PevDashboardKeyValueRows(
@@ -82,7 +82,7 @@ struct EucGarageScreenView: View {
                         .map { row in
                             PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
                         },
-                    scale: scale,
+                    scale: 1,
                     fill: PevColors.cardFill,
                     stroke: PevColors.cardStroke,
                     labelColor: PevColors.muted,
@@ -95,20 +95,20 @@ struct EucGarageScreenView: View {
                 Text("Read-only settings")
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 12 * scale)
+                    .padding(.top, 12)
                     .accessibilityHeading(.h2)
 
-                SettingsReadbackRows(readback: settingsReadback, scale: scale)
+                SettingsReadbackRows(readback: settingsReadback, scale: 1)
             }
 
             if let faultHistoryReadback, faultHistoryReadback.shouldRender {
                 Text("Read-only fault history")
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
-                    .padding(.top, 12 * scale)
+                    .padding(.top, 12)
                     .accessibilityHeading(.h2)
 
-                FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: scale)
+                FaultHistoryReadbackRows(readback: faultHistoryReadback, scale: 1)
             }
 
         }

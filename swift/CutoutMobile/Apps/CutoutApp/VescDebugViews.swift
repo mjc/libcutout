@@ -62,22 +62,22 @@ struct VescDebugScreenView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) { scale, columns in
+        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) { columns in
             PevScreenTitleBlock(
                 title: snapshot?.title ?? "VESC Debug",
                 subtitle: captureStatusText ?? phase.displayText
             )
 
-            PevDashboardGrid(columns: columns, spacing: 20 * scale) {
+            PevDashboardGrid(columns: columns, spacing: 20) {
                 ForEach(tiles) { tile in
-                    PevDashboardMetricTile(tile, scale: scale, cornerRadius: 16, minHeight: 104)
+                    PevDashboardMetricTile(tile, scale: 1, cornerRadius: 16, minHeight: 104)
                 }
             }
-            .padding(.top, 8 * scale)
+            .padding(.top, 8)
 
             PevDashboardKeyValueRows(
                 rows: rows,
-                scale: scale,
+                scale: 1,
                 fill: PevColors.cardFill,
                 stroke: PevColors.cardStroke,
                 labelColor: PevColors.muted,
