@@ -138,6 +138,9 @@ public struct PevDashboardProgressCard: View {
 }
 
 public struct PevDashboardWarningCard: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let detail: String
     let accent: Color
@@ -147,6 +150,11 @@ public struct PevDashboardWarningCard: View {
     let cornerRadius: CGFloat
 
     var accessibilityValueText: String { detail }
+
+    private func resolvedColor(_ color: Color) -> Color {
+        guard colorSchemeContrast == .increased || differentiateWithoutColor else { return color }
+        return colorScheme == .dark ? .white : .black
+    }
 
     public init(
         title: String,
@@ -168,12 +176,19 @@ public struct PevDashboardWarningCard: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title)
-                .font(.title3.weight(.black))
-                .foregroundStyle(accent)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(accent)
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.title3.weight(.black))
+                    .foregroundStyle(resolvedColor(PevDashboardColors.primaryText))
+                    .accessibilityHidden(true)
+            }
             Text(detail)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(detailColor)
+                .foregroundStyle(resolvedColor(detailColor))
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 16)

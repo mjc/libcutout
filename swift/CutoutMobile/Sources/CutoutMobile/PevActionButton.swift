@@ -84,12 +84,19 @@ public struct PevActionButton: View {
             )
             .accessibilityHidden(true)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PevActionButtonStyle())
         .frame(minWidth: 44, minHeight: 44)
         .disabled(!isEnabled)
         .accessibilityLabel(accessibilityLabelText ?? title)
         .accessibilityHint(accessibilityHintText ?? "")
         .accessibilityIdentifier(accessibilityIdentifierText ?? "")
+    }
+}
+
+private struct PevActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
 

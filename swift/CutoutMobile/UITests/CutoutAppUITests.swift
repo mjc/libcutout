@@ -111,9 +111,7 @@ final class CutoutAppUITests: XCTestCase {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
 
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        // XCTest currently reports the deliberately disabled capture control as a
-        // near-contrast failure; its native disabled semantics are covered below.
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testProductionPickerPassesAccessibilityAuditInLightAppearance() throws {
@@ -121,7 +119,13 @@ final class CutoutAppUITests: XCTestCase {
 
         let screen = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
+    func testProductionPickerPassesContrastAccessibilityAudit() throws {
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
@@ -129,7 +133,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit()
 
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
@@ -144,8 +148,11 @@ final class CutoutAppUITests: XCTestCase {
         // XCTest's text-clipping audit reports a framework false positive for
         // this bold/high-contrast launch configuration; the dedicated Dynamic
         // Type audit remains the authoritative clipping check.
+        // XCTest's contrast audit also reports false positives for SwiftUI's
+        // grouped dashboard cards even when the rendered surface is black on
+        // the semantic system background. Picker contrast is covered above.
         try performVisibleLayoutAccessibilityAudit(
-            excluding: [.contrast, .textClipped],
+            excluding: [.textClipped, .contrast],
             ignoringNilElementTextRepresentationWarning: true
         )
     }
@@ -472,7 +479,7 @@ final class CutoutAppUITests: XCTestCase {
             .subtracting(excluded)
         try app.performAccessibilityAudit(for: auditTypes) { issue in
             let elementDescription = issue.element?.debugDescription ?? "No element"
-            print("Accessibility audit issue: \(issue.detailedDescription)\n\(elementDescription)")
+            print("Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)")
             if ignoringNilElementTextRepresentationWarning,
                issue.element == nil,
                issue.detailedDescription.contains("text that should be represented using the accessibility API") {

@@ -2,6 +2,9 @@ import Accessibility
 import CutoutMobile
 import Foundation
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct ContentView: View {
     let model: CutoutAppModel
@@ -221,12 +224,24 @@ struct ContentView: View {
     }
 
     private var tabAccent: Color {
+        #if os(iOS)
         switch route {
         case .vescRide, .vescDebug:
-            PevColors.purple
+            Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? .systemPurple
+                    : UIColor(red: 0.34, green: 0.08, blue: 0.52, alpha: 1)
+            })
         default:
-            PevColors.yellow
+            Color(uiColor: UIColor { traits in
+                traits.userInterfaceStyle == .dark
+                    ? .systemYellow
+                    : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
+                })
         }
+        #else
+        .primary
+        #endif
     }
 
     private func screen(for route: CutoutAppRoute) -> PevScreen? {

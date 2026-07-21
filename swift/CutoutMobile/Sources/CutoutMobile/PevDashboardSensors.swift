@@ -59,7 +59,7 @@ public struct PevDashboardFootpadReadout: View {
                 Spacer()
                 Text(detail)
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(accent)
+                    .foregroundStyle(secondaryTextColor)
             }
 
             if dynamicTypeSize.isAccessibilitySize {

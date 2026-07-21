@@ -1,6 +1,9 @@
 import SwiftUI
 
 public struct PevDashboardMetricTile: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.colorScheme) private var colorScheme
     let label: String
     let value: String
     let unit: String
@@ -19,6 +22,15 @@ public struct PevDashboardMetricTile: View {
         pevDashboardAccessibilityValue([value, unit, detail])
     }
 
+    private var resolvedValueColor: Color {
+        resolvedColor(value == "--" ? PevDashboardColors.primaryText : valueColor)
+    }
+
+    private func resolvedColor(_ color: Color) -> Color {
+        guard colorSchemeContrast == .increased || differentiateWithoutColor else { return color }
+        return colorScheme == .dark ? .white : .black
+    }
+
     public init(
         label: String,
         value: String,
@@ -30,7 +42,7 @@ public struct PevDashboardMetricTile: View {
         labelColor: Color = PevDashboardColors.mutedText,
         valueColor: Color = PevDashboardColors.primaryText,
         unitColor: Color? = nil,
-        detailColor: Color = PevDashboardColors.mutedText,
+        detailColor: Color = PevDashboardColors.primaryText,
         cornerRadius: CGFloat = 20,
         minHeight: CGFloat = 106
     ) {
@@ -43,7 +55,7 @@ public struct PevDashboardMetricTile: View {
         self.stroke = stroke
         self.labelColor = labelColor
         self.valueColor = valueColor
-        self.unitColor = unitColor ?? accent
+        self.unitColor = unitColor ?? valueColor
         self.detailColor = detailColor
         self.cornerRadius = cornerRadius
         self.minHeight = minHeight
@@ -53,26 +65,30 @@ public struct PevDashboardMetricTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(labelColor)
+                .foregroundStyle(resolvedColor(labelColor))
+                .accessibilityHidden(true)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.title3.weight(.black))
-                    .foregroundStyle(valueColor)
+                    .foregroundStyle(resolvedValueColor)
                     .monospacedDigit()
+                    .accessibilityHidden(true)
                 Spacer(minLength: 4)
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.subheadline.weight(.black))
-                        .foregroundStyle(unitColor)
+                        .foregroundStyle(resolvedColor(unitColor))
+                        .accessibilityHidden(true)
                 }
             }
 
             if !detail.isEmpty {
                 Text(detail)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(detailColor)
+                    .foregroundStyle(resolvedColor(detailColor))
                     .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 16)
@@ -150,7 +166,7 @@ public struct PevDashboardHeroCard: View {
                     .monospacedDigit()
                 Text(unit)
                     .font(.headline.weight(.black))
-                    .foregroundStyle(accent)
+                    .foregroundStyle(secondaryTextColor)
             }
             Text(detail)
                 .font(.subheadline.weight(.bold))
@@ -177,6 +193,7 @@ public struct PevDashboardHeroCard: View {
         )
         .accessibilityRepresentation {
             ProgressView(value: clampedProgress)
+                .tint(PevDashboardColors.primaryText)
                 .accessibilityLabel(eyebrow)
                 .accessibilityValue(accessibilityValueText)
         }
@@ -236,7 +253,7 @@ public struct PevDashboardWideCard: View {
             if let detail, !detail.isEmpty {
                 Text(detail)
                     .font(.subheadline.weight(.black))
-                    .foregroundStyle(accent)
+                    .foregroundStyle(secondaryTextColor)
             }
         }
         .padding(.horizontal, 18)

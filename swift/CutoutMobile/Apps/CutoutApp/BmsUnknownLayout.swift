@@ -29,7 +29,7 @@ struct BmsUnknownLayout: View {
                     unit: "V",
                     detail: snapshot.unknownTopologyVoltageDetail,
                     accent: PevColors.yellow,
-                    detailColor: PevColors.yellow
+                    detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
                     label: "cell count",
@@ -37,7 +37,7 @@ struct BmsUnknownLayout: View {
                     unit: "",
                     detail: snapshot.unknownTopologyCellCountDetail,
                     accent: PevColors.orange,
-                    detailColor: PevColors.orange
+                    detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
                     label: "temps",
@@ -45,7 +45,7 @@ struct BmsUnknownLayout: View {
                     unit: "sensors",
                     detail: snapshot.unknownTopologyTemperatureDetail,
                     accent: PevColors.green,
-                    detailColor: PevColors.green
+                    detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
                     label: "fault bits",
@@ -53,7 +53,7 @@ struct BmsUnknownLayout: View {
                     unit: "",
                     detail: snapshot.faults.first?.label ?? "",
                     accent: PevColors.orange,
-                    detailColor: PevColors.orange
+                    detailColor: PevColors.primaryText
                 )
             }
 

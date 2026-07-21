@@ -90,10 +90,10 @@ struct EucRideScreenView: View {
                         label: bar.label,
                         value: bar.value,
                         progress: bar.progress,
-                        accent: bar.accent.color,
+                        accent: PevColors.primaryText,
                         track: PevColors.cardFill,
                         labelColor: PevColors.muted,
-                        valueColor: bar.accent.color
+                        valueColor: PevColors.primaryText
                     )
                 }
             }
@@ -103,7 +103,7 @@ struct EucRideScreenView: View {
                     title: warningCard.title,
                     detail: warningCard.detail,
                     accent: eucWarningAccent(for: warningSeverity),
-                    detailColor: PevColors.warningText,
+                    detailColor: PevColors.primaryText,
                     fill: PevColors.warningFill,
                     stroke: PevColors.warningStroke
                 )

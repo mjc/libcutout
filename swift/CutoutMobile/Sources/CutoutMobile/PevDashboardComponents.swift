@@ -7,33 +7,13 @@ import AppKit
 
 private enum PevSystemColors {
     #if os(iOS)
-    static let cardFill = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.067, green: 0.078, blue: 0.106, alpha: 1)
-            : UIColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)
-    })
-    static let primaryText = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark ? .white : .black
-    })
-    static let mutedText = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(white: 0.76, alpha: 1)
-            : UIColor(white: 0.35, alpha: 1)
-    })
+    static let cardFill = Color(uiColor: .secondarySystemBackground)
+    static let primaryText = Color(uiColor: .label)
+    static let mutedText = Color(uiColor: .label)
     #elseif os(macOS)
-    static let cardFill = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(red: 0.067, green: 0.078, blue: 0.106, alpha: 1)
-            : NSColor(red: 0.95, green: 0.95, blue: 0.97, alpha: 1)
-    })
-    static let primaryText = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
-    })
-    static let mutedText = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 0.76, alpha: 1)
-            : NSColor(white: 0.35, alpha: 1)
-    })
+    static let cardFill = Color(nsColor: .underPageBackgroundColor)
+    static let primaryText = Color(nsColor: .labelColor)
+    static let mutedText = Color(nsColor: .labelColor)
     #endif
 }
 

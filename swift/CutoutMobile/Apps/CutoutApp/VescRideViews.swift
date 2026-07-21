@@ -156,10 +156,10 @@ struct VescRideScreenView: View {
                 PevDashboardWarningCard(
                     title: "Telemetry stale",
                     detail: "Last update \(elapsed.rawValue) ms ago.",
-                    accent: PevColors.orange,
+                    accent: PevColors.primaryText,
                     detailColor: PevColors.primaryText,
                     fill: PevColors.cardFill,
-                    stroke: PevColors.cardStroke,
+                    stroke: PevColors.primaryText,
                     cornerRadius: 24
                 )
                 .padding(.top, 12)
@@ -169,12 +169,12 @@ struct VescRideScreenView: View {
                     value: percentText(dutyHeadroom),
                     detail: "Nose authority is the ride-critical value here.",
                     progress: Double(dutyHeadroom.value) / 100.0,
-                    accent: PevColors.orange,
+                    accent: PevColors.primaryText,
                     fill: PevColors.cardFill,
                     stroke: PevColors.cardStroke,
                     track: PevColors.cardStroke,
                     labelColor: PevColors.muted,
-                    valueColor: PevColors.yellow,
+                    valueColor: PevColors.primaryText,
                     detailColor: PevColors.muted
                 )
                     .padding(.top, 12)

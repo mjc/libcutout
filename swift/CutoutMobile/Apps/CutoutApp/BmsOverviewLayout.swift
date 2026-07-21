@@ -22,7 +22,7 @@ struct BmsOverviewLayout: View {
                             unit: "V",
                             detail: "",
                             accent: PevColors.green,
-                            detailColor: PevColors.green
+                            detailColor: PevColors.primaryText
                         )
                     }
                     if let lowestGroupVoltage {
@@ -32,7 +32,7 @@ struct BmsOverviewLayout: View {
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
                             accent: PevColors.orange,
-                            detailColor: PevColors.orange
+                            detailColor: PevColors.primaryText
                         )
                     }
                 }
@@ -45,7 +45,7 @@ struct BmsOverviewLayout: View {
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
                     accent: PevColors.green,
-                    detailColor: PevColors.green
+                    detailColor: PevColors.primaryText
                 )
             }
 
@@ -79,7 +79,7 @@ struct BmsOverviewLayout: View {
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
                 progress: energyProgress,
-                accent: PevColors.yellow
+                accent: PevColors.primaryText
             )
         } else {
             PevDashboardWideCard(

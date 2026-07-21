@@ -60,11 +60,23 @@ struct CaptureRecordingScreen: View {
     }
 
     private var stopCaptureButton: some View {
-        Button("Stop capture", role: .destructive, action: disconnect)
-            .buttonStyle(.bordered)
-            .tint(PevColors.yellow)
-            .frame(minHeight: 44)
+        Button("Stop capture", action: disconnect)
+            .buttonStyle(CaptureActionButtonStyle(fill: PevColors.yellow))
             .accessibilityIdentifier("capture.stop")
+    }
+}
+
+private struct CaptureActionButtonStyle: ButtonStyle {
+    let fill: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(Color.black)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 44)
+            .background(Capsule().fill(fill))
+            .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
 
@@ -123,7 +135,7 @@ private struct CaptureLabelControlRow: View {
                 .foregroundStyle(PevColors.primaryText)
             Text(isActive ? "Active" : "Idle")
                 .font(.caption)
-                .foregroundStyle(isActive ? PevColors.green : PevColors.muted)
+                .foregroundStyle(isActive ? PevColors.primaryText : PevColors.muted)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label.title)
@@ -138,10 +150,9 @@ private struct CaptureLabelControlRow: View {
                 start()
             }
         }
-        .buttonStyle(.borderedProminent)
-        .tint(isActive ? PevColors.orange : PevColors.yellow)
-        .foregroundStyle(.black)
-        .controlSize(.large)
+        .buttonStyle(
+            CaptureActionButtonStyle(fill: isActive ? PevColors.orange : PevColors.yellow)
+        )
         .accessibilityIdentifier("capture.label.\(label.id).action")
     }
 }

@@ -41,7 +41,7 @@ struct BmsNoDataWarningCard: View {
 
                 Text(snapshot.noDataWarningTitle)
                     .font(.headline)
-                    .foregroundStyle(PevColors.yellow)
+                    .foregroundStyle(PevColors.primaryText)
             }
             ForEach(snapshot.noDataWarningLines) { line in
                 Text(line.text)

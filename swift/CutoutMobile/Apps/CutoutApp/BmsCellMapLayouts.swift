@@ -106,7 +106,7 @@ struct BmsScrollableLayout: View {
                     .foregroundStyle(PevColors.muted)
                 Text(snapshot.scrollableCellMapFocusHint)
                     .font(.subheadline.weight(.black))
-                    .foregroundStyle(PevColors.yellow)
+                    .foregroundStyle(PevColors.primaryText)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 18)
@@ -162,7 +162,7 @@ struct BmsDetailLayout: View {
                         .accessibilityValue(selectedGroup.accessibilityValue)
                     Text(snapshot.detailGroupStatus(for: selectedGroup.index))
                         .font(.headline.weight(.black))
-                        .foregroundStyle(PevColors.orange)
+                        .foregroundStyle(PevColors.primaryText)
 
                     PevDashboardGrid(
                         columns: [
@@ -176,7 +176,7 @@ struct BmsDetailLayout: View {
                             unit: "°C",
                             detail: "",
                             accent: PevColors.green,
-                            detailColor: PevColors.green
+                            detailColor: PevColors.primaryText
                         )
                         PevDashboardMetricTile(
                             label: "IR est.",
@@ -184,7 +184,7 @@ struct BmsDetailLayout: View {
                             unit: "mΩ",
                             detail: "",
                             accent: PevColors.green,
-                            detailColor: PevColors.green
+                            detailColor: PevColors.primaryText
                         )
                     }
 
