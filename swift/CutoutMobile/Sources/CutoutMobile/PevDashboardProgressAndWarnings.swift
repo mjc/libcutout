@@ -150,6 +150,8 @@ public struct PevDashboardWarningCard: View {
     let stroke: Color
     let cornerRadius: CGFloat
 
+    var accessibilityValueText: String { detail }
+
     public init(
         title: String,
         detail: String,
@@ -189,6 +191,6 @@ public struct PevDashboardWarningCard: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
-        .accessibilityValue(detail)
+        .accessibilityValue(accessibilityValueText)
     }
 }

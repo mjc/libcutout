@@ -64,7 +64,7 @@ struct BmsOverviewLayout: View {
                     value: faultSummary,
                     detail: snapshot.faultDetail ?? "",
                     accent: PevColors.orange,
-                    stroke: Color(red: 0.92, green: 0.33, blue: 0.35)
+                    stroke: PevColors.red
                 )
             }
         }

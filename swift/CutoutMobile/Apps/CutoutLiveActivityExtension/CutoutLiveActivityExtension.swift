@@ -16,7 +16,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
         ActivityConfiguration(for: LiveActivityRideAttributes.self) { context in
             LockScreenRideActivityView(snapshot: context.state.snapshot)
                 .activityBackgroundTint(PevLiveActivityPalette.background)
-                .activitySystemActionForegroundColor(.white)
+                .activitySystemActionForegroundColor(PevLiveActivityPalette.primaryText)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {

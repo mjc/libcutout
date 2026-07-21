@@ -1,4 +1,27 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+private enum PevLiveActivitySystemColors {
+    #if os(iOS)
+    static let background = Color(uiColor: .systemBackground)
+    static let accent = Color(uiColor: .systemPurple)
+    static let accent2 = Color(uiColor: .systemPink)
+    static let connected = Color(uiColor: .systemGreen)
+    static let warning = Color(uiColor: .systemOrange)
+    static let orange = Color(uiColor: .systemOrange)
+    #elseif os(macOS)
+    static let background = Color(nsColor: .windowBackgroundColor)
+    static let accent = Color(nsColor: .systemPurple)
+    static let accent2 = Color(nsColor: .systemPink)
+    static let connected = Color(nsColor: .systemGreen)
+    static let warning = Color(nsColor: .systemOrange)
+    static let orange = Color(nsColor: .systemOrange)
+    #endif
+}
 
 public enum PevLiveActivityMetricRole: CaseIterable, Hashable, Sendable {
     case battery
@@ -279,15 +302,15 @@ public struct PevLiveActivityGlyph: View {
 }
 
 public enum PevLiveActivityPalette {
-    public static let background = Color(red: 0.02, green: 0.03, blue: 0.06)
-    public static let cellBackground = Color.white.opacity(0.025)
-    public static let border = Color.white.opacity(0.10)
-    public static let track = Color.white.opacity(0.14)
-    public static let primaryText = Color.white
-    public static let secondaryText = Color.white.opacity(0.62)
-    public static let accent = Color(red: 0.47, green: 0.23, blue: 1.0)
-    public static let accent2 = Color(red: 0.82, green: 0.32, blue: 1.0)
-    public static let connected = Color(red: 0.24, green: 0.90, blue: 0.35)
-    public static let warning = Color(red: 1.0, green: 0.66, blue: 0.22)
-    public static let orange = Color(red: 1.0, green: 0.55, blue: 0.22)
+    public static let background = PevLiveActivitySystemColors.background
+    public static let cellBackground = Color.secondary.opacity(0.08)
+    public static let border = Color.secondary.opacity(0.25)
+    public static let track = Color.secondary.opacity(0.30)
+    public static let primaryText = Color.primary
+    public static let secondaryText = Color.secondary
+    public static let accent = PevLiveActivitySystemColors.accent
+    public static let accent2 = PevLiveActivitySystemColors.accent2
+    public static let connected = PevLiveActivitySystemColors.connected
+    public static let warning = PevLiveActivitySystemColors.warning
+    public static let orange = PevLiveActivitySystemColors.orange
 }

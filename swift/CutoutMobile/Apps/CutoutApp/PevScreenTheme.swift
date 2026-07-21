@@ -1,5 +1,38 @@
 import CutoutMobile
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+private enum PevSystemColors {
+    #if os(iOS)
+    static let pageBackground = Color(uiColor: .systemBackground)
+    static let cardFill = Color(uiColor: .secondarySystemBackground)
+    static let disabledFill = Color(uiColor: .tertiarySystemBackground)
+    static let yellow = Color(uiColor: .systemYellow)
+    static let cyan = Color(uiColor: .systemCyan)
+    static let green = Color(uiColor: .systemGreen)
+    static let orange = Color(uiColor: .systemOrange)
+    static let red = Color(uiColor: .systemRed)
+    static let teal = Color(uiColor: .systemTeal)
+    static let brown = Color(uiColor: .systemBrown)
+    static let purple = Color(uiColor: .systemPurple)
+    #elseif os(macOS)
+    static let pageBackground = Color(nsColor: .windowBackgroundColor)
+    static let cardFill = Color(nsColor: .controlBackgroundColor)
+    static let disabledFill = Color(nsColor: .underPageBackgroundColor)
+    static let yellow = Color(nsColor: .systemYellow)
+    static let cyan = Color(nsColor: .systemCyan)
+    static let green = Color(nsColor: .systemGreen)
+    static let orange = Color(nsColor: .systemOrange)
+    static let red = Color(nsColor: .systemRed)
+    static let teal = Color(nsColor: .systemTeal)
+    static let brown = Color(nsColor: .systemBrown)
+    static let purple = Color(nsColor: .systemPurple)
+    #endif
+}
 
 extension DevicePickerRow {
     var glyphColor: Color {
@@ -27,26 +60,28 @@ extension DevicePickerRow {
 }
 
 enum PevColors {
-    static let pageBackground = Color(red: 0.027, green: 0.031, blue: 0.043)
-    static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
-    static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
-    static let disabledFill = Color(red: 0.067, green: 0.078, blue: 0.106)
-    static let primaryText = Color(red: 0.969, green: 0.953, blue: 0.918)
-    static let disabledText = Color(red: 0.455, green: 0.475, blue: 0.514)
-    static let disabledSecondaryText = Color(red: 0.36, green: 0.38, blue: 0.42)
-    static let muted = Color(red: 0.561, green: 0.596, blue: 0.659)
-    static let yellow = Color(red: 1.0, green: 0.827, blue: 0.302)
-    static let cyan = Color(red: 0.278, green: 0.824, blue: 0.933)
-    static let green = Color(red: 0.376, green: 0.906, blue: 0.553)
-    static let orange = Color(red: 1.0, green: 0.486, blue: 0.188)
-    static let red = Color(red: 1.0, green: 0.243, blue: 0.243)
-    static let warningText = Color(red: 1.0, green: 0.667, blue: 0.345)
-    static let warningFill = Color(red: 0.173, green: 0.087, blue: 0.040)
-    static let warningStroke = Color(red: 0.443, green: 0.216, blue: 0.102)
-    static let teal = Color(red: 0.180, green: 0.384, blue: 0.459)
-    static let brown = Color(red: 0.443, green: 0.259, blue: 0.141)
-    static let purple = Color(red: 0.635, green: 0.459, blue: 0.918)
-    static let iconFill = Color(red: 0.043, green: 0.051, blue: 0.071)
+    // Semantic system colors keep the visual hierarchy intact while honoring
+    // the user's light/dark appearance and contrast settings.
+    static let pageBackground = PevSystemColors.pageBackground
+    static let cardFill = PevSystemColors.cardFill
+    static let cardStroke = Color.secondary.opacity(0.35)
+    static let disabledFill = PevSystemColors.disabledFill
+    static let primaryText = Color.primary
+    static let disabledText = Color.secondary
+    static let disabledSecondaryText = Color.secondary.opacity(0.7)
+    static let muted = Color.secondary
+    static let yellow = PevSystemColors.yellow
+    static let cyan = PevSystemColors.cyan
+    static let green = PevSystemColors.green
+    static let orange = PevSystemColors.orange
+    static let red = PevSystemColors.red
+    static let warningText = PevSystemColors.orange
+    static let warningFill = PevSystemColors.orange.opacity(0.14)
+    static let warningStroke = PevSystemColors.orange.opacity(0.55)
+    static let teal = PevSystemColors.teal
+    static let brown = PevSystemColors.brown
+    static let purple = PevSystemColors.purple
+    static let iconFill = PevSystemColors.disabledFill
 }
 
 extension PevAccent {

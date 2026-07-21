@@ -55,10 +55,10 @@ struct BmsNoDataWarningCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color(red: 0.145, green: 0.094, blue: 0.102))
+                .fill(PevColors.warningFill)
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(Color(red: 0.318, green: 0.188, blue: 0.208), lineWidth: 1.2)
+                        .stroke(PevColors.warningStroke, lineWidth: 1.2)
                 )
         )
         .accessibilityElement(children: .ignore)

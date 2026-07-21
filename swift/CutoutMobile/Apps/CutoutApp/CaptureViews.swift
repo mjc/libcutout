@@ -47,7 +47,7 @@ struct CaptureRecordingScreen: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
     }

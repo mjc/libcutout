@@ -88,7 +88,7 @@ struct DevicePickerView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("device-picker.screen")
     }

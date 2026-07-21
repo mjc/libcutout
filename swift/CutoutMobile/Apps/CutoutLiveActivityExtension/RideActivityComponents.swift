@@ -33,7 +33,7 @@ struct DynamicIslandRideActivityView: View {
         }
         .padding(.top, 3)
         .frame(maxWidth: .infinity)
-        .foregroundStyle(.white)
+        .foregroundStyle(PevLiveActivityPalette.primaryText)
         .accessibilityElement(children: .contain)
     }
 }
@@ -67,7 +67,7 @@ struct LockScreenRideActivityView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .foregroundStyle(.white)
+        .foregroundStyle(PevLiveActivityPalette.primaryText)
         .accessibilityElement(children: .contain)
     }
 }

@@ -48,6 +48,19 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(card.accessibilityValueText, "No change")
     }
 
+    func testWarningCardUsesTypedDetailAsItsAccessibilityValue() {
+        let card = PevDashboardWarningCard(
+            title: "Connection warning",
+            detail: "Retrying in 5 seconds",
+            accent: .orange,
+            detailColor: .primary,
+            fill: .secondary,
+            stroke: .orange
+        )
+
+        XCTAssertEqual(card.accessibilityValueText, "Retrying in 5 seconds")
+    }
+
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
         XCTAssertTrue(
             PevDashboardScanningPill.shouldAnimate(

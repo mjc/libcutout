@@ -1,10 +1,23 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+private enum PevSystemColors {
+    #if os(iOS)
+    static let cardFill = Color(uiColor: .secondarySystemBackground)
+    #elseif os(macOS)
+    static let cardFill = Color(nsColor: .controlBackgroundColor)
+    #endif
+}
 
 public enum PevDashboardColors {
-    public static let cardFill = Color(red: 0.067, green: 0.078, blue: 0.106)
-    public static let cardStroke = Color(red: 0.165, green: 0.188, blue: 0.239)
-    public static let primaryText = Color(red: 0.969, green: 0.953, blue: 0.918)
-    public static let mutedText = Color(red: 0.561, green: 0.596, blue: 0.659)
+    public static let cardFill = PevSystemColors.cardFill
+    public static let cardStroke = Color.secondary.opacity(0.35)
+    public static let primaryText = Color.primary
+    public static let mutedText = Color.secondary
 }
 
 func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
