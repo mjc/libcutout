@@ -110,6 +110,25 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testReconnectLoopAnnouncesConnectionLossOnlyOnce() {
+        var announcements = ConnectionAccessibilityAnnouncements()
+        let messages = [
+            SessionConnectionPhase.discoveringServices,
+            .subscribing,
+            .failed(.connectFailed("timed out")),
+            .scanning,
+            .discoveringServices,
+            .failed(.connectFailed("still timed out")),
+        ].compactMap { announcements.next(for: $0) }
+
+        XCTAssertEqual(messages, ["Connection lost. Retrying. Connect failed: timed out"])
+        XCTAssertEqual(announcements.next(for: .live), "Connected.")
+        XCTAssertEqual(
+            announcements.next(for: .failed(.connectFailed("lost after connecting"))),
+            "Connection lost. Retrying. Connect failed: lost after connecting"
+        )
+    }
+
     func testSafetyAnnouncementsCoverTypedEscalationsWithoutTelemetryChatter() {
         XCTAssertNil(EucRideWarningSeverity.normal.accessibilityAnnouncement)
         XCTAssertEqual(

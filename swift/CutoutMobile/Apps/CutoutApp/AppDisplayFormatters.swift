@@ -98,6 +98,23 @@ extension SessionConnectionPhase {
     }
 }
 
+struct ConnectionAccessibilityAnnouncements {
+    private var hasAnnouncedFailure = false
+
+    mutating func next(for phase: SessionConnectionPhase) -> String? {
+        switch phase {
+        case .starting, .live:
+            hasAnnouncedFailure = false
+        case .failed:
+            guard !hasAnnouncedFailure else { return nil }
+            hasAnnouncedFailure = true
+        default:
+            break
+        }
+        return phase.accessibilityAnnouncement
+    }
+}
+
 extension EucRideWarningSeverity {
     var accessibilityAnnouncement: String? {
         switch self {

@@ -7,6 +7,7 @@ struct ContentView: View {
     let model: CutoutAppModel
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
+    @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
 
     private let catalog = PevScreenCatalog.live
 
@@ -57,7 +58,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: model.phase) { _, phase in
-            if let announcement = phase.accessibilityAnnouncement {
+            if let announcement = connectionAnnouncements.next(for: phase) {
                 AccessibilityNotification.Announcement(announcement).post()
             }
             if case .failed = phase {
