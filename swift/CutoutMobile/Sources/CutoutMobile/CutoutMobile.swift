@@ -4050,7 +4050,13 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             platformIdentifier: platformIdentifier,
             writeLimit: step.captureContext?.writeLimit ?? TransportWriteLimitBytes(0)
         ))
-        executeAndRecord(step.operations)
+        let writes = step.operations.filter { operation in
+            if case .subscribe = operation { false } else { true }
+        }
+        let subscriptions = step.operations.filter { operation in
+            if case .subscribe = operation { true } else { false }
+        }
+        executeAndRecord(writes + subscriptions)
         scheduleRetryIfNeeded(at: monotonicMilliseconds)
         return step
     }

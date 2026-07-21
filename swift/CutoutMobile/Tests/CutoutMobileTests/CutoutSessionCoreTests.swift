@@ -501,7 +501,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
-        XCTAssertEqual(sink.writes.count, 0)
+        XCTAssertEqual(sink.writes.count, 3)
         owner.handleNotificationStateUpdate(
             channel: .vescNordicUartNotify,
             isNotifying: true,
