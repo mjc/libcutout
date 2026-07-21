@@ -114,4 +114,29 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertTrue(BmsChip.usesGlassEffect(reduceTransparency: false))
         XCTAssertFalse(BmsChip.usesGlassEffect(reduceTransparency: true))
     }
+
+    @MainActor
+    func testBmsNoDataRidingRuleExposesClampedProgressToAccessibility() {
+        XCTAssertEqual(
+            BmsNoDataRidingRuleCard(
+                title: "record unsupported pack",
+                progress: 0.62
+            ).progressAccessibilityValue,
+            "62 percent"
+        )
+        XCTAssertEqual(
+            BmsNoDataRidingRuleCard(
+                title: "record unsupported pack",
+                progress: 1.8
+            ).progressAccessibilityValue,
+            "100 percent"
+        )
+        XCTAssertEqual(
+            BmsNoDataRidingRuleCard(
+                title: "record unsupported pack",
+                progress: -0.4
+            ).progressAccessibilityValue,
+            "0 percent"
+        )
+    }
 }

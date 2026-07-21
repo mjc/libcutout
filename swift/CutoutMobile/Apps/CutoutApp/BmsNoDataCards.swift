@@ -203,6 +203,10 @@ struct BmsNoDataRidingRuleCard: View {
         min(max(progress, 0), 1)
     }
 
+    var progressAccessibilityValue: String {
+        "\(Int((clampedProgress * 100).rounded())) percent"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             PevDashboardSectionLabel(title: "RIDING RULE", font: .caption.weight(.bold))
@@ -212,6 +216,7 @@ struct BmsNoDataRidingRuleCard: View {
             ProgressView(value: clampedProgress)
                 .tint(PevColors.yellow)
                 .accessibilityLabel("Riding rule progress")
+                .accessibilityValue(progressAccessibilityValue)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 18)
