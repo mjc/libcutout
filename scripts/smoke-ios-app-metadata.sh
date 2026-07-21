@@ -24,16 +24,20 @@ with open(sys.argv[1], "rb") as fh:
     plist = plistlib.load(fh)
 
 expected_scalars = {
-    "CFBundleDisplayName": "CutoutApp",
-    "NSBluetoothAlwaysUsageDescription": "CutoutApp uses Bluetooth to read live vehicle telemetry.",
+    "CFBundleDisplayName": "CutOut",
+    "NSBluetoothAlwaysUsageDescription": "CutOut uses Bluetooth to read live vehicle telemetry.",
 }
 for key, expected in expected_scalars.items():
     actual = plist.get(key)
     if actual != expected:
         raise SystemExit(f"metadata mismatch for {key}: expected {expected!r}, got {actual!r}")
 
-expected_orientations = ["UIInterfaceOrientationPortrait"]
-for key in ("UISupportedInterfaceOrientations", "UISupportedInterfaceOrientations~ipad"):
+expected_orientations = [
+    "UIInterfaceOrientationPortrait",
+    "UIInterfaceOrientationLandscapeLeft",
+    "UIInterfaceOrientationLandscapeRight",
+]
+for key in ("UISupportedInterfaceOrientations",):
     actual = plist.get(key)
     if actual != expected_orientations:
         raise SystemExit(f"metadata mismatch for {key}: expected {expected_orientations!r}, got {actual!r}")
