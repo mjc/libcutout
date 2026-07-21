@@ -186,6 +186,26 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc)
     }
 
+    func testVescLiveActivityFixtureStartsFromAnAccessibleRide() throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil,
+            "Live Activity inspection is reserved for a physical-device ActivityKit run"
+        )
+
+        app.terminate()
+        app.launchArguments = ["--ui-test-vesc", "--ui-test-live-activity"]
+        app.launch()
+        allowDeviceAuthorizationAlerts()
+
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 20))
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
+        // Leave the activity running for the caller to inspect on the device.
+    }
+
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() {
         relaunchAtVescFailureFixture()
 

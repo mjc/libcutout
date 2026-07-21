@@ -115,8 +115,14 @@ final class CutoutAppModel {
         CommandLine.arguments.contains("--ui-test-vesc-failure")
     }
 
+    private var usesVescUILiveActivityFixture: Bool {
+        CommandLine.arguments.contains("--ui-test-live-activity")
+    }
+
     private var usesVescUITestFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-vesc") || usesVescUIFailureFixture
+        CommandLine.arguments.contains("--ui-test-vesc")
+            || usesVescUIFailureFixture
+            || usesVescUILiveActivityFixture
     }
 
     private var usesEucUITestFixture: Bool {
@@ -369,7 +375,12 @@ final class CutoutAppModel {
             notificationCount: 1,
             lastUpdate: now
         )
+        if usesVescUILiveActivityFixture {
+            liveActivityIdentity = .device(selectedRideTitle ?? VescRideSnapshot.defaultTitle)
+            liveActivityGlyph = .floatwheelAtom
+        }
         phase = .live
+        syncLiveActivity()
     }
 
     private func showEucUITestRide() {
