@@ -9,66 +9,9 @@ cutout_host_os() {
   uname -s
 }
 
-cutout_swift_runtime_command() {
-  case "$(cutout_host_os)" in
-    Darwin)
-      printf '%s\n' "env -u SDKROOT -u DEVELOPER_DIR swift"
-      ;;
-    Linux)
-      printf '%s\n' "swift"
-      ;;
-    *)
-      echo "unsupported host OS for Swift package tooling: $(cutout_host_os)" >&2
-      return 1
-      ;;
-  esac
-}
-
-cutout_macosx_sdk_path() {
-  xcrun --sdk macosx --show-sdk-path
-}
-
 cutout_use_xcode_developer_dir() {
   export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
   unset SDKROOT
-}
-
-cutout_prepare_swift_package_workspace() {
-  local root
-  root="$(cutout_repo_root)"
-  "$root/scripts/prepare-swift-sourcekit-workspace.sh" >/dev/null
-}
-
-cutout_iphoneos_sdk_path() {
-  xcrun --sdk iphoneos --show-sdk-path
-}
-
-cutout_iphoneos_clang_path() {
-  xcrun --sdk iphoneos --find clang
-}
-
-cutout_build_ios_rust_ffi() {
-  local root
-  root="$(cutout_repo_root)"
-
-  env \
-    SDKROOT="$(cutout_iphoneos_sdk_path)" \
-    CC_aarch64_apple_ios="$(cutout_iphoneos_clang_path)" \
-    CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$(cutout_iphoneos_clang_path)" \
-    cargo build -p cutout-mobile-ffi --target aarch64-apple-ios
-}
-
-cutout_build_ios_simulator_rust_ffi() {
-  local root sdk clang
-  root="$(cutout_repo_root)"
-  sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
-  clang="$(xcrun --sdk iphonesimulator --find clang)"
-
-  env \
-    SDKROOT="$sdk" \
-    CC_aarch64_apple_ios_sim="$clang" \
-    CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$clang" \
-    cargo build -p cutout-mobile-ffi --target aarch64-apple-ios-sim
 }
 
 cutout_xcode_auth_args() {
@@ -119,36 +62,24 @@ PY
 }
 
 cutout_build_ios_app_bundle() {
-  local root package_dir project scheme destination derived_data rust_lib product
+  local root project scheme destination derived_data product
   root="$(cutout_repo_root)"
-  package_dir="$root/swift/CutoutMobile"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   destination="${CUTOUT_IOS_APP_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
   derived_data="${CUTOUT_IOS_APP_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
-  rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir
 
-  cutout_prepare_swift_package_workspace
-
-  cutout_build_ios_rust_ffi
-
   rm -rf "$product"
 
-  if ! (
-    cd "$package_dir"
-    env -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
-      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-      xcodebuild \
+  if ! /usr/bin/xcrun xcodebuild \
       -project "$root/$project" \
       -scheme "$scheme" \
       -destination "$destination" \
       -derivedDataPath "$derived_data" \
-      OTHER_LDFLAGS="$rust_lib -liconv" \
-      build
-  ) >&2; then
+      build >&2; then
     rm -rf "$product"
     return 1
   fi
@@ -162,16 +93,14 @@ cutout_build_ios_app_bundle() {
 }
 
 cutout_build_ios_device_app_bundle() {
-  local root package_dir project scheme device_udid destination derived_data rust_lib product
+  local root project scheme device_udid destination derived_data product
   local development_team bundle_id
   root="$(cutout_repo_root)"
-  package_dir="$root/swift/CutoutMobile"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   device_udid="${CUTOUT_IOS_DEVICE_UDID:-$(cutout_connected_ios_device_udid)}"
   destination="${CUTOUT_IOS_DEVICE_DESTINATION:-platform=iOS,id=$device_udid}"
   derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-signed}"
-  rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
   development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
@@ -184,17 +113,9 @@ cutout_build_ios_device_app_bundle() {
     return 1
   fi
 
-  cutout_prepare_swift_package_workspace
-
-  cutout_build_ios_rust_ffi
-
   rm -rf "$product"
 
-  if ! (
-    cd "$package_dir"
-    env -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
-      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-      xcodebuild \
+  if ! /usr/bin/xcrun xcodebuild \
       -project "$root/$project" \
       -scheme "$scheme" \
       -destination "$destination" \
@@ -206,9 +127,7 @@ cutout_build_ios_device_app_bundle() {
       CODE_SIGN_IDENTITY="Apple Development" \
       ${development_team:+DEVELOPMENT_TEAM="$development_team"} \
       ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
-      OTHER_LDFLAGS="$rust_lib -liconv" \
-      build
-  ) >&2; then
+      build >&2; then
     rm -rf "$product"
     return 1
   fi
@@ -228,16 +147,14 @@ cutout_ios_app_bundle_identifier() {
 }
 
 cutout_archive_ios_release_testing_app() {
-  local root package_dir project scheme archive_path rust_lib
+  local root project scheme archive_path
   local development_team bundle_id
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
-  package_dir="$root/swift/CutoutMobile"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"
-  rust_lib="$root/target/aarch64-apple-ios/debug/libcutout_mobile_ffi.a"
   development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
@@ -259,16 +176,9 @@ cutout_archive_ios_release_testing_app() {
     done < <(cutout_xcode_auth_args)
   fi
 
-  cutout_prepare_swift_package_workspace
-  cutout_build_ios_rust_ffi
-
   rm -rf "$archive_path"
 
-  if ! (
-    cd "$package_dir"
-    env -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
-      PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-      xcodebuild \
+  if ! /usr/bin/xcrun xcodebuild \
       -project "$root/$project" \
       -scheme "$scheme" \
       -destination "generic/platform=iOS" \
@@ -280,9 +190,7 @@ cutout_archive_ios_release_testing_app() {
       CODE_SIGN_STYLE=Automatic \
       DEVELOPMENT_TEAM="$development_team" \
       ${bundle_id:+PRODUCT_BUNDLE_IDENTIFIER="$bundle_id"} \
-      OTHER_LDFLAGS="$rust_lib -liconv" \
-      archive
-  ) >&2; then
+      archive >&2; then
     rm -rf "$archive_path"
     return 1
   fi
@@ -353,9 +261,7 @@ with open(path, "wb") as fh:
     plistlib.dump(options, fh)
 PY
 
-  if ! env -u SDKROOT -u LD -u CC -u CXX -u AR -u RANLIB \
-    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
-    xcodebuild \
+  if ! /usr/bin/xcrun xcodebuild \
     -exportArchive \
     -archivePath "$archive_path" \
     -exportPath "$export_path" \

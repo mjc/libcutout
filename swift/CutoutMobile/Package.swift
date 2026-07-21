@@ -20,7 +20,6 @@ let package = Package(
             dependencies: [
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
             ],
-            exclude: ["Generated"],
             linkerSettings: [
                 .linkedLibrary("iconv", .when(platforms: [.iOS, .macOS])),
             ]

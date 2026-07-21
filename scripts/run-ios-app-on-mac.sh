@@ -25,4 +25,4 @@ product="${CUTOUT_IOS_ON_MAC_PRODUCT:-$(cutout_build_ios_app_bundle)}"
 
 echo "ios_app_product=$product"
 echo "ios_app_destination=$destination"
-echo "ios_app_note=real iPhoneOS app bundle built; use scripts/run-cutout-app.sh --launch-smoke for local Mac launch proof"
+exec /usr/bin/open -n "$product"
