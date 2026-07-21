@@ -44,6 +44,8 @@ public enum PevLiveActivityMetricRole: CaseIterable, Hashable, Sendable {
 }
 
 public struct PevLiveActivityBrandMark: View {
+    @ScaledMetric(relativeTo: .title2) private var scaledBaseSize: CGFloat = 16
+
     let size: CGFloat
 
     public init(size: CGFloat) {
@@ -52,7 +54,7 @@ public struct PevLiveActivityBrandMark: View {
 
     public var body: some View {
         Text("C")
-            .font(.system(size: size, weight: .black, design: .rounded))
+            .font(.system(size: size * scaledBaseSize / 16, weight: .black, design: .rounded))
             .italic()
             .foregroundStyle(
                 LinearGradient(
