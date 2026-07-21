@@ -186,6 +186,16 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc)
     }
 
+    func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() {
+        relaunchAtVescFailureFixture()
+
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
+    }
+
     func testEucRideAndBmsSurfacesRemainAccessible() throws {
         relaunchAtEucAccessibilityDynamicType()
 
@@ -331,6 +341,13 @@ final class CutoutAppUITests: XCTestCase {
 
     private func relaunchAtAccessibilityDynamicType() {
         relaunchAtAccessibilityDynamicType(fixture: "--ui-test-vesc")
+    }
+
+    private func relaunchAtVescFailureFixture() {
+        app.terminate()
+        app.launchArguments = ["--ui-test-vesc-failure"]
+        app.launch()
+        allowDeviceAuthorizationAlerts()
     }
 
     private func relaunchAtEucAccessibilityDynamicType() {

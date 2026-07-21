@@ -111,8 +111,12 @@ final class CutoutAppModel {
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     #if DEBUG
+    private var usesVescUIFailureFixture: Bool {
+        CommandLine.arguments.contains("--ui-test-vesc-failure")
+    }
+
     private var usesVescUITestFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-vesc")
+        CommandLine.arguments.contains("--ui-test-vesc") || usesVescUIFailureFixture
     }
 
     private var usesEucUITestFixture: Bool {
@@ -170,6 +174,12 @@ final class CutoutAppModel {
 
     func pair(platformIdentifier: String) -> Bool {
         #if DEBUG
+        if usesVescUIFailureFixture, platformIdentifier == "ui-test-vesc" {
+            selectedRideTitle = "Refloat VESC"
+            selectedConnectionRoute = .vescOnewheel
+            phase = .failed(.connectFailed("deterministic fixture"))
+            return true
+        }
         if usesVescUITestFixture, platformIdentifier == "ui-test-vesc" {
             showVescUITestRide()
             return true
