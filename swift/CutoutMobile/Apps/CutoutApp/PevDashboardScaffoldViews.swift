@@ -90,12 +90,7 @@ struct PevAppShell<Content: View>: View {
             PevDashboardHeader(
                 sectionTitle: sectionTitle
             ) {
-                Button(action: disconnect) {
-                    PevDashboardBrand()
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Disconnect and choose device")
-                .accessibilityIdentifier("dashboard.disconnect")
+                PevRideDisconnectButton(scale: scale, action: disconnect)
             }
             .padding(.horizontal, 24 * scale)
 

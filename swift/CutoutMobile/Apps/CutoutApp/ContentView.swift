@@ -192,14 +192,12 @@ struct ContentView: View {
 
     private func appSectionTitle(for destination: CutoutAppRoute) -> String {
         switch destination {
-        case .eucRide:
-            "EUC ride"
-        case .vescRide:
-            "OW ride"
+        case .eucRide, .vescRide:
+            "Ride"
         case .eucPack:
-            "EUC pack"
+            "Pack"
         case .vescDebug:
-            "VESC debug"
+            "Debug"
         case .capture:
             "Capture"
         case .devicePicker:

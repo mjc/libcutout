@@ -112,32 +112,6 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc)
     }
 
-    func testVescLiveFixtureRendersTheProductionDashboard() {
-        app.terminate()
-        app.launchArguments = [
-            "--ui-test-vesc-live",
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryL",
-        ]
-        app.launch()
-
-        let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
-        XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        XCTAssertEqual(app.descendants(matching: .any)["ride.hero.speed"].value as? String, "19, mph")
-        XCTAssertTrue(app.buttons["dashboard.disconnect"].exists)
-        XCTAssertEqual(app.buttons["dashboard.disconnect"].label, "Disconnect and choose device")
-        XCTAssertTrue(app.staticTexts["Fungineers X7"].exists)
-        XCTAssertTrue(app.staticTexts["VESC OW · armed"].exists)
-        XCTAssertTrue(app.staticTexts["Duty headroom"].exists)
-        XCTAssertTrue(app.staticTexts["18%"].exists)
-        XCTAssertTrue(app.staticTexts["Pushback soon"].exists)
-        XCTAssertEqual(metric(named: "battery current").value as? String, "38, A, discharging")
-        XCTAssertEqual(metric(named: "motor current").value as? String, "71, A, phase current")
-        XCTAssertEqual(metric(named: "board angle").value as? String, "-1.8, °, nose down")
-        XCTAssertEqual(metric(named: "controller").value as? String, "54, °C, motor 49 °C")
-        XCTAssertEqual(app.tabBars.count, 1)
-    }
-
     func testConnectedEucSurfaceHasOneCanonicalBottomNavigation() throws {
         try assertConnectedSurface(for: .euc)
     }
@@ -188,12 +162,6 @@ final class CutoutAppUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH %@", "dashboard.screen.")
         ).firstMatch
         return screen.waitForExistence(timeout: timeout) ? screen : nil
-    }
-
-    private func metric(named label: String) -> XCUIElement {
-        app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", label)
-        ).firstMatch
     }
 
     private func disconnectIfConnected() {

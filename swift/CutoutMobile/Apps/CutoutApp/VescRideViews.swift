@@ -38,20 +38,15 @@ struct VescRideScreenView: View {
         guard let boardSpeed = liveSnapshot?.boardSpeed else {
             return .unavailable
         }
-        return .available(
-            value: RideUnits.speedText(millimetersPerSecond: boardSpeed.value, fractionDigits: 0),
-            unit: RideUnits.speedUnit
-        )
+        let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
+        return .available(value: readout.displayValue, unit: readout.displayUnit)
     }
 
     private var warningCard: PevWarningCard? {
         guard let liveSnapshot else { return nil }
         switch liveSnapshot.warning {
         case .pushbackSoon:
-            return PevWarningCard(
-                title: "Pushback soon",
-                detail: footpadText ?? "Duty and pack sag are both climbing."
-            )
+            return PevWarningCard(title: "Pushback soon", detail: footpadText ?? "Live telemetry.")
         case .none, .unknown:
             return nil
         }
@@ -74,42 +69,45 @@ struct VescRideScreenView: View {
         )
     }
 
-    private var batteryCurrentDetail: String {
-        guard let liveSnapshot, liveSnapshot.batteryCurrent != nil else {
-            return "current unavailable"
+    private var batteryDetail: String {
+        guard let liveSnapshot else { return "" }
+        let battery = liveSnapshot.batteryLevelReported.map {
+            "battery \(percentText($0)) reported"
+        } ?? liveSnapshot.batteryLevelEstimated.map {
+            "battery \(percentText($0)) estimated"
         }
-        return powerFlowDetail(
-            liveSnapshot.powerFlow,
-            fallback: "battery current"
-        )
+        let details = [
+            battery ?? "battery level unavailable",
+            liveSnapshot.batteryCurrent.map { "current \(currentText($0)) A" } ?? "current unavailable",
+        ]
+        return details.joined(separator: " · ")
     }
 
     private var motorCurrentDetail: String {
         guard let liveSnapshot, liveSnapshot.motorCurrent != nil else {
             return "current unavailable"
         }
-        return "phase current"
+        return powerFlowDetail(
+            liveSnapshot.powerFlow,
+            fallback: "phase current"
+        )
     }
 
     private var dashboardTiles: [PevDashboardTile] {
         guard let liveSnapshot else { return [] }
         return [
             PevDashboardTile(
-                kind: .batteryCurrent,
-                label: "battery current",
-                value: liveSnapshot.batteryCurrent.map {
-                    RideUnits.currentText(milliamps: $0.value, fractionDigits: 0)
-                } ?? "--",
-                unit: "A",
-                detail: batteryCurrentDetail,
+                kind: .batteryVoltage,
+                label: "voltage",
+                value: voltageText(liveSnapshot.batteryVoltage),
+                unit: "V",
+                detail: batteryDetail,
                 accent: .yellow
             ),
             PevDashboardTile(
                 kind: .motorCurrent,
                 label: "motor current",
-                value: liveSnapshot.motorCurrent.map {
-                    RideUnits.currentText(milliamps: $0.value, fractionDigits: 0)
-                } ?? "--",
+                value: phaseCurrentText(liveSnapshot.motorCurrent),
                 unit: "A",
                 detail: motorCurrentDetail,
                 accent: .orange
@@ -125,13 +123,9 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .controller,
                 label: "controller",
-                value: liveSnapshot.controllerTemperature.map {
-                    RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
-                } ?? "--",
+                value: temperatureText(liveSnapshot.controllerTemperature),
                 unit: "°C",
-                detail: liveSnapshot.motorTemperature.map {
-                    "motor \(RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)) \(RideUnits.temperatureUnit)"
-                } ?? "motor unavailable",
+                detail: liveSnapshot.motorTemperature.map { "motor \(temperatureText($0)) \(RideUnits.temperatureUnit)" } ?? "motor unavailable",
                 accent: .green
             ),
         ]
