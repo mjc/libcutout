@@ -242,10 +242,12 @@ final class CutoutAppUITests: XCTestCase {
             XCTFail("The deterministic \(family.name) fixture did not expose a Use button")
             return
         }
-        guard let screen = connectedScreen(timeout: 20) else {
+        guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The visible \(family.name) Use button was tapped, but no connected dashboard appeared")
             return
         }
+        let screen = app.descendants(matching: .any)[family.screenIdentifier]
+        XCTAssertTrue(screen.exists)
         defer { disconnectIfConnected() }
         XCTAssertEqual(screen.identifier, family.screenIdentifier)
         XCTAssertFalse(app.descendants(matching: .any)["device-picker.screen"].exists)
@@ -377,7 +379,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertMetricIsReachable(_ label: String, in screen: XCUIElement) {
-        let metric = app.descendants(matching: .any).matching(
+        let metric = screen.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", label)
         ).firstMatch
 
@@ -404,9 +406,13 @@ final class CutoutAppUITests: XCTestCase {
 
         for index in 0..<6 where !metric.exists || (!metric.isHittable && !metric.frame.intersects(screen.frame)) {
             if index < 3 {
-                screen.swipeUp()
+                let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+                let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             } else {
-                screen.swipeDown()
+                let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+                let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             }
         }
 
