@@ -384,7 +384,7 @@ final class CutoutAppModel {
             notificationCount: 1,
             lastUpdate: now
         )
-        if usesVescUILiveActivityFixture {
+        if usesVescUILiveActivityFixture || usesVescUILiveActivityAutoFixture {
             liveActivityIdentity = .device(selectedRideTitle ?? VescRideSnapshot.defaultTitle)
             liveActivityGlyph = .floatwheelAtom
         }
