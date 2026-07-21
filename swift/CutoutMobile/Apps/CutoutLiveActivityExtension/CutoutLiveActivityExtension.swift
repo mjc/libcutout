@@ -30,7 +30,11 @@ private struct CutoutRideLiveActivityWidget: Widget {
                             .font(.system(size: 12, weight: .bold))
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .combine)
+                    // The brand mark and wordmark are one visual identity;
+                    // expose one concise VoiceOver element instead of
+                    // announcing the same name twice.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Cutout")
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     HStack(spacing: 5) {
