@@ -289,13 +289,11 @@ public struct PevDashboardScanningPill: View {
 
     let title: String
     let isScanning: Bool
-    let scale: CGFloat
     @State private var phase = 0
 
-    public init(title: String, isScanning: Bool, scale: CGFloat) {
+    public init(title: String, isScanning: Bool) {
         self.title = title
         self.isScanning = isScanning
-        self.scale = scale
     }
 
     static func shouldAnimate(isScanning: Bool, reduceMotion: Bool) -> Bool {
@@ -308,11 +306,11 @@ public struct PevDashboardScanningPill: View {
                 .font(.headline.weight(.bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
-            Spacer(minLength: 12 * scale)
-            HStack(spacing: 9 * scale) {
+            Spacer(minLength: 12)
+            HStack(spacing: 9) {
                 ForEach(0..<3, id: \.self) { index in
                     Circle()
-                        .frame(width: 13 * scale, height: 13 * scale)
+                        .frame(width: 13, height: 13)
                         .opacity(!isScanning || index == phase ? 1 : 0.32)
                 }
             }
@@ -320,11 +318,11 @@ public struct PevDashboardScanningPill: View {
             .accessibilityHidden(true)
         }
         .foregroundStyle(PevDashboardColors.primaryText)
-        .padding(.horizontal, 22 * scale)
-        .padding(.vertical, 14 * scale)
-        .frame(minHeight: 64 * scale)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 14)
+        .frame(minHeight: 64)
         .frame(maxWidth: .infinity)
-        .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 28))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .task(id: Self.shouldAnimate(isScanning: isScanning, reduceMotion: reduceMotion)) {

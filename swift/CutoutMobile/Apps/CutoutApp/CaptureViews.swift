@@ -32,7 +32,6 @@ struct CaptureRecordingScreen: View {
 
             PevStatusStrip(
                 text: captureStatusText ?? "Recording locally",
-                scale: 1,
                 indicatorColor: PevColors.green,
                 background: PevColors.cardFill,
                 foreground: PevColors.primaryText,

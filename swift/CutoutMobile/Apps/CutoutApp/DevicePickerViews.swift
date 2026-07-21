@@ -35,14 +35,12 @@ struct DevicePickerView: View {
             PevDashboardScanningPill(
                 title: connectionStatusText,
                 isScanning: renderedScanState.status == .scanning || isConnecting,
-                scale: 1
             )
                 .padding(.top, 4)
 
             if let captureStatusText {
                 PevStatusStrip(
                     text: captureStatusText,
-                    scale: 1,
                     indicatorColor: PevColors.green,
                     background: PevColors.cardFill,
                     foreground: PevColors.primaryText,
