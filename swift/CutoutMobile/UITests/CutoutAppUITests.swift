@@ -67,17 +67,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
-        let captureKind = app.textFields["device-picker.capture-kind"]
-        let recordButton = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
-        ).firstMatch
-
-        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
-        captureKind.tap()
-        captureKind.typeText("custom vesc\n")
-        recordButton.tap()
-
-        XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
+        enterCapture()
 
         let rideActions = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "capture.label.ride.")
@@ -92,6 +82,23 @@ final class CutoutAppUITests: XCTestCase {
 
         action.tap()
         XCTAssertEqual(action.label, "Start Ride")
+    }
+
+    func testCapturePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        relaunchAtAccessibilityDynamicType()
+        enterCapture()
+
+        let screen = app.descendants(matching: .any)["capture.screen"]
+        let stopCapture = app.buttons["capture.stop"]
+        XCTAssertTrue(screen.exists)
+
+        for _ in 0..<6 where !stopCapture.isHittable {
+            screen.swipeUp()
+        }
+
+        XCTAssertTrue(stopCapture.exists)
+        XCTAssertTrue(stopCapture.isHittable)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testProductionPickerPassesAccessibilityAudit() throws {
@@ -133,6 +140,25 @@ final class CutoutAppUITests: XCTestCase {
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+    }
+
+    func testVescDebugPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        relaunchAtAccessibilityDynamicType()
+        guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let debugTab = app.descendants(matching: .any)["dashboard.nav.debug"]
+        XCTAssertTrue(debugTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(debugTab.isHittable)
+        debugTab.tap()
+
+        let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
+        XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
+        XCTAssertTrue(debugTab.isSelected)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     private func assertConnectedSurface(
@@ -202,6 +228,26 @@ final class CutoutAppUITests: XCTestCase {
         ]
         app.launch()
         allowDeviceAuthorizationAlerts()
+    }
+
+    private func enterCapture() {
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
+
+        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        captureKind.tap()
+        captureKind.typeText("custom vesc\n")
+
+        for _ in 0..<6 where !recordButton.isHittable {
+            screen.swipeUp()
+        }
+
+        XCTAssertTrue(recordButton.isHittable)
+        recordButton.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
     }
 
     private func assertMetricIsReachable(_ label: String, in screen: XCUIElement) {
