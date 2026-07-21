@@ -173,6 +173,46 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
     }
 
+    func testEveryLiveActivityValueHasOneTypedSpokenRepresentationAcrossConnectionStates() {
+        let snapshots = [
+            LiveActivityRideSnapshot(
+                identity: .model(.aero),
+                rideState: EucRideScreenState(
+                    phase: .connecting(model: .aero),
+                    displayState: RideDisplayState()
+                ),
+                now: MonotonicMilliseconds(3_000)
+            ),
+            LiveActivityRideSnapshot(
+                identity: .unavailable,
+                rideState: EucRideScreenState(
+                    phase: .bluetoothUnavailable(rawState: 4),
+                    displayState: RideDisplayState()
+                ),
+                now: MonotonicMilliseconds(3_000)
+            ),
+            LiveActivityRideSnapshot(
+                identity: .model(.aero),
+                rideState: liveRideState(
+                    speed: 2_000,
+                    telemetry: TelemetrySnapshot(
+                        at: MonotonicMilliseconds(1_000),
+                        speed: Speed(value: 2_000)
+                    )
+                ),
+                now: MonotonicMilliseconds(3_000),
+                staleAfter: MonotonicMilliseconds(1_000)
+            ),
+        ]
+
+        for snapshot in snapshots {
+            for value in snapshot.visibleValues {
+                XCTAssertFalse(value.label.isEmpty)
+                XCTAssertFalse(value.accessibilityValue.isEmpty)
+            }
+        }
+    }
+
     func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 
