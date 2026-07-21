@@ -119,10 +119,15 @@ final class CutoutAppModel {
         CommandLine.arguments.contains("--ui-test-live-activity")
     }
 
+    private var usesVescUILiveActivityAutoFixture: Bool {
+        CommandLine.arguments.contains("--ui-test-live-activity-auto")
+    }
+
     private var usesVescUITestFixture: Bool {
         CommandLine.arguments.contains("--ui-test-vesc")
             || usesVescUIFailureFixture
             || usesVescUILiveActivityFixture
+            || usesVescUILiveActivityAutoFixture
     }
 
     private var usesEucUITestFixture: Bool {
@@ -166,6 +171,10 @@ final class CutoutAppModel {
 
     func start() {
         #if DEBUG
+        if usesVescUILiveActivityAutoFixture {
+            showVescUITestRide()
+            return
+        }
         if usesVescUITestFixture {
             showVescUITestPicker()
             return
