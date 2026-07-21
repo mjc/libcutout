@@ -21,7 +21,7 @@ struct CutoutApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("CutoutApp") {
+        WindowGroup("CutOut") {
             rootView
                 .task {
                     model.start()
