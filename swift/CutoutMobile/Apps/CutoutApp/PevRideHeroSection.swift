@@ -254,7 +254,6 @@ struct PevRideHeroSection: View {
     private var statusPill: some View {
         PevDashboardStatusPill(
             title: subtitle,
-            scale: 1,
             fill: statusFill
         )
     }

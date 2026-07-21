@@ -69,7 +69,6 @@ struct PickerDeviceRow: View {
     private var statusPill: some View {
         PevDashboardStatusPill(
             title: row.state.actionTitle,
-            scale: 1,
             fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
             foreground: row.state.isSupported ? .black : PevColors.muted,
             stroke: row.state.isSupported ? nil : PevColors.cardStroke,
@@ -118,7 +117,6 @@ struct ManualPickerRow: View {
     private var statusPill: some View {
         PevDashboardStatusPill(
             title: row.state.actionTitle,
-            scale: 1,
             fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
             foreground: row.state.isSupported ? .black : PevColors.muted,
             stroke: row.state.isSupported ? nil : PevColors.cardStroke,

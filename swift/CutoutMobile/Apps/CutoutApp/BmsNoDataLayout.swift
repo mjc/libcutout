@@ -6,7 +6,6 @@ struct BmsNoDataLayout: View {
     let content: PevBmsContent
     let rideState: EucRideScreenState?
     let liveSnapshot: BmsSnapshot?
-    let scale: CGFloat
     @State private var showsDiagnostics = false
 
     private var snapshot: BmsSnapshot { content.snapshot }
@@ -69,17 +68,16 @@ struct BmsNoDataLayout: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 14 * scale) {
-                    BmsNoDataHeader(screen: screen, scale: scale)
+                VStack(alignment: .leading, spacing: 14) {
+                    BmsNoDataHeader(screen: screen)
 
-                    BmsNoDataWarningCard(snapshot: snapshot, scale: scale)
+                    BmsNoDataWarningCard(snapshot: snapshot)
 
                     BmsNoDataPackEstimateCard(
                         percentText: controllerEstimatePercentText,
                         detail: controllerEstimateDetail,
                         confidenceTitle: controllerConfidenceTitle,
-                        confidenceDetail: controllerConfidenceDetail,
-                        scale: scale
+                        confidenceDetail: controllerConfidenceDetail
                     )
 
                     BmsNoDataTelemetryCard(
@@ -87,29 +85,26 @@ struct BmsNoDataLayout: View {
                         rideSagValue: rideSagText ?? "--",
                         rideSagUnit: rideSagText == nil ? "" : "V",
                         loadValue: currentText(packCurrent) ?? "--",
-                        loadUnit: currentUnitText(packCurrent) ?? "",
-                        scale: scale
+                        loadUnit: currentUnitText(packCurrent) ?? ""
                     )
 
-                    BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows, scale: scale)
+                    BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows)
 
                     BmsNoDataRidingRuleCard(
                         title: snapshot.captureActionTitle ?? "--",
-                        progress: controllerRidingRuleProgress,
-                        scale: scale
+                        progress: controllerRidingRuleProgress
                     )
 
                     if let liveSnapshot, liveSnapshot.shouldRenderReadback {
                         BmsDiagnosticsSection(
                             snapshot: liveSnapshot,
-                            scale: scale,
                             isExpanded: $showsDiagnostics
                         )
                     }
                 }
-                .padding(.horizontal, 24 * scale)
-                .padding(.top, 44 * scale)
-                .padding(.bottom, 20 * scale)
+                .padding(.horizontal, 24)
+                .padding(.top, 44)
+                .padding(.bottom, 20)
             }
 
         }

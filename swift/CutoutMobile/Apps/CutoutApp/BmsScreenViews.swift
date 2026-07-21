@@ -30,8 +30,7 @@ struct BmsScreenView: View {
                     screen: screen,
                     content: content,
                     rideState: rideState,
-                    liveSnapshot: bmsSnapshot,
-                    scale: 1
+                    liveSnapshot: bmsSnapshot
                 )
             } else {
                 VStack(spacing: 0) {
@@ -95,7 +94,6 @@ struct BmsScreenView: View {
     private func liveReadbackSection(snapshot: BmsSnapshot) -> some View {
         BmsDiagnosticsSection(
             snapshot: snapshot,
-            scale: 1,
             isExpanded: $showsDiagnostics
         )
     }

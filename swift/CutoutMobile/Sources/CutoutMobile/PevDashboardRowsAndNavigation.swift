@@ -222,7 +222,6 @@ public struct PevDashboardStatusPill: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     let title: String
-    let scale: CGFloat
     let fill: Color
     let foreground: Color
     let stroke: Color?
@@ -233,7 +232,6 @@ public struct PevDashboardStatusPill: View {
 
     public init(
         title: String,
-        scale: CGFloat,
         fill: Color,
         foreground: Color = .black,
         stroke: Color? = nil,
@@ -243,7 +241,6 @@ public struct PevDashboardStatusPill: View {
         fixedHorizontal: Bool = false
     ) {
         self.title = title
-        self.scale = scale
         self.fill = fill
         self.foreground = foreground
         self.stroke = stroke
@@ -258,9 +255,9 @@ public struct PevDashboardStatusPill: View {
             .font(.callout.weight(.black))
             .foregroundStyle(foreground)
             .fixedSize(horizontal: fixedHorizontal, vertical: true)
-            .padding(.horizontal, horizontalPadding * scale)
-            .frame(minWidth: width.map { $0 * scale })
-            .frame(minHeight: height * scale)
+            .padding(.horizontal, horizontalPadding)
+            .frame(minWidth: width)
+            .frame(minHeight: height)
             .background(
                 Capsule()
                     .fill(fill)

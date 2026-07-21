@@ -3,7 +3,6 @@ import SwiftUI
 
 struct BmsDiagnosticsSection: View {
     let snapshot: BmsSnapshot
-    let scale: CGFloat
     @Binding var isExpanded: Bool
 
     var body: some View {
@@ -20,9 +19,9 @@ struct BmsDiagnosticsSection: View {
                 valueColor: PevColors.primaryText,
                 verticalPadding: 6
             )
-                .padding(.top, 8 * scale)
+                .padding(.top, 8)
         } label: {
-            VStack(alignment: .leading, spacing: 3 * scale) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("BMS diagnostics")
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
@@ -32,9 +31,9 @@ struct BmsDiagnosticsSection: View {
             }
         }
         .tint(PevColors.muted)
-        .padding(.horizontal, 16 * scale)
-        .padding(.vertical, 14 * scale)
-        .background(PevDashboardCardBackground(cornerRadius: 20 * scale))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(PevDashboardCardBackground(cornerRadius: 20))
         .accessibilityIdentifier("bms.diagnostics")
     }
 }

@@ -3,16 +3,15 @@ import SwiftUI
 
 struct BmsNoDataHeader: View {
     let screen: PevScreen
-    let scale: CGFloat
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 12 * scale) {
+            HStack(alignment: .top, spacing: 12) {
                 titleBlock
                 Spacer(minLength: 0)
                 statusPill
             }
-            VStack(alignment: .leading, spacing: 10 * scale) {
+            VStack(alignment: .leading, spacing: 10) {
                 titleBlock
                 statusPill
             }
@@ -24,21 +23,20 @@ struct BmsNoDataHeader: View {
     }
 
     private var statusPill: some View {
-        PevDashboardStatusPill(title: screen.secondaryValue, scale: scale, fill: PevColors.yellow)
+        PevDashboardStatusPill(title: screen.secondaryValue, fill: PevColors.yellow)
     }
 }
 
 struct BmsNoDataWarningCard: View {
     let snapshot: BmsSnapshot
-    let scale: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
-            HStack(spacing: 14 * scale) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 14) {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 28 * scale, weight: .bold))
+                    .font(.system(size: 28, weight: .bold))
                     .foregroundStyle(PevColors.yellow)
-                    .frame(width: 28 * scale, height: 28 * scale)
+                    .frame(width: 28, height: 28)
                     .accessibilityHidden(true)
 
                 Text(snapshot.noDataWarningTitle)
@@ -52,14 +50,14 @@ struct BmsNoDataWarningCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 18 * scale)
-        .padding(.vertical, 16 * scale)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color(red: 0.145, green: 0.094, blue: 0.102))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22 * scale, style: .continuous)
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .stroke(Color(red: 0.318, green: 0.188, blue: 0.208), lineWidth: 1.2)
                 )
         )
@@ -75,29 +73,28 @@ struct BmsNoDataPackEstimateCard: View {
     let detail: String
     let confidenceTitle: String
     let confidenceDetail: String
-    let scale: CGFloat
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 14 * scale) {
+            HStack(alignment: .top, spacing: 14) {
                 estimate
                 confidence
             }
-            VStack(alignment: .leading, spacing: 14 * scale) {
+            VStack(alignment: .leading, spacing: 14) {
                 estimate
                 confidence
             }
         }
-        .padding(.horizontal, 20 * scale)
-        .padding(.vertical, 18 * scale)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PevDashboardCardBackground(cornerRadius: 28 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 28))
     }
 
     private var estimate: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
+        VStack(alignment: .leading, spacing: 8) {
             PevDashboardSectionLabel(title: "PACK ESTIMATE", font: .caption.weight(.bold))
-            HStack(alignment: .firstTextBaseline, spacing: 4 * scale) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(percentText)
                     .font(.largeTitle.weight(.black))
                     .monospacedDigit()
@@ -116,7 +113,7 @@ struct BmsNoDataPackEstimateCard: View {
     }
 
     private var confidence: some View {
-        VStack(alignment: .leading, spacing: 8 * scale) {
+        VStack(alignment: .leading, spacing: 8) {
             PevDashboardSectionLabel(title: "CONFIDENCE", font: .caption.weight(.bold))
             Text(confidenceTitle)
                 .font(.title2.weight(.black))
@@ -124,15 +121,15 @@ struct BmsNoDataPackEstimateCard: View {
                 .font(.caption)
                 .foregroundStyle(PevColors.muted)
         }
-        .padding(.horizontal, 10 * scale)
-        .padding(.vertical, 14 * scale)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(PevColors.cardFill)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 18 * scale, style: .continuous)
-                        .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
                         .foregroundStyle(PevColors.cardStroke)
                 )
         )
@@ -148,69 +145,66 @@ struct BmsNoDataTelemetryCard: View {
     let rideSagUnit: String
     let loadValue: String
     let loadUnit: String
-    let scale: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14 * scale) {
+        VStack(alignment: .leading, spacing: 14) {
             PevDashboardSectionLabel(title: "WHAT WE CAN SEE", font: .caption.weight(.bold))
             PevDashboardGrid(
-                columns: [GridItem(.adaptive(minimum: 100 * scale), spacing: 18 * scale)],
-                spacing: 18 * scale
+                columns: [GridItem(.adaptive(minimum: 100), spacing: 18)],
+                spacing: 18
             ) {
                 BmsNoDataMetric(value: voltageValue, unit: "V", label: "pack voltage")
                 BmsNoDataMetric(value: rideSagValue, unit: rideSagUnit, label: "ride sag")
                 BmsNoDataMetric(value: loadValue, unit: loadUnit, label: "load now")
             }
         }
-        .padding(.horizontal, 20 * scale)
-        .padding(.vertical, 18 * scale)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 24))
     }
 }
 
 struct BmsNoDataUnknownsCard: View {
     let rows: [BmsNoDataTextRow]
-    let scale: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10 * scale) {
+        VStack(alignment: .leading, spacing: 10) {
             PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", font: .caption.weight(.bold))
             ForEach(rows) { row in
                 Text(row.text)
                     .font(.body)
                     .foregroundStyle(PevColors.primaryText.opacity(0.92))
-                    .padding(.horizontal, 12 * scale)
-                    .frame(maxWidth: .infinity, minHeight: 30 * scale, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(PevColors.cardFill)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10 * scale, style: .continuous)
-                                    .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5 * scale, 5 * scale]))
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
                                     .foregroundStyle(PevColors.cardStroke)
                             )
                     )
             }
         }
-        .padding(.horizontal, 20 * scale)
-        .padding(.vertical, 18 * scale)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 24))
     }
 }
 
 struct BmsNoDataRidingRuleCard: View {
     let title: String
     let progress: Double
-    let scale: CGFloat
 
     private var clampedProgress: Double {
         min(max(progress, 0), 1)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10 * scale) {
+        VStack(alignment: .leading, spacing: 10) {
             PevDashboardSectionLabel(title: "RIDING RULE", font: .caption.weight(.bold))
             Text(title)
                 .font(.body)
@@ -219,9 +213,9 @@ struct BmsNoDataRidingRuleCard: View {
                 .tint(PevColors.yellow)
                 .accessibilityLabel("Riding rule progress")
         }
-        .padding(.horizontal, 20 * scale)
-        .padding(.vertical, 18 * scale)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PevDashboardCardBackground(cornerRadius: 24 * scale))
+        .background(PevDashboardCardBackground(cornerRadius: 24))
     }
 }
