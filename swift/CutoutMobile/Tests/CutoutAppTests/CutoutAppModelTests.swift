@@ -3,6 +3,11 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
+    func testCaptureQuickLabelProvidesOneStatefulActionName() {
+        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
+        XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
+    }
+
     @MainActor
     func testPairFailureIsVisibleInsteadOfDoingNothing() {
         let model = CutoutAppModel()

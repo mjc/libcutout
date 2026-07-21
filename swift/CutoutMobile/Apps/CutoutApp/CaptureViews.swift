@@ -132,22 +132,16 @@ private struct CaptureLabelControlRow: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 10) {
-            Button("Start", action: start)
-                .buttonStyle(.borderedProminent)
-                .disabled(isActive)
-                .accessibilityLabel("Start \(label.title)")
-                .accessibilityHint(isActive ? "This label is already active" : "")
-                .accessibilityIdentifier("capture.label.\(label.id).start")
-
-            Button("Stop", role: .destructive, action: stop)
-                .buttonStyle(.bordered)
-                .disabled(!isActive)
-                .accessibilityLabel("Stop \(label.title)")
-                .accessibilityHint(isActive ? "" : "This label is not active")
-                .accessibilityIdentifier("capture.label.\(label.id).stop")
+        Button(label.actionTitle(isActive: isActive), role: isActive ? .destructive : nil) {
+            if isActive {
+                stop()
+            } else {
+                start()
+            }
         }
-        .tint(PevColors.yellow)
+        .buttonStyle(.borderedProminent)
+        .tint(isActive ? PevColors.orange : PevColors.yellow)
         .controlSize(.large)
+        .accessibilityIdentifier("capture.label.\(label.id).action")
     }
 }

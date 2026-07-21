@@ -203,6 +203,13 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
+        #if DEBUG
+        if usesVescUITestFixture {
+            isRecordOnlyCapture = true
+            recordOnlyDeviceKind = annotationKind
+            return true
+        }
+        #endif
         let annotations = ["device_kind=\(annotationKind)"]
         let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let didStart = switch modelHint {
@@ -497,6 +504,10 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
     case pwmPercent
 
     var id: String { annotationValue }
+
+    func actionTitle(isActive: Bool) -> String {
+        "\(isActive ? "Stop" : "Start") \(title)"
+    }
 
     var title: String {
         switch self {

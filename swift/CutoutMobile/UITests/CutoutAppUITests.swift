@@ -66,6 +66,34 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isEnabled)
     }
 
+    func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
+
+        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        captureKind.tap()
+        captureKind.typeText("custom vesc\n")
+        recordButton.tap()
+
+        XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
+
+        let rideActions = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "capture.label.ride.")
+        )
+        let action = app.buttons["capture.label.ride.action"]
+        XCTAssertEqual(rideActions.count, 1)
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
+        XCTAssertEqual(action.label, "Start Ride")
+
+        action.tap()
+        XCTAssertEqual(action.label, "Stop Ride")
+
+        action.tap()
+        XCTAssertEqual(action.label, "Start Ride")
+    }
+
     func testProductionPickerPassesAccessibilityAudit() throws {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
 
