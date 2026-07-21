@@ -148,6 +148,35 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc)
     }
 
+    func testEucRideAndBmsSurfacesRemainAccessible() throws {
+        relaunchAtEucAccessibilityDynamicType()
+
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        guard let rideScreen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.euc.screenIdentifier)
+        XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
+        assertMetricIsReachable("speed", in: rideScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+
+        let packTab = app.descendants(matching: .any)["dashboard.nav.pack"]
+        XCTAssertTrue(packTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(packTab.isHittable)
+        packTab.tap()
+
+        let bmsScreen = app.descendants(matching: .any)["dashboard.screen.bmsOverview"]
+        XCTAssertTrue(bmsScreen.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
+        for label in ["usable energy", "lowest group", "highest temp", "balancing", "fault state"] {
+            assertMetricIsReachable(label, in: bmsScreen)
+        }
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
@@ -248,9 +277,17 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func relaunchAtAccessibilityDynamicType() {
+        relaunchAtAccessibilityDynamicType(fixture: "--ui-test-vesc")
+    }
+
+    private func relaunchAtEucAccessibilityDynamicType() {
+        relaunchAtAccessibilityDynamicType(fixture: "--ui-test-euc")
+    }
+
+    private func relaunchAtAccessibilityDynamicType(fixture: String) {
         app.terminate()
         app.launchArguments = [
-            "--ui-test-vesc",
+            fixture,
             "-UIPreferredContentSizeCategoryName",
             "UICTContentSizeCategoryAccessibilityXXXL",
         ]

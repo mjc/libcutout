@@ -114,6 +114,10 @@ final class CutoutAppModel {
     private var usesVescUITestFixture: Bool {
         CommandLine.arguments.contains("--ui-test-vesc")
     }
+
+    private var usesEucUITestFixture: Bool {
+        CommandLine.arguments.contains("--ui-test-euc")
+    }
     #endif
 
     init() {
@@ -156,6 +160,10 @@ final class CutoutAppModel {
             showVescUITestPicker()
             return
         }
+        if usesEucUITestFixture {
+            showEucUITestPicker()
+            return
+        }
         #endif
         core.start()
     }
@@ -164,6 +172,10 @@ final class CutoutAppModel {
         #if DEBUG
         if usesVescUITestFixture, platformIdentifier == "ui-test-vesc" {
             showVescUITestRide()
+            return true
+        }
+        if usesEucUITestFixture, platformIdentifier == "ui-test-euc" {
+            showEucUITestRide()
             return true
         }
         #endif
@@ -282,6 +294,10 @@ final class CutoutAppModel {
             showVescUITestPicker()
             return
         }
+        if usesEucUITestFixture {
+            showEucUITestPicker()
+            return
+        }
         #endif
         core.disconnectAndScan()
     }
@@ -297,6 +313,26 @@ final class CutoutAppModel {
             support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
             symbolName: "circle.hexagongrid.circle"
         )
+        showUITestPicker(candidate)
+    }
+
+    private func showEucUITestPicker() {
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "ui-test-euc",
+            displayName: "Test EUC",
+            productCategory: "Electric unicycle",
+            evidence: "UI test fixture",
+            detail: "Deterministic accessibility test device",
+            support: .supported(
+                connectionRoute: .electricUnicycle,
+                electricUnicycleModel: .aero
+            ),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        showUITestPicker(candidate)
+    }
+
+    private func showUITestPicker(_ candidate: DevicePickerDiscoveryCandidate) {
         displayState = RideDisplayState()
         devicePickerScanState = DevicePickerScanState(status: .idle, rows: [candidate.pickerRow])
         phase = .scanning
@@ -322,6 +358,73 @@ final class CutoutAppModel {
             telemetry: telemetry,
             notificationCount: 1,
             lastUpdate: now
+        )
+        phase = .live
+    }
+
+    private func showEucUITestRide() {
+        let now = core.now()
+        let telemetry = TelemetrySnapshot(
+            at: now,
+            speed: Speed(value: 12_000),
+            speedSource: .reported,
+            speedQuality: .known,
+            operatingState: .riding,
+            voltage: Voltage(value: 82_000),
+            batteryCurrent: BatteryCurrent(value: 8_000),
+            controllerTemperature: Temperature(value: 31_000),
+            batteryLevelReported: BatteryLevel(value: 64)
+        )
+        selectedRideTitle = "Test EUC"
+        selectedConnectionRoute = .electricUnicycle
+        displayState = RideDisplayState(
+            speed: SpeedReadout(snapshot: telemetry),
+            telemetry: telemetry,
+            notificationCount: 1,
+            lastUpdate: now
+        )
+        bmsSnapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "20S4P test pack",
+                seriesGroupCount: 20,
+                parallelCount: 4,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            pageKind: "overview",
+            pageVerification: .hardwareVerified,
+            energyPercent: BatteryLevel(value: 64),
+            voltage: Voltage(value: 82_000),
+            current: BatteryCurrent(value: 8_000),
+            cellDelta: VoltageDelta(value: 24),
+            lowestGroupIndex: 7,
+            highestTemperature: Temperature(value: 38_000),
+            temperatureReadings: [Temperature(value: 38_000), Temperature(value: 34_000)],
+            highestTemperatureLabel: "right pack",
+            balancingSummary: "balancing 2 groups",
+            balancingDetail: "groups 7 and 12",
+            faultSummary: "no active faults",
+            faultDetail: "last fault unavailable",
+            groups: [
+                BmsGroupSnapshot(
+                    index: 7,
+                    label: "right pack group 7",
+                    voltage: Voltage(value: 4_036),
+                    temperature: Temperature(value: 38_000),
+                    isBalancing: true,
+                    alertLevel: .warning,
+                    detail: "lowest group"
+                ),
+                BmsGroupSnapshot(
+                    index: 12,
+                    label: "right pack group 12",
+                    voltage: Voltage(value: 4_060),
+                    temperature: Temperature(value: 34_000),
+                    isBalancing: true,
+                    alertLevel: .nominal
+                )
+            ]
         )
         phase = .live
     }
