@@ -485,6 +485,24 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(step.snapshot?.speed)
     }
 
+    func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
+                localName: "Floatwheel Atom",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
+
+        XCTAssertEqual(sink.events, [.write, .write, .write, .subscribe])
+    }
+
     func testVescLiveOwnerRetriesTelemetryAfterLinkUp() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
@@ -1989,12 +2007,21 @@ private func isRefloatRequest(_ bytes: Data, command: UInt8) -> Bool {
 }
 
 private final class RecordingOperationSink: CoreBluetoothOperationSink {
-    var writes: [Data] = []
+    enum Event: Equatable {
+        case subscribe
+        case write
+    }
 
-    func subscribe(channel: BluetoothUuid) {}
+    var writes: [Data] = []
+    var events: [Event] = []
+
+    func subscribe(channel: BluetoothUuid) {
+        events.append(.subscribe)
+    }
 
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         writes.append(bytes)
+        events.append(.write)
     }
 
     func disconnect() {}
