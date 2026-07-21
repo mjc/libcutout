@@ -72,6 +72,15 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutNavigationCommands.shortcut(for: .logs), "6")
     }
 
+    func testNativeNavigationOmitsUnavailableDestinations() {
+        XCTAssertEqual(CutoutAppRoute.eucRide.availableNavigationTabs.map(\.id), [.ride, .pack])
+        XCTAssertEqual(CutoutAppRoute.eucPack(.bmsOverview).availableNavigationTabs.map(\.id), [.ride, .pack])
+        XCTAssertEqual(CutoutAppRoute.vescRide.availableNavigationTabs.map(\.id), [.ride, .debug])
+        XCTAssertEqual(CutoutAppRoute.vescDebug.availableNavigationTabs.map(\.id), [.ride, .debug])
+        XCTAssertTrue(CutoutAppRoute.devicePicker.availableNavigationTabs.isEmpty)
+        XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs.isEmpty)
+    }
+
     func testOnlyLiveConnectionOpensTheRideSurface() {
         XCTAssertFalse(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.discoveringServices.opensRideScreen)

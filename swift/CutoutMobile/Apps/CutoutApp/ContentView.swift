@@ -42,26 +42,8 @@ struct ContentView: View {
                 .accessibilityFocused($focusedRoute, equals: .devicePicker)
             }
             .navigationDestination(for: CutoutAppRoute.self) { destination in
-                ZStack {
-                    PevColors.pageBackground
-                        .ignoresSafeArea()
-
-                    PevAppShell(
-                        sectionTitle: appSectionTitle,
-                        tabs: appTabs,
-                        connectionPhase: model.phase,
-                        selectedColor: appSelectedColor,
-                        unselectedColor: PevColors.muted,
-                        disconnect: disconnectAndReturnToPicker,
-                        selectTarget: selectTarget
-                    ) {
-                        routedContent
-                    }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityLabel(appSectionTitle)
-                    .accessibilityFocused($focusedRoute, equals: destination)
-                }
-                .navigationBarBackButtonHidden(true)
+                destinationContent(for: destination)
+                    .navigationBarBackButtonHidden(true)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -109,10 +91,6 @@ struct ContentView: View {
         navigate(to: CutoutAppRoute.route(for: model.selectedConnectionRoute))
     }
 
-    private func selectScreen(_ screenID: PevScreenID) {
-        navigate(to: CutoutAppRoute.route(for: screenID))
-    }
-
     private func selectTarget(_ target: PevNavigationTarget) {
         navigate(to: CutoutAppRoute.route(forNavigationTarget: target))
     }
@@ -127,8 +105,52 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var routedContent: some View {
-        if let screen = screen(for: route) {
+    private func destinationContent(for destination: CutoutAppRoute) -> some View {
+        if destination == .capture {
+            ZStack {
+                PevColors.pageBackground
+                    .ignoresSafeArea()
+                routedContent(for: destination)
+            }
+            .accessibilityFocused($focusedRoute, equals: destination)
+        } else {
+            TabView(selection: tabSelection) {
+                ForEach(availableTabs) { tab in
+                    if let target = tab.destinationTarget {
+                        let tabRoute = CutoutAppRoute.route(forNavigationTarget: target)
+                        Tab(value: tab.id) {
+                            connectedDestination(for: tabRoute)
+                        } label: {
+                            Label(tab.title, systemImage: tab.id.systemImage)
+                                .accessibilityIdentifier(tab.accessibilityIdentifier)
+                        }
+                    }
+                }
+            }
+            .tint(tabAccent)
+        }
+    }
+
+    private func connectedDestination(for destination: CutoutAppRoute) -> some View {
+        ZStack {
+            PevColors.pageBackground
+                .ignoresSafeArea()
+
+            PevAppShell(
+                sectionTitle: appSectionTitle(for: destination),
+                disconnect: disconnectAndReturnToPicker
+            ) {
+                routedContent(for: destination)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(appSectionTitle(for: destination))
+            .accessibilityFocused($focusedRoute, equals: destination)
+        }
+    }
+
+    @ViewBuilder
+    private func routedContent(for destination: CutoutAppRoute) -> some View {
+        if let screen = screen(for: destination) {
             if screen.id == .eucRide || screen.id == .vescRide {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
                     screenContainer(screen, now: model.currentMonotonicTime)
@@ -136,7 +158,7 @@ struct ContentView: View {
             } else {
                 screenContainer(screen, now: model.currentMonotonicTime)
             }
-        } else if route == .capture {
+        } else if destination == .capture {
             CaptureRecordingScreen(
                 deviceKind: model.recordOnlyDeviceKind,
                 captureStatusText: model.captureStatusText,
@@ -168,8 +190,8 @@ struct ContentView: View {
         )
     }
 
-    private var appSectionTitle: String {
-        switch route {
+    private func appSectionTitle(for destination: CutoutAppRoute) -> String {
+        switch destination {
         case .eucRide, .vescRide:
             "Ride"
         case .eucPack:
@@ -183,11 +205,25 @@ struct ContentView: View {
         }
     }
 
-    private var appTabs: [PevScreenTab] {
-        route.navigationTabs
+    private var availableTabs: [PevScreenTab] {
+        route.availableNavigationTabs
     }
 
-    private var appSelectedColor: Color {
+    private var tabSelection: Binding<PevScreenTabID> {
+        Binding(
+            get: {
+                availableTabs.first(where: \.isSelected)?.id ?? .ride
+            },
+            set: { selectedID in
+                guard let target = availableTabs.first(where: { $0.id == selectedID })?.destinationTarget else {
+                    return
+                }
+                selectTarget(target)
+            }
+        )
+    }
+
+    private var tabAccent: Color {
         switch route {
         case .vescRide, .vescDebug:
             PevColors.purple
@@ -212,6 +248,25 @@ struct ContentView: View {
             catalog.screen(id: .vescDebug)
         case .capture:
             nil
+        }
+    }
+}
+
+private extension PevScreenTabID {
+    var systemImage: String {
+        switch self {
+        case .ride:
+            "speedometer"
+        case .pack:
+            "battery.100percent"
+        case .debug:
+            "wrench.and.screwdriver"
+        case .map:
+            "map"
+        case .tune:
+            "slider.horizontal.3"
+        case .logs:
+            "doc.text"
         }
     }
 }

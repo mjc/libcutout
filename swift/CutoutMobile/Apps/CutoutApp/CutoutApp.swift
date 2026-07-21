@@ -57,7 +57,7 @@ struct CutoutApp: App {
     }
 
     private var navigationTabs: [PevScreenTab] {
-        currentRoute.navigationTabs
+        currentRoute.availableNavigationTabs
     }
 }
 

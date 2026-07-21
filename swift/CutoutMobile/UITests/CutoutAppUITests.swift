@@ -134,14 +134,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertNotEqual(speed.value as? String, "--")
         XCTAssertFalse((speed.value as? String ?? "").isEmpty)
 
-        let bottomBars = app.descendants(matching: .any).matching(identifier: "dashboard.bottom.navigation")
-        XCTAssertEqual(bottomBars.count, 1)
+        let tabBar = app.tabBars.firstMatch
+        XCTAssertTrue(tabBar.exists)
+        XCTAssertEqual(app.tabBars.count, 1)
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.top.navigation"].exists)
 
         let window = app.windows.firstMatch
-        let bottomBar = bottomBars.element
-        XCTAssertLessThanOrEqual(bottomBar.frame.maxY, window.frame.maxY + 2)
-        XCTAssertGreaterThan(bottomBar.frame.height, 0)
+        XCTAssertLessThanOrEqual(tabBar.frame.maxY, window.frame.maxY + 2)
+        XCTAssertGreaterThan(tabBar.frame.height, 0)
 
         for tab in family.tabNames {
             let element = app.descendants(matching: .any)["dashboard.nav.\(tab)"]
@@ -149,11 +149,11 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertFalse(element.frame.isEmpty)
             XCTAssertGreaterThan(element.frame.width, 0)
             XCTAssertGreaterThan(element.frame.height, 0)
+            XCTAssertEqual(element.isSelected, tab == "ride")
+        }
 
-            let expectedValue = tab == "ride"
-                ? "Selected"
-                : ["map", "logs", "tune"].contains(tab) ? "Unavailable" : "Available"
-            XCTAssertEqual(element.value as? String, expectedValue)
+        for unavailableTab in family.unavailableTabNames {
+            XCTAssertFalse(app.descendants(matching: .any)["dashboard.nav.\(unavailableTab)"].exists)
         }
     }
 
@@ -216,8 +216,15 @@ private enum ConnectedDeviceFamily: Equatable {
 
     var tabNames: [String] {
         switch self {
-        case .euc: ["ride", "pack", "map", "tune"]
-        case .vesc: ["ride", "debug", "map", "logs"]
+        case .euc: ["ride", "pack"]
+        case .vesc: ["ride", "debug"]
+        }
+    }
+
+    var unavailableTabNames: [String] {
+        switch self {
+        case .euc: ["map", "tune"]
+        case .vesc: ["map", "logs"]
         }
     }
 

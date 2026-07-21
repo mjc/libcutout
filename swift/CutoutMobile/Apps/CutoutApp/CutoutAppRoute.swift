@@ -73,4 +73,8 @@ enum CutoutAppRoute: Hashable {
         }
     }
 
+    var availableNavigationTabs: [PevScreenTab] {
+        navigationTabs.filter { $0.isEnabled && $0.destinationTarget != nil }
+    }
+
 }
