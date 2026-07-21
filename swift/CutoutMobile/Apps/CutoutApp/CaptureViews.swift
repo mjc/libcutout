@@ -141,6 +141,7 @@ private struct CaptureLabelControlRow: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(isActive ? PevColors.orange : PevColors.yellow)
+        .foregroundStyle(.black)
         .controlSize(.large)
         .accessibilityIdentifier("capture.label.\(label.id).action")
     }
