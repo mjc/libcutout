@@ -487,6 +487,75 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(stale.speed.state, .stale)
     }
 
+    func testMinimalAccessibilitySummaryNamesNormalAlertStaleAndUnavailableStates() {
+        let normal = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: liveRideState(
+                speed: 2_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 2_000),
+                    operatingState: .riding
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+        let alert = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: liveRideState(
+                speed: 12_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 12_000),
+                    operatingState: .riding,
+                    pwm: DutyCycle(permille: 800)
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+        let stale = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: liveRideState(
+                speed: 2_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 2_000)
+                )
+            ),
+            now: MonotonicMilliseconds(3_000),
+            staleAfter: MonotonicMilliseconds(1_000)
+        )
+        let unavailable = LiveActivityRideSnapshot(
+            identity: .unavailable,
+            rideState: EucRideScreenState(
+                phase: .bluetoothUnavailable(rawState: 4),
+                displayState: RideDisplayState()
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+
+        XCTAssertEqual(normal.connectionState, .connected)
+        XCTAssertEqual(
+            normal.minimalAccessibilitySummary,
+            "Aero, connected, Speed, 4.5, mph, vehicle telemetry"
+        )
+        XCTAssertEqual(alert.connectionState, .connected)
+        XCTAssertEqual(
+            alert.minimalAccessibilitySummary,
+            "Aero, connected, Speed, 26.8, mph, vehicle telemetry, Headroom, Reduce acceleration, derived telemetry"
+        )
+        XCTAssertEqual(stale.connectionState, .stale)
+        XCTAssertEqual(
+            stale.minimalAccessibilitySummary,
+            "Aero, stale, Speed, 4.5, mph, vehicle telemetry, stale"
+        )
+        XCTAssertEqual(unavailable.connectionState, .unavailable)
+        XCTAssertEqual(
+            unavailable.minimalAccessibilitySummary,
+            "Device, unavailable, Speed, unavailable, mph"
+        )
+    }
+
     func testConnectingSnapshotWaitsForFirstTelemetry() {
         let snapshot = LiveActivityRideSnapshot(
             identity: .model(.aero),
