@@ -110,6 +110,12 @@ final class CutoutAppModel {
     private var captureLabel: String?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
+    #if DEBUG
+    private var usesVescUITestFixture: Bool {
+        CommandLine.arguments.contains("--ui-test-vesc")
+    }
+    #endif
+
     init() {
         core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
@@ -145,10 +151,22 @@ final class CutoutAppModel {
     deinit {}
 
     func start() {
+        #if DEBUG
+        if usesVescUITestFixture {
+            showVescUITestPicker()
+            return
+        }
+        #endif
         core.start()
     }
 
     func pair(platformIdentifier: String) -> Bool {
+        #if DEBUG
+        if usesVescUITestFixture, platformIdentifier == "ui-test-vesc" {
+            showVescUITestRide()
+            return true
+        }
+        #endif
         let rows = devicePickerScanState?.rows ?? []
         guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
             phase = .scanning
@@ -252,8 +270,55 @@ final class CutoutAppModel {
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         selectedDeviceStore.clear()
+        #if DEBUG
+        if usesVescUITestFixture {
+            showVescUITestPicker()
+            return
+        }
+        #endif
         core.disconnectAndScan()
     }
+
+    #if DEBUG
+    private func showVescUITestPicker() {
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "ui-test-vesc",
+            displayName: "Refloat VESC",
+            productCategory: "VESC Onewheel",
+            evidence: "UI test fixture",
+            detail: "Deterministic accessibility test device",
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
+        )
+        displayState = RideDisplayState()
+        devicePickerScanState = DevicePickerScanState(status: .idle, rows: [candidate.pickerRow])
+        phase = .scanning
+    }
+
+    private func showVescUITestRide() {
+        let now = core.now()
+        let telemetry = TelemetrySnapshot(
+            at: now,
+            speed: Speed(value: 8_000),
+            speedSource: .reported,
+            speedQuality: .known,
+            operatingState: .riding,
+            voltage: Voltage(value: 50_400),
+            batteryCurrent: BatteryCurrent(value: 12_000),
+            controllerTemperature: Temperature(value: 32_000),
+            batteryLevelReported: BatteryLevel(value: 72)
+        )
+        selectedRideTitle = "Refloat VESC"
+        selectedConnectionRoute = .vescOnewheel
+        displayState = RideDisplayState(
+            speed: SpeedReadout(snapshot: telemetry),
+            telemetry: telemetry,
+            notificationCount: 1,
+            lastUpdate: now
+        )
+        phase = .live
+    }
+    #endif
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
         liveActivityCoordinator.end(reason: reason)

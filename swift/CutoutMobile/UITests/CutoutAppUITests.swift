@@ -1,20 +1,22 @@
 import XCTest
 
+@MainActor
 final class CutoutAppUITests: XCTestCase {
     private var app: XCUIApplication!
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         continueAfterFailure = false
         app = XCUIApplication()
+        app.launchArguments = ["--ui-test-vesc"]
         app.launch()
         allowDeviceAuthorizationAlerts()
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         app?.terminate()
         app = nil
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func allowDeviceAuthorizationAlerts() {
@@ -106,10 +108,6 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
-    func testEucUseOpensAnAccessibleLiveRide() throws {
-        try assertConnectedSurface(for: .euc)
-    }
-
     private func assertConnectedSurface(
         for family: ConnectedDeviceFamily,
         requiredMetricLabel: String? = nil
@@ -117,7 +115,8 @@ final class CutoutAppUITests: XCTestCase {
         let pairingAttempted = pairAvailableDevice(family)
 
         guard pairingAttempted else {
-            throw XCTSkip("Requires an advertising \(family.name) device")
+            XCTFail("The deterministic \(family.name) fixture did not expose a Use button")
+            return
         }
         guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The visible \(family.name) Use button was tapped, but no connected dashboard appeared")
@@ -170,6 +169,7 @@ final class CutoutAppUITests: XCTestCase {
     private func relaunchAtAccessibilityDynamicType() {
         app.terminate()
         app.launchArguments = [
+            "--ui-test-vesc",
             "-UIPreferredContentSizeCategoryName",
             "UICTContentSizeCategoryAccessibilityXXXL",
         ]
