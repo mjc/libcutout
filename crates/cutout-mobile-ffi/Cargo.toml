@@ -11,7 +11,7 @@ keywords = ["ble", "pev", "ffi", "mobile"]
 categories = ["hardware-support", "api-bindings"]
 
 [lib]
-crate-type = ["cdylib", "staticlib", "rlib"]
+crate-type = ["cdylib", "staticlib", "lib"]
 
 [lints]
 workspace = true
@@ -20,7 +20,7 @@ workspace = true
 cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 thiserror.workspace = true
-uniffi = { workspace = true, features = ["cli"] }
+uniffi.workspace = true
 
 [dev-dependencies]
 hex-literal.workspace = true
