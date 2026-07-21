@@ -88,6 +88,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
     public let unit: String?
+    public let normalizedProgress: Double?
     public let accessibilityDetail: String?
     public let state: LiveActivityRideValueState
     public let source: LiveActivityRideValueSource
@@ -96,6 +97,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         label: String,
         value: String,
         unit: String?,
+        normalizedProgress: Double? = nil,
         accessibilityDetail: String? = nil,
         state: LiveActivityRideValueState,
         source: LiveActivityRideValueSource
@@ -103,6 +105,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         self.label = label
         self.value = value
         self.unit = unit
+        self.normalizedProgress = normalizedProgress
         self.accessibilityDetail = accessibilityDetail
         self.state = state
         self.source = source
@@ -112,6 +115,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         label: String,
         value: String,
         unit: String?,
+        normalizedProgress: Double? = nil,
         accessibilityDetail: String? = nil,
         source: LiveActivityRideValueSource
     ) -> Self {
@@ -119,6 +123,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
             label: label,
             value: value,
             unit: unit,
+            normalizedProgress: normalizedProgress,
             accessibilityDetail: accessibilityDetail,
             state: .available,
             source: source
@@ -144,6 +149,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         label: String,
         value: String,
         unit: String?,
+        normalizedProgress: Double? = nil,
         accessibilityDetail: String? = nil,
         source: LiveActivityRideValueSource
     ) -> Self {
@@ -151,6 +157,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
             label: label,
             value: value,
             unit: unit,
+            normalizedProgress: normalizedProgress,
             accessibilityDetail: accessibilityDetail,
             state: .stale,
             source: source
@@ -168,10 +175,10 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     public var progressValue: Double? {
         guard
             unit == "%",
-            let percentage = fraction(of: 100)
+            state == .available || state == .stale
         else { return nil }
 
-        return percentage
+        return clampedNormalizedProgress
     }
 
     public var displayValue: String {
@@ -208,24 +215,16 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     }
 
     public var speedGaugeProgressValue: Double? {
-        switch unit {
-        case "mph":
-            fraction(of: 50)
-        case "km/h", "kmh":
-            fraction(of: 80)
-        default:
-            nil
-        }
-    }
-
-    public func fraction(of maximum: Double) -> Double? {
         guard
-            state == .available || state == .stale,
-            maximum > 0,
-            let number = Double(value)
+            unit == "mph" || unit == "km/h" || unit == "kmh",
+            state == .available || state == .stale
         else { return nil }
 
-        return min(max(number / maximum, 0), 1)
+        return clampedNormalizedProgress
+    }
+
+    private var clampedNormalizedProgress: Double? {
+        normalizedProgress.map { min(max($0, 0), 1) }
     }
 }
 
@@ -394,11 +393,12 @@ extension LiveActivityRideSnapshot {
         connectionState: LiveActivityRideConnectionState
     ) -> LiveActivityRideValue {
         rideState.displayState.speed.millimetersPerSecond
-            .map { _ in
+            .map { speed in
                 value(
                     label: "Speed",
                     value: rideState.speedText,
                     unit: rideState.speedUnit,
+                    normalizedProgress: RideUnits.speedValue(millimetersPerSecond: speed) / 50,
                     source: .liveTelemetry,
                     connectionState: connectionState
                 )
@@ -414,6 +414,7 @@ extension LiveActivityRideSnapshot {
                 label: "Battery",
                 value: percentageString(fromPercent: reported.value),
                 unit: "%",
+                normalizedProgress: Double(reported.value) / 100,
                 source: .liveTelemetry,
                 connectionState: connectionState
             )
@@ -425,6 +426,7 @@ extension LiveActivityRideSnapshot {
                     label: "Battery",
                     value: percentageString(fromPercent: $0.value),
                     unit: "%",
+                    normalizedProgress: Double($0.value) / 100,
                     source: .derivedTelemetry,
                     connectionState: connectionState
                 )
@@ -459,6 +461,7 @@ extension LiveActivityRideSnapshot {
                         label: "PWM",
                         value: percentageString(fromPermille: abs($0.permille)),
                         unit: "%",
+                        normalizedProgress: Double(abs(Int($0.permille))) / 1_000,
                         source: .liveTelemetry,
                         connectionState: connectionState
                     )
@@ -620,6 +623,7 @@ extension LiveActivityRideSnapshot {
         label: String,
         value: String,
         unit: String?,
+        normalizedProgress: Double? = nil,
         source: LiveActivityRideValueSource,
         connectionState: LiveActivityRideConnectionState,
         state: LiveActivityRideValueState? = nil,
@@ -640,6 +644,7 @@ extension LiveActivityRideSnapshot {
             label: label,
             value: value,
             unit: unit,
+            normalizedProgress: normalizedProgress,
             accessibilityDetail: accessibilityDetail,
             state: state ?? (connectionState == .stale ? .stale : .available),
             source: source

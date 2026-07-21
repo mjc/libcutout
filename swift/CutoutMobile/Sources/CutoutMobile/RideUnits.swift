@@ -8,8 +8,12 @@ public enum RideUnits {
 
     private static let milesPerHourPerMillimeterPerSecond = 0.002_236_936_292_054_4
 
+    public static func speedValue(millimetersPerSecond: Int32) -> Double {
+        Double(millimetersPerSecond) * milesPerHourPerMillimeterPerSecond
+    }
+
     public static func speedText(millimetersPerSecond: Int32, fractionDigits: Int = 1) -> String {
-        decimalString(Double(millimetersPerSecond) * milesPerHourPerMillimeterPerSecond, fractionDigits: fractionDigits)
+        decimalString(speedValue(millimetersPerSecond: millimetersPerSecond), fractionDigits: fractionDigits)
     }
 
     public static func voltageText<T: BinaryInteger>(millivolts: T, fractionDigits: Int = 1) -> String {

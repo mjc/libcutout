@@ -195,10 +195,25 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.identity.displayLabel, "Aero connected")
         XCTAssertEqual(snapshot.glyph, .electricUnicycle)
         XCTAssertEqual(snapshot.connectionState, .connected)
-        XCTAssertEqual(snapshot.speed, .available(label: "Speed", value: "27.0", unit: "mph", source: .liveTelemetry))
-        XCTAssertEqual(snapshot.battery, .available(label: "Battery", value: "68", unit: "%", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.speed,
+            .available(
+                label: "Speed",
+                value: "27.0",
+                unit: "mph",
+                normalizedProgress: RideUnits.speedValue(millimetersPerSecond: 12_070) / 50,
+                source: .liveTelemetry
+            )
+        )
+        XCTAssertEqual(
+            snapshot.battery,
+            .available(label: "Battery", value: "68", unit: "%", normalizedProgress: 0.68, source: .liveTelemetry)
+        )
         XCTAssertEqual(snapshot.packVoltage, .available(label: "Voltage", value: "118.4", unit: "V", source: .liveTelemetry))
-        XCTAssertEqual(snapshot.pwm, .available(label: "PWM", value: "54", unit: "%", source: .liveTelemetry))
+        XCTAssertEqual(
+            snapshot.pwm,
+            .available(label: "PWM", value: "54", unit: "%", normalizedProgress: 0.54, source: .liveTelemetry)
+        )
         XCTAssertEqual(snapshot.distance, .available(label: "Distance", value: "7.8", unit: "mi", source: .liveTelemetry))
         XCTAssertEqual(snapshot.headroom.value, "Headroom good")
         XCTAssertEqual(snapshot.headroomSeverity, .nominal)
@@ -442,11 +457,11 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
 
     func testPercentProgressComesFromAvailableAndStaleValues() {
         let values: [(LiveActivityRideValue, Double?)] = [
-            (.available(label: "Battery", value: "68", unit: "%", source: .liveTelemetry), 0.68),
-            (.stale(label: "PWM", value: "42", unit: "%", source: .liveTelemetry), 0.42),
-            (.available(label: "Battery", value: "120", unit: "%", source: .liveTelemetry), 1.0),
-            (.available(label: "PWM", value: "-8", unit: "%", source: .liveTelemetry), 0.0),
-            (.available(label: "Voltage", value: "68", unit: "V", source: .liveTelemetry), nil),
+            (.available(label: "Battery", value: "68", unit: "%", normalizedProgress: 0.68, source: .liveTelemetry), 0.68),
+            (.stale(label: "PWM", value: "42", unit: "%", normalizedProgress: 0.42, source: .liveTelemetry), 0.42),
+            (.available(label: "Battery", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry), 1.0),
+            (.available(label: "PWM", value: "-8", unit: "%", normalizedProgress: -0.08, source: .liveTelemetry), 0.0),
+            (.available(label: "Voltage", value: "68", unit: "V", normalizedProgress: 0.68, source: .liveTelemetry), nil),
             (.unavailable(label: "Battery", unit: "%"), nil),
             (.deferred(label: "PWM", unit: "%"), nil),
         ]
@@ -454,18 +469,17 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(values.map { $0.0.progressValue }, values.map(\.1))
     }
 
-    func testNumericFractionComesFromAvailableAndStaleValues() {
+    func testSpeedGaugeProgressComesFromTypedNumericState() {
         let values: [(LiveActivityRideValue, Double?)] = [
-            (.available(label: "Speed", value: "25.0", unit: "mph", source: .liveTelemetry), 0.5),
-            (.stale(label: "Speed", value: "12.5", unit: "mph", source: .liveTelemetry), 0.25),
-            (.available(label: "Speed", value: "123.4", unit: "mph", source: .liveTelemetry), 1.0),
-            (.available(label: "Speed", value: "-1.0", unit: "mph", source: .liveTelemetry), 0.0),
+            (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.5, source: .liveTelemetry), 0.5),
+            (.stale(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.25, source: .liveTelemetry), 0.25),
+            (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 2, source: .liveTelemetry), 1.0),
+            (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: -1, source: .liveTelemetry), 0.0),
             (.unavailable(label: "Speed", unit: "mph"), nil),
             (.available(label: "Speed", value: "--", unit: "mph", source: .liveTelemetry), nil),
         ]
 
-        XCTAssertEqual(values.map { $0.0.fraction(of: 50) }, values.map(\.1))
-        XCTAssertNil(LiveActivityRideValue.available(label: "Speed", value: "25.0", unit: "mph", source: .liveTelemetry).fraction(of: 0))
+        XCTAssertEqual(values.map { $0.0.speedGaugeProgressValue }, values.map(\.1))
     }
 
     func testDisplayValueNormalizesUnavailableAndNotApplicableValues() {
