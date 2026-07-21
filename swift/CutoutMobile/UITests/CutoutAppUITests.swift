@@ -205,6 +205,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescRidePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+
+        relaunchAtAccessibilityDynamicType()
+        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+    }
+
     func testVescDebugPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
         guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
