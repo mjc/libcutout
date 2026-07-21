@@ -109,6 +109,14 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
+    func testProductionPickerPassesAccessibilityAuditInLightAppearance() throws {
+        relaunchAtLightAppearance()
+
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
 
@@ -243,6 +251,17 @@ final class CutoutAppUITests: XCTestCase {
             "--ui-test-vesc",
             "-UIPreferredContentSizeCategoryName",
             "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        allowDeviceAuthorizationAlerts()
+    }
+
+    private func relaunchAtLightAppearance() {
+        app.terminate()
+        app.launchArguments = [
+            "--ui-test-vesc",
+            "-AppleInterfaceStyle",
+            "Light",
         ]
         app.launch()
         allowDeviceAuthorizationAlerts()
