@@ -52,7 +52,7 @@ struct DevicePickerView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 PevDashboardSectionLabel(title: "Device kind for capture")
-                TextField("euc nosfet aeon", text: $recordOnlyDeviceKind)
+                TextField("Device model", text: $recordOnlyDeviceKind)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(PevColors.primaryText)
                     .padding(.horizontal, 14)
@@ -132,7 +132,7 @@ struct DevicePickerView: View {
             horizontalPadding: 0,
             iconSpacing: 8,
             foregroundEnabled: PevColors.yellow,
-            foregroundDisabled: PevColors.muted,
+            foregroundDisabled: PevColors.primaryText,
             fillEnabled: PevColors.warningFill,
             fillDisabled: PevColors.disabledFill,
             strokeEnabled: PevColors.warningStroke,

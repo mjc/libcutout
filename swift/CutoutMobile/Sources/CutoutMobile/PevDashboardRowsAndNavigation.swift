@@ -319,6 +319,7 @@ public struct PevDashboardScanningPill: View {
             .foregroundStyle(.yellow)
             .accessibilityHidden(true)
         }
+        .foregroundStyle(PevDashboardColors.primaryText)
         .padding(.horizontal, 22 * scale)
         .padding(.vertical, 14 * scale)
         .frame(minHeight: 64 * scale)

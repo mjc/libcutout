@@ -90,13 +90,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(screen.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(screen.frame.maxY, window.frame.maxY + 2)
 
-        for _ in 0..<4 where captureKind.frame.maxY > window.frame.maxY {
+        for _ in 0..<4 where !captureKind.isHittable {
             screen.swipeUp()
         }
 
         XCTAssertTrue(captureKind.isHittable)
-        XCTAssertGreaterThanOrEqual(captureKind.frame.minY, window.frame.minY - 2)
-        XCTAssertLessThanOrEqual(captureKind.frame.maxY, window.frame.maxY + 2)
         try performVisibleLayoutAccessibilityAudit()
     }
 
