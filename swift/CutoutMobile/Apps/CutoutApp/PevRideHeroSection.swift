@@ -50,6 +50,7 @@ enum PevRideHeroReadout: Equatable {
 }
 
 struct PevRideHeroSection: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle.electricUnicycleSpeedPointSize
     @ScaledMetric(relativeTo: .largeTitle) private var vescSpeedFontSize = PevRideHeroStyle.vescOnewheelSpeedPointSize
     @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize = PevRideHeroStyle.unitPointSize
@@ -129,7 +130,7 @@ struct PevRideHeroSection: View {
     private var speed: some View {
         if speedReadout.isAvailable {
             Text(speedReadout.displayValue)
-                .font(.system(size: speedFontSize, weight: .black))
+                .font(speedFont)
                 .monospacedDigit()
         } else {
             Text(speedReadout.displayValue)
@@ -144,12 +145,24 @@ struct PevRideHeroSection: View {
         }
     }
 
+    private var speedFont: Font {
+        dynamicTypeSize.isAccessibilitySize
+            ? .largeTitle.weight(.black)
+            : .system(size: speedFontSize, weight: .black)
+    }
+
     @ViewBuilder
     private var unit: some View {
         if !speedReadout.displayUnit.isEmpty {
             Text(speedReadout.displayUnit)
-                .font(.system(size: speedUnitFontSize, weight: .bold))
+                .font(unitFont)
                 .foregroundStyle(PevColors.muted)
         }
+    }
+
+    private var unitFont: Font {
+        dynamicTypeSize.isAccessibilitySize
+            ? .title2.weight(.bold)
+            : .system(size: speedUnitFontSize, weight: .bold)
     }
 }

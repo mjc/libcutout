@@ -75,6 +75,7 @@ public struct PevDashboardMetricTile: View {
                 Text(detail)
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(detailColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 16 * scale)

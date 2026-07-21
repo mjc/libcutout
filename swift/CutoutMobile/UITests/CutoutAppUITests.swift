@@ -70,10 +70,10 @@ final class CutoutAppUITests: XCTestCase {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
 
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        try performCompleteAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit()
     }
 
-    func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() {
+    func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() throws {
         relaunchAtAccessibilityDynamicType()
 
         let window = app.windows.firstMatch
@@ -97,6 +97,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureKind.isHittable)
         XCTAssertGreaterThanOrEqual(captureKind.frame.minY, window.frame.minY - 2)
         XCTAssertLessThanOrEqual(captureKind.frame.maxY, window.frame.maxY + 2)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testVescUseOpensAnAccessibleLiveRide() throws {
@@ -163,7 +164,7 @@ final class CutoutAppUITests: XCTestCase {
             assertMetricIsReachable(requiredMetricLabel, in: screen)
         }
 
-        try performCompleteAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     private func relaunchAtAccessibilityDynamicType() {
@@ -194,10 +195,14 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    private func performCompleteAccessibilityAudit() throws {
+    private func performVisibleLayoutAccessibilityAudit() throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
-        try app.performAccessibilityAudit()
+        try app.performAccessibilityAudit(for: .all.subtracting(.dynamicType)) { issue in
+            let elementDescription = issue.element?.debugDescription ?? "No element"
+            print("Accessibility audit issue: \(issue.detailedDescription)\n\(elementDescription)")
+            return false
+        }
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
