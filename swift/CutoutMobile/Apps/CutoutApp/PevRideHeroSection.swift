@@ -17,35 +17,169 @@ enum PevRideHeroStyle {
     }
 }
 
-enum PevRideHeroReadout: Equatable {
-    case available(value: String, unit: String)
+enum PevRideMetricProvenance: Equatable {
+    case vehicleTelemetry
+
+    var accessibilityText: String {
+        switch self {
+        case .vehicleTelemetry: "vehicle telemetry"
+        }
+    }
+}
+
+enum PevRideMetricSeverity: Equatable {
+    case nominal
+    case caution
+    case critical
     case unavailable
+
+    init(_ severity: EucRideWarningSeverity) {
+        switch severity {
+        case .normal: self = .nominal
+        case .caution, .reduceAcceleration: self = .caution
+        case .limpHome, .failed: self = .critical
+        case .unavailable: self = .unavailable
+        }
+    }
+
+    init(_ warning: VescRideWarning) {
+        switch warning {
+        case .none: self = .nominal
+        case .pushbackSoon: self = .caution
+        case .unknown: self = .unavailable
+        }
+    }
+
+    var accessibilityText: String {
+        switch self {
+        case .nominal: "nominal"
+        case .caution: "caution"
+        case .critical: "critical"
+        case .unavailable: "severity unavailable"
+        }
+    }
+}
+
+enum PevRideHeroReadout: Equatable {
+    case available(
+        value: String,
+        unit: String,
+        provenance: PevRideMetricProvenance,
+        freshness: EucRideUpdateFreshness,
+        severity: PevRideMetricSeverity
+    )
+    case unavailable(
+        provenance: PevRideMetricProvenance,
+        freshness: EucRideUpdateFreshness,
+        severity: PevRideMetricSeverity
+    )
 
     var displayValue: String {
         switch self {
-        case .available(let value, _): value
+        case .available(let value, _, _, _, _): value
         case .unavailable: "Unavailable"
         }
     }
 
     var displayUnit: String {
         switch self {
-        case .available(_, let unit): unit
+        case .available(_, let unit, _, _, _): unit
         case .unavailable: ""
         }
     }
 
     var accessibilityValue: String {
         switch self {
-        case .available(let value, let unit):
-            [value, unit].filter { !$0.isEmpty }.joined(separator: ", ")
-        case .unavailable:
-            "unavailable"
+        case .available(let value, let unit, let provenance, let freshness, let severity):
+            [
+                value,
+                unit,
+                "available",
+                provenance.accessibilityText,
+                freshness.accessibilityText,
+                severity.accessibilityText,
+            ]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        case .unavailable(let provenance, let freshness, let severity):
+            [
+                "unavailable",
+                provenance.accessibilityText,
+                freshness.accessibilityText,
+                severity.accessibilityText,
+            ]
+            .joined(separator: ", ")
         }
     }
 
     var isAvailable: Bool {
         if case .available = self { true } else { false }
+    }
+
+    static func euc(
+        state: EucRideScreenState?,
+        now: MonotonicMilliseconds
+    ) -> Self {
+        let freshness = state?.updateAge(
+            at: now,
+            staleAfter: MonotonicMilliseconds(2_000)
+        ).freshness ?? .unavailable
+        let severity = PevRideMetricSeverity(
+            state?.warningState(
+                at: now,
+                staleAfter: MonotonicMilliseconds(2_000)
+            ).severity ?? .unavailable
+        )
+        guard let state, state.telemetry?.speed != nil else {
+            return .unavailable(
+                provenance: .vehicleTelemetry,
+                freshness: freshness,
+                severity: severity
+            )
+        }
+        return .available(
+            value: state.speedText,
+            unit: state.speedUnit,
+            provenance: .vehicleTelemetry,
+            freshness: freshness,
+            severity: severity
+        )
+    }
+
+    static func vesc(
+        snapshot: VescRideSnapshot?,
+        now: MonotonicMilliseconds
+    ) -> Self {
+        let freshness = snapshot?.updateAge(
+            at: now,
+            staleAfter: MonotonicMilliseconds(2_000)
+        ).freshness ?? .unavailable
+        let severity = PevRideMetricSeverity(snapshot?.warning ?? .unknown)
+        guard let boardSpeed = snapshot?.boardSpeed else {
+            return .unavailable(
+                provenance: .vehicleTelemetry,
+                freshness: freshness,
+                severity: severity
+            )
+        }
+        let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
+        return .available(
+            value: readout.displayValue,
+            unit: readout.displayUnit,
+            provenance: .vehicleTelemetry,
+            freshness: freshness,
+            severity: severity
+        )
+    }
+}
+
+private extension EucRideUpdateFreshness {
+    var accessibilityText: String {
+        switch self {
+        case .fresh: "fresh"
+        case .stale: "stale"
+        case .unavailable: "freshness unavailable"
+        }
     }
 }
 

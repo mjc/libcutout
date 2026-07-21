@@ -35,11 +35,7 @@ struct VescRideScreenView: View {
     }
 
     private var speedReadout: PevRideHeroReadout {
-        guard let boardSpeed = liveSnapshot?.boardSpeed else {
-            return .unavailable
-        }
-        let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
-        return .available(value: readout.displayValue, unit: readout.displayUnit)
+        .vesc(snapshot: liveSnapshot, now: now)
     }
 
     private var warningCard: PevWarningCard? {

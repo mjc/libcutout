@@ -12,10 +12,7 @@ struct EucRideScreenView: View {
     let disconnect: () -> Void
 
     private var speedReadout: PevRideHeroReadout {
-        if let rideState {
-            return .available(value: rideState.speedText, unit: rideState.speedUnit)
-        }
-        return .unavailable
+        .euc(state: rideState, now: now)
     }
 
     private var phaseText: String {
