@@ -34,7 +34,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     // expose one concise VoiceOver element instead of
                     // announcing the same name twice.
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Cutout")
+                    .accessibilityLabel("CutOut")
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     HStack(spacing: 5) {
@@ -92,7 +92,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                 .accessibilityValue(context.state.snapshot.compactTrailingValue.accessibilityValue)
             } minimal: {
                 PevLiveActivityBrandMark(size: 16)
-                    .accessibilityLabel("Cutout ride")
+                    .accessibilityLabel("CutOut ride")
                     .accessibilityValue(context.state.snapshot.minimalAccessibilitySummary)
             }
         }

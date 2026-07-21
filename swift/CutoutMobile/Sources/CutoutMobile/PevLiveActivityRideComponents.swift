@@ -63,7 +63,7 @@ public struct PevLiveActivityBrandMark: View {
                     endPoint: .bottomTrailing
                 )
             )
-            .accessibilityLabel("Cutout")
+            .accessibilityLabel("CutOut")
     }
 }
 
@@ -98,7 +98,7 @@ public struct PevLiveActivityHeader: View {
                 .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Cutout ride")
+        .accessibilityLabel("CutOut ride")
         .accessibilityValue(snapshot.identity.accessibilityValue(for: snapshot.connectionState))
     }
 }
