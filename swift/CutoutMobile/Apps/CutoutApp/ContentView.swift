@@ -64,10 +64,6 @@ struct ContentView: View {
                 disconnectAndReturnToPicker()
                 return
             }
-            if route.requiresLiveSession && phase != .live {
-                navigate(to: .devicePicker)
-                return
-            }
             openRideScreen(ifNeededFor: phase)
         }
         .onChange(of: model.bmsSnapshot?.accessibilityAlertLevel) { _, level in

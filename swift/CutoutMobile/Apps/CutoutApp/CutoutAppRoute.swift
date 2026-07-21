@@ -49,15 +49,6 @@ enum CutoutAppRoute: Hashable {
         route == .devicePicker ? [] : [route]
     }
 
-    var requiresLiveSession: Bool {
-        switch self {
-        case .devicePicker, .capture:
-            false
-        case .eucRide, .eucPack, .vescRide, .vescDebug:
-            true
-        }
-    }
-
     var navigationTabs: [PevScreenTab] {
         switch self {
         case .devicePicker, .capture:
