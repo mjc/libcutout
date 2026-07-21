@@ -52,5 +52,8 @@ if [[ "$mode" == "test" ]]; then
   /usr/bin/xcrun xcodebuild \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
+    -test-timeouts-enabled YES \
+    -default-test-execution-time-allowance 120 \
+    -maximum-test-execution-time-allowance 120 \
     test-without-building
 fi
