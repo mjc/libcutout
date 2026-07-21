@@ -37,6 +37,8 @@ expected_orientations = [
     "UIInterfaceOrientationLandscapeLeft",
     "UIInterfaceOrientationLandscapeRight",
 ]
+if plist.get("UIDeviceFamily") != [1]:
+    raise SystemExit(f"metadata mismatch for UIDeviceFamily: expected [1], got {plist.get('UIDeviceFamily')!r}")
 for key in ("UISupportedInterfaceOrientations",):
     actual = plist.get(key)
     if actual != expected_orientations:
