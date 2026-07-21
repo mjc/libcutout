@@ -3,6 +3,15 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
+    @MainActor
+    func testPairFailureIsVisibleInsteadOfDoingNothing() {
+        let model = CutoutAppModel()
+
+        XCTAssertFalse(model.pair(platformIdentifier: "missing-device"))
+        XCTAssertEqual(model.phase, .scanning)
+        XCTAssertEqual(model.devicePickerScanState?.statusText, "Device is no longer available")
+    }
+
     func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
         XCTAssertEqual(
             CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")

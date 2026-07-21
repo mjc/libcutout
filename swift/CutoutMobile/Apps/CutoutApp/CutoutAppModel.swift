@@ -149,7 +149,16 @@ final class CutoutAppModel {
     }
 
     func pair(platformIdentifier: String) -> Bool {
-        let selectedRow = devicePickerScanState?.rows.first { $0.id == platformIdentifier }
+        let rows = devicePickerScanState?.rows ?? []
+        guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
+            phase = .scanning
+            devicePickerScanState = .failed("Device is no longer available", rows: rows)
+            return false
+        }
+
+        selectedRideTitle = selectedRow.title
+        selectedConnectionRoute = selectedRow.connectionRoute
+        phase = .discoveringServices
         let didPair = core.pair(platformIdentifier: platformIdentifier)
         if didPair {
             isRecordOnlyCapture = false
@@ -158,9 +167,10 @@ final class CutoutAppModel {
             selectedDeviceStore.save(platformIdentifier: platformIdentifier)
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
-            selectedRideTitle = selectedRow?.title
-            selectedConnectionRoute = selectedRow?.connectionRoute
             syncLiveActivity()
+        } else {
+            phase = .scanning
+            devicePickerScanState = .failed("Device is no longer available", rows: rows)
         }
         return didPair
     }
