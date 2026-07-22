@@ -74,7 +74,15 @@ public enum RideUnits {
         distanceText(millimeters: millimetres, unit: unit, fractionDigits: fractionDigits)
     }
 
-    public static func decimalString(_ value: Double, fractionDigits: Int) -> String {
-        String(format: "%.\(fractionDigits)f", value)
+    public static func decimalString(
+        _ value: Double,
+        fractionDigits: Int,
+        locale: Locale = .current
+    ) -> String {
+        value.formatted(
+            .number
+                .precision(.fractionLength(fractionDigits))
+                .locale(locale)
+        )
     }
 }

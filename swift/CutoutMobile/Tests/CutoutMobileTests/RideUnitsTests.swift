@@ -26,4 +26,15 @@ final class RideUnitsTests: XCTestCase {
         XCTAssertEqual(RideUnits.temperatureText(millicelsius: 34_000), "34")
         XCTAssertEqual(RideUnits.temperatureUnit, "°C")
     }
+
+    func testDecimalStringUsesRequestedLocale() {
+        XCTAssertEqual(
+            RideUnits.decimalString(
+                12.3,
+                fractionDigits: 1,
+                locale: Locale(identifier: "fr_FR")
+            ),
+            "12,3"
+        )
+    }
 }
