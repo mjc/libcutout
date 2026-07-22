@@ -22,6 +22,9 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
         XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
         XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")
+        XCTAssertEqual(localizedAppText("bms.detail.back_to_cell_map"), "Back to cell map")
+        XCTAssertEqual(localizedAppText("bms.detail.group", Int64(3)), "Group 3")
+        XCTAssertEqual(localizedAppText("bms.detail.trend", "stable"), "Trend: stable")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

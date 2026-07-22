@@ -10,7 +10,7 @@ struct BmsInlineLayout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
-                title: "topology fits inline",
+                title: localizedAppText("bms.inline.topology_fits"),
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel
             )
@@ -29,7 +29,7 @@ struct BmsInlineLayout: View {
             }
 
             PevDashboardWideCard(
-                title: "range of interest",
+                title: localizedAppText("bms.inline.range_of_interest"),
                 value: snapshot.cellMapSpreadSummary,
                 detail: snapshot.cellMapFocusSummary
             )
@@ -72,7 +72,7 @@ struct BmsScrollableLayout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
-                title: "large packs use grouped overview first",
+                title: localizedAppText("bms.scroll.large_packs"),
                 value: snapshot.cellMapVisibilitySummary,
                 detail: snapshot.topology.layoutLabel
             )
@@ -88,7 +88,7 @@ struct BmsScrollableLayout: View {
             }
 
             PevDashboardWideCard(
-                title: "interesting groups",
+                title: localizedAppText("bms.scroll.interesting_groups"),
                 value: snapshot.cellMapFocusSummary,
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
                 stroke: PevColors.orange
@@ -151,7 +151,7 @@ struct BmsDetailLayout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: showCellMap) {
-                Label("Back to cell map", systemImage: "chevron.left")
+                Label(localizedAppText("bms.detail.back_to_cell_map"), systemImage: "chevron.left")
                     .font(.body.weight(.semibold))
             }
             .buttonStyle(.bordered)
@@ -170,7 +170,7 @@ struct BmsDetailLayout: View {
 
             if let selectedGroup {
                 VStack(alignment: .leading, spacing: 15) {
-                    Text("group \(selectedGroup.index)")
+                    Text(localizedAppText("bms.detail.group", Int64(selectedGroup.index)))
                         .font(.headline)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityAddTraits(.isHeader)
@@ -190,14 +190,14 @@ struct BmsDetailLayout: View {
                         spacing: 14
                     ) {
                         PevDashboardMetricTile(
-                            label: "temp",
+                            label: localizedAppText("bms.detail.temperature"),
                             value: temperatureText(selectedGroup.temperature),
                             unit: "°C",
                             detail: "",
                             detailColor: PevColors.primaryText
                         )
                         PevDashboardMetricTile(
-                            label: "IR est.",
+                            label: localizedAppText("bms.detail.resistance"),
                             value: selectedGroup.resistance.map { String($0.value) } ?? "--",
                             unit: "mΩ",
                             detail: "",
@@ -207,7 +207,7 @@ struct BmsDetailLayout: View {
 
                     PevDashboardWideCard(
                         title: nil,
-                        value: "trend: \(snapshot.detailGroupTrend(for: selectedGroup.index))",
+                        value: localizedAppText("bms.detail.trend", snapshot.detailGroupTrend(for: selectedGroup.index)),
                         detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index)
                     )
                 }

@@ -1,6 +1,42 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.detail.back_to_cell_map" : {
+      "comment" : "Button title returning from a BMS group detail to the cell map.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to cell map" } } }
+    },
+    "bms.detail.group" : {
+      "comment" : "BMS group detail heading. The placeholder is the cell-group index.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Group %lld" } } }
+    },
+    "bms.detail.resistance" : {
+      "comment" : "BMS metric label for estimated internal resistance.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Estimated resistance" } } }
+    },
+    "bms.detail.temperature" : {
+      "comment" : "BMS metric label for cell-group temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } } }
+    },
+    "bms.detail.trend" : {
+      "comment" : "BMS group trend value. The placeholder is the trend state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trend: %@" } } }
+    },
+    "bms.inline.range_of_interest" : {
+      "comment" : "BMS inline cell-map card title for the voltage range that needs attention.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Range of interest" } } }
+    },
+    "bms.inline.topology_fits" : {
+      "comment" : "BMS inline cell-map card title when the topology fits in the available space.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Topology fits inline" } } }
+    },
+    "bms.scroll.interesting_groups" : {
+      "comment" : "BMS scrollable cell-map card title for groups needing attention.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interesting groups" } } }
+    },
+    "bms.scroll.large_packs" : {
+      "comment" : "BMS scrollable cell-map card title explaining the grouped overview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Large packs use grouped overview first" } } }
+    },
     "capture.announcement.failed" : {
       "comment" : "Visible status and VoiceOver announcement when capture fails.",
       "localizations" : {
