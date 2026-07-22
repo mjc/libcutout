@@ -10,7 +10,7 @@ struct BmsUnknownLayout: View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: "do not pretend certainty",
-                value: snapshot.faultSummary ?? "--",
+                metricValue: faultMetricValue,
                 detail: snapshot.faultDetail ?? "",
                 stroke: PevColors.orange
             )
@@ -76,5 +76,10 @@ struct BmsUnknownLayout: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("bms.unknown.capture-flow")
         }
+    }
+
+    private var faultMetricValue: PevDashboardMetricValue {
+        guard let faultSummary = snapshot.faultSummary else { return .unavailable }
+        return .available(display: faultSummary, accessibility: faultSummary)
     }
 }
