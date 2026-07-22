@@ -485,6 +485,102 @@
       "comment" : "VoiceOver sentence fragment for unavailable Ride hero speed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
     },
+    "ride.charge.detail.with_voltage_sag" : {
+      "comment" : "Ride charge tile detail when voltage sag is available. The placeholders are the sag detail and the typed charge-estimate detail.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ · %2$@" } } }
+    },
+    "ride.detail.sag_unavailable" : {
+      "comment" : "Ride pack-voltage tile detail when sag is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "sag unavailable" } } }
+    },
+    "ride.detail.typed_range_estimate" : {
+      "comment" : "Ride range tile detail identifying a typed range estimate.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "typed range estimate" } } }
+    },
+    "ride.detail.typed_telemetry" : {
+      "comment" : "Ride thermal tile fallback detail when no temperature telemetry is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "typed telemetry" } } }
+    },
+    "ride.metric.charge" : {
+      "comment" : "Ride dashboard tile label for charge.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charge" } } }
+    },
+    "ride.metric.limp_home" : {
+      "comment" : "Ride dashboard tile label for limp-home range.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "limp-home" } } }
+    },
+    "ride.metric.pack" : {
+      "comment" : "Ride dashboard tile label for pack voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "pack" } } }
+    },
+    "ride.metric.power" : {
+      "comment" : "Ride dashboard tile label for power.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "power" } } }
+    },
+    "ride.metric.thermal" : {
+      "comment" : "Ride dashboard tile label for temperatures.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "thermal" } } }
+    },
+    "ride.power.calculated_pack_current" : {
+      "comment" : "Ride power tile fallback when power is calculated from pack voltage and current.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "calculated from pack current" } } }
+    },
+    "ride.power.live_telemetry" : {
+      "comment" : "Ride power tile fallback when power is directly reported by live telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "live telemetry" } } }
+    },
+    "ride.safety.pwm_headroom" : {
+      "comment" : "Ride safety-bar label for PWM headroom.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM headroom" } } }
+    },
+    "ride.safety.sag_adjusted_energy" : {
+      "comment" : "Ride safety-bar label for sag-adjusted energy.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "sag-adjusted energy" } } }
+    },
+    "ride.sag.detail" : {
+      "comment" : "Ride pack-voltage sag detail. The placeholders are sag voltage, current, and effective resistance in milliohms.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@ V sag at %2$@ A · %3$lld mΩ" } } }
+    },
+    "ride.thermal.all" : {
+      "comment" : "Ride thermal tile detail. The placeholders are controller, motor, and battery temperatures, each followed by its unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ESC %1$@ %2$@ · motor %3$@ %4$@ · battery %5$@ %6$@" } } }
+    },
+    "ride.thermal.battery" : {
+      "comment" : "Ride thermal tile detail. The placeholders are battery temperature and unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery %@ %@" } } }
+    },
+    "ride.thermal.controller" : {
+      "comment" : "Ride thermal tile detail. The placeholders are controller temperature and unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ESC %@ %@" } } }
+    },
+    "ride.thermal.controller_battery" : {
+      "comment" : "Ride thermal tile detail. The placeholders are controller and battery temperatures, each followed by its unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ESC %1$@ %2$@ · battery %3$@ %4$@" } } }
+    },
+    "ride.thermal.controller_motor" : {
+      "comment" : "Ride thermal tile detail. The placeholders are controller and motor temperatures, each followed by its unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "ESC %1$@ %2$@ · motor %3$@ %4$@" } } }
+    },
+    "ride.thermal.motor" : {
+      "comment" : "Ride thermal tile detail. The placeholders are motor temperature and unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "motor %@ %@" } } }
+    },
+    "ride.thermal.motor_battery" : {
+      "comment" : "Ride thermal tile detail. The placeholders are motor and battery temperatures, each followed by its unit.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "motor %1$@ %2$@ · battery %3$@ %4$@" } } }
+    },
+    "ride.value.not_applicable" : {
+      "comment" : "Ride safety-bar value when a metric does not apply to the current riding state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not applicable" } } }
+    },
+    "ride.value.percent" : {
+      "comment" : "Ride percentage value. The placeholder is the locale-formatted numeric percentage without its percent sign.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@%%" } } }
+    },
+    "ride.value.unavailable" : {
+      "comment" : "Ride dashboard value when a typed metric is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
     "telemetry.power_flow.charging" : {
       "comment" : "Telemetry tile detail when the vehicle is charging from an external input.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging input" } } }

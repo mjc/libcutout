@@ -93,6 +93,28 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("telemetry.power_flow.negative_unknown"), "regen/discharge unverified")
     }
 
+    func testSharedRideTilePresentationUsesTheAppCatalog() {
+        let telemetry = TelemetrySnapshot(
+            voltage: Voltage(value: 54_300),
+            batteryCurrent: BatteryCurrent(value: 12_400),
+            powerFlow: .discharge,
+            controllerTemperature: Temperature(value: 54_000),
+            motorTemperature: Temperature(value: 49_000)
+        )
+
+        XCTAssertEqual(livePowerTile(from: telemetry).label, "power")
+        XCTAssertEqual(livePowerTile(from: telemetry).detail, "discharging")
+        XCTAssertEqual(liveThermalDetail(telemetry: telemetry), "ESC 54 °C · motor 49 °C")
+        XCTAssertEqual(localizedAppText("ride.metric.power"), "power")
+        XCTAssertEqual(
+            localizedAppText("ride.thermal.controller_motor", "54", "°C", "49", "°C"),
+            "ESC 54 °C · motor 49 °C"
+        )
+        XCTAssertEqual(localizedAppText("ride.value.unavailable"), "Unavailable")
+        XCTAssertEqual(percentageString(fromPercent: 62), "62%")
+        XCTAssertEqual(percentageString(fromPermille: 625), "62%")
+    }
+
     @MainActor
     func testVescDashboardPresentationUsesTheAppCatalog() {
         let snapshot = VescRideSnapshot(

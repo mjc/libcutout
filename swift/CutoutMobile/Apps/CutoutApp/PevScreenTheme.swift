@@ -150,22 +150,24 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
         state.pwmHeadroomPermille.map { headroomPermille in
             return PevSafetyBar(
                 id: .pwmHeadroom,
-                label: "PWM headroom",
+                label: localizedAppText("ride.safety.pwm_headroom"),
                 value: percentageString(fromPermille: headroomPermille),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
         } ?? PevSafetyBar(
             id: .pwmHeadroom,
-            label: "PWM headroom",
-            value: state.pwmHeadroomApplicability == .notApplicable ? "Not applicable" : "Unavailable",
+            label: localizedAppText("ride.safety.pwm_headroom"),
+            value: state.pwmHeadroomApplicability == .notApplicable
+                ? localizedAppText("ride.value.not_applicable")
+                : localizedAppText("ride.value.unavailable"),
             progress: 0,
             accent: .yellow
         ),
         PevSafetyBar(
             id: .sagAdjustedEnergy,
-            label: "sag-adjusted energy",
-            value: "Unavailable",
+            label: localizedAppText("ride.safety.sag_adjusted_energy"),
+            value: localizedAppText("ride.value.unavailable"),
             progress: 0,
             accent: .cyan
         ),
@@ -179,48 +181,73 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
         telemetry.voltage.map { voltage in
             PevDashboardTile(
                 kind: .packVoltage,
-                label: "pack",
+                label: localizedAppText("ride.metric.pack"),
                 value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
                 detail: telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
-                    ?? "sag unavailable",
+                    ?? localizedAppText("ride.detail.sag_unavailable"),
                 accent: .cyan
             )
-        } ?? PevDashboardTile(kind: .packVoltage, label: "pack", metricValue: .unavailable, unit: "V", detail: "unavailable", accent: .cyan),
+        } ?? PevDashboardTile(
+            kind: .packVoltage,
+            label: localizedAppText("ride.metric.pack"),
+            metricValue: .unavailable,
+            unit: "V",
+            detail: localizedAppText("ride.value.unavailable"),
+            accent: .cyan
+        ),
         livePowerTile(from: telemetry),
         (telemetry.controllerTemperature != nil || telemetry.motorTemperature != nil || telemetry.batteryTemperature != nil)
             ? PevDashboardTile(
                 kind: .thermal,
-                label: "thermal",
+                label: localizedAppText("ride.metric.thermal"),
                 value: liveThermalValue(telemetry: telemetry),
                 unit: "°C",
                 detail: liveThermalDetail(telemetry: telemetry),
                 accent: .green
             )
-            : PevDashboardTile(kind: .thermal, label: "thermal", metricValue: .unavailable, unit: "°C", detail: "unavailable", accent: .green),
+            : PevDashboardTile(
+                kind: .thermal,
+                label: localizedAppText("ride.metric.thermal"),
+                metricValue: .unavailable,
+                unit: "°C",
+                detail: localizedAppText("ride.value.unavailable"),
+                accent: .green
+            ),
         state.limpHomeRange.map { range in
             PevDashboardTile(
                 kind: .limpHomeRange,
-                label: "limp-home",
+                label: localizedAppText("ride.metric.limp_home"),
                 value: decimalString(fromMillimetres: range.value, unit: distanceUnit, fractionDigits: 1),
                 unit: distanceUnit,
-                detail: "typed range estimate",
+                detail: localizedAppText("ride.detail.typed_range_estimate"),
                 accent: .cyan
             )
-        } ?? PevDashboardTile(kind: .limpHomeRange, label: "limp-home", metricValue: .unavailable, unit: distanceUnit, detail: "unavailable", accent: .cyan),
+        } ?? PevDashboardTile(
+            kind: .limpHomeRange,
+            label: localizedAppText("ride.metric.limp_home"),
+            metricValue: .unavailable,
+            unit: distanceUnit,
+            detail: localizedAppText("ride.value.unavailable"),
+            accent: .cyan
+        ),
     ]
 }
 
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
     let estimate = state.chargeEstimate
     let detail = if let voltageSag = estimate.voltageSag {
-        "\(voltageSagDetail(voltageSag)) · \(estimate.displayDetail)"
+        localizedAppText(
+            "ride.charge.detail.with_voltage_sag",
+            voltageSagDetail(voltageSag),
+            estimate.displayDetail
+        )
     } else {
         estimate.displayDetail
     }
     return PevDashboardTile(
         kind: .chargeEstimate,
-        label: "charge",
+        label: localizedAppText("ride.metric.charge"),
         value: estimate.displayValue,
         unit: "",
         detail: detail,
@@ -234,7 +261,12 @@ func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {
         fractionDigits: 1
     )
     let current = RideUnits.currentText(milliamps: abs(sag.loadCurrent.value))
-    return "\(voltage) V sag at \(current) A · \(sag.effectiveResistanceMilliohms) mΩ"
+    return localizedAppText(
+        "ride.sag.detail",
+        voltage,
+        current,
+        Int64(sag.effectiveResistanceMilliohms)
+    )
 }
 
 func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
@@ -244,13 +276,16 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
         let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
         return PevDashboardTile(
             kind: .power,
-            label: "power",
+            label: localizedAppText("ride.metric.power"),
             value: decimalString(
                 fromMilliwatts: milliwatts,
                 fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
             ),
             unit: "kW",
-            detail: powerFlowDetail(telemetry.powerFlow, fallback: "calculated from pack current"),
+            detail: powerFlowDetail(
+                telemetry.powerFlow,
+                fallback: localizedAppText("ride.power.calculated_pack_current")
+            ),
             accent: .yellow
         )
     }
@@ -258,18 +293,28 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
     if let power = telemetry.power {
         return PevDashboardTile(
             kind: .power,
-            label: "power",
+            label: localizedAppText("ride.metric.power"),
             value: decimalString(
                 fromMilliwatts: power.value,
                 fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
             ),
             unit: "kW",
-            detail: powerFlowDetail(telemetry.powerFlow, fallback: "live telemetry"),
+            detail: powerFlowDetail(
+                telemetry.powerFlow,
+                fallback: localizedAppText("ride.power.live_telemetry")
+            ),
             accent: .yellow
         )
     }
 
-    return PevDashboardTile(kind: .power, label: "power", metricValue: .unavailable, unit: "kW", detail: "unavailable", accent: .yellow)
+    return PevDashboardTile(
+        kind: .power,
+        label: localizedAppText("ride.metric.power"),
+        metricValue: .unavailable,
+        unit: "kW",
+        detail: localizedAppText("ride.value.unavailable"),
+        accent: .yellow
+    )
 }
 
 func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> String {
@@ -291,13 +336,26 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
 
 func unavailableSafetyBars(from bars: [PevSafetyBar]) -> [PevSafetyBar] {
     bars.map {
-        PevSafetyBar(id: $0.id, label: $0.label, value: "Unavailable", progress: 0, accent: $0.accent)
+        PevSafetyBar(
+            id: $0.id,
+            label: $0.label,
+            value: localizedAppText("ride.value.unavailable"),
+            progress: 0,
+            accent: $0.accent
+        )
     }
 }
 
 func unavailableDashboardTiles(from tiles: [PevDashboardTile]) -> [PevDashboardTile] {
     tiles.map {
-        PevDashboardTile(kind: $0.kind, label: $0.label, metricValue: .unavailable, unit: $0.unit, detail: "unavailable", accent: $0.accent)
+        PevDashboardTile(
+            kind: $0.kind,
+            label: $0.label,
+            metricValue: .unavailable,
+            unit: $0.unit,
+            detail: localizedAppText("ride.value.unavailable"),
+            accent: $0.accent
+        )
     }
 }
 
@@ -311,26 +369,51 @@ func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
 }
 
 func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
-    let parts = [
-        telemetry.controllerTemperature.map {
-            "ESC " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) + " " + RideUnits.temperatureUnit
-        },
-        telemetry.motorTemperature.map {
-            "motor " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) + " " + RideUnits.temperatureUnit
-        },
-        telemetry.batteryTemperature.map {
-            "battery " + decimalString(fromMillicelsius: $0.value, fractionDigits: 0) + " " + RideUnits.temperatureUnit
-        },
-    ].compactMap { $0 }
-    return parts.isEmpty ? "typed telemetry" : parts.joined(separator: " · ")
+    let controller = telemetry.controllerTemperature.map {
+        decimalString(fromMillicelsius: $0.value, fractionDigits: 0)
+    }
+    let motor = telemetry.motorTemperature.map {
+        decimalString(fromMillicelsius: $0.value, fractionDigits: 0)
+    }
+    let battery = telemetry.batteryTemperature.map {
+        decimalString(fromMillicelsius: $0.value, fractionDigits: 0)
+    }
+    let unit = RideUnits.temperatureUnit
+
+    switch (controller, motor, battery) {
+    case let (.some(controller), .some(motor), .some(battery)):
+        return localizedAppText(
+            "ride.thermal.all",
+            controller,
+            unit,
+            motor,
+            unit,
+            battery,
+            unit
+        )
+    case let (.some(controller), .some(motor), nil):
+        return localizedAppText("ride.thermal.controller_motor", controller, unit, motor, unit)
+    case let (.some(controller), nil, .some(battery)):
+        return localizedAppText("ride.thermal.controller_battery", controller, unit, battery, unit)
+    case let (nil, .some(motor), .some(battery)):
+        return localizedAppText("ride.thermal.motor_battery", motor, unit, battery, unit)
+    case let (.some(controller), nil, nil):
+        return localizedAppText("ride.thermal.controller", controller, unit)
+    case let (nil, .some(motor), nil):
+        return localizedAppText("ride.thermal.motor", motor, unit)
+    case let (nil, nil, .some(battery)):
+        return localizedAppText("ride.thermal.battery", battery, unit)
+    case (nil, nil, nil):
+        return localizedAppText("ride.detail.typed_telemetry")
+    }
 }
 
 func percentageString<T: BinaryInteger>(fromPercent percent: T) -> String {
-    RideUnits.percentText(percent) + "%"
+    localizedAppText("ride.value.percent", RideUnits.percentText(percent))
 }
 
 func percentageString<T: BinaryInteger>(fromPermille permille: T) -> String {
-    RideUnits.permillePercentText(permille) + "%"
+    localizedAppText("ride.value.percent", RideUnits.permillePercentText(permille))
 }
 
 func decimalString<T: BinaryInteger>(fromMillivolts value: T, fractionDigits: Int) -> String {
