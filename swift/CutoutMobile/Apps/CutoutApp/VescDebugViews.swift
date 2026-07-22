@@ -12,19 +12,7 @@ struct VescDebugScreenView: View {
     }
 
     private var rows: [PevDashboardKeyValueRow] {
-        guard let snapshot else {
-            return [PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), value: phase.displayText)]
-        }
-        return [
-            PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), value: phase.displayText),
-            PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), value: String(describing: snapshot.subProtocol)),
-            PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: String(describing: snapshot.operatingState)),
-            PevDashboardKeyValueRow(id: "notifications", label: localizedAppText("vesc.debug.row.notifications"), value: String(notificationCount)),
-            PevDashboardKeyValueRow(id: "voltage", label: localizedAppText("vesc.debug.row.pack_voltage"), value: localizedAppText("vesc.debug.value.voltage", voltageText(snapshot.batteryVoltage))),
-            PevDashboardKeyValueRow(id: "battery-current", label: localizedAppText("vesc.debug.row.battery_current"), value: localizedAppText("vesc.debug.value.current", currentText(snapshot.batteryCurrent))),
-            PevDashboardKeyValueRow(id: "motor-current", label: localizedAppText("vesc.debug.row.motor_current"), value: localizedAppText("vesc.debug.value.current", phaseCurrentText(snapshot.motorCurrent))),
-            PevDashboardKeyValueRow(id: "footpad", label: localizedAppText("vesc.debug.row.footpad"), value: snapshot.footpad?.stateDisplayText ?? "--"),
-        ]
+        vescDebugRows(snapshot, phase: phase, notificationCount: notificationCount)
     }
 
     var body: some View {

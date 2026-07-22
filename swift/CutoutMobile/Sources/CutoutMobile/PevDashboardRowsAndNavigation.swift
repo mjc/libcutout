@@ -3,13 +3,29 @@ import SwiftUI
 public struct PevDashboardKeyValueRow: Identifiable {
     public let id: String
     public let label: String
-    public let value: String
+    public let metricValue: PevDashboardMetricValue
+    public var value: String { metricValue.displayText }
+    public var accessibilityValueText: String { metricValue.accessibilityText }
     public let valueColor: Color?
 
     public init(id: String, label: String, value: String, valueColor: Color? = nil) {
+        self.init(
+            id: id,
+            label: label,
+            metricValue: .available(display: value, accessibility: value),
+            valueColor: valueColor
+        )
+    }
+
+    public init(
+        id: String,
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        valueColor: Color? = nil
+    ) {
         self.id = id
         self.label = label
-        self.value = value
+        self.metricValue = metricValue
         self.valueColor = valueColor
     }
 }
@@ -63,7 +79,7 @@ public struct PevDashboardKeyValueRows: View {
                 .frame(minHeight: 31)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(row.label)
-                .accessibilityValue(row.value)
+                .accessibilityValue(row.accessibilityValueText)
 
                 if row.id != rows.last?.id {
                     Rectangle()

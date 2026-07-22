@@ -31,6 +31,17 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "unavailable")
     }
 
+    func testKeyValueRowSpeaksTypedUnavailableValue() {
+        let row = PevDashboardKeyValueRow(
+            id: "pack-voltage",
+            label: "Pack voltage",
+            metricValue: .unavailable
+        )
+
+        XCTAssertEqual(row.value, "--")
+        XCTAssertEqual(row.accessibilityValueText, "unavailable")
+    }
+
     func testProgressSemanticsClampOutOfRangeValues() {
         XCTAssertEqual(makeProgressBar(progress: -0.4).clampedProgress, 0)
         XCTAssertEqual(makeProgressBar(progress: 0.42).clampedProgress, 0.42)

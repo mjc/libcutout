@@ -277,6 +277,58 @@ func vescDebugTiles(_ snapshot: VescRideSnapshot) -> [PevDashboardTile] {
     ]
 }
 
+func vescDebugRows(
+    _ snapshot: VescRideSnapshot?,
+    phase: SessionConnectionPhase,
+    notificationCount: UInt64
+) -> [PevDashboardKeyValueRow] {
+    guard let snapshot else {
+        return [PevDashboardKeyValueRow(
+            id: "phase",
+            label: localizedAppText("vesc.debug.row.session"),
+            value: phase.displayText
+        )]
+    }
+
+    return [
+        PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), value: phase.displayText),
+        PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), value: String(describing: snapshot.subProtocol)),
+        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: String(describing: snapshot.operatingState)),
+        PevDashboardKeyValueRow(id: "notifications", label: localizedAppText("vesc.debug.row.notifications"), value: String(notificationCount)),
+        PevDashboardKeyValueRow(
+            id: "voltage",
+            label: localizedAppText("vesc.debug.row.pack_voltage"),
+            metricValue: snapshot.batteryVoltage.map { voltage in
+                let text = localizedAppText("vesc.debug.value.voltage", RideUnits.voltageText(millivolts: voltage.value))
+                return .available(display: text, accessibility: text)
+            } ?? .unavailable
+        ),
+        PevDashboardKeyValueRow(
+            id: "battery-current",
+            label: localizedAppText("vesc.debug.row.battery_current"),
+            metricValue: snapshot.batteryCurrent.map { current in
+                let text = localizedAppText("vesc.debug.value.current", RideUnits.currentText(milliamps: current.value))
+                return .available(display: text, accessibility: text)
+            } ?? .unavailable
+        ),
+        PevDashboardKeyValueRow(
+            id: "motor-current",
+            label: localizedAppText("vesc.debug.row.motor_current"),
+            metricValue: snapshot.motorCurrent.map { current in
+                let text = localizedAppText("vesc.debug.value.current", RideUnits.currentText(milliamps: current.value))
+                return .available(display: text, accessibility: text)
+            } ?? .unavailable
+        ),
+        PevDashboardKeyValueRow(
+            id: "footpad",
+            label: localizedAppText("vesc.debug.row.footpad"),
+            metricValue: snapshot.footpad.map { footpad in
+                .available(display: footpad.stateDisplayText, accessibility: footpad.stateDisplayText)
+            } ?? .unavailable
+        ),
+    ]
+}
+
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
     let estimate = state.chargeEstimate
     let detail = if let voltageSag = estimate.voltageSag {

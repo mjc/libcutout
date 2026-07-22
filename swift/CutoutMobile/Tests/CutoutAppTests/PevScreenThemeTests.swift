@@ -53,6 +53,23 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testVescDebugRowsUseTypedUnavailableMetricValues() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown
+        )
+
+        let rows = vescDebugRows(snapshot, phase: .live, notificationCount: 0)
+
+        XCTAssertEqual(
+            rows.suffix(4).map(\.metricValue),
+            [.unavailable, .unavailable, .unavailable, .unavailable]
+        )
+        XCTAssertEqual(rows.suffix(4).map(\.accessibilityValueText), Array(repeating: "unavailable", count: 4))
+    }
+
     func testVescFootpadPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("vesc.footpad.left"), "LEFT / ADC1")
         XCTAssertEqual(localizedAppText("vesc.footpad.right"), "RIGHT / ADC2")
