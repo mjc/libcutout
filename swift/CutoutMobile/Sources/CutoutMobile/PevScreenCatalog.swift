@@ -259,10 +259,6 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
     public let selectedGroupIndex: Int?
     public let modes: [PevBmsMode]
 
-    public var modeTitles: [String] {
-        modes.map(\.title)
-    }
-
     public init(
         kind: PevBmsScreenKind,
         snapshot: BmsSnapshot,

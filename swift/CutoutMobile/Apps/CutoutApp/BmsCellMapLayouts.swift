@@ -45,14 +45,7 @@ struct BmsInlineLayout: View {
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
-                PevDashboardGrid(
-                    columns: [GridItem(.adaptive(minimum: 100), spacing: 10)],
-                    spacing: 10
-                ) {
-                    ForEach(content.modes) { mode in
-                        BmsModeChip(title: mode.title)
-                    }
-                }
+                BmsModeGrid(modes: content.modes)
                 Text(snapshot.cellMapInteractionHint)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
@@ -111,8 +104,7 @@ struct BmsScrollableLayout: View {
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
-                Text(content.modeTitles.joined(separator: " • "))
-                    .font(.headline.weight(.black))
+                BmsModeGrid(modes: content.modes)
                 Text(snapshot.scrollableCellMapRule)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)

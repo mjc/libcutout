@@ -208,3 +208,18 @@ struct BmsModeChip: View {
             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
     }
 }
+
+struct BmsModeGrid: View {
+    let modes: [PevBmsMode]
+
+    var body: some View {
+        PevDashboardGrid(
+            columns: [GridItem(.adaptive(minimum: 100), spacing: 10)],
+            spacing: 10
+        ) {
+            ForEach(modes) { mode in
+                BmsModeChip(title: mode.title)
+            }
+        }
+    }
+}

@@ -341,7 +341,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(presented.id, .bmsCellMap6S)
         XCTAssertEqual(presented.bmsContent?.snapshot, snapshot)
         XCTAssertEqual(presented.bmsContent?.highlightedGroupIndices, [])
-        XCTAssertEqual(presented.bmsContent?.modeTitles, ["balance view"])
+        XCTAssertEqual(presented.bmsContent?.modes.map(\.title), ["balance view"])
     }
 
     func testBmsPresentationIdentityDoesNotDependOnOrder() {
@@ -365,7 +365,7 @@ final class PevScreenCatalogTests: XCTestCase {
 
         XCTAssertNotEqual(chips[0].id, chips[1].id)
         XCTAssertEqual(content.modes.map(\.id), [.rawTable, .overview])
-        XCTAssertEqual(content.modeTitles, ["raw table", "overview"])
+        XCTAssertEqual(content.modes.map(\.title), ["raw table", "overview"])
     }
 
     func testPresentedBmsScreenKeepsExplicitRouteIdentity() throws {
