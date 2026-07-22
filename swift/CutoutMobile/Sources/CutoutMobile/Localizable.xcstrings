@@ -93,6 +93,138 @@
       "comment" : "Dashboard title for VESC diagnostics state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC state" } } }
     },
+    "live_activity.accessibility.device" : {
+      "comment" : "VoiceOver identity used when no specific vehicle name is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device" } } }
+    },
+    "live_activity.accessibility.identity_connection" : {
+      "comment" : "VoiceOver identity and connection state. The placeholders are the vehicle name and connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } } }
+    },
+    "live_activity.accessibility.labeled_value" : {
+      "comment" : "VoiceOver metric label and its spoken value. The placeholders are the label and value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@" } } }
+    },
+    "live_activity.accessibility.ride" : {
+      "comment" : "VoiceOver label for the CutOut ride Live Activity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CutOut ride" } } }
+    },
+    "live_activity.connection.connected" : {
+      "comment" : "Live Activity connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "connected" } } }
+    },
+    "live_activity.connection.disconnected" : {
+      "comment" : "Live Activity connection state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "disconnected" } } }
+    },
+    "live_activity.connection.stale" : {
+      "comment" : "Live Activity state when presented telemetry is no longer fresh.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "stale" } } }
+    },
+    "live_activity.connection.unavailable" : {
+      "comment" : "Live Activity state when no connection is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
+    },
+    "live_activity.connection.waiting_for_telemetry" : {
+      "comment" : "Live Activity state while connected but before the first telemetry arrives.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "waiting for telemetry" } } }
+    },
+    "live_activity.headroom.good" : {
+      "comment" : "Live Activity safety state when adequate headroom remains.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headroom good" } } }
+    },
+    "live_activity.headroom.reduce_acceleration" : {
+      "comment" : "Live Activity safety warning when the rider should reduce acceleration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reduce acceleration" } } }
+    },
+    "live_activity.identity.connected" : {
+      "comment" : "Live Activity display identity. The placeholder is the vehicle or device name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ connected" } } }
+    },
+    "live_activity.identity.unavailable" : {
+      "comment" : "Live Activity display identity when no vehicle is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device unavailable" } } }
+    },
+    "live_activity.label.battery" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery" } } }
+    },
+    "live_activity.label.beeps" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeps" } } }
+    },
+    "live_activity.label.charge" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge" } } }
+    },
+    "live_activity.label.distance" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Distance" } } }
+    },
+    "live_activity.label.duration" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Duration" } } }
+    },
+    "live_activity.label.headroom" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headroom" } } }
+    },
+    "live_activity.label.mode" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Mode" } } }
+    },
+    "live_activity.label.pwm" : {
+      "comment" : "Live Activity metric label for pulse-width modulation.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM" } } }
+    },
+    "live_activity.label.speed" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed" } } }
+    },
+    "live_activity.label.status" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Status" } } }
+    },
+    "live_activity.label.temperature" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temp" } } }
+    },
+    "live_activity.label.voltage" : {
+      "comment" : "Live Activity metric label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage" } } }
+    },
+    "live_activity.provenance.app_state" : {
+      "comment" : "VoiceOver provenance for a value supplied by app lifecycle state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "app state" } } }
+    },
+    "live_activity.provenance.derived_telemetry" : {
+      "comment" : "VoiceOver provenance for a value derived from telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "derived telemetry" } } }
+    },
+    "live_activity.provenance.session_state" : {
+      "comment" : "VoiceOver provenance for a value supplied by session state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "session state" } } }
+    },
+    "live_activity.provenance.vehicle_telemetry" : {
+      "comment" : "VoiceOver provenance for a direct vehicle telemetry value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "vehicle telemetry" } } }
+    },
+    "live_activity.value.not_applicable" : {
+      "comment" : "Full Live Activity value when a metric does not apply.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not applicable" } } }
+    },
+    "live_activity.value.not_applicable_accessibility" : {
+      "comment" : "VoiceOver sentence fragment when a metric does not apply.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "not applicable" } } }
+    },
+    "live_activity.value.not_applicable_compact" : {
+      "comment" : "Compact visual Live Activity value when a metric does not apply.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "n/a" } } }
+    },
+    "live_activity.value.waiting_for_data" : {
+      "comment" : "VoiceOver value while a metric awaits data.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "waiting for data" } } }
+    },
     "picker.action.capture_for_device" : {
       "comment" : "Accessibility label for starting a capture. The placeholder is the selected device name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ for %@" } } }

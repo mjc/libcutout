@@ -49,7 +49,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                             .accessibilityHidden(true)
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Device")
+                    .accessibilityLabel(LiveActivityRideIdentity.accessibilityLabel)
                     .accessibilityValue(
                         context.presentationSnapshot.identity.accessibilityValue(
                             for: context.presentationSnapshot.connectionState
@@ -92,7 +92,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
                 .accessibilityValue(context.presentationSnapshot.compactTrailingValue.accessibilityValue)
             } minimal: {
                 PevLiveActivityBrandMark(size: 16)
-                    .accessibilityLabel("CutOut ride")
+                    .accessibilityLabel(LiveActivityRideSnapshot.activityAccessibilityLabel)
                     .accessibilityValue(context.presentationSnapshot.minimalAccessibilitySummary)
             }
         }

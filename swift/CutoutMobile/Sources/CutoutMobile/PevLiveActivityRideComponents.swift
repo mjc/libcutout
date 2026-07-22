@@ -98,7 +98,7 @@ public struct PevLiveActivityHeader: View {
                 .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("CutOut ride")
+        .accessibilityLabel(LiveActivityRideSnapshot.activityAccessibilityLabel)
         .accessibilityValue(snapshot.identity.accessibilityValue(for: snapshot.connectionState))
     }
 }

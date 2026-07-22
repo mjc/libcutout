@@ -689,6 +689,11 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             "Not applicable, %"
         )
     }
+
+    func testSharedLiveActivityAccessibilityLabelsResolveFromTheCatalog() {
+        XCTAssertEqual(LiveActivityRideIdentity.accessibilityLabel, "Device")
+        XCTAssertEqual(LiveActivityRideSnapshot.activityAccessibilityLabel, "CutOut ride")
+    }
 }
 
 private func liveRideState(speed: Int32?, telemetry: TelemetrySnapshot) -> EucRideScreenState {

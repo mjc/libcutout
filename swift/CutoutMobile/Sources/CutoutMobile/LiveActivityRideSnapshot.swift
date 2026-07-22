@@ -1,6 +1,14 @@
 import CutoutMobileFFI
 import Foundation
 
+private func localizedLiveActivityText(_ key: String, _ arguments: CVarArg...) -> String {
+    String(
+        format: Bundle.module.localizedString(forKey: key, value: nil, table: "Localizable"),
+        locale: .current,
+        arguments: arguments
+    )
+}
+
 public enum LiveActivityRideIdentitySource: String, Codable, Equatable, Hashable, Sendable {
     case productionModel
     case productionDevice
@@ -25,21 +33,29 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
     }
 
     public static var unavailable: Self {
-        Self(label: "Device unavailable", source: .unavailable)
+        Self(label: localizedLiveActivityText("live_activity.identity.unavailable"), source: .unavailable)
+    }
+
+    public static var accessibilityLabel: String {
+        localizedLiveActivityText("live_activity.accessibility.device")
     }
 
     public var displayLabel: String {
         switch source {
         case .productionModel, .productionDevice:
-            "\(label) connected"
+            localizedLiveActivityText("live_activity.identity.connected", label)
         case .unavailable:
             label
         }
     }
 
     public func accessibilityValue(for connectionState: LiveActivityRideConnectionState) -> String {
-        let spokenIdentity = source == .unavailable ? "Device" : label
-        return "\(spokenIdentity), \(connectionState.accessibilityValue)"
+        let spokenIdentity = source == .unavailable ? Self.accessibilityLabel : label
+        return localizedLiveActivityText(
+            "live_activity.accessibility.identity_connection",
+            spokenIdentity,
+            connectionState.accessibilityValue
+        )
     }
 }
 
@@ -53,15 +69,15 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
     public var accessibilityValue: String {
         switch self {
         case .connected:
-            "connected"
+            localizedLiveActivityText("live_activity.connection.connected")
         case .disconnected:
-            "disconnected"
+            localizedLiveActivityText("live_activity.connection.disconnected")
         case .stale:
-            "stale"
+            localizedLiveActivityText("live_activity.connection.stale")
         case .waitingForFirstTelemetry:
-            "waiting for telemetry"
+            localizedLiveActivityText("live_activity.connection.waiting_for_telemetry")
         case .unavailable:
-            "unavailable"
+            localizedLiveActivityText("live_activity.connection.unavailable")
         }
     }
 }
@@ -178,7 +194,13 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     }
 
     public static func notApplicable(label: String, unit: String? = nil) -> Self {
-        Self(label: label, value: "Not applicable", unit: unit, state: .notApplicable, source: .notApplicable)
+        Self(
+            label: label,
+            value: localizedLiveActivityText("live_activity.value.not_applicable"),
+            unit: unit,
+            state: .notApplicable,
+            source: .notApplicable
+        )
     }
 
     public static func deferred(label: String, unit: String? = nil) -> Self {
@@ -199,7 +221,7 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         case .available, .stale:
             value
         case .notApplicable:
-            "n/a"
+            localizedLiveActivityText("live_activity.value.not_applicable_compact")
         case .unavailable, .deferred:
             "--"
         }
@@ -215,13 +237,13 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
     public var accessibilityProvenance: String? {
         switch source {
         case .liveTelemetry:
-            "vehicle telemetry"
+            localizedLiveActivityText("live_activity.provenance.vehicle_telemetry")
         case .derivedTelemetry:
-            "derived telemetry"
+            localizedLiveActivityText("live_activity.provenance.derived_telemetry")
         case .sessionState:
-            "session state"
+            localizedLiveActivityText("live_activity.provenance.session_state")
         case .appLifecycle:
-            "app state"
+            localizedLiveActivityText("live_activity.provenance.app_state")
         case .explicitlyUnavailable, .notApplicable, .deferred:
             nil
         }
@@ -232,13 +254,13 @@ public struct LiveActivityRideValue: Codable, Equatable, Hashable, Sendable {
         case .available:
             [value, unit, accessibilityProvenance, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         case .stale:
-            [value, unit, accessibilityProvenance, accessibilityDetail, "stale"].compactMap { $0 }.joined(separator: ", ")
+            [value, unit, accessibilityProvenance, accessibilityDetail, localizedLiveActivityText("live_activity.connection.stale")].compactMap { $0 }.joined(separator: ", ")
         case .unavailable:
-            ["unavailable", unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            [localizedLiveActivityText("live_activity.connection.unavailable"), unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         case .notApplicable:
-            ["not applicable", unit].compactMap { $0 }.joined(separator: ", ")
+            [localizedLiveActivityText("live_activity.value.not_applicable_accessibility"), unit].compactMap { $0 }.joined(separator: ", ")
         case .deferred:
-            ["waiting for data", unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
+            [localizedLiveActivityText("live_activity.value.waiting_for_data"), unit, accessibilityDetail].compactMap { $0 }.joined(separator: ", ")
         }
     }
 
@@ -303,7 +325,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.battery = Self.batteryValue(telemetry: rideState.telemetry, connectionState: connectionState)
         self.packVoltage = Self.voltageValue(telemetry: rideState.telemetry, connectionState: connectionState)
         self.pwm = Self.pwmValue(rideState: rideState, connectionState: connectionState)
-        self.mode = .deferred(label: "Mode")
+        self.mode = .deferred(label: localizedLiveActivityText("live_activity.label.mode"))
         self.duration = Self.durationValue(rideDuration)
         self.distance = Self.distanceValue(
             telemetry: rideState.telemetry,
@@ -312,7 +334,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         )
         self.headroom = Self.headroomValue(rideState: rideState, connectionState: connectionState)
         self.headroomSeverity = Self.headroomSeverity(rideState: rideState, connectionState: connectionState)
-        self.beeps = .deferred(label: "Beeps")
+        self.beeps = .deferred(label: localizedLiveActivityText("live_activity.label.beeps"))
         self.temperature = Self.temperatureValue(telemetry: rideState.telemetry, connectionState: connectionState)
         self.chargeEstimate = Self.chargeEstimateValue(rideState: rideState, connectionState: connectionState)
     }
@@ -350,7 +372,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         self.headroomSeverity = headroomSeverity
         self.beeps = beeps
         self.temperature = temperature
-        self.chargeEstimate = chargeEstimate ?? .deferred(label: "Charge")
+        self.chargeEstimate = chargeEstimate ?? .deferred(label: localizedLiveActivityText("live_activity.label.charge"))
     }
 
     public var visibleValues: [LiveActivityRideValue] {
@@ -373,13 +395,27 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         headroomSeverity == .reduceAcceleration ? headroom : battery
     }
 
+    public static var activityAccessibilityLabel: String {
+        localizedLiveActivityText("live_activity.accessibility.ride")
+    }
+
     public var minimalAccessibilitySummary: String {
         var parts = [
             identity.accessibilityValue(for: connectionState),
-            "\(speed.label), \(speed.accessibilityValue)",
+            localizedLiveActivityText(
+                "live_activity.accessibility.labeled_value",
+                speed.label,
+                speed.accessibilityValue
+            ),
         ]
         if headroomSeverity == .reduceAcceleration {
-            parts.append("\(headroom.label), \(headroom.accessibilityValue)")
+            parts.append(
+                localizedLiveActivityText(
+                    "live_activity.accessibility.labeled_value",
+                    headroom.label,
+                    headroom.accessibilityValue
+                )
+            )
         }
         return parts.joined(separator: ", ")
     }
@@ -449,7 +485,13 @@ extension LiveActivityRideSnapshot {
         rideState: EucRideScreenState,
         connectionState: LiveActivityRideConnectionState
     ) -> LiveActivityRideValue {
-        value(label: "Status", value: rideState.statusText, unit: nil, source: .sessionState, connectionState: connectionState)
+        value(
+            label: localizedLiveActivityText("live_activity.label.status"),
+            value: rideState.statusText,
+            unit: nil,
+            source: .sessionState,
+            connectionState: connectionState
+        )
     }
 
     static func speedValue(
@@ -459,14 +501,14 @@ extension LiveActivityRideSnapshot {
         rideState.displayState.speed.millimetersPerSecond
             .map { speed in
                 value(
-                    label: "Speed",
+                    label: localizedLiveActivityText("live_activity.label.speed"),
                     value: rideState.speedText,
                     unit: rideState.speedUnit,
                     normalizedProgress: RideUnits.speedValue(millimetersPerSecond: speed) / 50,
                     source: .liveTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: "Speed", unit: rideState.speedUnit)
+            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.speed"), unit: rideState.speedUnit)
     }
 
     static func batteryValue(
@@ -475,7 +517,7 @@ extension LiveActivityRideSnapshot {
     ) -> LiveActivityRideValue {
         if let reported = telemetry?.batteryLevelReported {
             return value(
-                label: "Battery",
+                label: localizedLiveActivityText("live_activity.label.battery"),
                 value: percentageString(fromPercent: reported.value),
                 unit: "%",
                 normalizedProgress: Double(reported.value) / 100,
@@ -487,14 +529,14 @@ extension LiveActivityRideSnapshot {
         return telemetry?.batteryLevelEstimated
             .map {
                 value(
-                    label: "Battery",
+                    label: localizedLiveActivityText("live_activity.label.battery"),
                     value: percentageString(fromPercent: $0.value),
                     unit: "%",
                     normalizedProgress: Double($0.value) / 100,
                     source: .derivedTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: "Battery", unit: "%")
+            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.battery"), unit: "%")
     }
 
     static func voltageValue(
@@ -504,13 +546,13 @@ extension LiveActivityRideSnapshot {
         telemetry?.voltage
             .map {
                 value(
-                    label: "Voltage",
+                    label: localizedLiveActivityText("live_activity.label.voltage"),
                     value: decimalString(fromMillivolts: $0.value, fractionDigits: 1),
                     unit: "V",
                     source: .liveTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: "Voltage", unit: "V")
+            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.voltage"), unit: "V")
     }
 
     static func pwmValue(
@@ -522,18 +564,18 @@ extension LiveActivityRideSnapshot {
             return rideState.telemetry?.pwm
                 .map {
                     value(
-                        label: "PWM",
+                        label: localizedLiveActivityText("live_activity.label.pwm"),
                         value: percentageString(fromPermille: abs($0.permille)),
                         unit: "%",
                         normalizedProgress: Double(abs(Int($0.permille))) / 1_000,
                         source: .liveTelemetry,
                         connectionState: connectionState
                     )
-                } ?? .unavailable(label: "PWM", unit: "%")
+                } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: "%")
         case .unavailable:
-            return .unavailable(label: "PWM", unit: "%")
+            return .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: "%")
         case .notApplicable:
-            return .notApplicable(label: "PWM")
+            return .notApplicable(label: localizedLiveActivityText("live_activity.label.pwm"))
         }
     }
 
@@ -541,12 +583,12 @@ extension LiveActivityRideSnapshot {
         rideDuration
             .map {
                 LiveActivityRideValue.available(
-                    label: "Duration",
+                    label: localizedLiveActivityText("live_activity.label.duration"),
                     value: durationString(from: $0),
                     unit: nil,
                     source: .appLifecycle
                 )
-            } ?? .deferred(label: "Duration")
+            } ?? .deferred(label: localizedLiveActivityText("live_activity.label.duration"))
     }
 
     static func distanceValue(
@@ -558,13 +600,13 @@ extension LiveActivityRideSnapshot {
         return telemetry?.distance
             .map {
                 value(
-                    label: "Distance",
+                    label: localizedLiveActivityText("live_activity.label.distance"),
                     value: decimalString(fromMillimetres: $0.value, unit: unit, fractionDigits: 1),
                     unit: unit,
                     source: .liveTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: "Distance", unit: unit)
+            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.distance"), unit: unit)
     }
 
     static func headroomValue(
@@ -576,19 +618,19 @@ extension LiveActivityRideSnapshot {
             return rideState.pwmHeadroomPermille
                 .map { _ in
                     value(
-                        label: "Headroom",
+                        label: localizedLiveActivityText("live_activity.label.headroom"),
                         value: rideState.warningState.severity == .reduceAcceleration
-                            ? "Reduce acceleration"
-                            : "Headroom good",
+                            ? localizedLiveActivityText("live_activity.headroom.reduce_acceleration")
+                            : localizedLiveActivityText("live_activity.headroom.good"),
                         unit: nil,
                         source: .derivedTelemetry,
                         connectionState: connectionState
                     )
-                } ?? .unavailable(label: "Headroom")
+                } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.headroom"))
         case .unavailable:
-            return .unavailable(label: "Headroom")
+            return .unavailable(label: localizedLiveActivityText("live_activity.label.headroom"))
         case .notApplicable:
-            return .notApplicable(label: "Headroom")
+            return .notApplicable(label: localizedLiveActivityText("live_activity.label.headroom"))
         }
     }
 
@@ -623,13 +665,13 @@ extension LiveActivityRideSnapshot {
         .max()
         .map {
             value(
-                label: "Temp",
+                label: localizedLiveActivityText("live_activity.label.temperature"),
                 value: decimalString(fromMillicelsius: $0, fractionDigits: 0),
                 unit: unit,
                 source: .liveTelemetry,
                 connectionState: connectionState
             )
-        } ?? .unavailable(label: "Temp", unit: unit)
+        } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.temperature"), unit: unit)
     }
 
     static func chargeEstimateValue(
@@ -640,7 +682,7 @@ extension LiveActivityRideSnapshot {
         switch estimate.kind {
         case .available:
             return value(
-                label: "Charge",
+                label: localizedLiveActivityText("live_activity.label.charge"),
                 value: estimate.displayValue,
                 unit: nil,
                 source: .derivedTelemetry,
@@ -649,7 +691,7 @@ extension LiveActivityRideSnapshot {
             )
         case .collectingSamples:
             return value(
-                label: "Charge",
+                label: localizedLiveActivityText("live_activity.label.charge"),
                 value: estimate.displayValue,
                 unit: nil,
                 source: .derivedTelemetry,
@@ -658,7 +700,7 @@ extension LiveActivityRideSnapshot {
             )
         case .stale:
             return value(
-                label: "Charge",
+                label: localizedLiveActivityText("live_activity.label.charge"),
                 value: estimate.displayValue,
                 unit: nil,
                 source: .derivedTelemetry,
@@ -669,7 +711,7 @@ extension LiveActivityRideSnapshot {
         case .unavailable:
             if estimate.unavailableReason == .fullOrNearFull {
                 return value(
-                    label: "Charge",
+                    label: localizedLiveActivityText("live_activity.label.charge"),
                     value: estimate.displayValue,
                     unit: nil,
                     source: .derivedTelemetry,
@@ -677,9 +719,9 @@ extension LiveActivityRideSnapshot {
                     accessibilityDetail: estimate.displayDetail
                 )
             }
-            return .unavailable(label: "Charge", accessibilityDetail: estimate.displayDetail)
+            return .unavailable(label: localizedLiveActivityText("live_activity.label.charge"), accessibilityDetail: estimate.displayDetail)
         case .failed:
-            return .unavailable(label: "Charge", accessibilityDetail: estimate.displayDetail)
+            return .unavailable(label: localizedLiveActivityText("live_activity.label.charge"), accessibilityDetail: estimate.displayDetail)
         }
     }
 
