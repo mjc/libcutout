@@ -275,15 +275,15 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
 func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> String {
     switch direction {
     case .discharge:
-        "discharging"
+        localizedAppText("telemetry.power_flow.discharge")
     case .zero:
-        "idle"
+        localizedAppText("telemetry.power_flow.zero")
     case .charging:
-        "charging input"
+        localizedAppText("telemetry.power_flow.charging")
     case .regeneration:
-        "regen"
+        localizedAppText("telemetry.power_flow.regeneration")
     case .negativeUnknown:
-        "regen/discharge unverified"
+        localizedAppText("telemetry.power_flow.negative_unknown")
     case nil:
         fallback
     }

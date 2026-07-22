@@ -485,6 +485,26 @@
       "comment" : "VoiceOver sentence fragment for unavailable Ride hero speed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
     },
+    "telemetry.power_flow.charging" : {
+      "comment" : "Telemetry tile detail when the vehicle is charging from an external input.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging input" } } }
+    },
+    "telemetry.power_flow.discharge" : {
+      "comment" : "Telemetry tile detail when the vehicle is discharging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "discharging" } } }
+    },
+    "telemetry.power_flow.negative_unknown" : {
+      "comment" : "Telemetry tile detail when a negative current direction cannot be verified as regeneration or discharge.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "regen/discharge unverified" } } }
+    },
+    "telemetry.power_flow.regeneration" : {
+      "comment" : "Telemetry tile detail when the vehicle is regenerating power.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "regen" } } }
+    },
+    "telemetry.power_flow.zero" : {
+      "comment" : "Telemetry tile detail when current is effectively zero.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "idle" } } }
+    },
     "picker.section.supported_now" : {
       "comment" : "Device picker heading for devices that can connect immediately.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Supported now" } } }

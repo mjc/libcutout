@@ -85,6 +85,14 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(powerFlowDetail(nil, fallback: "fallback"), "fallback")
     }
 
+    func testPowerFlowLabelsResolveFromTheAppCatalog() {
+        XCTAssertEqual(localizedAppText("telemetry.power_flow.discharge"), "discharging")
+        XCTAssertEqual(localizedAppText("telemetry.power_flow.zero"), "idle")
+        XCTAssertEqual(localizedAppText("telemetry.power_flow.charging"), "charging input")
+        XCTAssertEqual(localizedAppText("telemetry.power_flow.regeneration"), "regen")
+        XCTAssertEqual(localizedAppText("telemetry.power_flow.negative_unknown"), "regen/discharge unverified")
+    }
+
     func testUnavailableDashboardTilesCarryTypedAvailability() {
         let source = PevDashboardTile(
             kind: .packVoltage,
