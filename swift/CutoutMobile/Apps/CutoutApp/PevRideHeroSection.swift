@@ -214,7 +214,6 @@ struct PevRideHeroSection: View {
         }
         .padding(.top, 8)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(subtitle)")
         .accessibilityHeading(.h1)
 
         if let captureStatusText {
