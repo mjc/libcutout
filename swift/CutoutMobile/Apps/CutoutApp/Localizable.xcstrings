@@ -799,11 +799,11 @@
     },
     "vesc.footpad.left" : {
       "comment" : "VESC footpad readout label for the left sensor.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "left / adc1" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "LEFT / ADC1" } } }
     },
     "vesc.footpad.right" : {
       "comment" : "VESC footpad readout label for the right sensor.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "right / adc2" } } }
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "RIGHT / ADC2" } } }
     },
     "vesc.metric.battery_voltage" : {
       "comment" : "VESC dashboard tile label for battery voltage.",

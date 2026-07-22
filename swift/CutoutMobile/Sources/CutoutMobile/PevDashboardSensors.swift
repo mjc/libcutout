@@ -99,7 +99,6 @@ public struct PevDashboardFootpadReadout: View {
                 Text(label)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(secondaryTextColor)
-                    .textCase(.uppercase)
             }
             Text(value)
                 .font(.title3.weight(.black))

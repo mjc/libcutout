@@ -39,6 +39,11 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("vesc.debug.value.current", "12.4"), "12.4 A")
     }
 
+    func testVescFootpadPresentationUsesTheAppCatalog() {
+        XCTAssertEqual(localizedAppText("vesc.footpad.left"), "LEFT / ADC1")
+        XCTAssertEqual(localizedAppText("vesc.footpad.right"), "RIGHT / ADC2")
+    }
+
     func testRideHeroReadoutSharesExplicitAvailabilitySemantics() {
         let unavailable = PevRideHeroReadout.unavailable(
             provenance: .vehicleTelemetry,
