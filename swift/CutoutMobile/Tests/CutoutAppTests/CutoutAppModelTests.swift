@@ -151,6 +151,19 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRecordOnlyCaptureKeepsTheRememberedDevice() {
+        let store = DevicePickerSelectionStore()
+        store.save(platformIdentifier: "saved-device")
+        defer { store.clear() }
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
+
+        XCTAssertEqual(store.platformIdentifier, "saved-device")
+        XCTAssertTrue(model.hasSavedDevice)
+    }
+
+    @MainActor
     func testDisconnectIgnoresALateLiveCallback() {
         let row = DevicePickerRow(
             id: "vesc-1234",

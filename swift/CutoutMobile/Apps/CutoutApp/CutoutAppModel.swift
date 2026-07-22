@@ -281,8 +281,6 @@ final class CutoutAppModel {
             )
         }
         if didStart {
-            selectedDeviceStore.clear()
-            hasSavedDevice = false
             permitsStoredDeviceAutoPairing = false
             if modelHint != .unknown {
                 core.annotateCapture(key: "device_kind", value: annotationKind)
