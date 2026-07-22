@@ -893,6 +893,12 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection failed. Choose a device to try again. %@" } }
       }
     },
+    "picker.announcement.bluetooth_permission_denied" : {
+      "comment" : "VoiceOver recovery guidance when the app has no Bluetooth permission.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth permission denied. Allow Bluetooth access in Settings to scan for rides." } }
+      }
+    },
     "bms.display_modes" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Display modes" } }

@@ -988,7 +988,11 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
         assertOnBleQueue()
         record("central_state=\(central.state.rawValue)")
         guard central.state == .poweredOn else {
-            setPhase(.bluetoothUnavailable(rawState: central.state.rawValue))
+            setPhase(
+                central.state == .unauthorized
+                    ? .bluetoothPermissionDenied
+                    : .bluetoothUnavailable(rawState: central.state.rawValue)
+            )
             return
         }
         setPhase(.scanning)

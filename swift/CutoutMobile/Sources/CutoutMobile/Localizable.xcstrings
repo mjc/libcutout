@@ -157,6 +157,10 @@
       "comment" : "Bluetooth connection phase while Bluetooth starts.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting Bluetooth..." } } }
     },
+    "euc.connection.permission_denied" : {
+      "comment" : "Bluetooth connection phase when the app is not authorized to use Bluetooth.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth permission denied" } } }
+    },
     "euc.connection.subscribing" : {
       "comment" : "Bluetooth connection phase while subscribing to live device notifications.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Subscribing..." } } }

@@ -28,6 +28,12 @@ struct DevicePickerConnectionPresentation: Equatable {
 
     init(scanState: DevicePickerScanState?, phase: SessionConnectionPhase?) {
         switch phase {
+        case .bluetoothPermissionDenied:
+            self = .init(
+                title: String(localized: "picker.status.bluetooth_permission_denied", table: "Localizable", bundle: appLocalizationBundle),
+                showsActivity: false,
+                symbolName: "lock.slash.fill"
+            )
         case .bluetoothUnavailable:
             self = .init(
                 title: String(localized: "picker.status.bluetooth_unavailable", table: "Localizable", bundle: appLocalizationBundle),
@@ -157,7 +163,7 @@ extension SessionConnectionPhase {
         switch self {
         case .live:
             true
-        case .starting, .bluetoothUnavailable, .scanning, .connecting, .discoveringServices, .subscribing, .failed:
+        case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning, .connecting, .discoveringServices, .subscribing, .failed:
             false
         }
     }
@@ -166,6 +172,8 @@ extension SessionConnectionPhase {
         switch self {
         case .starting, .scanning, .discoveringServices, .subscribing:
             nil
+        case .bluetoothPermissionDenied:
+            String(localized: "picker.announcement.bluetooth_permission_denied", table: "Localizable", bundle: appLocalizationBundle)
         case .bluetoothUnavailable:
             String(
                 localized: "picker.announcement.bluetooth_unavailable",

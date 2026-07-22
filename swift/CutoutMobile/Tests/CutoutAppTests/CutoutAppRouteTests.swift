@@ -213,6 +213,21 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testPickerPermissionDenialUsesDistinctVisualAndSpokenRecovery() {
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(scanState: nil, phase: .bluetoothPermissionDenied),
+            .init(
+                title: "Bluetooth permission denied",
+                showsActivity: false,
+                symbolName: "lock.slash.fill"
+            )
+        )
+        XCTAssertEqual(
+            SessionConnectionPhase.bluetoothPermissionDenied.accessibilityAnnouncement,
+            "Bluetooth permission denied. Allow Bluetooth access in Settings to scan for rides."
+        )
+    }
+
     func testConnectionAnnouncementsCoverMeaningfulTransitionsWithoutChatter() {
         XCTAssertNil(SessionConnectionPhase.starting.accessibilityAnnouncement)
         XCTAssertNil(SessionConnectionPhase.scanning.accessibilityAnnouncement)

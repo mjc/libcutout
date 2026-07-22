@@ -525,7 +525,7 @@ private extension SessionConnectionPhase {
         switch self {
         case .connecting, .discoveringServices, .subscribing, .live:
             true
-        case .starting, .bluetoothUnavailable, .scanning, .failed:
+        case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning, .failed:
             false
         }
     }

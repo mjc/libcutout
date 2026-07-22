@@ -2944,7 +2944,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
                 title: phaseText,
                 detail: pevLocalizedText("euc.warning.waiting_for_live_telemetry")
             )
-        case .starting, .bluetoothUnavailable, .scanning:
+        case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning:
             return EucRideWarningState(
                 severity: .unavailable,
                 title: phaseText,
@@ -3194,6 +3194,7 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
 
 public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
     case starting
+    case bluetoothPermissionDenied
     case bluetoothUnavailable(rawState: Int)
     case scanning
     case connecting(model: ElectricUnicycleModel)
@@ -3206,6 +3207,8 @@ public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
         switch self {
         case .starting:
             pevLocalizedText("euc.connection.starting")
+        case .bluetoothPermissionDenied:
+            pevLocalizedText("euc.connection.permission_denied")
         case .bluetoothUnavailable(let rawState):
             pevLocalizedText("euc.connection.unavailable", rawState)
         case .scanning:
