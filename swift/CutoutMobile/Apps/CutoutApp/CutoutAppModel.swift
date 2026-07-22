@@ -549,50 +549,11 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
     var id: String { annotationValue }
 
     func actionTitle(isActive: Bool) -> String {
-        "\(isActive ? "Stop" : "Start") \(title)"
+        localizedCaptureText(isActive ? "capture.label.stop" : "capture.label.start", title)
     }
 
     var title: String {
-        switch self {
-        case .ride:
-            "Ride"
-        case .charge:
-            "Charge"
-        case .balance:
-            "Balance"
-        case .lowBeamOn:
-            "Low beam on"
-        case .lowBeamOff:
-            "Low beam off"
-        case .highBeamOn:
-            "High beam on"
-        case .highBeamOff:
-            "High beam off"
-        case .horn:
-            "Horn"
-        case .pedalsHard:
-            "Pedals hard"
-        case .pedalsMedium:
-            "Pedals medium"
-        case .pedalsSoft:
-            "Pedals soft"
-        case .resetTrip:
-            "Reset trip"
-        case .softwareLock:
-            "Software lock"
-        case .softwareUnlock:
-            "Software unlock"
-        case .tiltbackSpeed:
-            "Tiltback speed"
-        case .alarmSpeed:
-            "Alarm speed"
-        case .angleAdjustment:
-            "Angle adjust"
-        case .rideMode:
-            "Ride mode"
-        case .pwmPercent:
-            "PWM percent"
-        }
+        localizedCaptureText("capture.label.\(annotationValue)")
     }
 
     var annotationValue: String {

@@ -8,6 +8,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
     }
 
+    func testCaptureQuickLabelsResolveCatalogTitlesForVisibleAndAccessibleActions() {
+        for label in CaptureQuickLabel.allCases {
+            XCTAssertFalse(label.title.hasPrefix("capture.label."))
+            XCTAssertFalse(label.actionTitle(isActive: false).hasPrefix("capture.label."))
+            XCTAssertFalse(label.actionTitle(isActive: true).hasPrefix("capture.label."))
+        }
+        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.title, "Low beam on")
+        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: false), "Start Low beam on")
+        XCTAssertEqual(CaptureQuickLabel.lowBeamOn.actionTitle(isActive: true), "Stop Low beam on")
+    }
+
     @MainActor
     func testPairFailureIsVisibleInsteadOfDoingNothing() {
         let model = CutoutAppModel()

@@ -11,7 +11,7 @@ struct CaptureRecordingScreen: View {
 
     var body: some View {
         PevDashboardScaffold(
-            sectionTitle: "record",
+            sectionTitle: String(localized: "capture.section.record", table: "Localizable", bundle: appLocalizationBundle),
             bottomPadding: 24,
             allowsVerticalScroll: false,
             contentSpacing: 16,
@@ -58,8 +58,8 @@ struct CaptureRecordingScreen: View {
 
     private var titleBlock: some View {
         PevScreenTitleBlock(
-            title: deviceKind ?? "Capture session",
-            subtitle: "Capture session"
+            title: deviceKind ?? String(localized: "capture.session", table: "Localizable", bundle: appLocalizationBundle),
+            subtitle: String(localized: "capture.session", table: "Localizable", bundle: appLocalizationBundle)
         )
     }
 
@@ -137,13 +137,21 @@ private struct CaptureLabelControlRow: View {
             Text(label.title)
                 .font(.headline)
                 .foregroundStyle(PevColors.primaryText)
-            Text(isActive ? "Active" : "Idle")
+            Text(stateText)
                 .font(.caption)
                 .foregroundStyle(isActive ? PevColors.primaryText : PevColors.muted)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label.title)
-        .accessibilityValue(isActive ? "Active" : "Idle")
+        .accessibilityValue(stateText)
+    }
+
+    private var stateText: String {
+        String(
+            localized: isActive ? "capture.label.active" : "capture.label.idle",
+            table: "Localizable",
+            bundle: appLocalizationBundle
+        )
     }
 
     private var actions: some View {

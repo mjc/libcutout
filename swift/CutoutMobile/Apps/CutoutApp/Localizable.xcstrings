@@ -25,6 +25,106 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture saved" } }
       }
     },
+    "capture.label.active" : {
+      "comment" : "Visible and VoiceOver state for an active quick capture label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Active" } } }
+    },
+    "capture.label.alarm_speed" : {
+      "comment" : "Quick capture label title for an alarm speed adjustment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
+    },
+    "capture.label.angle_adjustment" : {
+      "comment" : "Quick capture label title for an angle adjustment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Angle adjust" } } }
+    },
+    "capture.label.balancing" : {
+      "comment" : "Quick capture label title for balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Balance" } } }
+    },
+    "capture.label.charging" : {
+      "comment" : "Quick capture label title for charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge" } } }
+    },
+    "capture.label.high_beam_off" : {
+      "comment" : "Quick capture label title for turning the high beam off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam off" } } }
+    },
+    "capture.label.high_beam_on" : {
+      "comment" : "Quick capture label title for turning the high beam on.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam on" } } }
+    },
+    "capture.label.horn" : {
+      "comment" : "Quick capture label title for a horn event.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Horn" } } }
+    },
+    "capture.label.idle" : {
+      "comment" : "Visible and VoiceOver state for an inactive quick capture label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Idle" } } }
+    },
+    "capture.label.low_beam_off" : {
+      "comment" : "Quick capture label title for turning the low beam off.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low beam off" } } }
+    },
+    "capture.label.low_beam_on" : {
+      "comment" : "Quick capture label title for turning the low beam on.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low beam on" } } }
+    },
+    "capture.label.pedals_hard" : {
+      "comment" : "Quick capture label title for hard pedals.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedals hard" } } }
+    },
+    "capture.label.pedals_medium" : {
+      "comment" : "Quick capture label title for medium pedals.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedals medium" } } }
+    },
+    "capture.label.pedals_soft" : {
+      "comment" : "Quick capture label title for soft pedals.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedals soft" } } }
+    },
+    "capture.label.pwm_percent" : {
+      "comment" : "Quick capture label title for PWM percentage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM percent" } } }
+    },
+    "capture.label.reset_trip" : {
+      "comment" : "Quick capture label title for resetting a trip.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset trip" } } }
+    },
+    "capture.label.ride" : {
+      "comment" : "Quick capture label title for a ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
+    },
+    "capture.label.ride_mode" : {
+      "comment" : "Quick capture label title for a ride mode change.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride mode" } } }
+    },
+    "capture.label.software_lock" : {
+      "comment" : "Quick capture label title for a software lock.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Software lock" } } }
+    },
+    "capture.label.software_unlock" : {
+      "comment" : "Quick capture label title for a software unlock.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Software unlock" } } }
+    },
+    "capture.label.start" : {
+      "comment" : "Quick capture label action. The placeholder is the label title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start %@" } } }
+    },
+    "capture.label.stop" : {
+      "comment" : "Quick capture label action. The placeholder is the label title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop %@" } } }
+    },
+    "capture.label.tiltback_speed" : {
+      "comment" : "Quick capture label title for a tiltback speed adjustment.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tiltback speed" } } }
+    },
+    "capture.section.record" : {
+      "comment" : "Capture screen section title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record" } } }
+    },
+    "capture.session" : {
+      "comment" : "Capture screen title and subtitle when the connected device name is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture session" } } }
+    },
     "capture.status.label_started" : {
       "comment" : "Visible capture status after a label begins. The placeholder is the label name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ started" } } }
