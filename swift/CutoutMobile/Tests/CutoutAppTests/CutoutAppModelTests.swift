@@ -124,6 +124,40 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(store.platformIdentifier)
     }
 
+    @MainActor
+    func testDisconnectIgnoresALateLiveCallback() {
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        driver.protocolIdentityCandidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: row.id,
+            displayName: row.title,
+            productCategory: row.subtitle,
+            evidence: "advertisement",
+            detail: row.detail,
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            symbolName: row.symbolName
+        )
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+
+        model.disconnectTransport()
+        driver.onPhaseChange?(.scanning)
+        driver.onPhaseChange?(.live)
+
+        XCTAssertEqual(model.phase, .scanning)
+        XCTAssertNil(model.selectedRideTitle)
+        XCTAssertNil(model.selectedConnectionRoute)
+    }
+
     func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
         XCTAssertEqual(
             CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")
