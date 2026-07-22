@@ -45,6 +45,26 @@
       "comment" : "Short action displayed for a supported device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use" } } }
     },
+    "picker.status.bluetooth_unavailable" : {
+      "comment" : "Device picker status when Bluetooth cannot be used.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth unavailable" } } }
+    },
+    "picker.status.permission_denied" : {
+      "comment" : "Device picker status when Bluetooth permission is denied.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth permission denied" } } }
+    },
+    "picker.status.scan_complete" : {
+      "comment" : "Device picker status after a Bluetooth scan finishes with devices found.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth scan complete" } } }
+    },
+    "picker.status.scanning" : {
+      "comment" : "Device picker status while Bluetooth discovery is running.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning Bluetooth" } } }
+    },
+    "picker.status.no_devices" : {
+      "comment" : "Device picker status after a Bluetooth scan finishes with no rideable device found.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } } }
+    },
     "tab.debug" : {
       "comment" : "Bottom navigation tab for diagnostics.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }

@@ -90,6 +90,28 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(PevRideTabs.vescRideTabs()[2].disabledReason, "Map is not available yet.")
     }
 
+    func testSharedPickerStatusCopyResolvesFromThePackageCatalog() {
+        XCTAssertEqual(DevicePickerScanState.scanning.statusText, "Scanning Bluetooth")
+        XCTAssertEqual(DevicePickerScanState(status: .idle, rows: []).statusText, "No rideable devices found")
+        XCTAssertEqual(
+            DevicePickerScanState(
+                status: .idle,
+                rows: [
+                    DevicePickerRow(
+                        title: "VESC",
+                        subtitle: "",
+                        detail: "",
+                        state: DevicePickerRowState(action: .use),
+                        symbolName: "bolt"
+                    ),
+                ]
+            ).statusText,
+            "Bluetooth scan complete"
+        )
+        XCTAssertEqual(DevicePickerScanState(status: .bluetoothUnavailable, rows: []).statusText, "Bluetooth unavailable")
+        XCTAssertEqual(DevicePickerScanState(status: .permissionDenied, rows: []).statusText, "Bluetooth permission denied")
+    }
+
     func testRideTabsNavigateToTheirProductionSurfaces() {
         XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
         XCTAssertNil(PevRideTabs.eucRideTabs().first?.destinationScreenID)

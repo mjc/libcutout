@@ -797,23 +797,23 @@ public extension DevicePickerCandidateSupport {
     var pickerRowState: DevicePickerRowState {
         switch self {
         case .supported, .provisionalRoute:
-            .supported(action: "Use")
+            DevicePickerRowState(action: .use)
         case .probeRecommended:
-            .probeRecommended(action: "Probe")
+            DevicePickerRowState(action: .probe)
         case .unknownRecordable:
-            .unsupported(action: "Record")
+            DevicePickerRowState(action: .record)
         case .knownUnsupported:
-            .unsupported(action: "Record")
+            DevicePickerRowState(action: .record)
         case .ambiguous:
-            .unsupported(action: "Confirm")
+            DevicePickerRowState(action: .confirm)
         case .conflicting:
-            .unsupported(action: "Review")
+            DevicePickerRowState(action: .review)
         case .rejectedNoise:
-            .unsupported(action: "Record")
+            DevicePickerRowState(action: .record)
         case .manualEntry:
-            .manual(action: "later")
+            DevicePickerRowState(action: .later)
         case .unsupported:
-            .unsupported(action: "Record")
+            DevicePickerRowState(action: .record)
         }
     }
 }
@@ -858,15 +858,15 @@ public struct DevicePickerScanState: Equatable, Hashable, Sendable {
     public var statusText: String {
         switch status {
         case .scanning:
-            "Scanning Bluetooth"
+            pevLocalizedText("picker.status.scanning")
         case .idle where rows.isEmpty:
-            "No rideable devices found"
+            pevLocalizedText("picker.status.no_devices")
         case .idle:
-            "Bluetooth scan complete"
+            pevLocalizedText("picker.status.scan_complete")
         case .bluetoothUnavailable:
-            "Bluetooth unavailable"
+            pevLocalizedText("picker.status.bluetooth_unavailable")
         case .permissionDenied:
-            "Bluetooth permission denied"
+            pevLocalizedText("picker.status.permission_denied")
         case .failed(let message):
             message
         }
