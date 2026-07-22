@@ -268,6 +268,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
+
+        let forget = app.buttons["device-picker.forget-saved-device"]
+        XCTAssertTrue(forget.waitForExistence(timeout: 5))
+        XCTAssertTrue(forget.isHittable)
+        XCTAssertEqual(forget.label, "Forget saved device")
     }
 
     func testEucRideAndBmsSurfacesRemainAccessible() throws {

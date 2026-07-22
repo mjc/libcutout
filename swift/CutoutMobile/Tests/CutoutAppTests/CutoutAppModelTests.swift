@@ -125,6 +125,32 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testConnectionFailureKeepsTheRememberedDevice() {
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let store = DevicePickerSelectionStore()
+        store.clear()
+        defer { store.clear() }
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+
+        driver.onPhaseChange?(.failed(.connectFailed("timed out")))
+
+        XCTAssertEqual(store.platformIdentifier, row.id)
+        XCTAssertTrue(model.hasSavedDevice)
+        XCTAssertEqual(model.phase, .failed(.connectFailed("timed out")))
+    }
+
+    @MainActor
     func testDisconnectIgnoresALateLiveCallback() {
         let row = DevicePickerRow(
             id: "vesc-1234",
