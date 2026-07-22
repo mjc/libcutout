@@ -2778,6 +2778,12 @@ public enum ControllerOnlyEstimateConfidence: Equatable, Hashable, Sendable {
     }
 }
 
+public enum ControllerOnlyEstimateDetail: Equatable, Hashable, Sendable {
+    case recentSag
+    case voltageCurve
+    case unavailable
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     private static let reduceAccelerationPwmHeadroomThreshold = 250
 
@@ -2837,14 +2843,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         telemetry?.batteryLevelReported ?? telemetry?.batteryLevelEstimated
     }
 
-    public var controllerOnlyEstimateDetail: String {
+    public var controllerOnlyEstimateDetail: ControllerOnlyEstimateDetail {
         if telemetry?.voltage != nil, voltageSag != nil {
-            return "derived from voltage curve + recent sag"
+            return .recentSag
         }
         if telemetry?.voltage != nil {
-            return "derived from voltage curve only"
+            return .voltageCurve
         }
-        return "estimate unavailable"
+        return .unavailable
     }
 
     public var controllerOnlyConfidence: ControllerOnlyEstimateConfidence {

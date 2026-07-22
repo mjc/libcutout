@@ -29,6 +29,18 @@
       "comment" : "No-data BMS detail when no telemetry supports a controller estimate.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry unavailable" } } }
     },
+    "bms.no_data.estimate_detail.recent_sag" : {
+      "comment" : "No-data BMS controller estimate based on voltage and recent sag.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Derived from voltage curve + recent sag" } } }
+    },
+    "bms.no_data.estimate_detail.unavailable" : {
+      "comment" : "No-data BMS controller estimate when no usable estimate can be calculated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Estimate unavailable" } } }
+    },
+    "bms.no_data.estimate_detail.voltage_curve" : {
+      "comment" : "No-data BMS controller estimate based only on the voltage curve.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Derived from voltage curve only" } } }
+    },
     "bms.no_data.load_now" : {
       "comment" : "No-data BMS metric label for current battery load.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load now" } } }

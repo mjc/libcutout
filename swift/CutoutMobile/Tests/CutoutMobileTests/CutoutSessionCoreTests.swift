@@ -1826,7 +1826,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         XCTAssertEqual(rideState.controllerOnlyEstimatePercent, batteryLevelValue(71))
-        XCTAssertEqual(rideState.controllerOnlyEstimateDetail, "derived from voltage curve + recent sag")
+        XCTAssertEqual(rideState.controllerOnlyEstimateDetail, .recentSag)
         XCTAssertEqual(rideState.controllerOnlyConfidence, .medium)
         XCTAssertEqual(rideState.controllerOnlyConfidence.ridingRuleProgress, 0.62, accuracy: 0.001)
     }
@@ -1843,7 +1843,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         XCTAssertEqual(rideState.controllerOnlyEstimatePercent, batteryLevelValue(68))
-        XCTAssertEqual(rideState.controllerOnlyEstimateDetail, "derived from voltage curve only")
+        XCTAssertEqual(rideState.controllerOnlyEstimateDetail, .voltageCurve)
         XCTAssertEqual(rideState.controllerOnlyConfidence, .low)
         XCTAssertEqual(rideState.controllerOnlyConfidence.ridingRuleProgress, 0.35, accuracy: 0.001)
     }

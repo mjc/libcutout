@@ -16,7 +16,14 @@ struct BmsNoDataLayout: View {
         return "--"
     }
     private var controllerEstimateDetail: String {
-        rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail
+        switch rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail {
+        case .recentSag:
+            localizedAppText("bms.no_data.estimate_detail.recent_sag")
+        case .voltageCurve:
+            localizedAppText("bms.no_data.estimate_detail.voltage_curve")
+        case .unavailable:
+            localizedAppText("bms.no_data.estimate_detail.unavailable")
+        }
     }
     private var controllerConfidence: ControllerOnlyEstimateConfidence {
         rideState?.controllerOnlyConfidence ?? fallbackConfidence
@@ -66,14 +73,14 @@ struct BmsNoDataLayout: View {
             return .available(display: value, accessibility: value)
         } ?? .unavailable
     }
-    private var fallbackEstimateDetail: String {
+    private var fallbackEstimateDetail: ControllerOnlyEstimateDetail {
         if snapshot.voltage != nil, snapshot.current != nil {
-            return "derived from voltage curve + recent sag"
+            return .recentSag
         }
         if snapshot.voltage != nil {
-            return "derived from voltage curve only"
+            return .voltageCurve
         }
-        return "estimate unavailable"
+        return .unavailable
     }
     private var fallbackConfidence: ControllerOnlyEstimateConfidence {
         if snapshot.voltage != nil, snapshot.current != nil {
