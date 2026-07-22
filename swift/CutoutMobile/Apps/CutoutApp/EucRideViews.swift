@@ -9,7 +9,6 @@ struct EucRideScreenView: View {
     let now: MonotonicMilliseconds
     let captureStatusText: String?
     let phoneLocationReadback: PhoneLocationReadback
-    let disconnect: () -> Void
 
     private var speedReadout: PevRideHeroReadout {
         .euc(state: rideState, now: now)

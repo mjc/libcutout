@@ -7,7 +7,6 @@ struct VescRideScreenView: View {
     let phase: SessionConnectionPhase
     let now: MonotonicMilliseconds
     let captureStatusText: String?
-    let disconnect: () -> Void
 
     private var title: String {
         liveSnapshot?.title ?? VescRideSnapshot.defaultTitle

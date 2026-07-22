@@ -35,7 +35,6 @@
 		300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */; };
 		300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */; };
 		300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */; };
-		300000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift */; };
 		300000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */; };
 		300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */; };
 		300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
@@ -98,7 +97,6 @@
 		400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucRideViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTitleBlock.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardScaffoldViews.swift; sourceTree = SOURCE_ROOT; };
-		400000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenContainer.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTheme.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescDebugViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
@@ -171,7 +169,6 @@
 				400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */,
 				400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */,
 				400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */,
-				400000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift */,
 				400000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift */,
 				400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */,
 				400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */,
@@ -383,7 +380,6 @@
 				300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */,
 				300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */,
 				300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */,
-				300000000000000000000014 /* Apps/CutoutApp/PevScreenContainer.swift in Sources */,
 				300000000000000000000015 /* Apps/CutoutApp/PevScreenTheme.swift in Sources */,
 				300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */,
 				300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */,

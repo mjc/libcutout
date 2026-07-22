@@ -164,15 +164,59 @@ struct ContentView: View {
 
     @ViewBuilder
     private func routedContent(for destination: CutoutAppRoute) -> some View {
-        if let screen = screen(for: destination) {
-            if screen.id == .eucRide || screen.id == .vescRide {
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    screenContainer(screen, route: destination, now: model.currentMonotonicTime)
-                }
-            } else {
-                screenContainer(screen, route: destination, now: model.currentMonotonicTime)
+        switch destination {
+        case .eucRide:
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                EucRideScreenView(
+                    rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
+                        ? nil
+                        : model.rideState,
+                    rideTitle: model.selectedRideTitle,
+                    now: model.currentMonotonicTime,
+                    captureStatusText: model.captureStatusText,
+                    phoneLocationReadback: model.phoneLocationReadback
+                )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dashboard.screen.eucRide")
             }
-        } else if destination == .capture {
+        case .eucPack(let packScreen):
+            if let screen = bmsScreen(for: packScreen) {
+                BmsScreenView(
+                    screen: screen,
+                    rideState: model.rideState,
+                    bmsSnapshot: model.bmsSnapshot,
+                    selectedGroupIndex: destination.selectedBmsGroupIndex,
+                    showGroupDetail: { groupIndex in
+                        navigate(to: .eucPack(.bmsCellDetail(groupIndex)))
+                    },
+                    showCellMap: {
+                        navigate(to: .eucPack(.root))
+                    }
+                )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
+            }
+        case .vescRide:
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                VescRideScreenView(
+                    liveSnapshot: model.vescRideSnapshot,
+                    phase: model.phase,
+                    now: model.currentMonotonicTime,
+                    captureStatusText: model.captureStatusText
+                )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("dashboard.screen.vescRide")
+            }
+        case .vescDebug:
+            VescDebugScreenView(
+                snapshot: model.vescRideSnapshot,
+                phase: model.phase,
+                notificationCount: model.displayState.notificationCount,
+                captureStatusText: model.captureStatusText
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dashboard.screen.vescDebug")
+        case .capture:
             CaptureRecordingScreen(
                 deviceKind: model.recordOnlyDeviceKind,
                 captureStatusText: model.captureStatusText,
@@ -181,36 +225,9 @@ struct ContentView: View {
                 startCaptureLabel: model.startCaptureLabel,
                 stopCaptureLabel: model.stopCaptureLabel
             )
+        case .devicePicker:
+            EmptyView()
         }
-    }
-
-    private func screenContainer(
-        _ screen: PevScreen,
-        route: CutoutAppRoute,
-        now: MonotonicMilliseconds
-    ) -> some View {
-        PevScreenContainer(
-            screen: screen,
-            rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
-                ? nil
-                : model.rideState,
-            rideTitle: model.selectedRideTitle,
-            bmsSnapshot: model.bmsSnapshot,
-            phoneLocationReadback: model.phoneLocationReadback,
-            vescSnapshot: model.vescRideSnapshot,
-            now: now,
-            connectionPhase: model.phase,
-            notificationCount: model.displayState.notificationCount,
-            captureStatusText: model.captureStatusText,
-            disconnect: disconnectAndReturnToPicker,
-            selectedBmsGroupIndex: route.selectedBmsGroupIndex,
-            showBmsGroupDetail: { groupIndex in
-                navigate(to: .eucPack(.bmsCellDetail(groupIndex)))
-            },
-            showBmsCellMap: {
-                navigate(to: .eucPack(.root))
-            }
-        )
     }
 
     private func appSectionTitle(for destination: CutoutAppRoute) -> String {
@@ -267,26 +284,13 @@ struct ContentView: View {
         #endif
     }
 
-    private func screen(for route: CutoutAppRoute) -> PevScreen? {
-        switch route {
-        case .devicePicker:
-            nil
-        case .eucRide:
-            catalog.screen(id: .eucRide)
-        case .eucPack(let screen):
-            if let screenID = screen.screenID {
-                catalog.screen(id: screenID).map {
-                    catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
-                }
-            } else {
-                catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
+    private func bmsScreen(for screen: EucPackScreen) -> PevScreen? {
+        if let screenID = screen.screenID {
+            catalog.screen(id: screenID).map {
+                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
             }
-        case .vescRide:
-            catalog.screen(id: .vescRide)
-        case .vescDebug:
-            catalog.screen(id: .vescDebug)
-        case .capture:
-            nil
+        } else {
+            catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
         }
     }
 }
