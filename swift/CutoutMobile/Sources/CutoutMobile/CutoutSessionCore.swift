@@ -1468,11 +1468,17 @@ private extension CBCharacteristic {
     }
 }
 
-private struct MonotonicClock {
-    private let base = Date()
+struct MonotonicClock {
+    private let source: () -> MonotonicMilliseconds
+
+    init(now: @escaping () -> MonotonicMilliseconds = {
+        MonotonicMilliseconds(UInt64(ProcessInfo.processInfo.systemUptime * 1_000))
+    }) {
+        source = now
+    }
 
     func now() -> MonotonicMilliseconds {
-        MonotonicMilliseconds(UInt64(Date().timeIntervalSince(base) * 1_000))
+        source()
     }
 }
 

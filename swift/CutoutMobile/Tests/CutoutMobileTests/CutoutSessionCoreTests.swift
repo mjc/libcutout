@@ -6,6 +6,16 @@ import CoreBluetooth
 @testable import CutoutMobile
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testMonotonicClockUsesItsInjectedUptimeSource() {
+        var now = MonotonicMilliseconds(100)
+        let clock = MonotonicClock(now: { now })
+
+        XCTAssertEqual(clock.now(), MonotonicMilliseconds(100))
+
+        now = MonotonicMilliseconds(250)
+        XCTAssertEqual(clock.now(), MonotonicMilliseconds(250))
+    }
+
     func testNordicNotificationUUIDsRemainFullWidthForPevcap() {
         let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         let notify = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
