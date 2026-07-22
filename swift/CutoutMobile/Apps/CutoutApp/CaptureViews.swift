@@ -60,7 +60,7 @@ struct CaptureRecordingScreen: View {
     }
 
     private var stopCaptureButton: some View {
-        Button("Stop capture", action: disconnect)
+        Button(String(localized: "capture.stop"), action: disconnect)
             .buttonStyle(CaptureActionButtonStyle(fill: PevColors.yellow))
             .accessibilityIdentifier("capture.stop")
     }

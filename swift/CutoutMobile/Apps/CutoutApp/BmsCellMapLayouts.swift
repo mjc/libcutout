@@ -37,7 +37,7 @@ struct BmsInlineLayout: View {
             )
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("display modes")
+                Text(String(localized: "bms.display_modes"))
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)
@@ -99,7 +99,7 @@ struct BmsScrollableLayout: View {
             )
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("display modes")
+                Text(String(localized: "bms.display_modes"))
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityAddTraits(.isHeader)

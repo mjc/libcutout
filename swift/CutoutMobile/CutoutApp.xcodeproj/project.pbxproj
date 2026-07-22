@@ -41,6 +41,8 @@
 		300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
 		300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
 		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
+		500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
+		500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -104,6 +106,7 @@
 		400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		500000000000000000000201 /* Apps/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -199,6 +202,7 @@
 			children = (
 				111111111111111111111126 /* Apps/CutoutApp/Info.plist */,
 				111111111111111111111125 /* Apps/CutoutApp/Assets.xcassets */,
+				500000000000000000000201 /* Apps/Localizable.xcstrings */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -334,6 +338,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				111111111111111111111114 /* Apps/CutoutApp/Assets.xcassets in Resources */,
+				500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -342,6 +347,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				222222222222222222222114 /* Apps/CutoutLiveActivityExtension/Assets.xcassets in Resources */,
+				500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
