@@ -88,6 +88,12 @@ public enum PevDashboardMetricValue: Equatable, Hashable, Sendable {
     case available(display: String, accessibility: String)
     case unavailable
 
+    public init(display: String, accessibility: String? = nil) {
+        self = display == "--"
+            ? .unavailable
+            : .available(display: display, accessibility: accessibility ?? display)
+    }
+
     public var displayText: String {
         switch self {
         case .available(let display, _): display

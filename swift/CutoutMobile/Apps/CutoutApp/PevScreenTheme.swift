@@ -130,10 +130,9 @@ extension PevDashboardMetricTile {
     ) {
         self.init(
             label: tile.label,
-            value: tile.value,
+            metricValue: tile.metricValue,
             unit: tile.unit,
             detail: tile.detail,
-            accessibilityValue: tile.metricValue.accessibilityValue(unit: tile.unit, detail: tile.detail),
             accent: tile.accent.color,
             fill: fill,
             stroke: stroke,

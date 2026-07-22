@@ -16,16 +16,16 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")
     }
 
-    func testUnavailableMetricUsesTypedSpokenValueInsteadOfItsDisplaySentinel() {
+    func testLegacyUnavailableMetricIsBridgedToTypedPresentation() {
         let tile = PevDashboardMetricTile(
             label: "Pack voltage",
             value: PevDashboardMetricValue.unavailable.displayText,
             unit: "volts",
             detail: "stale",
-            accessibilityValue: PevDashboardMetricValue.unavailable.accessibilityText,
             accent: .yellow
         )
 
+        XCTAssertEqual(tile.metricValue, .unavailable)
         XCTAssertEqual(tile.accessibilityValueText, "unavailable")
     }
 

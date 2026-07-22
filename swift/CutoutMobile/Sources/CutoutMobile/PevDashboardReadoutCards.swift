@@ -5,7 +5,8 @@ public struct PevDashboardMetricTile: View {
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.colorScheme) private var colorScheme
     let label: String
-    let value: String
+    let metricValue: PevDashboardMetricValue
+    var value: String { metricValue.displayText }
     let unit: String
     let detail: String
     let accessibilityValue: String?
@@ -20,11 +21,16 @@ public struct PevDashboardMetricTile: View {
     let minHeight: CGFloat
 
     var accessibilityValueText: String {
-        accessibilityValue ?? pevDashboardAccessibilityValue([value, unit, detail])
+        accessibilityValue ?? metricValue.accessibilityValue(unit: unit, detail: detail)
     }
 
     private var resolvedValueColor: Color {
-        resolvedColor(value == "--" ? PevDashboardColors.primaryText : valueColor)
+        let color = if case .unavailable = metricValue {
+            PevDashboardColors.primaryText
+        } else {
+            valueColor
+        }
+        return resolvedColor(color)
     }
 
     private func resolvedColor(_ color: Color) -> Color {
@@ -48,8 +54,42 @@ public struct PevDashboardMetricTile: View {
         cornerRadius: CGFloat = 20,
         minHeight: CGFloat = 106
     ) {
+        self.init(
+            label: label,
+            metricValue: PevDashboardMetricValue(display: value),
+            unit: unit,
+            detail: detail,
+            accessibilityValue: accessibilityValue,
+            accent: accent,
+            fill: fill,
+            stroke: stroke,
+            labelColor: labelColor,
+            valueColor: valueColor,
+            unitColor: unitColor,
+            detailColor: detailColor,
+            cornerRadius: cornerRadius,
+            minHeight: minHeight
+        )
+    }
+
+    public init(
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        unit: String = "",
+        detail: String = "",
+        accessibilityValue: String? = nil,
+        accent: Color,
+        fill: Color = PevDashboardColors.cardFill,
+        stroke: Color = PevDashboardColors.cardStroke,
+        labelColor: Color = PevDashboardColors.mutedText,
+        valueColor: Color = PevDashboardColors.primaryText,
+        unitColor: Color? = nil,
+        detailColor: Color = PevDashboardColors.primaryText,
+        cornerRadius: CGFloat = 20,
+        minHeight: CGFloat = 106
+    ) {
         self.label = label
-        self.value = value
+        self.metricValue = metricValue
         self.unit = unit
         self.detail = detail
         self.accessibilityValue = accessibilityValue
