@@ -3,6 +3,12 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class PhoneLocationReadbackTests: XCTestCase {
+    func testGpsFreshnessDetailsResolveFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("gps.detail.unavailable"), "GPS unavailable")
+        XCTAssertEqual(pevLocalizedText("gps.detail.fresh"), "fresh GPS")
+        XCTAssertEqual(pevLocalizedText("gps.detail.stale"), "stale GPS")
+    }
+
     func testRustGpsSpeedIsAvailableAndFresh() {
         let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: 2_500))
 

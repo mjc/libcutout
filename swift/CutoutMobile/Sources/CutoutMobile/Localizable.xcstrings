@@ -229,6 +229,18 @@
       "comment" : "Ride warning title while waiting for the first telemetry values.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for telemetry" } } }
     },
+    "gps.detail.fresh" : {
+      "comment" : "Phone GPS speed detail when its sample is within the freshness threshold.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "fresh GPS" } } }
+    },
+    "gps.detail.stale" : {
+      "comment" : "Phone GPS speed detail when its sample is older than the freshness threshold.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "stale GPS" } } }
+    },
+    "gps.detail.unavailable" : {
+      "comment" : "Phone GPS speed detail when no usable location speed is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS unavailable" } } }
+    },
     "live_activity.accessibility.device" : {
       "comment" : "VoiceOver identity used when no specific vehicle name is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device" } } }

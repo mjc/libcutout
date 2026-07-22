@@ -1892,11 +1892,11 @@ public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
     public func detail(at wallClockUnixMilliseconds: UInt64) -> String {
         switch freshness(at: wallClockUnixMilliseconds) {
         case .unavailable:
-            "GPS unavailable"
+            pevLocalizedText("gps.detail.unavailable")
         case .fresh:
-            "fresh GPS"
+            pevLocalizedText("gps.detail.fresh")
         case .stale:
-            "stale GPS"
+            pevLocalizedText("gps.detail.stale")
         }
     }
 }
