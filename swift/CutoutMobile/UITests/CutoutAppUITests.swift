@@ -106,7 +106,7 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testProductionPickerPassesAccessibilityAudit() throws {
