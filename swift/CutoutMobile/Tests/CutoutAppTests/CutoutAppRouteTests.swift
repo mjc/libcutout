@@ -104,11 +104,11 @@ final class CutoutAppRouteTests: XCTestCase {
                 scanState: nil,
                 phase: .bluetoothUnavailable(rawState: 4)
             ),
-            .init(title: "Bluetooth unavailable", showsActivity: false)
+            .init(title: "Bluetooth unavailable", showsActivity: false, symbolName: "bolt.slash.fill")
         )
         XCTAssertEqual(
             DevicePickerConnectionPresentation(scanState: nil, phase: .starting),
-            .init(title: "Starting Bluetooth…", showsActivity: false)
+            .init(title: "Starting Bluetooth…", showsActivity: false, symbolName: "bolt.horizontal.circle")
         )
         XCTAssertEqual(
             DevicePickerConnectionPresentation(
