@@ -76,6 +76,7 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Not cell-safe"),
             "Medium. Not cell-safe"
         )
+        XCTAssertEqual(localizedAppText("bms.no_data.riding_rule_progress_value", Int64(62)), "62 percent")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

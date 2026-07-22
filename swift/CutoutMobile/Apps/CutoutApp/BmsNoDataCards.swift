@@ -206,7 +206,10 @@ struct BmsNoDataRidingRuleCard: View {
     }
 
     var progressAccessibilityValue: String {
-        "\(Int((clampedProgress * 100).rounded())) percent"
+        localizedAppText(
+            "bms.no_data.riding_rule_progress_value",
+            Int64((clampedProgress * 100).rounded())
+        )
     }
 
     var body: some View {
