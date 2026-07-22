@@ -115,6 +115,17 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(percentageString(fromPermille: 625), "62%")
     }
 
+    func testHighlightedBmsGroupAccessibilityUsesTheAppCatalog() {
+        XCTAssertEqual(
+            bmsGroupAccessibilityValue("Group 4, 3.8 volts", isHighlighted: true),
+            "Group 4, 3.8 volts, highlighted"
+        )
+        XCTAssertEqual(
+            bmsGroupAccessibilityValue("Group 4, 3.8 volts", isHighlighted: false),
+            "Group 4, 3.8 volts"
+        )
+    }
+
     @MainActor
     func testVescDashboardPresentationUsesTheAppCatalog() {
         let snapshot = VescRideSnapshot(

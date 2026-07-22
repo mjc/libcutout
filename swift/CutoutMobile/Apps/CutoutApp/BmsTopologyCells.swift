@@ -1,6 +1,12 @@
 import CutoutMobile
 import SwiftUI
 
+func bmsGroupAccessibilityValue(_ value: String, isHighlighted: Bool) -> String {
+    isHighlighted
+        ? localizedAppText("bms.group.accessibility.highlighted", value)
+        : value
+}
+
 struct BmsChip: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -64,7 +70,9 @@ struct BmsGroupCell: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
-        .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
+        .accessibilityValue(
+            bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
+        )
         .accessibilityHint(group.detailSelectionAccessibilityHint)
         .accessibilityIdentifier("bms.group.\(group.index)")
     }
@@ -108,7 +116,9 @@ struct BmsStripCell: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
-        .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
+        .accessibilityValue(
+            bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
+        )
         .accessibilityHint(group.detailSelectionAccessibilityHint)
         .accessibilityIdentifier("bms.group.\(group.index)")
     }

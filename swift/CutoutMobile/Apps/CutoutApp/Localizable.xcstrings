@@ -165,6 +165,10 @@
       "comment" : "Button title returning from a BMS group detail to the cell map.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to cell map" } } }
     },
+    "bms.group.accessibility.highlighted" : {
+      "comment" : "VoiceOver value for a highlighted BMS group. The placeholder is the group's normal accessibility value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@, highlighted" } } }
+    },
     "bms.detail.group" : {
       "comment" : "BMS group detail heading. The placeholder is the cell-group index.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Group %lld" } } }
