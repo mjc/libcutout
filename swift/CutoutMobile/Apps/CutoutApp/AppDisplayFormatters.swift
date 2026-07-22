@@ -2,9 +2,9 @@ import Foundation
 import CutoutMobile
 
 #if SWIFT_PACKAGE
-private let appLocalizationBundle = Bundle.module
+let appLocalizationBundle = Bundle.module
 #else
-private let appLocalizationBundle = Bundle.main
+let appLocalizationBundle = Bundle.main
 #endif
 
 struct DevicePickerConnectionPresentation: Equatable {

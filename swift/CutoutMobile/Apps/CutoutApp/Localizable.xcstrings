@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "capture.announcement.failed" : {
+      "comment" : "VoiceOver announcement when capture fails.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture failed" } }
+      }
+    },
+    "capture.announcement.label_started" : {
+      "comment" : "VoiceOver announcement when a capture label starts. The placeholder is the label name.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ capture started" } }
+      }
+    },
+    "capture.announcement.label_stopped" : {
+      "comment" : "VoiceOver announcement when a capture label stops. The placeholder is the label name.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ capture stopped" } }
+      }
+    },
+    "capture.announcement.saved" : {
+      "comment" : "VoiceOver announcement when a capture file is saved.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture saved" } }
+      }
+    },
     "picker.announcement.bluetooth_unavailable" : {
       "comment" : "VoiceOver announcement when Bluetooth is unavailable.",
       "localizations" : {

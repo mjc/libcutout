@@ -30,13 +30,29 @@ enum CaptureStatus: Equatable {
     var accessibilityAnnouncement: String? {
         switch self {
         case let .labelStarted(label, _, _):
-            "\(label) capture started"
+            String(
+                format: String(
+                    localized: "capture.announcement.label_started",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                ),
+                locale: .current,
+                label
+            )
         case let .labelStopped(label, _, _):
-            "\(label) capture stopped"
+            String(
+                format: String(
+                    localized: "capture.announcement.label_stopped",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                ),
+                locale: .current,
+                label
+            )
         case .saved:
-            "Capture saved"
+            String(localized: "capture.announcement.saved", table: "Localizable", bundle: appLocalizationBundle)
         case .failed:
-            "Capture failed"
+            String(localized: "capture.announcement.failed", table: "Localizable", bundle: appLocalizationBundle)
         case .recordingLocally, .recording:
             nil
         }
