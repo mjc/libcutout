@@ -217,6 +217,12 @@ struct ConnectionAccessibilityAnnouncements {
         }
         return phase.accessibilityAnnouncement
     }
+
+    mutating func next(for scanState: DevicePickerScanState) -> String? {
+        guard case .failed = scanState.status, !hasAnnouncedFailure else { return nil }
+        hasAnnouncedFailure = true
+        return scanState.statusText
+    }
 }
 
 extension EucRideWarningSeverity {

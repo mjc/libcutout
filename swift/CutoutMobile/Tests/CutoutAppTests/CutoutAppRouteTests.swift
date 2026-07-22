@@ -233,6 +233,18 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testConnectionAnnouncementsSpeakRejectedPickerActionOnlyOnce() {
+        var announcements = ConnectionAccessibilityAnnouncements()
+        announcements.beginUserInitiatedAttempt()
+        let rejectedAction = DevicePickerScanState.failed("Device is no longer available")
+
+        XCTAssertEqual(
+            announcements.next(for: rejectedAction),
+            "Device is no longer available"
+        )
+        XCTAssertNil(announcements.next(for: .failed(.connectFailed("timed out"))))
+    }
+
     func testReconnectLoopAnnouncesConnectionLossOnlyOnce() {
         var announcements = ConnectionAccessibilityAnnouncements()
         let messages = [
