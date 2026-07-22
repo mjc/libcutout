@@ -57,6 +57,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedPickerActionReturnsToThePickerWithAnError() {
+        let driver = SessionDriverSpy(
+            rows: [
+                DevicePickerRow(
+                    id: "vesc-1234",
+                    title: "VESC",
+                    subtitle: "VESC Onewheel",
+                    detail: "Device 1234",
+                    state: DevicePickerRowState(action: .use),
+                    symbolName: "circle.hexagongrid.circle",
+                    connectionRoute: .vescOnewheel
+                ),
+            ],
+            pairingSucceeds: false
+        )
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertFalse(model.pair(platformIdentifier: "vesc-1234"))
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, ["vesc-1234"])
+        XCTAssertEqual(model.phase, .scanning)
+        XCTAssertEqual(model.devicePickerScanState?.statusText, "Device is no longer available")
+        let presentation = DevicePickerConnectionPresentation(
+            scanState: model.devicePickerScanState,
+            phase: model.phase
+        )
+        XCTAssertEqual(presentation.title, "Device is no longer available")
+        XCTAssertFalse(presentation.showsActivity)
+    }
+
+    @MainActor
     func testNonSupportedPickerRowCannotStartTheConnection() {
         let driver = SessionDriverSpy(
             rows: [
@@ -228,10 +259,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     private let scanState: DevicePickerScanState
+    private let pairingSucceeds: Bool
     private(set) var pairedPlatformIdentifiers = [String]()
 
-    init(rows: [DevicePickerRow]) {
+    init(rows: [DevicePickerRow], pairingSucceeds: Bool = true) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
+        self.pairingSucceeds = pairingSucceeds
     }
 
     func start() {
@@ -240,7 +273,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func pair(platformIdentifier: String) -> Bool {
         pairedPlatformIdentifiers.append(platformIdentifier)
-        return true
+        return pairingSucceeds
     }
 
     func pair(platformIdentifier: String, model _: ElectricUnicycleModel) -> Bool {
