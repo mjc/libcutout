@@ -4066,10 +4066,12 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let executor: CoreBluetoothOperationExecutor
     private let executionQueue: DispatchQueue?
     private let retryCommandOnLinkUp: DeviceCommand?
+    private let maximumRetryAttempts: Int
     private let retryDelay: DispatchTimeInterval
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
     private var pendingRetryTimestamp: MonotonicMilliseconds?
+    private var retryAttempts = 0
     private var receivedRealtimeTelemetrySinceLinkUp = false
     private var pendingOperationsAfterSubscription: [CoreBluetoothPlannedOperation] = []
     private var waitingForSubscriptionChannel: BluetoothUuid?
@@ -4080,6 +4082,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         writeLimit: TransportWriteLimitBytes,
         operationSink: CoreBluetoothOperationSink,
         retryCommandOnLinkUp: DeviceCommand? = nil,
+        maximumRetryAttempts: Int = 3,
         retryDelay: DispatchTimeInterval = .seconds(1),
         executionQueue: DispatchQueue? = nil
     ) {
@@ -4097,6 +4100,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)
         self.executionQueue = executionQueue
         self.retryCommandOnLinkUp = retryCommandOnLinkUp
+        self.maximumRetryAttempts = max(0, maximumRetryAttempts)
         self.retryDelay = retryDelay
     }
 
@@ -4118,6 +4122,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         cancelPendingRetry()
         receivedRealtimeTelemetrySinceLinkUp = false
+        retryAttempts = 0
         let step = try runner.handle(.linkUp(at: monotonicMilliseconds))
         record(.linkUp(
             platformIdentifier: platformIdentifier,
@@ -4240,7 +4245,11 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     }
 
     private func scheduleRetryIfNeeded(at monotonicMilliseconds: MonotonicMilliseconds) {
-        guard let retryCommandOnLinkUp else {
+        guard
+            let retryCommandOnLinkUp,
+            retryAttempts < maximumRetryAttempts,
+            pendingRetry == nil
+        else {
             return
         }
         pendingRetryTimestamp = monotonicMilliseconds
@@ -4273,6 +4282,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         }
         pendingRetry = nil
         pendingRetryTimestamp = nil
+        retryAttempts += 1
         do {
             _ = try handleCommand(retryCommandOnLinkUp, at: monotonicMilliseconds)
         } catch {
