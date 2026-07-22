@@ -264,6 +264,16 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucRideAndBmsPassAccessibilityAuditAtAccessibilityDynamicType() throws {
+        guard let bmsScreen = openEucBmsMap() else {
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testEucBmsGroupOpensAccessibleDetailAndReturnsToMap() {
         guard let bmsScreen = openEucBmsMap() else {
             return
@@ -396,34 +406,9 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private var launchArguments: [String] {
-        if name.contains("Picker") || name.contains("Capture") {
-            var arguments = ["--ui-test-vesc"]
-            if name.contains("InLightAppearance") {
-                arguments += ["-AppleInterfaceStyle", "Light"]
-            }
-            if name.contains("AccessibilityDynamicType") {
-                arguments += [
-                    "-UIPreferredContentSizeCategoryName",
-                    "UICTContentSizeCategoryAccessibilityXXXL",
-                ]
-            }
-            return arguments
-        }
-        if name.contains("LiveActivityAutoFixture") {
-            return ["--ui-test-live-activity-auto"]
-        }
-        if name.contains("LiveActivityFixture") {
-            return ["--ui-test-vesc", "--ui-test-live-activity"]
-        }
-        if name.contains("FailedVescConnection") {
-            return ["--ui-test-vesc-failure"]
-        }
-        if name.contains("EucRideAndBms") {
-            return accessibilityLaunchArguments(fixture: "--ui-test-euc")
-        }
+        var arguments = fixture.launchArguments
         if name.contains("RespectSystemAccessibilitySettings") {
-            return [
-                "--ui-test-vesc",
+            arguments += [
                 "-AppleInterfaceStyle", "Dark",
                 "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryLarge",
                 "-UIAccessibilityBoldTextEnabled", "YES",
@@ -433,42 +418,69 @@ final class CutoutAppUITests: XCTestCase {
                 "-UIAccessibilityReduceTransparencyEnabled", "YES",
                 "-UIAccessibilityGrayscaleEnabled", "YES",
             ]
-        }
-        if name.contains("RightToLeft") {
-            return [
-                "--ui-test-vesc",
+        } else {
+            if name.contains("InLightAppearance") {
+                arguments += ["-AppleInterfaceStyle", "Light"]
+            }
+            if name.contains("RightToLeft") {
+                arguments += [
                 "-AppleLanguages", "(ar)",
                 "-AppleLocale", "ar_SA",
-                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
-            ]
+                ]
+            }
+            if name.contains("AccessibilityDynamicType") || name.contains("RightToLeft") {
+                arguments += [
+                    "-UIPreferredContentSizeCategoryName",
+                    "UICTContentSizeCategoryAccessibilityXXXL",
+                ]
+            }
         }
-        if name.contains("AccessibilityDynamicType") {
-            return accessibilityLaunchArguments(fixture: "--ui-test-vesc")
-        }
-        if name.contains("Vesc") || name.contains("DisconnectKeepsSavedDevice") {
-            return ["--ui-test-vesc"]
-        }
-        return []
+
+        return arguments
     }
 
     private var fixtureEnvironmentValue: String {
-        if name.contains("LiveActivityAutoFixture") { return "vesc-live-activity-auto" }
-        if name.contains("LiveActivityFixture") { return "vesc-live-activity" }
-        if name.contains("FailedVescConnection") { return "vesc-failure" }
-        if name.contains("EucRideAndBms") { return "euc" }
-        return "vesc"
+        fixture.environmentValue
     }
 
     private var isLandscapeTest: Bool {
         name.contains("InLandscape")
     }
 
-    private func accessibilityLaunchArguments(fixture: String) -> [String] {
-        [
-            fixture,
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryAccessibilityXXXL",
-        ]
+    private var fixture: Fixture {
+        if name.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
+        if name.contains("LiveActivityFixture") { return .vescLiveActivity }
+        if name.contains("FailedVescConnection") { return .vescFailure }
+        if name.contains("Euc") { return .euc }
+        return .vesc
+    }
+
+    private enum Fixture {
+        case euc
+        case vesc
+        case vescFailure
+        case vescLiveActivity
+        case vescLiveActivityAuto
+
+        var environmentValue: String {
+            switch self {
+            case .euc: "euc"
+            case .vesc: "vesc"
+            case .vescFailure: "vesc-failure"
+            case .vescLiveActivity: "vesc-live-activity"
+            case .vescLiveActivityAuto: "vesc-live-activity-auto"
+            }
+        }
+
+        var launchArguments: [String] {
+            switch self {
+            case .euc: ["--ui-test-euc"]
+            case .vesc: ["--ui-test-vesc"]
+            case .vescFailure: ["--ui-test-vesc-failure"]
+            case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
+            case .vescLiveActivityAuto: ["--ui-test-live-activity-auto"]
+            }
+        }
     }
 
     private func skipLiveActivityTestsOnSimulator() throws {
