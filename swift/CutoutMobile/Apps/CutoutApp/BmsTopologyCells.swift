@@ -47,7 +47,7 @@ struct BmsGroupCell: View {
         Button(action: action) {
             VStack(spacing: 8) {
                 HStack(spacing: 4) {
-                    Text("\(group.index)")
+                    Text(group.index, format: .number)
                     BmsAlertIndicator(alertLevel: group.alertLevel)
                 }
                 .font(.subheadline)
@@ -94,7 +94,7 @@ struct BmsStripCell: View {
         Button(action: action) {
             VStack(spacing: 2) {
                 HStack(spacing: 2) {
-                    Text(String(format: "%02d", group.index))
+                    Text(group.index, format: .number.precision(.integerLength(2...)))
                     BmsAlertIndicator(alertLevel: group.alertLevel)
                 }
                 .font(.caption2)
@@ -175,7 +175,7 @@ struct BmsGroupIndexCell: View {
 
     var body: some View {
         Button(action: action) {
-            Text("\(group.index)")
+            Text(group.index, format: .number)
                 .font(.body)
                 .foregroundStyle(PevColors.muted)
                 .frame(maxWidth: .infinity)
