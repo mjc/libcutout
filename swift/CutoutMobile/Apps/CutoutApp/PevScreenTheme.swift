@@ -145,19 +145,6 @@ extension PevDashboardMetricTile {
     }
 }
 
-extension DevicePickerRowState {
-    var actionTitle: String {
-        switch self {
-        case .supported(let action), .probeRecommended(let action), .unsupported(let action), .manual(let action):
-            action
-        }
-    }
-
-    var isSupported: Bool {
-        if case .supported = self { true } else { false }
-    }
-}
-
 func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
     [
         state.pwmHeadroomPermille.map { headroomPermille in
