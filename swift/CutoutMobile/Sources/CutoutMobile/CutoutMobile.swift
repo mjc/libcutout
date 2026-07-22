@@ -2893,13 +2893,11 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         at now: MonotonicMilliseconds,
         staleAfter staleThreshold: MonotonicMilliseconds
     ) -> EucRideUpdateAge {
-        guard let updatedAt = telemetry?.at ?? displayState.lastUpdate else {
-            return EucRideUpdateAge(elapsed: nil, freshness: .unavailable)
-        }
-
-        let elapsed = now.rawValue >= updatedAt.rawValue ? now.rawValue - updatedAt.rawValue : 0
-        let freshness: EucRideUpdateFreshness = elapsed > staleThreshold.rawValue ? .stale : .fresh
-        return EucRideUpdateAge(elapsed: MonotonicMilliseconds(elapsed), freshness: freshness)
+        rideUpdateAge(
+            updatedAt: telemetry?.at ?? displayState.lastUpdate,
+            at: now,
+            staleAfter: staleThreshold
+        )
     }
 
     public var warningState: EucRideWarningState {
