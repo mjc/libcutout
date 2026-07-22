@@ -383,6 +383,43 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         }
         return parts.joined(separator: ", ")
     }
+
+    public func presented(isStale: Bool) -> Self {
+        guard isStale, connectionState == .connected else { return self }
+
+        return Self(
+            identity: identity,
+            glyph: glyph,
+            connectionState: .stale,
+            sessionStatus: sessionStatus.stalePresentation,
+            speed: speed.stalePresentation,
+            battery: battery.stalePresentation,
+            packVoltage: packVoltage.stalePresentation,
+            pwm: pwm.stalePresentation,
+            mode: mode.stalePresentation,
+            duration: duration.stalePresentation,
+            distance: distance.stalePresentation,
+            headroom: headroom.stalePresentation,
+            beeps: beeps.stalePresentation,
+            temperature: temperature.stalePresentation,
+            chargeEstimate: chargeEstimate.stalePresentation,
+            headroomSeverity: headroomSeverity
+        )
+    }
+}
+
+private extension LiveActivityRideValue {
+    var stalePresentation: Self {
+        guard state == .available else { return self }
+        return .stale(
+            label: label,
+            value: value,
+            unit: unit,
+            normalizedProgress: normalizedProgress,
+            accessibilityDetail: accessibilityDetail,
+            source: source
+        )
+    }
 }
 
 extension LiveActivityRideSnapshot {

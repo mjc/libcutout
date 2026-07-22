@@ -487,6 +487,28 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(stale.speed.state, .stale)
     }
 
+    func testSystemStaleStateOverridesAConnectedSnapshotPresentation() {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .model(.aero),
+            rideState: liveRideState(
+                speed: 2_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 2_000)
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+
+        let presented = snapshot.presented(isStale: true)
+
+        XCTAssertEqual(snapshot.connectionState, .connected)
+        XCTAssertEqual(presented.connectionState, .stale)
+        XCTAssertEqual(presented.speed.state, .stale)
+        XCTAssertTrue(presented.minimalAccessibilitySummary.contains("Aero, stale"))
+        XCTAssertTrue(presented.minimalAccessibilitySummary.contains("vehicle telemetry, stale"))
+    }
+
     func testMinimalAccessibilitySummaryNamesNormalAlertStaleAndUnavailableStates() {
         let normal = LiveActivityRideSnapshot(
             identity: .model(.aero),
