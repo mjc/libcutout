@@ -84,12 +84,32 @@ public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
     case headroom
 }
 
+public enum PevDashboardMetricValue: Equatable, Hashable, Sendable {
+    case available(display: String, accessibility: String)
+    case unavailable
+
+    public var displayText: String {
+        switch self {
+        case .available(let display, _): display
+        case .unavailable: "--"
+        }
+    }
+
+    public var accessibilityText: String {
+        switch self {
+        case .available(_, let accessibility): accessibility
+        case .unavailable: "unavailable"
+        }
+    }
+}
+
 public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public var id: PevDashboardTileKind { kind }
 
     public let kind: PevDashboardTileKind
     public let label: String
-    public let value: String
+    public let metricValue: PevDashboardMetricValue
+    public var value: String { metricValue.displayText }
     public let unit: String
     public let detail: String
     public let accent: PevAccent
@@ -102,9 +122,27 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
         detail: String,
         accent: PevAccent
     ) {
+        self.init(
+            kind: kind,
+            label: label,
+            metricValue: .available(display: value, accessibility: value),
+            unit: unit,
+            detail: detail,
+            accent: accent
+        )
+    }
+
+    public init(
+        kind: PevDashboardTileKind,
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        unit: String,
+        detail: String,
+        accent: PevAccent
+    ) {
         self.kind = kind
         self.label = label
-        self.value = value
+        self.metricValue = metricValue
         self.unit = unit
         self.detail = detail
         self.accent = accent

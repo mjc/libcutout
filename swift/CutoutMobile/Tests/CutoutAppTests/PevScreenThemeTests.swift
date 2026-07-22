@@ -85,6 +85,19 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(powerFlowDetail(nil, fallback: "fallback"), "fallback")
     }
 
+    func testUnavailableDashboardTilesCarryTypedAvailability() {
+        let source = PevDashboardTile(
+            kind: .packVoltage,
+            label: "pack",
+            value: "84.2",
+            unit: "V",
+            detail: "fresh",
+            accent: .cyan
+        )
+
+        XCTAssertEqual(unavailableDashboardTiles(from: [source]).first?.metricValue, .unavailable)
+    }
+
     @MainActor
     func testBmsAlertIndicatorAlwaysShowsNonNominalSeverity() {
         XCTAssertEqual(BmsAlertIndicator.systemImageName(

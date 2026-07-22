@@ -16,6 +16,19 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")
     }
 
+    func testUnavailableMetricUsesTypedSpokenValueInsteadOfItsDisplaySentinel() {
+        let tile = PevDashboardMetricTile(
+            label: "Pack voltage",
+            value: PevDashboardMetricValue.unavailable.displayText,
+            unit: "volts",
+            detail: "stale",
+            accessibilityValue: PevDashboardMetricValue.unavailable.accessibilityText,
+            accent: .yellow
+        )
+
+        XCTAssertEqual(tile.accessibilityValueText, "unavailable")
+    }
+
     func testProgressSemanticsClampOutOfRangeValues() {
         XCTAssertEqual(makeProgressBar(progress: -0.4).clampedProgress, 0)
         XCTAssertEqual(makeProgressBar(progress: 0.42).clampedProgress, 0.42)

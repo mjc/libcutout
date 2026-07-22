@@ -24,7 +24,7 @@ public enum PevDashboardColors {
     public static let mutedText = PevSystemColors.mutedText
 }
 
-func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
+public func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
     parts.filter { !$0.isEmpty }.joined(separator: ", ")
 }
 

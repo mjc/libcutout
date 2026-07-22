@@ -8,6 +8,7 @@ public struct PevDashboardMetricTile: View {
     let value: String
     let unit: String
     let detail: String
+    let accessibilityValue: String?
     let accent: Color
     let fill: Color
     let stroke: Color
@@ -19,7 +20,7 @@ public struct PevDashboardMetricTile: View {
     let minHeight: CGFloat
 
     var accessibilityValueText: String {
-        pevDashboardAccessibilityValue([value, unit, detail])
+        accessibilityValue ?? pevDashboardAccessibilityValue([value, unit, detail])
     }
 
     private var resolvedValueColor: Color {
@@ -36,6 +37,7 @@ public struct PevDashboardMetricTile: View {
         value: String,
         unit: String = "",
         detail: String = "",
+        accessibilityValue: String? = nil,
         accent: Color,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
@@ -50,6 +52,7 @@ public struct PevDashboardMetricTile: View {
         self.value = value
         self.unit = unit
         self.detail = detail
+        self.accessibilityValue = accessibilityValue
         self.accent = accent
         self.fill = fill
         self.stroke = stroke
