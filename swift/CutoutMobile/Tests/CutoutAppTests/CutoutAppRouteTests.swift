@@ -90,6 +90,27 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(SessionConnectionPhase.scanning.opensRideScreen)
     }
 
+    func testPickerStatusNeverShowsScanningWhenBluetoothIsUnavailableOrScanStateIsMissing() {
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(
+                scanState: nil,
+                phase: .bluetoothUnavailable(rawState: 4)
+            ),
+            .init(title: "Bluetooth unavailable", showsActivity: false)
+        )
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(scanState: nil, phase: .starting),
+            .init(title: "Starting Bluetooth…", showsActivity: false)
+        )
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(
+                scanState: .scanning,
+                phase: .scanning
+            ),
+            .init(title: "Scanning Bluetooth", showsActivity: true)
+        )
+    }
+
     func testConnectionAnnouncementsCoverMeaningfulTransitionsWithoutChatter() {
         XCTAssertNil(SessionConnectionPhase.starting.accessibilityAnnouncement)
         XCTAssertNil(SessionConnectionPhase.scanning.accessibilityAnnouncement)

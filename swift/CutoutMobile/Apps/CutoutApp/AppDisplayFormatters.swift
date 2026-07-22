@@ -1,5 +1,37 @@
 import CutoutMobile
 
+struct DevicePickerConnectionPresentation: Equatable {
+    let title: String
+    let showsActivity: Bool
+
+    init(title: String, showsActivity: Bool) {
+        self.title = title
+        self.showsActivity = showsActivity
+    }
+
+    init(scanState: DevicePickerScanState?, phase: SessionConnectionPhase?) {
+        switch phase {
+        case .bluetoothUnavailable:
+            self = .init(title: "Bluetooth unavailable", showsActivity: false)
+        case .failed(let failure):
+            self = .init(title: failure.displayText, showsActivity: false)
+        case .connecting, .discoveringServices, .subscribing:
+            self = .init(title: "Connecting…", showsActivity: true)
+        case .starting:
+            self = .init(title: "Starting Bluetooth…", showsActivity: false)
+        case .scanning:
+            self = .init(
+                title: scanState?.statusText ?? "Scanning Bluetooth",
+                showsActivity: scanState?.status == .scanning || scanState == nil
+            )
+        case .live:
+            self = .init(title: "Live", showsActivity: false)
+        case nil:
+            self = .init(title: scanState?.statusText ?? "Starting Bluetooth…", showsActivity: false)
+        }
+    }
+}
+
 func percentText(_ value: BatteryLevel?) -> String {
     guard let value else { return "--" }
     return "\(value.value)%"

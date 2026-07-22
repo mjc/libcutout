@@ -12,7 +12,7 @@ struct DevicePickerView: View {
     @FocusState private var isCaptureKindFocused: Bool
 
     private var renderedScanState: DevicePickerScanState {
-        scanState ?? .scanning
+        scanState ?? DevicePickerScanState(status: .idle, rows: [])
     }
 
     private var sections: DevicePickerSections {
@@ -33,8 +33,8 @@ struct DevicePickerView: View {
             )
 
             PevDashboardScanningPill(
-                title: connectionStatusText,
-                isScanning: renderedScanState.status == .scanning || isConnecting,
+                title: connectionPresentation.title,
+                isScanning: connectionPresentation.showsActivity,
             )
                 .padding(.top, 4)
                 .accessibilityIdentifier("device-picker.connection-status")
@@ -143,17 +143,8 @@ struct DevicePickerView: View {
         }
     }
 
-    private var isConnecting: Bool {
-        switch connectionPhase {
-        case .connecting, .discoveringServices, .subscribing:
-            true
-        default:
-            false
-        }
-    }
-
-    private var connectionStatusText: String {
-        isConnecting ? "Connecting…" : renderedScanState.statusText
+    private var connectionPresentation: DevicePickerConnectionPresentation {
+        DevicePickerConnectionPresentation(scanState: scanState, phase: connectionPhase)
     }
 
     private var hasRecordOnlyDeviceKind: Bool {
