@@ -29,6 +29,34 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSupportedPickerActionStartsTheSelectedConnection() {
+        let store = DevicePickerSelectionStore()
+        store.clear()
+        defer { store.clear() }
+        let driver = SessionDriverSpy(
+            rows: [
+                DevicePickerRow(
+                    id: "vesc-1234",
+                    title: "VESC",
+                    subtitle: "VESC Onewheel",
+                    detail: "Device 1234",
+                    state: DevicePickerRowState(action: .use),
+                    symbolName: "circle.hexagongrid.circle",
+                    connectionRoute: .vescOnewheel
+                ),
+            ]
+        )
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertTrue(model.pair(platformIdentifier: "vesc-1234"))
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, ["vesc-1234"])
+        XCTAssertEqual(model.phase, .discoveringServices)
+        XCTAssertEqual(model.selectedRideTitle, "VESC")
+        XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+    }
+
+    @MainActor
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
@@ -163,5 +191,48 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.applyProtocolIdentityCandidate(second)
         XCTAssertEqual(model.selectedRideTitle, "Little FOCer BT")
+    }
+}
+
+@MainActor
+private final class SessionDriverSpy: CutoutSessionDriving {
+    var onDisplayStateChange: ((RideDisplayState) -> Void)?
+    var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    var onCaptureEvent: ((CaptureEvent) -> Void)?
+    var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
+    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)?
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    private let scanState: DevicePickerScanState
+    private(set) var pairedPlatformIdentifiers = [String]()
+
+    init(rows: [DevicePickerRow]) {
+        scanState = DevicePickerScanState(status: .scanning, rows: rows)
+    }
+
+    func start() {
+        onScanStateChange?(scanState)
+    }
+
+    func pair(platformIdentifier: String) -> Bool {
+        pairedPlatformIdentifiers.append(platformIdentifier)
+        return true
+    }
+
+    func pair(platformIdentifier: String, model _: ElectricUnicycleModel) -> Bool {
+        pair(platformIdentifier: platformIdentifier)
+    }
+
+    func recordOnly(platformIdentifier _: String, note _: String?, annotations _: [String]) -> Bool { true }
+    func annotateCapture(label _: String) {}
+    func annotateCapture(key _: String, value _: String) {}
+    func flushCapture() {}
+    func disconnectAndScan() {}
+
+    func now() -> MonotonicMilliseconds {
+        MonotonicMilliseconds(0)
     }
 }

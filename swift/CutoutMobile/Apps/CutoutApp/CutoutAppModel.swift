@@ -89,7 +89,7 @@ enum CaptureStatus: Equatable {
 }
 
 @MainActor
-private protocol CutoutSessionDriving: AnyObject {
+protocol CutoutSessionDriving: AnyObject {
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
@@ -167,9 +167,23 @@ final class CutoutAppModel {
     private var permitsStoredDeviceAutoPairing = true
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
-    init() {
-        permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
-        core = Self.makeSessionDriver()
+    convenience init() {
+        self.init(
+            core: Self.makeSessionDriver(),
+            permitsStoredDeviceAutoPairing: Self.uiTestFixture == nil
+        )
+    }
+
+    convenience init(core: any CutoutSessionDriving) {
+        self.init(core: core, permitsStoredDeviceAutoPairing: true)
+    }
+
+    private init(
+        core: any CutoutSessionDriving,
+        permitsStoredDeviceAutoPairing: Bool
+    ) {
+        self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
+        self.core = core
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
