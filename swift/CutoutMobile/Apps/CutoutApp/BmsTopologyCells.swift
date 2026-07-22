@@ -53,6 +53,14 @@ struct BmsGroupCell: View {
             .frame(maxWidth: .infinity)
             .frame(minHeight: 70)
             .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
+            .overlay(alignment: .topTrailing) {
+                if isHighlighted {
+                    Image(systemName: "scope")
+                        .font(.caption2.weight(.bold))
+                        .padding(5)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
@@ -89,6 +97,14 @@ struct BmsStripCell: View {
             }
             .frame(maxWidth: .infinity, minHeight: 60)
             .background(PevDashboardCardBackground(cornerRadius: 8, stroke: strokeColor, lineWidth: 1.2))
+            .overlay(alignment: .topTrailing) {
+                if isHighlighted {
+                    Image(systemName: "scope")
+                        .font(.caption2.weight(.bold))
+                        .padding(4)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
@@ -155,6 +171,14 @@ struct BmsGroupIndexCell: View {
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)
                 .background(PevDashboardCardBackground(cornerRadius: 8, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
+                .overlay(alignment: .topTrailing) {
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption2.weight(.bold))
+                            .padding(4)
+                            .accessibilityHidden(true)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
