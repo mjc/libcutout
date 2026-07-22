@@ -9,6 +9,22 @@
       "comment" : "Disabled app command shown when no device is connected.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No connected device" } } }
     },
+    "euc.metric.gps_speed" : {
+      "comment" : "EUC ride dashboard metric label for phone GPS speed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS speed" } } }
+    },
+    "euc.ride.connecting" : {
+      "comment" : "EUC ride dashboard subtitle before a ride state is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting" } } }
+    },
+    "euc.ride.untitled" : {
+      "comment" : "EUC ride dashboard fallback title when no device name is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "EUC" } } }
+    },
+    "euc.speed.caption" : {
+      "comment" : "Short caption below the primary EUC ride speed readout.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "speed" } } }
+    },
     "bms.diagnostics.detail" : {
       "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }

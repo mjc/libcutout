@@ -15,11 +15,15 @@ struct EucRideScreenView: View {
     }
 
     private var phaseText: String {
-        rideState?.statusText ?? "Connecting"
+        rideState?.statusText ?? localizedAppText("euc.ride.connecting")
     }
 
     private var titleText: String {
-        rideTitle ?? "EUC"
+        rideTitle ?? localizedAppText("euc.ride.untitled")
+    }
+
+    private var sectionTitle: String {
+        PevScreenCatalog.live.screen(id: .eucRide)!.title
     }
 
     private var warningCard: PevWarningCard? {
@@ -64,7 +68,7 @@ struct EucRideScreenView: View {
         let now = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
         return PevDashboardTile(
             kind: .gpsSpeed,
-            label: "GPS speed",
+            label: localizedAppText("euc.metric.gps_speed"),
             value: phoneLocationReadback.speed.displayValue,
             unit: phoneLocationReadback.speed.millimetersPerSecond == nil ? "" : phoneLocationReadback.speed.displayUnit,
             detail: phoneLocationReadback.detail(at: now),
@@ -74,14 +78,14 @@ struct EucRideScreenView: View {
 
     var body: some View {
         PevRideDashboardShell(
-            sectionTitle: "EUC ride",
+            sectionTitle: sectionTitle,
             heroStyle: .electricUnicycle,
             title: titleText,
             subtitle: phaseText,
             statusFill: PevColors.green,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
-            speedCaption: "speed",
+            speedCaption: localizedAppText("euc.speed.caption"),
         ) {
             VStack(spacing: 10) {
                 ForEach(safetyBars) { bar in

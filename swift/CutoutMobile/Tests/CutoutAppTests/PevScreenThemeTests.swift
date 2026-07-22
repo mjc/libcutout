@@ -3,6 +3,14 @@ import XCTest
 import CutoutMobile
 
 final class PevScreenThemeTests: XCTestCase {
+    func testEucRideAppPresentationUsesTheAppCatalog() {
+        XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
+        XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")
+        XCTAssertEqual(localizedAppText("euc.ride.untitled"), "EUC")
+        XCTAssertEqual(localizedAppText("euc.metric.gps_speed"), "GPS speed")
+        XCTAssertEqual(localizedAppText("euc.speed.caption"), "speed")
+    }
+
     func testRideHeroReadoutSharesExplicitAvailabilitySemantics() {
         let unavailable = PevRideHeroReadout.unavailable(
             provenance: .vehicleTelemetry,
