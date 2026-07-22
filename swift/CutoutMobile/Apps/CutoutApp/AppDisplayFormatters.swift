@@ -107,10 +107,6 @@ func angleText(_ value: CutoutMobile.Angle?) -> String {
     value.map { RideUnits.angleText(millidegrees: $0.value) } ?? "--"
 }
 
-func millivoltsText(_ value: VoltageDelta?) -> String {
-    value.map { String($0.value) } ?? "--"
-}
-
 func temperatureText(_ value: Temperature?) -> String {
     value.map { RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1) } ?? "--"
 }
