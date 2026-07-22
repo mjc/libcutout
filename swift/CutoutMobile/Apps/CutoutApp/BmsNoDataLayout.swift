@@ -18,14 +18,29 @@ struct BmsNoDataLayout: View {
     private var controllerEstimateDetail: String {
         rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail
     }
+    private var controllerConfidence: ControllerOnlyEstimateConfidence {
+        rideState?.controllerOnlyConfidence ?? fallbackConfidence
+    }
     private var controllerConfidenceTitle: String {
-        rideState?.controllerOnlyConfidenceTitle ?? fallbackConfidenceTitle
+        switch controllerConfidence {
+        case .medium:
+            localizedAppText("bms.no_data.confidence.medium")
+        case .low:
+            localizedAppText("bms.no_data.confidence.low")
+        case .unknown:
+            localizedAppText("bms.no_data.confidence.unknown")
+        }
     }
     private var controllerConfidenceDetail: String {
-        rideState?.controllerOnlyConfidenceDetail ?? (controllerConfidenceTitle == "unknown" ? "telemetry unavailable" : "not cell-safe")
+        switch controllerConfidence {
+        case .medium, .low:
+            localizedAppText("bms.no_data.confidence_detail.not_cell_safe")
+        case .unknown:
+            localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable")
+        }
     }
     private var controllerRidingRuleProgress: Double {
-        rideState?.controllerOnlyRidingRuleProgress ?? fallbackRidingRuleProgress
+        controllerConfidence.ridingRuleProgress
     }
     private var packVoltage: Voltage? {
         rideState?.telemetry?.voltage ?? snapshot.voltage
@@ -45,24 +60,14 @@ struct BmsNoDataLayout: View {
         }
         return "estimate unavailable"
     }
-    private var fallbackConfidenceTitle: String {
+    private var fallbackConfidence: ControllerOnlyEstimateConfidence {
         if snapshot.voltage != nil, snapshot.current != nil {
-            return "medium"
+            return .medium
         }
         if snapshot.voltage != nil || snapshot.energyPercent != nil {
-            return "low"
+            return .low
         }
-        return "unknown"
-    }
-    private var fallbackRidingRuleProgress: Double {
-        switch fallbackConfidenceTitle {
-        case "medium":
-            0.62
-        case "low":
-            0.35
-        default:
-            0.15
-        }
+        return .unknown
     }
 
     var body: some View {

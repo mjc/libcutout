@@ -39,6 +39,11 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.unknown.fault_bits"), "Fault bits")
         XCTAssertEqual(localizedAppText("bms.unknown.next_capture_flow"), "Next capture flow")
         XCTAssertEqual(localizedAppText("bms.unknown.capture_unavailable"), "Unavailable")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence.medium"), "Medium")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence.low"), "Low")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence.unknown"), "Unknown")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.not_cell_safe"), "Not cell-safe")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable"), "Telemetry unavailable")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

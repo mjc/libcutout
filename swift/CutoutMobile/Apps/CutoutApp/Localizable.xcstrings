@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.no_data.confidence.low" : {
+      "comment" : "No-data BMS controller-estimate confidence when only partial evidence is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low" } } }
+    },
+    "bms.no_data.confidence.medium" : {
+      "comment" : "No-data BMS controller-estimate confidence when voltage and recent sag are available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
+    },
+    "bms.no_data.confidence.unknown" : {
+      "comment" : "No-data BMS controller-estimate confidence when telemetry evidence is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown" } } }
+    },
+    "bms.no_data.confidence_detail.not_cell_safe" : {
+      "comment" : "No-data BMS detail warning that a controller estimate is not safe to treat as a cell-level reading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not cell-safe" } } }
+    },
+    "bms.no_data.confidence_detail.telemetry_unavailable" : {
+      "comment" : "No-data BMS detail when no telemetry supports a controller estimate.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry unavailable" } } }
+    },
     "bms.overview.average_group" : {
       "comment" : "BMS overview metric label for the average cell-group voltage.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Average group" } } }

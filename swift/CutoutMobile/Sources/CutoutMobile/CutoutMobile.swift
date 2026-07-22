@@ -2761,6 +2761,23 @@ public enum EucRideLiveValidationField: String, Equatable, Hashable, Sendable {
     case thermal
 }
 
+public enum ControllerOnlyEstimateConfidence: Equatable, Hashable, Sendable {
+    case medium
+    case low
+    case unknown
+
+    public var ridingRuleProgress: Double {
+        switch self {
+        case .medium:
+            0.62
+        case .low:
+            0.35
+        case .unknown:
+            0.15
+        }
+    }
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     private static let reduceAccelerationPwmHeadroomThreshold = 250
 
@@ -2830,29 +2847,14 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         return "estimate unavailable"
     }
 
-    public var controllerOnlyConfidenceTitle: String {
+    public var controllerOnlyConfidence: ControllerOnlyEstimateConfidence {
         if controllerOnlyEstimatePercent != nil, voltageSag != nil {
-            return "medium"
+            return .medium
         }
         if controllerOnlyEstimatePercent != nil || telemetry?.voltage != nil {
-            return "low"
+            return .low
         }
-        return "unknown"
-    }
-
-    public var controllerOnlyConfidenceDetail: String {
-        controllerOnlyConfidenceTitle == "unknown" ? "telemetry unavailable" : "not cell-safe"
-    }
-
-    public var controllerOnlyRidingRuleProgress: Double {
-        switch controllerOnlyConfidenceTitle {
-        case "medium":
-            0.62
-        case "low":
-            0.35
-        default:
-            0.15
-        }
+        return .unknown
     }
 
     public func updateAge(
