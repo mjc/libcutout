@@ -2192,8 +2192,16 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public var readbackRows: [SessionDebugRow] {
         var rows = [
             SessionDebugRow(label: "availability", value: availability.displayText),
-            SessionDebugRow(label: "page", value: bmsPageText(selector: pageSelector, tag: pageTag, kind: pageKind)),
-            SessionDebugRow(label: "page verification", value: pageVerification?.displayText ?? "unavailable"),
+            SessionDebugRow(
+                label: "page",
+                value: bmsPageText(selector: pageSelector, tag: pageTag, kind: pageKind),
+                role: .transportMetadata
+            ),
+            SessionDebugRow(
+                label: "page verification",
+                value: pageVerification?.displayText ?? "unavailable",
+                role: .transportMetadata
+            ),
             SessionDebugRow(label: "charge", value: bmsPercentText(energyPercent)),
             SessionDebugRow(label: "voltage", value: bmsVoltageText(voltage)),
             SessionDebugRow(label: "current", value: bmsCurrentText(current)),
@@ -2557,13 +2565,20 @@ private func bmsGroupVoltageText(_ value: Voltage?) -> String {
     return RideUnits.voltageText(millivolts: value.value, fractionDigits: 3)
 }
 
+public enum SessionDebugRowRole: Equatable, Hashable, Sendable {
+    case data
+    case transportMetadata
+}
+
 public struct SessionDebugRow: Equatable, Hashable, Sendable {
     public let label: String
     public let value: String
+    public let role: SessionDebugRowRole
 
-    public init(label: String, value: String) {
+    public init(label: String, value: String, role: SessionDebugRowRole = .data) {
         self.label = label
         self.value = value
+        self.role = role
     }
 }
 

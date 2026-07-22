@@ -222,8 +222,8 @@ final class BmsSnapshotContractTests: XCTestCase {
             snapshot.readbackRows,
             [
                 SessionDebugRow(label: "availability", value: "available"),
-                SessionDebugRow(label: "page", value: "temperature #3"),
-                SessionDebugRow(label: "page verification", value: "hardware verified"),
+                SessionDebugRow(label: "page", value: "temperature #3", role: .transportMetadata),
+                SessionDebugRow(label: "page verification", value: "hardware verified", role: .transportMetadata),
                 SessionDebugRow(label: "charge", value: "72%"),
                 SessionDebugRow(label: "voltage", value: "81.6"),
                 SessionDebugRow(label: "current", value: "-12.4"),

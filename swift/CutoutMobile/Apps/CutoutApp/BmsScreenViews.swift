@@ -114,7 +114,7 @@ struct BmsDiagnosticsSection: View {
         DisclosureGroup(isExpanded: $isExpanded) {
             PevDashboardKeyValueRows(
                 rows: snapshot.readbackRows
-                    .filter { $0.label != "page" && $0.label != "page verification" }
+                    .filter { $0.role == .data }
                     .map { row in
                         PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
                     },
