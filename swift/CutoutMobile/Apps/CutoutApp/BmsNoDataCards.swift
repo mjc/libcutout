@@ -210,8 +210,12 @@ struct BmsNoDataUnknownsCard: View {
 }
 
 struct BmsNoDataRidingRuleCard: View {
-    let title: String
+    let metricValue: PevDashboardMetricValue
     let progress: Double
+
+    var titleAccessibilityText: String {
+        metricValue.accessibilityText
+    }
 
     private var clampedProgress: Double {
         min(max(progress, 0), 1)
@@ -227,9 +231,10 @@ struct BmsNoDataRidingRuleCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             PevDashboardSectionLabel(title: localizedAppText("bms.no_data.riding_rule"), font: .caption.weight(.bold))
-            Text(title)
+            Text(metricValue.displayText)
                 .font(.body)
                 .foregroundStyle(PevColors.primaryText.opacity(0.9))
+                .accessibilityLabel(titleAccessibilityText)
             ProgressView(value: clampedProgress)
                 .tint(PevColors.yellow)
                 .accessibilityLabel(localizedAppText("bms.no_data.riding_rule_progress_accessibility"))

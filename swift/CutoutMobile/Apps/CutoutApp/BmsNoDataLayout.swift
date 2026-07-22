@@ -114,7 +114,7 @@ struct BmsNoDataLayout: View {
                     BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows)
 
                     BmsNoDataRidingRuleCard(
-                        title: snapshot.captureActionTitle ?? "--",
+                        metricValue: bmsNoDataRidingRuleMetricValue(snapshot.captureActionTitle),
                         progress: controllerRidingRuleProgress
                     )
 
@@ -139,4 +139,9 @@ func bmsNoDataPackEstimateMetricValue(_ percent: BatteryLevel?) -> PevDashboardM
     guard let percent else { return .unavailable }
     let value = RideUnits.decimalString(Double(percent.value), fractionDigits: 0)
     return .available(display: value, accessibility: value)
+}
+
+func bmsNoDataRidingRuleMetricValue(_ title: String?) -> PevDashboardMetricValue {
+    guard let title, !title.isEmpty else { return .unavailable }
+    return .available(display: title, accessibility: title)
 }

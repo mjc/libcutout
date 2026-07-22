@@ -369,21 +369,21 @@ final class PevScreenThemeTests: XCTestCase {
     func testBmsNoDataRidingRuleExposesClampedProgressToAccessibility() {
         XCTAssertEqual(
             BmsNoDataRidingRuleCard(
-                title: "record unsupported pack",
+                metricValue: bmsNoDataRidingRuleMetricValue("record unsupported pack"),
                 progress: 0.62
             ).progressAccessibilityValue,
             "62 percent"
         )
         XCTAssertEqual(
             BmsNoDataRidingRuleCard(
-                title: "record unsupported pack",
+                metricValue: bmsNoDataRidingRuleMetricValue("record unsupported pack"),
                 progress: 1.8
             ).progressAccessibilityValue,
             "100 percent"
         )
         XCTAssertEqual(
             BmsNoDataRidingRuleCard(
-                title: "record unsupported pack",
+                metricValue: bmsNoDataRidingRuleMetricValue("record unsupported pack"),
                 progress: -0.4
             ).progressAccessibilityValue,
             "0 percent"
@@ -420,5 +420,13 @@ final class PevScreenThemeTests: XCTestCase {
                 detail
             )
         )
+    }
+
+    func testBmsNoDataRidingRuleSpeaksTypedUnavailableTitle() {
+        let metricValue = bmsNoDataRidingRuleMetricValue(nil)
+        let card = BmsNoDataRidingRuleCard(metricValue: metricValue, progress: 0)
+
+        XCTAssertEqual(metricValue, .unavailable)
+        XCTAssertEqual(card.titleAccessibilityText, "unavailable")
     }
 }
