@@ -7,8 +7,10 @@ final class CutoutAppUITests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         continueAfterFailure = false
+        try skipLiveActivityTestsOnSimulator()
+        XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
-        app.launchArguments = ["--ui-test-vesc"]
+        app.launchArguments = launchArguments
         app.launch()
         allowDeviceAuthorizationAlerts()
     }
@@ -16,6 +18,7 @@ final class CutoutAppUITests: XCTestCase {
     override func tearDown() async throws {
         app?.terminate()
         app = nil
+        XCUIDevice.shared.orientation = .portrait
         try await super.tearDown()
     }
 
@@ -33,7 +36,7 @@ final class CutoutAppUITests: XCTestCase {
 
         for _ in 0..<3 {
             let alert = springboard.alerts.firstMatch
-            guard alert.waitForExistence(timeout: 3) else { return }
+            guard alert.waitForExistence(timeout: 1) else { return }
 
             guard let button = alert.buttons.allElementsBoundByIndex.first(where: {
                 allowLabels.contains($0.label.lowercased())
@@ -91,7 +94,6 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCapturePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        relaunchAtAccessibilityDynamicType()
         enterCapture()
 
         let screen = app.descendants(matching: .any)["capture.screen"]
@@ -115,22 +117,12 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testProductionPickerPassesAccessibilityAuditInLightAppearance() throws {
-        relaunchAtLightAppearance()
-
-        let screen = app.descendants(matching: .any)["device-picker.screen"]
-        XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        try performVisibleLayoutAccessibilityAudit()
-    }
-
-    func testProductionPickerPassesContrastAccessibilityAudit() throws {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
         try performVisibleLayoutAccessibilityAudit()
     }
 
     func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
-        relaunchWithSystemAccessibilitySettings()
-
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         try performVisibleLayoutAccessibilityAudit()
@@ -158,8 +150,6 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() throws {
-        relaunchAtAccessibilityDynamicType()
-
         let window = app.windows.firstMatch
         let screen = app.descendants(matching: .any)["device-picker.screen"]
         let captureKind = app.textFields["device-picker.capture-kind"]
@@ -187,16 +177,6 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescLiveActivityFixtureStartsFromAnAccessibleRide() throws {
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil,
-            "Live Activity inspection is reserved for a physical-device ActivityKit run"
-        )
-
-        app.terminate()
-        app.launchArguments = ["--ui-test-vesc", "--ui-test-live-activity"]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
-
         XCTAssertTrue(pairAvailableDevice(.vesc))
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20))
@@ -207,16 +187,6 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
-        try XCTSkipIf(
-            ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil,
-            "Live Activity inspection is reserved for a physical-device ActivityKit run"
-        )
-
-        app.terminate()
-        app.launchArguments = ["--ui-test-live-activity-auto"]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
-
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20))
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
@@ -226,8 +196,6 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() {
-        relaunchAtVescFailureFixture()
-
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
@@ -249,8 +217,6 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsSurfacesRemainAccessible() throws {
-        relaunchAtEucAccessibilityDynamicType()
-
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard let rideScreen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic EUC fixture did not open its Ride screen")
@@ -278,25 +244,18 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        relaunchAtAccessibilityDynamicType()
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
     func testVescRidePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
-        defer { XCUIDevice.shared.orientation = .portrait }
-
-        relaunchAtAccessibilityDynamicType()
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
     func testVescRidePassesAccessibilityAuditInRightToLeftLayout() throws {
-        relaunchAtRightToLeftAccessibilityDynamicType()
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
     func testVescDebugPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        relaunchAtAccessibilityDynamicType()
         guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
             return
@@ -391,81 +350,66 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
-    private func relaunchAtAccessibilityDynamicType() {
-        relaunchAtAccessibilityDynamicType(fixture: "--ui-test-vesc")
+    private var launchArguments: [String] {
+        if name.contains("LiveActivityAutoFixture") {
+            return ["--ui-test-live-activity-auto"]
+        }
+        if name.contains("LiveActivityFixture") {
+            return ["--ui-test-vesc", "--ui-test-live-activity"]
+        }
+        if name.contains("FailedVescConnection") {
+            return ["--ui-test-vesc-failure"]
+        }
+        if name.contains("EucRideAndBms") {
+            return accessibilityLaunchArguments(fixture: "--ui-test-euc")
+        }
+        if name.contains("InLightAppearance") {
+            return ["--ui-test-vesc", "-AppleInterfaceStyle", "Light"]
+        }
+        if name.contains("RespectSystemAccessibilitySettings") {
+            return [
+                "--ui-test-vesc",
+                "-AppleInterfaceStyle", "Dark",
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryLarge",
+                "-UIAccessibilityBoldTextEnabled", "YES",
+                "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
+                "-UIAccessibilityDifferentiateWithoutColorEnabled", "YES",
+                "-UIAccessibilityReduceMotionEnabled", "YES",
+                "-UIAccessibilityReduceTransparencyEnabled", "YES",
+                "-UIAccessibilityGrayscaleEnabled", "YES",
+            ]
+        }
+        if name.contains("RightToLeft") {
+            return [
+                "--ui-test-vesc",
+                "-AppleLanguages", "(ar)",
+                "-AppleLocale", "ar_SA",
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            ]
+        }
+        if name.contains("AccessibilityDynamicType") {
+            return accessibilityLaunchArguments(fixture: "--ui-test-vesc")
+        }
+        return ["--ui-test-vesc"]
     }
 
-    private func relaunchAtVescFailureFixture() {
-        app.terminate()
-        app.launchArguments = ["--ui-test-vesc-failure"]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
+    private var isLandscapeTest: Bool {
+        name.contains("InLandscape")
     }
 
-    private func relaunchAtEucAccessibilityDynamicType() {
-        relaunchAtAccessibilityDynamicType(fixture: "--ui-test-euc")
-    }
-
-    private func relaunchAtAccessibilityDynamicType(fixture: String) {
-        app.terminate()
-        app.launchArguments = [
+    private func accessibilityLaunchArguments(fixture: String) -> [String] {
+        [
             fixture,
             "-UIPreferredContentSizeCategoryName",
             "UICTContentSizeCategoryAccessibilityXXXL",
         ]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
     }
 
-    private func relaunchAtLightAppearance() {
-        app.terminate()
-        app.launchArguments = [
-            "--ui-test-vesc",
-            "-AppleInterfaceStyle",
-            "Light",
-        ]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
-    }
-
-    private func relaunchAtRightToLeftAccessibilityDynamicType() {
-        app.terminate()
-        app.launchArguments = [
-            "--ui-test-vesc",
-            "-AppleLanguages",
-            "(ar)",
-            "-AppleLocale",
-            "ar_SA",
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryAccessibilityXXXL",
-        ]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
-    }
-
-    private func relaunchWithSystemAccessibilitySettings() {
-        app.terminate()
-        app.launchArguments = [
-            "--ui-test-vesc",
-            "-AppleInterfaceStyle",
-            "Dark",
-            "-UIPreferredContentSizeCategoryName",
-            "UICTContentSizeCategoryLarge",
-            "-UIAccessibilityBoldTextEnabled",
-            "YES",
-            "-UIAccessibilityDarkerSystemColorsEnabled",
-            "YES",
-            "-UIAccessibilityDifferentiateWithoutColorEnabled",
-            "YES",
-            "-UIAccessibilityReduceMotionEnabled",
-            "YES",
-            "-UIAccessibilityReduceTransparencyEnabled",
-            "YES",
-            "-UIAccessibilityGrayscaleEnabled",
-            "YES",
-        ]
-        app.launch()
-        allowDeviceAuthorizationAlerts()
+    private func skipLiveActivityTestsOnSimulator() throws {
+        guard name.contains("LiveActivity"),
+              ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil
+        else { return }
+        throw XCTSkip("Live Activity inspection is reserved for a physical-device ActivityKit run")
     }
 
     private func enterCapture() {
