@@ -44,7 +44,7 @@ public struct PevDashboardFootpadReadout: View {
             rightLabel,
             rightValue,
             detail,
-        ].joined(separator: ", ")
+        ].formatted(.list(type: .and))
     }
 
     public var body: some View {

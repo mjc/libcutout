@@ -132,7 +132,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
 
         XCTAssertEqual(
             readout.accessibilityValueText,
-            "left, 1.2 volts, right, unavailable, engaged"
+            "left, 1.2 volts, right, unavailable, and engaged"
         )
     }
 
