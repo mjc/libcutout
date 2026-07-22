@@ -6,7 +6,7 @@ struct DynamicIslandRideActivityView: View {
     let snapshot: LiveActivityRideSnapshot
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
+        ViewThatFits(in: [.horizontal, .vertical]) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(spacing: 4) {
                     PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 70)
@@ -30,6 +30,13 @@ struct DynamicIslandRideActivityView: View {
                 PevLiveActivityMetricGrid(snapshot: snapshot, compact: true)
             }
             .frame(maxWidth: .infinity)
+
+            HStack(spacing: 10) {
+                PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 52)
+                PevLiveActivitySafetyFooter(snapshot: snapshot, compact: true)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity)
         }
         .padding(.top, 3)
         .frame(maxWidth: .infinity)
@@ -44,7 +51,7 @@ struct LockScreenRideActivityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             PevLiveActivityHeader(snapshot: snapshot, compact: false)
-            ViewThatFits(in: .horizontal) {
+            ViewThatFits(in: [.horizontal, .vertical]) {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(spacing: 5) {
                         PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 78)
@@ -60,6 +67,9 @@ struct LockScreenRideActivityView: View {
                     PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 68)
                     PevLiveActivityMetricGrid(snapshot: snapshot, compact: true)
                 }
+                .frame(maxWidth: .infinity)
+
+                PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 56)
                 .frame(maxWidth: .infinity)
             }
             PevLiveActivitySafetyFooter(snapshot: snapshot, compact: false)
