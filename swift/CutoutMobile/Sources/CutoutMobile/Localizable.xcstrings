@@ -1,6 +1,50 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.accessibility.balancing" : {
+      "comment" : "VoiceOver BMS cell-group state when that group is actively balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "balancing" } } }
+    },
+    "bms.accessibility.group" : {
+      "comment" : "VoiceOver cell-group label. The placeholder is the one-based group index.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell group %lld" } } }
+    },
+    "bms.accessibility.group_named" : {
+      "comment" : "VoiceOver cell-group label. The first placeholder is the one-based group index; the second is the device-provided group name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell group %1$lld, %2$@" } } }
+    },
+    "bms.accessibility.not_balancing" : {
+      "comment" : "VoiceOver BMS cell-group state when that group is not balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "not balancing" } } }
+    },
+    "bms.accessibility.show_details" : {
+      "comment" : "VoiceOver hint for opening details about a BMS cell group.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show available details for this cell group" } } }
+    },
+    "bms.accessibility.status.critical" : {
+      "comment" : "VoiceOver BMS cell-group alert level for a critical condition.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "critical" } } }
+    },
+    "bms.accessibility.status.nominal" : {
+      "comment" : "VoiceOver BMS cell-group alert level for a normal condition.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "nominal" } } }
+    },
+    "bms.accessibility.status.unknown" : {
+      "comment" : "VoiceOver BMS cell-group alert level when no status is known.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "status unknown" } } }
+    },
+    "bms.accessibility.status.warning" : {
+      "comment" : "VoiceOver BMS cell-group alert level for a warning condition.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "warning" } } }
+    },
+    "bms.accessibility.voltage" : {
+      "comment" : "VoiceOver BMS cell-group voltage. The placeholder is the displayed voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ volts" } } }
+    },
+    "bms.accessibility.voltage_unavailable" : {
+      "comment" : "VoiceOver BMS cell-group voltage when no voltage reading is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "voltage unavailable" } } }
+    },
     "bms.chip.bms_online" : {
       "comment" : "BMS status chip. The placeholder is the number of online BMS controllers.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld BMS online" } } }

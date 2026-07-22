@@ -3,6 +3,20 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class BmsSnapshotContractTests: XCTestCase {
+    func testBmsAccessibilityCopyResolvesFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.group", Int64(7)), "Cell group 7")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.group_named", Int64(7), "left pack"), "Cell group 7, left pack")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.voltage", "4.071"), "4.071 volts")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.voltage_unavailable"), "voltage unavailable")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.balancing"), "balancing")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.not_balancing"), "not balancing")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.status.nominal"), "nominal")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.status.warning"), "warning")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.status.critical"), "critical")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.status.unknown"), "status unknown")
+        XCTAssertEqual(pevLocalizedText("bms.accessibility.show_details"), "Show available details for this cell group")
+    }
+
     func testEnergyProgressUsesAndClampsTypedBatteryLevel() {
         let topology = BmsTopology(
             layoutLabel: "test pack",
@@ -37,13 +51,13 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(group.accessibilityLabel, "Cell group 7, left pack")
         XCTAssertEqual(
             group.accessibilityValue,
-            "4.071 volts, warning, balancing, sagging under load"
+            "4.071 volts, warning, balancing, and sagging under load"
         )
         XCTAssertEqual(group.detailSelectionAccessibilityHint, "Show available details for this cell group")
 
         let unavailable = BmsGroupSnapshot(index: 8, alertLevel: .unknown)
         XCTAssertEqual(unavailable.accessibilityLabel, "Cell group 8")
-        XCTAssertEqual(unavailable.accessibilityValue, "voltage unavailable, status unknown")
+        XCTAssertEqual(unavailable.accessibilityValue, "voltage unavailable and status unknown")
     }
 
     func testSnapshotPreservesSplitPackIdentityAndGroupMetadata() {
