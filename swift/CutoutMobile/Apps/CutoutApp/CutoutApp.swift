@@ -78,7 +78,7 @@ struct CutoutNavigationCommands: Commands {
     }
 
     var body: some Commands {
-        CommandMenu("Navigate") {
+        CommandMenu(localizedAppText("app.command.navigate")) {
             if navigationTabs.isEmpty {
                 Button(localizedAppText("app.command.no_connected_device")) {}
                     .disabled(true)

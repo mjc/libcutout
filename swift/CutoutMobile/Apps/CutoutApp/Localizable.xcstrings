@@ -9,6 +9,10 @@
       "comment" : "Disabled app command shown when no device is connected.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No connected device" } } }
     },
+    "app.command.navigate" : {
+      "comment" : "App command menu that contains navigation destinations.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Navigate" } } }
+    },
     "accessibility.bms_alert.critical" : {
       "comment" : "VoiceOver announcement for a critical BMS alert.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical battery warning. Check BMS details." } } }

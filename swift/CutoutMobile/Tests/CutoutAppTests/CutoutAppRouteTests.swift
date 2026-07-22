@@ -70,6 +70,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("picker.error.device_no_longer_available"), "Device is no longer available")
         XCTAssertEqual(localizedAppText("app.command.no_connected_device"), "No connected device")
         XCTAssertEqual(localizedAppText("app.command.disconnect"), "Disconnect")
+        XCTAssertEqual(localizedAppText("app.command.navigate"), "Navigate")
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
