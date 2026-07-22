@@ -139,6 +139,7 @@ final class CutoutAppModel {
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     init() {
+        permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
         core = Self.makeSessionDriver()
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
@@ -351,15 +352,23 @@ final class CutoutAppModel {
 
     private static func makeSessionDriver() -> any CutoutSessionDriving {
         #if DEBUG
-        if let fixture = CutoutUITestSessionFixture(
-            value: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE")
-        ) ?? CutoutUITestSessionFixture(
-            value: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"]
-        ) ?? CutoutUITestSessionFixture(arguments: CommandLine.arguments) {
+        if let fixture = uiTestFixture {
             return CutoutUITestSessionDriver(fixture: fixture)
         }
         #endif
         return CutoutSessionCore()
+    }
+
+    private static var uiTestFixture: CutoutUITestSessionFixture? {
+        #if DEBUG
+        CutoutUITestSessionFixture(
+            value: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE")
+        ) ?? CutoutUITestSessionFixture(
+            value: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"]
+        ) ?? CutoutUITestSessionFixture(arguments: CommandLine.arguments)
+        #else
+        nil
+        #endif
     }
 
     private func syncLiveActivity() {

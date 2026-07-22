@@ -128,11 +128,15 @@ struct DevicePickerView: View {
 
     private func captureButton(for row: DevicePickerRow) -> some View {
         Button {
-            recordOnly(row, trimmedRecordOnlyDeviceKind)
+            if hasRecordOnlyDeviceKind {
+                recordOnly(row, trimmedRecordOnlyDeviceKind)
+            } else {
+                isCaptureKindFocused = true
+            }
         } label: {
             Label(row.captureActionTitle, systemImage: "record.circle")
                 .font(.callout.weight(.bold))
-                .foregroundStyle(hasRecordOnlyDeviceKind ? PevColors.yellow : PevColors.primaryText)
+                .foregroundStyle(hasRecordOnlyDeviceKind ? PevColors.yellow : PevColors.brand)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(
                     PevDashboardCardBackground(
@@ -143,7 +147,6 @@ struct DevicePickerView: View {
                 )
         }
         .buttonStyle(.plain)
-        .disabled(!hasRecordOnlyDeviceKind)
         .accessibilityLabel(row.captureActionAccessibilityLabel)
         .accessibilityHint(hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture")
         .accessibilityIdentifier("device-picker.record.\(row.id)")

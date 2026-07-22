@@ -10,7 +10,8 @@ final class CutoutAppUITests: XCTestCase {
         try skipLiveActivityTestsOnSimulator()
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
-        app.launchArguments = launchArguments + ["-CUTOUT_UI_TEST_FIXTURE", fixtureEnvironmentValue]
+        app.launchArguments = launchArguments
+        app.launchEnvironment["CUTOUT_UI_TEST_FIXTURE"] = fixtureEnvironmentValue
         app.launch()
         allowDeviceAuthorizationAlerts()
     }
@@ -68,9 +69,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureKind.isHittable)
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
         XCTAssertTrue(recordButton.label.contains("Refloat VESC"))
-        XCTAssertFalse(recordButton.isEnabled)
 
-        captureKind.tap()
+        recordButton.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+
         captureKind.typeText("vesc floatwheel")
 
         XCTAssertEqual(captureKind.value as? String, "vesc floatwheel")
@@ -394,6 +396,19 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private var launchArguments: [String] {
+        if name.contains("Picker") || name.contains("Capture") {
+            var arguments = ["--ui-test-vesc"]
+            if name.contains("InLightAppearance") {
+                arguments += ["-AppleInterfaceStyle", "Light"]
+            }
+            if name.contains("AccessibilityDynamicType") {
+                arguments += [
+                    "-UIPreferredContentSizeCategoryName",
+                    "UICTContentSizeCategoryAccessibilityXXXL",
+                ]
+            }
+            return arguments
+        }
         if name.contains("LiveActivityAutoFixture") {
             return ["--ui-test-live-activity-auto"]
         }
@@ -405,9 +420,6 @@ final class CutoutAppUITests: XCTestCase {
         }
         if name.contains("EucRideAndBms") {
             return accessibilityLaunchArguments(fixture: "--ui-test-euc")
-        }
-        if name.contains("InLightAppearance") {
-            return ["--ui-test-vesc", "-AppleInterfaceStyle", "Light"]
         }
         if name.contains("RespectSystemAccessibilitySettings") {
             return [
@@ -433,11 +445,10 @@ final class CutoutAppUITests: XCTestCase {
         if name.contains("AccessibilityDynamicType") {
             return accessibilityLaunchArguments(fixture: "--ui-test-vesc")
         }
-        return ["--ui-test-vesc"]
-    }
-
-    private var isLandscapeTest: Bool {
-        name.contains("InLandscape")
+        if name.contains("Vesc") || name.contains("DisconnectKeepsSavedDevice") {
+            return ["--ui-test-vesc"]
+        }
+        return []
     }
 
     private var fixtureEnvironmentValue: String {
@@ -446,6 +457,10 @@ final class CutoutAppUITests: XCTestCase {
         if name.contains("FailedVescConnection") { return "vesc-failure" }
         if name.contains("EucRideAndBms") { return "euc" }
         return "vesc"
+    }
+
+    private var isLandscapeTest: Bool {
+        name.contains("InLandscape")
     }
 
     private func accessibilityLaunchArguments(fixture: String) -> [String] {
