@@ -281,6 +281,10 @@
       "comment" : "Unknown-topology BMS metric label for available temperature readings.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperatures" } } }
     },
+    "bms.unknown.temperature_sensors" : {
+      "comment" : "Unit after the unknown-topology BMS temperature sensor count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "sensors" } } }
+    },
     "bms.unknown.title" : {
       "comment" : "Unknown-topology BMS warning card title that tells the rider the topology is not confirmed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Do not pretend certainty" } } }

@@ -5,6 +5,7 @@ import CutoutMobile
 final class PevScreenThemeTests: XCTestCase {
     func testBmsScreenPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("bms.screen.subtitle"), "CutOut · BMS")
+        XCTAssertEqual(localizedAppText("bms.unknown.temperature_sensors"), "sensors")
     }
 
     func testEucRideAppPresentationUsesTheAppCatalog() {

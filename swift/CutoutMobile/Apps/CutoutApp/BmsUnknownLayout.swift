@@ -47,7 +47,7 @@ struct BmsUnknownLayout: View {
                         let value = String($0)
                         return .available(display: value, accessibility: value)
                     } ?? .unavailable,
-                    unit: "sensors",
+                    unit: localizedAppText("bms.unknown.temperature_sensors"),
                     detail: snapshot.unknownTopologyTemperatureDetail,
                     detailColor: PevColors.primaryText
                 )
