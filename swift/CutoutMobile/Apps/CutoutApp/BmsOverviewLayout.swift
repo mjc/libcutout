@@ -21,7 +21,6 @@ struct BmsOverviewLayout: View {
                             value: groupVoltageText(averageGroupVoltage),
                             unit: "V",
                             detail: "",
-                            accent: PevColors.green,
                             detailColor: PevColors.primaryText
                         )
                     }
@@ -31,7 +30,6 @@ struct BmsOverviewLayout: View {
                             value: groupVoltageText(lowestGroupVoltage),
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
-                            accent: PevColors.orange,
                             detailColor: PevColors.primaryText
                         )
                     }
@@ -44,7 +42,6 @@ struct BmsOverviewLayout: View {
                     value: temperatureText(snapshot.highestTemperature),
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
-                    accent: PevColors.green,
                     detailColor: PevColors.primaryText
                 )
             }
@@ -53,8 +50,7 @@ struct BmsOverviewLayout: View {
                 PevDashboardWideCard(
                     title: "balancing",
                     value: balancingSummary,
-                    detail: snapshot.balancingDetail ?? "",
-                    accent: PevColors.orange
+                    detail: snapshot.balancingDetail ?? ""
                 )
             }
 
@@ -63,7 +59,6 @@ struct BmsOverviewLayout: View {
                     title: "fault state",
                     value: faultSummary,
                     detail: snapshot.faultDetail ?? "",
-                    accent: PevColors.orange,
                     stroke: PevColors.red
                 )
             }
@@ -85,8 +80,7 @@ struct BmsOverviewLayout: View {
             PevDashboardWideCard(
                 title: "pack telemetry",
                 value: voltageText(snapshot.voltage) == "--" ? snapshot.availability.displayText : "\(voltageText(snapshot.voltage)) V",
-                detail: snapshot.topology.layoutLabel,
-                accent: PevColors.green
+                detail: snapshot.topology.layoutLabel
             )
         }
     }

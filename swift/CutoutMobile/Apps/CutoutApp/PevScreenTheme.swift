@@ -133,7 +133,6 @@ extension PevDashboardMetricTile {
             metricValue: tile.metricValue,
             unit: tile.unit,
             detail: tile.detail,
-            accent: tile.accent.color,
             fill: fill,
             stroke: stroke,
             labelColor: labelColor,

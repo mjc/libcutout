@@ -205,7 +205,6 @@ struct VescRideScreenView: View {
                     rightLabel: "right / adc2",
                     rightValue: footpad.adc2DisplayText,
                     detail: footpad.stateDisplayText,
-                    accent: PevColors.cyan,
                     fill: PevColors.cardFill,
                     stroke: PevColors.cardStroke,
                     textColor: PevColors.primaryText,

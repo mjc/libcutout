@@ -9,8 +9,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             label: "Pack voltage",
             value: "84",
             unit: "volts",
-            detail: "stale",
-            accent: .yellow
+            detail: "stale"
         )
 
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")
@@ -21,8 +20,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             label: "Pack voltage",
             value: PevDashboardMetricValue.unavailable.displayText,
             unit: "volts",
-            detail: "stale",
-            accent: .yellow
+            detail: "stale"
         )
 
         XCTAssertEqual(tile.metricValue, .unavailable)
@@ -53,8 +51,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         let card = PevDashboardWideCard(
             title: nil,
             value: "Trend stable",
-            detail: "No change",
-            accent: .yellow
+            detail: "No change"
         )
 
         XCTAssertEqual(card.accessibilityLabelText, "Trend stable")
@@ -155,7 +152,6 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             rightLabel: "right",
             rightValue: "unavailable",
             detail: "engaged",
-            accent: .cyan,
             fill: .gray,
             stroke: .gray,
             textColor: .primary,

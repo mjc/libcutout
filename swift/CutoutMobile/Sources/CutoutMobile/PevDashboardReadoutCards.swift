@@ -10,7 +10,6 @@ public struct PevDashboardMetricTile: View {
     let unit: String
     let detail: String
     let accessibilityValue: String?
-    let accent: Color
     let fill: Color
     let stroke: Color
     let labelColor: Color
@@ -44,7 +43,6 @@ public struct PevDashboardMetricTile: View {
         unit: String = "",
         detail: String = "",
         accessibilityValue: String? = nil,
-        accent: Color,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         labelColor: Color = PevDashboardColors.mutedText,
@@ -60,7 +58,6 @@ public struct PevDashboardMetricTile: View {
             unit: unit,
             detail: detail,
             accessibilityValue: accessibilityValue,
-            accent: accent,
             fill: fill,
             stroke: stroke,
             labelColor: labelColor,
@@ -78,7 +75,6 @@ public struct PevDashboardMetricTile: View {
         unit: String = "",
         detail: String = "",
         accessibilityValue: String? = nil,
-        accent: Color,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         labelColor: Color = PevDashboardColors.mutedText,
@@ -93,7 +89,6 @@ public struct PevDashboardMetricTile: View {
         self.unit = unit
         self.detail = detail
         self.accessibilityValue = accessibilityValue
-        self.accent = accent
         self.fill = fill
         self.stroke = stroke
         self.labelColor = labelColor
@@ -247,7 +242,6 @@ public struct PevDashboardWideCard: View {
     let title: String?
     let value: String
     let detail: String?
-    let accent: Color
     let fill: Color
     let stroke: Color
     let textColor: Color
@@ -267,7 +261,6 @@ public struct PevDashboardWideCard: View {
         title: String?,
         value: String,
         detail: String?,
-        accent: Color,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         textColor: Color = PevDashboardColors.primaryText,
@@ -276,7 +269,6 @@ public struct PevDashboardWideCard: View {
         self.title = title
         self.value = value
         self.detail = detail
-        self.accent = accent
         self.fill = fill
         self.stroke = stroke
         self.textColor = textColor

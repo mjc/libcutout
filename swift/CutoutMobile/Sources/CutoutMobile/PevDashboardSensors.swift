@@ -9,7 +9,6 @@ public struct PevDashboardFootpadReadout: View {
     let rightLabel: String
     let rightValue: String
     let detail: String
-    let accent: Color
     let fill: Color
     let stroke: Color
     let textColor: Color
@@ -23,7 +22,6 @@ public struct PevDashboardFootpadReadout: View {
         rightLabel: String = "right",
         rightValue: String,
         detail: String,
-        accent: Color,
         fill: Color,
         stroke: Color,
         textColor: Color,
@@ -36,7 +34,6 @@ public struct PevDashboardFootpadReadout: View {
         self.rightLabel = rightLabel
         self.rightValue = rightValue
         self.detail = detail
-        self.accent = accent
         self.fill = fill
         self.stroke = stroke
         self.textColor = textColor

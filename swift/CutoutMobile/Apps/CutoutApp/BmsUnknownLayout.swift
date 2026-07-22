@@ -12,7 +12,6 @@ struct BmsUnknownLayout: View {
                 title: "do not pretend certainty",
                 value: snapshot.faultSummary ?? "--",
                 detail: snapshot.faultDetail ?? "",
-                accent: PevColors.orange,
                 stroke: PevColors.orange
             )
 
@@ -28,7 +27,6 @@ struct BmsUnknownLayout: View {
                     value: voltageText(snapshot.voltage),
                     unit: "V",
                     detail: snapshot.unknownTopologyVoltageDetail,
-                    accent: PevColors.yellow,
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
@@ -36,7 +34,6 @@ struct BmsUnknownLayout: View {
                     value: snapshot.unknownTopologyCellCountValue,
                     unit: "",
                     detail: snapshot.unknownTopologyCellCountDetail,
-                    accent: PevColors.orange,
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
@@ -44,7 +41,6 @@ struct BmsUnknownLayout: View {
                     value: snapshot.unknownTopologyTemperatureValue,
                     unit: "sensors",
                     detail: snapshot.unknownTopologyTemperatureDetail,
-                    accent: PevColors.green,
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
@@ -52,7 +48,6 @@ struct BmsUnknownLayout: View {
                     value: snapshot.faults.first?.code ?? "--",
                     unit: "",
                     detail: snapshot.faults.first?.label ?? "",
-                    accent: PevColors.orange,
                     detailColor: PevColors.primaryText
                 )
             }

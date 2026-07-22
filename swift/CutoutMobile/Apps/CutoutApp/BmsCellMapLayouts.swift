@@ -12,8 +12,7 @@ struct BmsInlineLayout: View {
             PevDashboardWideCard(
                 title: "topology fits inline",
                 value: snapshot.cellMapVisibilitySummary,
-                detail: snapshot.topology.layoutLabel,
-                accent: PevColors.green
+                detail: snapshot.topology.layoutLabel
             )
 
             PevDashboardGrid(
@@ -32,8 +31,7 @@ struct BmsInlineLayout: View {
             PevDashboardWideCard(
                 title: "range of interest",
                 value: snapshot.cellMapSpreadSummary,
-                detail: snapshot.cellMapFocusSummary,
-                accent: PevColors.cyan
+                detail: snapshot.cellMapFocusSummary
             )
 
             VStack(alignment: .leading, spacing: 14) {
@@ -76,8 +74,7 @@ struct BmsScrollableLayout: View {
             PevDashboardWideCard(
                 title: "large packs use grouped overview first",
                 value: snapshot.cellMapVisibilitySummary,
-                detail: snapshot.topology.layoutLabel,
-                accent: PevColors.cyan
+                detail: snapshot.topology.layoutLabel
             )
 
             PevDashboardGrid(columns: columns, spacing: 8) {
@@ -94,7 +91,6 @@ struct BmsScrollableLayout: View {
                 title: "interesting groups",
                 value: snapshot.cellMapFocusSummary,
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
-                accent: PevColors.orange,
                 stroke: PevColors.orange
             )
 
@@ -198,7 +194,6 @@ struct BmsDetailLayout: View {
                             value: temperatureText(selectedGroup.temperature),
                             unit: "°C",
                             detail: "",
-                            accent: PevColors.green,
                             detailColor: PevColors.primaryText
                         )
                         PevDashboardMetricTile(
@@ -206,7 +201,6 @@ struct BmsDetailLayout: View {
                             value: selectedGroup.resistance.map { String($0.value) } ?? "--",
                             unit: "mΩ",
                             detail: "",
-                            accent: PevColors.green,
                             detailColor: PevColors.primaryText
                         )
                     }
@@ -214,8 +208,7 @@ struct BmsDetailLayout: View {
                     PevDashboardWideCard(
                         title: nil,
                         value: "trend: \(snapshot.detailGroupTrend(for: selectedGroup.index))",
-                        detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index),
-                        accent: PevColors.yellow
+                        detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index)
                     )
                 }
                 .padding(.horizontal, 18)
