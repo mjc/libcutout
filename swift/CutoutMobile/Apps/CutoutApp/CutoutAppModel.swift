@@ -296,7 +296,9 @@ final class CutoutAppModel {
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
-        liveActivityCoordinator.end(reason: reason)
+        Task { [liveActivityCoordinator] in
+            await liveActivityCoordinator.end(reason: reason)
+        }
         lastLiveActivitySnapshot = nil
         lastLiveActivityUpdate = nil
     }
@@ -374,7 +376,13 @@ final class CutoutAppModel {
             .sessionEnded
         }
         guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
-        liveActivityCoordinator.reconcile(snapshot: snapshot, shouldBeActive: shouldBeActive, endReason: endReason)
+        Task { [liveActivityCoordinator] in
+            await liveActivityCoordinator.reconcile(
+                snapshot: snapshot,
+                shouldBeActive: shouldBeActive,
+                endReason: endReason
+            )
+        }
     }
 
     private func maybeSetSelectedRideTitle(from candidate: DevicePickerDiscoveryCandidate?) {

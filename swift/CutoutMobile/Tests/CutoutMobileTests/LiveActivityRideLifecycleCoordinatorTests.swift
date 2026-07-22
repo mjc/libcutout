@@ -3,59 +3,64 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
-    func testReconcileStartsUpdatesAndEndsOnce() {
+    func testReconcileStartsUpdatesAndEndsOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let first = liveSnapshot(label: "Connected ride", speedMph: 19.8)
         let second = liveSnapshot(label: "Connected ride", speedMph: 21.6)
 
-        coordinator.reconcile(snapshot: first, shouldBeActive: true)
-        coordinator.reconcile(snapshot: first, shouldBeActive: true)
-        coordinator.reconcile(snapshot: second, shouldBeActive: true)
-        coordinator.reconcile(snapshot: second, shouldBeActive: false, endReason: .disconnected)
+        await coordinator.reconcile(snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: second, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: second, shouldBeActive: false, endReason: .disconnected)
 
-        XCTAssertEqual(manager.events, [.start(first), .update(second), .end(.disconnected)])
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(first), .update(second), .end(.disconnected)])
     }
 
-    func testReconcileDoesNotStartWithoutSnapshot() {
+    func testReconcileDoesNotStartWithoutSnapshot() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
 
-        coordinator.reconcile(snapshot: nil, shouldBeActive: true)
-        coordinator.reconcile(snapshot: nil, shouldBeActive: false, endReason: .sessionEnded)
+        await coordinator.reconcile(snapshot: nil, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: nil, shouldBeActive: false, endReason: .sessionEnded)
 
-        XCTAssertTrue(manager.events.isEmpty)
+        let events = await manager.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
     }
 
-    func testEndStopsActiveActivityOnce() {
+    func testEndStopsActiveActivityOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
-        coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
-        coordinator.end(reason: .sessionEnded)
-        coordinator.end(reason: .sessionEnded)
+        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(reason: .sessionEnded)
+        await coordinator.end(reason: .sessionEnded)
 
-        XCTAssertEqual(manager.events, [.start(snapshot), .end(.sessionEnded)])
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot), .end(.sessionEnded)])
     }
 
-    func testEndDoesNothingWithoutPriorStart() {
+    func testEndDoesNothingWithoutPriorStart() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
 
-        coordinator.end(reason: .sessionEnded)
+        await coordinator.end(reason: .sessionEnded)
 
-        XCTAssertTrue(manager.events.isEmpty)
+        let events = await manager.recordedEvents()
+        XCTAssertTrue(events.isEmpty)
     }
 
-    func testLiveSnapshotCanEnterThePipeline() {
+    func testLiveSnapshotCanEnterThePipeline() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 27)
 
-        coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
 
-        XCTAssertEqual(manager.events, [.start(snapshot)])
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot)])
     }
 
     func testLiveSnapshotKeepsSpeedUnitSeparate() {
@@ -68,33 +73,93 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(fastSnapshot.speed.unit, "mph")
     }
 
-    func testIdentityChangeEndsPreviousActivityBeforeStartingReplacement() {
+    func testIdentityChangeEndsPreviousActivityBeforeStartingReplacement() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let first = liveSnapshot(label: "First ride", speedMph: 19.8)
         let replacement = liveSnapshot(label: "Second ride", speedMph: 19.8)
 
-        coordinator.reconcile(snapshot: first, shouldBeActive: true)
-        coordinator.reconcile(snapshot: replacement, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: replacement, shouldBeActive: true)
 
+        let events = await manager.recordedEvents()
         XCTAssertEqual(
-            manager.events,
+            events,
             [.start(first), .end(.sessionEnded), .start(replacement)]
         )
     }
+
+    func testFailedStartDoesNotMakeTheCoordinatorActive() async {
+        let manager = RecordingLiveActivityRideLifecycleManager(startError: .requestFailed)
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(reason: .sessionEnded)
+
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot)])
+    }
+
+    func testConcurrentReconciliationsDoNotOverlapLifecycleOperations() async {
+        let manager = RecordingLiveActivityRideLifecycleManager(blockFirstStart: true)
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let first = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let second = liveSnapshot(label: "Connected ride", speedMph: 21.6)
+
+        let firstReconciliation = Task {
+            await coordinator.reconcile(snapshot: first, shouldBeActive: true)
+        }
+        await manager.waitUntilFirstStartIsBlocked()
+
+        let secondReconciliation = Task {
+            await coordinator.reconcile(snapshot: second, shouldBeActive: true)
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let eventsBeforeRelease = await manager.recordedEvents()
+        XCTAssertEqual(eventsBeforeRelease, [.start(first)])
+
+        await manager.resumeFirstStart()
+        await firstReconciliation.value
+        await secondReconciliation.value
+
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(first), .update(second)])
+    }
 }
 
-private final class RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecycleManaging {
+private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecycleManaging {
     enum Event: Equatable {
         case start(LiveActivityRideSnapshot)
         case update(LiveActivityRideSnapshot)
         case end(LiveActivityRideLifecycleEndReason)
     }
 
-    private(set) var events: [Event] = []
+    private var events: [Event] = []
+    private let startError: LiveActivityRideLifecycleError?
+    private let blockFirstStart: Bool
+    private var firstStartBlocked = false
+    private var firstStartWaiter: CheckedContinuation<Void, Never>?
+    private var firstStartBlockedWaiter: CheckedContinuation<Void, Never>?
 
-    func start(snapshot: LiveActivityRideSnapshot) {
+    init(
+        startError: LiveActivityRideLifecycleError? = nil,
+        blockFirstStart: Bool = false
+    ) {
+        self.startError = startError
+        self.blockFirstStart = blockFirstStart
+    }
+
+    func start(snapshot: LiveActivityRideSnapshot) async throws {
         events.append(.start(snapshot))
+        if let startError { throw startError }
+
+        guard blockFirstStart, firstStartBlocked == false else { return }
+        firstStartBlocked = true
+        firstStartBlockedWaiter?.resume()
+        firstStartBlockedWaiter = nil
+        await withCheckedContinuation { firstStartWaiter = $0 }
     }
 
     func update(snapshot: LiveActivityRideSnapshot) {
@@ -103,6 +168,18 @@ private final class RecordingLiveActivityRideLifecycleManager: LiveActivityRideL
 
     func end(reason: LiveActivityRideLifecycleEndReason) {
         events.append(.end(reason))
+    }
+
+    func recordedEvents() -> [Event] { events }
+
+    func waitUntilFirstStartIsBlocked() async {
+        guard firstStartBlocked == false else { return }
+        await withCheckedContinuation { firstStartBlockedWaiter = $0 }
+    }
+
+    func resumeFirstStart() {
+        firstStartWaiter?.resume()
+        firstStartWaiter = nil
     }
 }
 

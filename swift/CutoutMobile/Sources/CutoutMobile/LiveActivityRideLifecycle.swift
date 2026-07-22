@@ -8,16 +8,24 @@ public enum LiveActivityRideLifecycleEndReason: String, Codable, Equatable, Hash
     case platformUnsupported
 }
 
-public protocol LiveActivityRideLifecycleManaging: AnyObject {
-    func start(snapshot: LiveActivityRideSnapshot)
-    func update(snapshot: LiveActivityRideSnapshot)
-    func end(reason: LiveActivityRideLifecycleEndReason)
+public enum LiveActivityRideLifecycleError: Error, Equatable, Sendable {
+    case authorizationDenied
+    case requestFailed
+    case activityUnavailable
 }
 
-public final class LiveActivityRideLifecycleCoordinator {
+public protocol LiveActivityRideLifecycleManaging: Sendable {
+    func start(snapshot: LiveActivityRideSnapshot) async throws
+    func update(snapshot: LiveActivityRideSnapshot) async throws
+    func end(reason: LiveActivityRideLifecycleEndReason) async throws
+}
+
+public actor LiveActivityRideLifecycleCoordinator {
     private let manager: any LiveActivityRideLifecycleManaging
     private var isActive = false
     private var lastSnapshot: LiveActivityRideSnapshot?
+    private var isOperationInFlight = false
+    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
 
     public init(manager: some LiveActivityRideLifecycleManaging) {
         self.manager = manager
@@ -27,28 +35,28 @@ public final class LiveActivityRideLifecycleCoordinator {
         snapshot: LiveActivityRideSnapshot?,
         shouldBeActive: Bool,
         endReason: LiveActivityRideLifecycleEndReason = .sessionEnded
-    ) {
+    ) async {
+        await beginOperation()
+        defer { finishOperation() }
+
         guard shouldBeActive else {
-            endIfNeeded(reason: endReason)
+            await endIfNeeded(reason: endReason)
             return
         }
 
         guard let snapshot else {
-            endIfNeeded(reason: endReason)
+            await endIfNeeded(reason: endReason)
             return
         }
 
         if isActive == false {
-            manager.start(snapshot: snapshot)
-            isActive = true
-            lastSnapshot = snapshot
+            await start(snapshot: snapshot)
             return
         }
 
         if lastSnapshot?.identity != snapshot.identity {
-            manager.end(reason: .sessionEnded)
-            manager.start(snapshot: snapshot)
-            lastSnapshot = snapshot
+            await endIfNeeded(reason: .sessionEnded)
+            await start(snapshot: snapshot)
             return
         }
 
@@ -56,21 +64,59 @@ public final class LiveActivityRideLifecycleCoordinator {
             return
         }
 
-        manager.update(snapshot: snapshot)
-        lastSnapshot = snapshot
+        do {
+            try await manager.update(snapshot: snapshot)
+            lastSnapshot = snapshot
+        } catch {
+            isActive = false
+            lastSnapshot = nil
+        }
     }
 
-    public func end(reason: LiveActivityRideLifecycleEndReason) {
-        endIfNeeded(reason: reason)
+    public func end(reason: LiveActivityRideLifecycleEndReason) async {
+        await beginOperation()
+        defer { finishOperation() }
+        await endIfNeeded(reason: reason)
     }
 
-    private func endIfNeeded(reason: LiveActivityRideLifecycleEndReason) {
+    private func beginOperation() async {
+        guard isOperationInFlight else {
+            isOperationInFlight = true
+            return
+        }
+
+        await withCheckedContinuation { continuation in
+            operationWaiters.append(continuation)
+        }
+    }
+
+    private func finishOperation() {
+        guard operationWaiters.isEmpty == false else {
+            isOperationInFlight = false
+            return
+        }
+
+        operationWaiters.removeFirst().resume()
+    }
+
+    private func start(snapshot: LiveActivityRideSnapshot) async {
+        do {
+            try await manager.start(snapshot: snapshot)
+            isActive = true
+            lastSnapshot = snapshot
+        } catch {
+            isActive = false
+            lastSnapshot = nil
+        }
+    }
+
+    private func endIfNeeded(reason: LiveActivityRideLifecycleEndReason) async {
         guard isActive else {
             lastSnapshot = nil
             return
         }
 
-        manager.end(reason: reason)
+        try? await manager.end(reason: reason)
         isActive = false
         lastSnapshot = nil
     }
@@ -97,30 +143,21 @@ public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable,
 }
 
 @available(iOS 16.2, *)
-public final class LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
+public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
     private let state = LiveActivityRideActivityKitState()
 
     public init() {}
 
-    public func start(snapshot: LiveActivityRideSnapshot) {
-        let state = state
-        Task {
-            await state.start(snapshot: snapshot)
-        }
+    public func start(snapshot: LiveActivityRideSnapshot) async throws {
+        try await state.start(snapshot: snapshot)
     }
 
-    public func update(snapshot: LiveActivityRideSnapshot) {
-        let state = state
-        Task {
-            await state.update(snapshot: snapshot)
-        }
+    public func update(snapshot: LiveActivityRideSnapshot) async throws {
+        try await state.update(snapshot: snapshot)
     }
 
-    public func end(reason: LiveActivityRideLifecycleEndReason) {
-        let state = state
-        Task {
-            await state.end(reason: reason)
-        }
+    public func end(reason: LiveActivityRideLifecycleEndReason) async throws {
+        try await state.end(reason: reason)
     }
 }
 
@@ -129,18 +166,15 @@ private actor LiveActivityRideActivityKitState {
     private var activity: Activity<LiveActivityRideAttributes>?
     private var lastSnapshot: LiveActivityRideSnapshot?
 
-    func start(snapshot: LiveActivityRideSnapshot) async {
+    func start(snapshot: LiveActivityRideSnapshot) async throws {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            return
+            throw LiveActivityRideLifecycleError.authorizationDenied
         }
 
         let existingActivities = Activity<LiveActivityRideAttributes>.activities
         if let existing = existingActivities.first(where: { $0.attributes.identity == snapshot.identity }) {
             activity = existing
-            await update(snapshot: snapshot)
-            for otherActivity in existingActivities where otherActivity.id != existing.id {
-                await otherActivity.end(otherActivity.content, dismissalPolicy: .immediate)
-            }
+            try await update(snapshot: snapshot)
             return
         }
 
@@ -149,7 +183,7 @@ private actor LiveActivityRideActivityKitState {
                 await activeActivity.end(activeActivity.content, dismissalPolicy: .immediate)
             }
             activity = nil
-            await start(snapshot: snapshot)
+            try await start(snapshot: snapshot)
             return
         }
 
@@ -163,30 +197,25 @@ private actor LiveActivityRideActivityKitState {
         } catch {
             activity = nil
             lastSnapshot = nil
+            throw LiveActivityRideLifecycleError.requestFailed
         }
     }
 
-    func update(snapshot: LiveActivityRideSnapshot) async {
+    func update(snapshot: LiveActivityRideSnapshot) async throws {
         guard let activity else {
-            await start(snapshot: snapshot)
-            return
+            throw LiveActivityRideLifecycleError.activityUnavailable
         }
 
         await activity.update(content(snapshot: snapshot))
         lastSnapshot = snapshot
     }
 
-    func end(reason _: LiveActivityRideLifecycleEndReason) async {
+    func end(reason _: LiveActivityRideLifecycleEndReason) async throws {
         let currentActivity = activity
-        let existingActivities = Activity<LiveActivityRideAttributes>.activities
 
         if let currentActivity {
             let finalContent = lastSnapshot.map(content(snapshot:)) ?? currentActivity.content
             await currentActivity.end(finalContent, dismissalPolicy: .immediate)
-        }
-
-        for existingActivity in existingActivities where existingActivity.id != currentActivity?.id {
-            await existingActivity.end(existingActivity.content, dismissalPolicy: .immediate)
         }
 
         activity = nil
@@ -201,13 +230,17 @@ private actor LiveActivityRideActivityKitState {
     }
 }
 #else
-public final class LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
+public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
     public init() {}
 
-    public func start(snapshot _: LiveActivityRideSnapshot) {}
+    public func start(snapshot _: LiveActivityRideSnapshot) async throws {
+        throw LiveActivityRideLifecycleError.activityUnavailable
+    }
 
-    public func update(snapshot _: LiveActivityRideSnapshot) {}
+    public func update(snapshot _: LiveActivityRideSnapshot) async throws {
+        throw LiveActivityRideLifecycleError.activityUnavailable
+    }
 
-    public func end(reason _: LiveActivityRideLifecycleEndReason) {}
+    public func end(reason _: LiveActivityRideLifecycleEndReason) async throws {}
 }
 #endif
