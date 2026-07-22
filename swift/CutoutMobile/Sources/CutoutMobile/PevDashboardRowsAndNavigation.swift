@@ -279,11 +279,13 @@ public struct PevDashboardScanningPill: View {
 
     let title: String
     let isScanning: Bool
+    let symbolName: String?
     @State private var phase = 0
 
-    public init(title: String, isScanning: Bool) {
+    public init(title: String, isScanning: Bool, symbolName: String? = nil) {
         self.title = title
         self.isScanning = isScanning
+        self.symbolName = symbolName
     }
 
     static func shouldAnimate(isScanning: Bool, reduceMotion: Bool) -> Bool {
@@ -301,7 +303,12 @@ public struct PevDashboardScanningPill: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
             Spacer(minLength: 12)
-            if Self.showsIndicators(isScanning: isScanning) {
+            if let symbolName {
+                Image(systemName: symbolName)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.yellow)
+                    .accessibilityHidden(true)
+            } else if Self.showsIndicators(isScanning: isScanning) {
                 HStack(spacing: 9) {
                     ForEach(0..<3, id: \.self) { index in
                         Circle()

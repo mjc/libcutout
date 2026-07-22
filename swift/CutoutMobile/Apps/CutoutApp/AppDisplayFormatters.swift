@@ -3,31 +3,37 @@ import CutoutMobile
 struct DevicePickerConnectionPresentation: Equatable {
     let title: String
     let showsActivity: Bool
+    let symbolName: String?
 
-    init(title: String, showsActivity: Bool) {
+    init(title: String, showsActivity: Bool, symbolName: String? = nil) {
         self.title = title
         self.showsActivity = showsActivity
+        self.symbolName = symbolName
     }
 
     init(scanState: DevicePickerScanState?, phase: SessionConnectionPhase?) {
         switch phase {
         case .bluetoothUnavailable:
-            self = .init(title: "Bluetooth unavailable", showsActivity: false)
+            self = .init(title: "Bluetooth unavailable", showsActivity: false, symbolName: "bolt.slash.fill")
         case .failed(let failure):
-            self = .init(title: failure.displayText, showsActivity: false)
+            self = .init(title: failure.displayText, showsActivity: false, symbolName: "xmark.octagon.fill")
         case .connecting, .discoveringServices, .subscribing:
             self = .init(title: "Connecting…", showsActivity: true)
         case .starting:
-            self = .init(title: "Starting Bluetooth…", showsActivity: false)
+            self = .init(title: "Starting Bluetooth…", showsActivity: false, symbolName: "bolt.horizontal.circle")
         case .scanning:
             self = .init(
                 title: scanState?.statusText ?? "Scanning Bluetooth",
                 showsActivity: scanState?.status == .scanning || scanState == nil
             )
         case .live:
-            self = .init(title: "Live", showsActivity: false)
+            self = .init(title: "Live", showsActivity: false, symbolName: "checkmark.circle.fill")
         case nil:
-            self = .init(title: scanState?.statusText ?? "Starting Bluetooth…", showsActivity: false)
+            self = .init(
+                title: scanState?.statusText ?? "Starting Bluetooth…",
+                showsActivity: false,
+                symbolName: "bolt.horizontal.circle"
+            )
         }
     }
 }

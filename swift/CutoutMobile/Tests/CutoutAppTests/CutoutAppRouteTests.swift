@@ -119,6 +119,27 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testPickerStatusUsesTypedSymbolsForNonScanningStates() {
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(
+                scanState: nil,
+                phase: .bluetoothUnavailable(rawState: 4)
+            ).symbolName,
+            "bolt.slash.fill"
+        )
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(
+                scanState: nil,
+                phase: .failed(.connectFailed("timed out"))
+            ).symbolName,
+            "xmark.octagon.fill"
+        )
+        XCTAssertEqual(
+            DevicePickerConnectionPresentation(scanState: nil, phase: .live).symbolName,
+            "checkmark.circle.fill"
+        )
+    }
+
     func testConnectionAnnouncementsCoverMeaningfulTransitionsWithoutChatter() {
         XCTAssertNil(SessionConnectionPhase.starting.accessibilityAnnouncement)
         XCTAssertNil(SessionConnectionPhase.scanning.accessibilityAnnouncement)

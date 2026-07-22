@@ -37,6 +37,7 @@ struct DevicePickerView: View {
             PevDashboardScanningPill(
                 title: connectionPresentation.title,
                 isScanning: connectionPresentation.showsActivity,
+                symbolName: connectionPresentation.symbolName
             )
                 .padding(.top, 4)
                 .accessibilityIdentifier("device-picker.connection-status")
