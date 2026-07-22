@@ -44,6 +44,17 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.no_data.confidence.unknown"), "Unknown")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.not_cell_safe"), "Not cell-safe")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable"), "Telemetry unavailable")
+        XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate"), "PACK ESTIMATE")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence"), "CONFIDENCE")
+        XCTAssertEqual(localizedAppText("bms.no_data.what_we_can_see"), "WHAT WE CAN SEE")
+        XCTAssertEqual(localizedAppText("bms.no_data.pack_voltage"), "Pack voltage")
+        XCTAssertEqual(localizedAppText("bms.no_data.ride_sag"), "Ride sag")
+        XCTAssertEqual(localizedAppText("bms.no_data.load_now"), "Load now")
+        XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "WHAT IS UNKNOWN")
+        XCTAssertEqual(localizedAppText("bms.no_data.riding_rule"), "RIDING RULE")
+        XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate_accessibility"), "Pack estimate")
+        XCTAssertEqual(localizedAppText("bms.no_data.confidence_accessibility"), "Confidence")
+        XCTAssertEqual(localizedAppText("bms.no_data.riding_rule_progress_accessibility"), "Riding rule progress")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

@@ -1,6 +1,14 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.no_data.confidence" : {
+      "comment" : "No-data BMS section heading for the controller estimate confidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CONFIDENCE" } } }
+    },
+    "bms.no_data.confidence_accessibility" : {
+      "comment" : "VoiceOver label for the no-data BMS confidence summary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confidence" } } }
+    },
     "bms.no_data.confidence.low" : {
       "comment" : "No-data BMS controller-estimate confidence when only partial evidence is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low" } } }
@@ -20,6 +28,42 @@
     "bms.no_data.confidence_detail.telemetry_unavailable" : {
       "comment" : "No-data BMS detail when no telemetry supports a controller estimate.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry unavailable" } } }
+    },
+    "bms.no_data.load_now" : {
+      "comment" : "No-data BMS metric label for current battery load.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load now" } } }
+    },
+    "bms.no_data.pack_estimate" : {
+      "comment" : "No-data BMS section heading for the controller-only pack-energy estimate.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PACK ESTIMATE" } } }
+    },
+    "bms.no_data.pack_estimate_accessibility" : {
+      "comment" : "VoiceOver label for the no-data BMS controller-only pack estimate.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack estimate" } } }
+    },
+    "bms.no_data.pack_voltage" : {
+      "comment" : "No-data BMS metric label for reported pack voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack voltage" } } }
+    },
+    "bms.no_data.ride_sag" : {
+      "comment" : "No-data BMS metric label for the voltage drop under riding load.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride sag" } } }
+    },
+    "bms.no_data.riding_rule" : {
+      "comment" : "No-data BMS section heading for the recommended riding rule.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "RIDING RULE" } } }
+    },
+    "bms.no_data.riding_rule_progress_accessibility" : {
+      "comment" : "VoiceOver label for no-data BMS riding-rule progress.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding rule progress" } } }
+    },
+    "bms.no_data.what_is_unknown" : {
+      "comment" : "No-data BMS section heading for facts the controller cannot establish.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "WHAT IS UNKNOWN" } } }
+    },
+    "bms.no_data.what_we_can_see" : {
+      "comment" : "No-data BMS section heading for available telemetry facts.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "WHAT WE CAN SEE" } } }
     },
     "bms.overview.average_group" : {
       "comment" : "BMS overview metric label for the average cell-group voltage.",

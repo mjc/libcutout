@@ -93,7 +93,7 @@ struct BmsNoDataPackEstimateCard: View {
 
     private var estimate: some View {
         VStack(alignment: .leading, spacing: 8) {
-            PevDashboardSectionLabel(title: "PACK ESTIMATE", font: .caption.weight(.bold))
+            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.pack_estimate"), font: .caption.weight(.bold))
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(percentText)
                     .font(.largeTitle.weight(.black))
@@ -108,13 +108,13 @@ struct BmsNoDataPackEstimateCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Pack estimate")
+        .accessibilityLabel(localizedAppText("bms.no_data.pack_estimate_accessibility"))
         .accessibilityValue("\(percentText) percent. \(detail)")
     }
 
     private var confidence: some View {
         VStack(alignment: .leading, spacing: 8) {
-            PevDashboardSectionLabel(title: "CONFIDENCE", font: .caption.weight(.bold))
+            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.confidence"), font: .caption.weight(.bold))
             Text(confidenceTitle)
                 .font(.title2.weight(.black))
             Text(confidenceDetail)
@@ -134,7 +134,7 @@ struct BmsNoDataPackEstimateCard: View {
                 )
         )
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Confidence")
+        .accessibilityLabel(localizedAppText("bms.no_data.confidence_accessibility"))
         .accessibilityValue("\(confidenceTitle). \(confidenceDetail)")
     }
 }
@@ -146,14 +146,14 @@ struct BmsNoDataTelemetryCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            PevDashboardSectionLabel(title: "WHAT WE CAN SEE", font: .caption.weight(.bold))
+            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.what_we_can_see"), font: .caption.weight(.bold))
             PevDashboardGrid(
                 columns: [GridItem(.adaptive(minimum: 100), spacing: 18)],
                 spacing: 18
             ) {
-                BmsNoDataMetric(metricValue: voltageMetricValue, unit: "V", label: "pack voltage")
-                BmsNoDataMetric(metricValue: rideSagMetricValue, unit: "V", label: "ride sag")
-                BmsNoDataMetric(metricValue: loadMetricValue, unit: "A", label: "load now")
+                BmsNoDataMetric(metricValue: voltageMetricValue, unit: "V", label: localizedAppText("bms.no_data.pack_voltage"))
+                BmsNoDataMetric(metricValue: rideSagMetricValue, unit: "V", label: localizedAppText("bms.no_data.ride_sag"))
+                BmsNoDataMetric(metricValue: loadMetricValue, unit: "A", label: localizedAppText("bms.no_data.load_now"))
             }
         }
         .padding(.horizontal, 20)
@@ -168,7 +168,7 @@ struct BmsNoDataUnknownsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PevDashboardSectionLabel(title: "WHAT IS UNKNOWN", font: .caption.weight(.bold))
+            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.what_is_unknown"), font: .caption.weight(.bold))
             ForEach(rows) { row in
                 Text(row.text)
                     .font(.body)
@@ -207,13 +207,13 @@ struct BmsNoDataRidingRuleCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PevDashboardSectionLabel(title: "RIDING RULE", font: .caption.weight(.bold))
+            PevDashboardSectionLabel(title: localizedAppText("bms.no_data.riding_rule"), font: .caption.weight(.bold))
             Text(title)
                 .font(.body)
                 .foregroundStyle(PevColors.primaryText.opacity(0.9))
             ProgressView(value: clampedProgress)
                 .tint(PevColors.yellow)
-                .accessibilityLabel("Riding rule progress")
+                .accessibilityLabel(localizedAppText("bms.no_data.riding_rule_progress_accessibility"))
                 .accessibilityValue(progressAccessibilityValue)
         }
         .padding(.horizontal, 20)
