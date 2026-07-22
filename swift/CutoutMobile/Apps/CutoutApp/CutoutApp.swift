@@ -80,7 +80,7 @@ struct CutoutNavigationCommands: Commands {
     var body: some Commands {
         CommandMenu("Navigate") {
             if navigationTabs.isEmpty {
-                Button("No connected device") {}
+                Button(localizedAppText("app.command.no_connected_device")) {}
                     .disabled(true)
             } else {
                 ForEach(navigationTabs) { tab in
@@ -97,7 +97,7 @@ struct CutoutNavigationCommands: Commands {
 
             Divider()
 
-            Button("Disconnect") {
+            Button(localizedAppText("app.command.disconnect")) {
                 disconnect()
                 navigationPath = CutoutAppRoute.navigationPath(for: .devicePicker)
             }

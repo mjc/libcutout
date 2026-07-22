@@ -1,6 +1,14 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "app.command.disconnect" : {
+      "comment" : "App command that disconnects the current device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }
+    },
+    "app.command.no_connected_device" : {
+      "comment" : "Disabled app command shown when no device is connected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No connected device" } } }
+    },
     "bms.diagnostics.detail" : {
       "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }
