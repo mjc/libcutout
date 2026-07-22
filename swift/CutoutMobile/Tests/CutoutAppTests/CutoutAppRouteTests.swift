@@ -11,7 +11,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsOverview), .eucPack(.bmsOverview))
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsCellMap6S), .eucPack(.bmsCellMap6S))
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsCellMap40S), .eucPack(.bmsCellMap40S))
-        XCTAssertEqual(CutoutAppRoute.route(for: .bmsCellDetail), .eucPack(.bmsCellDetail))
+        XCTAssertEqual(CutoutAppRoute.route(for: .bmsCellDetail), .eucPack(.bmsCellDetail(nil)))
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsUnknownTopology), .eucPack(.bmsUnknownTopology))
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsNoData), .eucPack(.bmsNoData))
         XCTAssertEqual(CutoutAppRoute.route(for: .eucGarage), .eucPack(.eucGarage))
@@ -31,7 +31,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .eucPack(.bmsOverview),
             .eucPack(.bmsCellMap6S),
             .eucPack(.bmsCellMap40S),
-            .eucPack(.bmsCellDetail),
+            .eucPack(.bmsCellDetail(nil)),
             .eucPack(.bmsUnknownTopology),
             .eucPack(.bmsNoData),
             .eucPack(.eucGarage),

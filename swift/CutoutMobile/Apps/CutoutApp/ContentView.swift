@@ -120,7 +120,7 @@ struct ContentView: View {
             TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
                     if let target = tab.destinationTarget {
-                        let tabRoute = CutoutAppRoute.route(forNavigationTarget: target)
+                        let tabRoute = contentRoute(for: tab, destination: destination, target: target)
                         Tab(value: tab.id) {
                             connectedDestination(for: tabRoute)
                         } label: {
@@ -151,15 +151,26 @@ struct ContentView: View {
         }
     }
 
+    private func contentRoute(
+        for tab: PevScreenTab,
+        destination: CutoutAppRoute,
+        target: PevNavigationTarget
+    ) -> CutoutAppRoute {
+        if tab.id == .pack, case .eucPack = destination {
+            return destination
+        }
+        return CutoutAppRoute.route(forNavigationTarget: target)
+    }
+
     @ViewBuilder
     private func routedContent(for destination: CutoutAppRoute) -> some View {
         if let screen = screen(for: destination) {
             if screen.id == .eucRide || screen.id == .vescRide {
                 TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    screenContainer(screen, now: model.currentMonotonicTime)
+                    screenContainer(screen, route: destination, now: model.currentMonotonicTime)
                 }
             } else {
-                screenContainer(screen, now: model.currentMonotonicTime)
+                screenContainer(screen, route: destination, now: model.currentMonotonicTime)
             }
         } else if destination == .capture {
             CaptureRecordingScreen(
@@ -173,7 +184,11 @@ struct ContentView: View {
         }
     }
 
-    private func screenContainer(_ screen: PevScreen, now: MonotonicMilliseconds) -> some View {
+    private func screenContainer(
+        _ screen: PevScreen,
+        route: CutoutAppRoute,
+        now: MonotonicMilliseconds
+    ) -> some View {
         PevScreenContainer(
             screen: screen,
             rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
@@ -189,7 +204,14 @@ struct ContentView: View {
             connectionPhase: model.phase,
             notificationCount: model.displayState.notificationCount,
             captureStatusText: model.captureStatusText,
-            disconnect: disconnectAndReturnToPicker
+            disconnect: disconnectAndReturnToPicker,
+            selectedBmsGroupIndex: route.selectedBmsGroupIndex,
+            showBmsGroupDetail: { groupIndex in
+                navigate(to: .eucPack(.bmsCellDetail(groupIndex)))
+            },
+            showBmsCellMap: {
+                navigate(to: .eucPack(.eucGarage))
+            }
         )
     }
 

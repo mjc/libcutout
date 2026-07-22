@@ -4,7 +4,7 @@ enum EucPackScreen: Hashable {
     case bmsOverview
     case bmsCellMap6S
     case bmsCellMap40S
-    case bmsCellDetail
+    case bmsCellDetail(Int?)
     case bmsUnknownTopology
     case bmsNoData
     case eucGarage
@@ -14,7 +14,7 @@ enum EucPackScreen: Hashable {
         case .bmsOverview: self = .bmsOverview
         case .bmsCellMap6S: self = .bmsCellMap6S
         case .bmsCellMap40S: self = .bmsCellMap40S
-        case .bmsCellDetail: self = .bmsCellDetail
+        case .bmsCellDetail: self = .bmsCellDetail(nil)
         case .bmsUnknownTopology: self = .bmsUnknownTopology
         case .bmsNoData: self = .bmsNoData
         case .eucGarage: self = .eucGarage
@@ -101,6 +101,11 @@ enum CutoutAppRoute: Hashable {
 
     var availableNavigationTabs: [PevScreenTab] {
         navigationTabs.filter { $0.isEnabled && $0.destinationTarget != nil }
+    }
+
+    var selectedBmsGroupIndex: Int? {
+        guard case let .eucPack(.bmsCellDetail(groupIndex)) = self else { return nil }
+        return groupIndex
     }
 
 }

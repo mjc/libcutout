@@ -35,25 +35,30 @@ struct BmsChip: View {
 struct BmsGroupCell: View {
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
+    let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Text("\(group.index)")
-                BmsAlertIndicator(alertLevel: group.alertLevel)
+        Button(action: action) {
+            VStack(spacing: 8) {
+                HStack(spacing: 4) {
+                    Text("\(group.index)")
+                    BmsAlertIndicator(alertLevel: group.alertLevel)
+                }
+                .font(.subheadline)
+                .foregroundStyle(PevColors.muted)
+                Text(groupVoltageText(group))
+                    .font(.title3.weight(.black))
+                    .monospacedDigit()
             }
-            .font(.subheadline)
-            .foregroundStyle(PevColors.muted)
-            Text(groupVoltageText(group))
-                .font(.title3.weight(.black))
-                .monospacedDigit()
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 70)
+            .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
         }
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 70)
-        .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
-        .accessibilityElement(children: .ignore)
+        .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
         .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
+        .accessibilityHint(group.detailSelectionAccessibilityHint)
+        .accessibilityIdentifier("bms.group.\(group.index)")
     }
 
     private var strokeColor: Color {
@@ -67,24 +72,29 @@ struct BmsGroupCell: View {
 struct BmsStripCell: View {
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
+    let action: () -> Void
 
     var body: some View {
-        VStack(spacing: 2) {
-            HStack(spacing: 2) {
-                Text(String(format: "%02d", group.index))
-                BmsAlertIndicator(alertLevel: group.alertLevel)
+        Button(action: action) {
+            VStack(spacing: 2) {
+                HStack(spacing: 2) {
+                    Text(String(format: "%02d", group.index))
+                    BmsAlertIndicator(alertLevel: group.alertLevel)
+                }
+                .font(.caption2)
+                .foregroundStyle(PevColors.muted)
+                Text(groupVoltageText(group))
+                    .font(.caption.weight(.black))
+                    .monospacedDigit()
             }
-            .font(.caption2)
-            .foregroundStyle(PevColors.muted)
-            Text(groupVoltageText(group))
-                .font(.caption.weight(.black))
-                .monospacedDigit()
+            .frame(maxWidth: .infinity, minHeight: 60)
+            .background(PevDashboardCardBackground(cornerRadius: 8, stroke: strokeColor, lineWidth: 1.2))
         }
-        .frame(maxWidth: .infinity, minHeight: 60)
-        .background(PevDashboardCardBackground(cornerRadius: 8, stroke: strokeColor, lineWidth: 1.2))
-        .accessibilityElement(children: .ignore)
+        .buttonStyle(.plain)
         .accessibilityLabel(group.accessibilityLabel)
         .accessibilityValue(group.accessibilityValue + (isHighlighted ? ", highlighted" : ""))
+        .accessibilityHint(group.detailSelectionAccessibilityHint)
+        .accessibilityIdentifier("bms.group.\(group.index)")
     }
 
     private var strokeColor: Color {

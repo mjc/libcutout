@@ -5,6 +5,9 @@ struct BmsScreenView: View {
     let screen: PevScreen
     let rideState: EucRideScreenState?
     let bmsSnapshot: BmsSnapshot?
+    let selectedGroupIndex: Int?
+    let showGroupDetail: (Int) -> Void
+    let showCellMap: () -> Void
     @State private var showsDiagnostics = false
 
     private var content: PevBmsContent {
@@ -61,11 +64,15 @@ struct BmsScreenView: View {
         case .overview:
             BmsOverviewLayout(content: content)
         case .cellMapInline:
-            BmsInlineLayout(content: content)
+            BmsInlineLayout(content: content, showGroupDetail: showGroupDetail)
         case .cellMapScrollable:
-            BmsScrollableLayout(content: content)
+            BmsScrollableLayout(content: content, showGroupDetail: showGroupDetail)
         case .cellDetail:
-            BmsDetailLayout(content: content)
+            BmsDetailLayout(
+                content: content,
+                selectedGroupIndex: selectedGroupIndex,
+                showCellMap: showCellMap
+            )
         case .unknownTopology:
             BmsUnknownLayout(content: content)
         case .noData:

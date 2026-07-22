@@ -23,27 +23,34 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func allowDeviceAuthorizationAlerts() {
+        var didDismissAlert = false
+        defer {
+            if didDismissAlert {
+                app.activate()
+            }
+        }
+
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allowLabels = Set([
-            "allow",
-            "allow once",
+        let allowLabels = [
             "allow while using app",
             "allow bluetooth",
             "always allow",
             "change to always allow",
+            "allow",
+            "allow once",
             "ok",
-        ])
+        ]
 
         for _ in 0..<3 {
             let alert = springboard.alerts.firstMatch
-            guard alert.waitForExistence(timeout: 1) else { return }
+            guard alert.waitForExistence(timeout: 1) else { break }
 
-            guard let button = alert.buttons.allElementsBoundByIndex.first(where: {
-                allowLabels.contains($0.label.lowercased())
-            }) else {
-                return
-            }
+            let buttons = alert.buttons.allElementsBoundByIndex
+            guard let button = allowLabels.lazy.compactMap({ label in
+                buttons.first { $0.label.lowercased() == label }
+            }).first else { break }
             button.tap()
+            didDismissAlert = true
             _ = alert.waitForNonExistence(timeout: 2)
         }
     }
@@ -245,28 +252,38 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsSurfacesRemainAccessible() throws {
-        XCTAssertTrue(pairAvailableDevice(.euc))
-        guard let rideScreen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+        guard let bmsScreen = openEucBmsMap() else {
             return
         }
         defer { disconnectIfConnected() }
 
-        XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.euc.screenIdentifier)
-        XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
-        assertMetricIsReachable("speed", in: rideScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
-
-        let packTab = app.tabBars.buttons["Pack"]
-        XCTAssertTrue(packTab.waitForExistence(timeout: 5))
-        XCTAssertTrue(packTab.isHittable)
-        packTab.tap()
-
-        let bmsScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellMap6S"]
-        XCTAssertTrue(bmsScreen.waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
         assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
+    func testEucBmsGroupOpensAccessibleDetailAndReturnsToMap() {
+        guard let bmsScreen = openEucBmsMap() else {
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
+        XCTAssertTrue(group.exists)
+        XCTAssertEqual(group.elementType, .button)
+        XCTAssertTrue(group.isHittable)
+        group.tap()
+
+        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: detailScreen)
+
+        let backToMap = app.buttons["bms.detail.back"]
+        XCTAssertTrue(backToMap.exists)
+        XCTAssertTrue(backToMap.isHittable)
+        backToMap.tap()
+        XCTAssertTrue(bmsScreen.waitForExistence(timeout: 5))
+        XCTAssertFalse(detailScreen.waitForExistence(timeout: 2))
     }
 
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
@@ -550,6 +567,32 @@ final class CutoutAppUITests: XCTestCase {
         guard disconnect.waitForExistence(timeout: 2) else { return }
         disconnect.tap()
         _ = app.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
+    }
+
+    private func openEucBmsMap() -> XCUIElement? {
+        guard pairAvailableDevice(.euc) else { return nil }
+        guard let rideScreen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            return nil
+        }
+
+        XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.euc.screenIdentifier)
+        XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
+        assertMetricIsReachable("speed", in: rideScreen)
+
+        let packTab = app.tabBars.buttons["Pack"]
+        guard packTab.waitForExistence(timeout: 5), packTab.isHittable else {
+            XCTFail("The Pack tab is not available from the EUC Ride screen")
+            return nil
+        }
+        packTab.tap()
+
+        let bmsScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellMap6S"]
+        guard bmsScreen.waitForExistence(timeout: 5) else {
+            XCTFail("The Pack tab did not open the live BMS cell map")
+            return nil
+        }
+        return bmsScreen
     }
 
     @discardableResult

@@ -15,6 +15,9 @@ struct PevScreenContainer: View {
     let notificationCount: UInt64
     let captureStatusText: String?
     let disconnect: () -> Void
+    let selectedBmsGroupIndex: Int?
+    let showBmsGroupDetail: (Int) -> Void
+    let showBmsCellMap: () -> Void
 
     var body: some View {
         Group {
@@ -29,7 +32,14 @@ struct PevScreenContainer: View {
                     disconnect: disconnect,
                 )
             case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
-                BmsScreenView(screen: screen, rideState: rideState, bmsSnapshot: bmsSnapshot)
+                BmsScreenView(
+                    screen: screen,
+                    rideState: rideState,
+                    bmsSnapshot: bmsSnapshot,
+                    selectedGroupIndex: selectedBmsGroupIndex,
+                    showGroupDetail: showBmsGroupDetail,
+                    showCellMap: showBmsCellMap
+                )
             case .eucGarage:
                 EucGarageScreenView(
                     screen: screen,

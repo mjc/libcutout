@@ -3,6 +3,7 @@ import SwiftUI
 
 struct BmsInlineLayout: View {
     let content: PevBmsContent
+    let showGroupDetail: (Int) -> Void
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
@@ -22,7 +23,8 @@ struct BmsInlineLayout: View {
                 ForEach(snapshot.groups) { group in
                     BmsGroupCell(
                         group: group,
-                        isHighlighted: content.highlightedGroupIndices.contains(group.index)
+                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
+                        action: { showGroupDetail(group.index) }
                     )
                 }
             }
@@ -61,6 +63,7 @@ struct BmsInlineLayout: View {
 
 struct BmsScrollableLayout: View {
     let content: PevBmsContent
+    let showGroupDetail: (Int) -> Void
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
@@ -81,7 +84,8 @@ struct BmsScrollableLayout: View {
                 ForEach(snapshot.groups) { group in
                     BmsStripCell(
                         group: group,
-                        isHighlighted: content.highlightedGroupIndices.contains(group.index)
+                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
+                        action: { showGroupDetail(group.index) }
                     )
                 }
             }
@@ -118,7 +122,18 @@ struct BmsScrollableLayout: View {
 
 struct BmsDetailLayout: View {
     let content: PevBmsContent
+    let showCellMap: () -> Void
     @State private var selectedGroupIndex: Int?
+
+    init(
+        content: PevBmsContent,
+        selectedGroupIndex: Int?,
+        showCellMap: @escaping () -> Void
+    ) {
+        self.content = content
+        self.showCellMap = showCellMap
+        _selectedGroupIndex = State(initialValue: selectedGroupIndex)
+    }
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var selectedGroup: BmsGroupSnapshot? {
@@ -139,6 +154,14 @@ struct BmsDetailLayout: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Button(action: showCellMap) {
+                Label("Back to cell map", systemImage: "chevron.left")
+                    .font(.body.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("bms.detail.back")
+
             PevDashboardGrid(columns: columns, spacing: 10) {
                 ForEach(snapshot.groups) { group in
                     BmsGroupIndexCell(
