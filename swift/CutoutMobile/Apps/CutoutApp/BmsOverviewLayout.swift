@@ -18,7 +18,10 @@ struct BmsOverviewLayout: View {
                     if let averageGroupVoltage {
                         PevDashboardMetricTile(
                             label: "average group",
-                            value: groupVoltageText(averageGroupVoltage),
+                            metricValue: .available(
+                                display: groupVoltageText(averageGroupVoltage),
+                                accessibility: groupVoltageText(averageGroupVoltage)
+                            ),
                             unit: "V",
                             detail: "",
                             detailColor: PevColors.primaryText
@@ -27,7 +30,10 @@ struct BmsOverviewLayout: View {
                     if let lowestGroupVoltage {
                         PevDashboardMetricTile(
                             label: "lowest group",
-                            value: groupVoltageText(lowestGroupVoltage),
+                            metricValue: .available(
+                                display: groupVoltageText(lowestGroupVoltage),
+                                accessibility: groupVoltageText(lowestGroupVoltage)
+                            ),
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
                             detailColor: PevColors.primaryText
@@ -39,7 +45,9 @@ struct BmsOverviewLayout: View {
             if hasTemperatureEvidence {
                 PevDashboardMetricTile(
                     label: "highest temp",
-                    value: temperatureText(snapshot.highestTemperature),
+                    metricValue: snapshot.highestTemperature.map {
+                        .available(display: temperatureText($0), accessibility: temperatureText($0))
+                    } ?? .unavailable,
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
                     detailColor: PevColors.primaryText
@@ -49,7 +57,7 @@ struct BmsOverviewLayout: View {
             if let balancingSummary = snapshot.balancingSummary {
                 PevDashboardWideCard(
                     title: "balancing",
-                    value: balancingSummary,
+                    metricValue: .available(display: balancingSummary, accessibility: balancingSummary),
                     detail: snapshot.balancingDetail ?? ""
                 )
             }
@@ -57,7 +65,7 @@ struct BmsOverviewLayout: View {
             if let faultSummary = snapshot.faultSummary {
                 PevDashboardWideCard(
                     title: "fault state",
-                    value: faultSummary,
+                    metricValue: .available(display: faultSummary, accessibility: faultSummary),
                     detail: snapshot.faultDetail ?? "",
                     stroke: PevColors.red
                 )

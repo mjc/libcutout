@@ -2338,12 +2338,9 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
     }
 
-    public var unknownTopologyTemperatureValue: String {
+    public var unknownTopologyTemperatureSensorCount: Int? {
         let sensorCount = groups.compactMap(\.temperature).count
-        guard sensorCount > 0 else {
-            return "--"
-        }
-        return String(sensorCount)
+        return sensorCount > 0 ? sensorCount : nil
     }
 
     public var unknownTopologyTemperatureDetail: String {

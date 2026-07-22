@@ -39,38 +39,6 @@ public struct PevDashboardMetricTile: View {
 
     public init(
         label: String,
-        value: String,
-        unit: String = "",
-        detail: String = "",
-        accessibilityValue: String? = nil,
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        labelColor: Color = PevDashboardColors.mutedText,
-        valueColor: Color = PevDashboardColors.primaryText,
-        unitColor: Color? = nil,
-        detailColor: Color = PevDashboardColors.primaryText,
-        cornerRadius: CGFloat = 20,
-        minHeight: CGFloat = 106
-    ) {
-        self.init(
-            label: label,
-            metricValue: PevDashboardMetricValue(display: value),
-            unit: unit,
-            detail: detail,
-            accessibilityValue: accessibilityValue,
-            fill: fill,
-            stroke: stroke,
-            labelColor: labelColor,
-            valueColor: valueColor,
-            unitColor: unitColor,
-            detailColor: detailColor,
-            cornerRadius: cornerRadius,
-            minHeight: minHeight
-        )
-    }
-
-    public init(
-        label: String,
         metricValue: PevDashboardMetricValue,
         unit: String = "",
         detail: String = "",
@@ -255,26 +223,6 @@ public struct PevDashboardWideCard: View {
     var accessibilityValueText: String {
         guard title != nil else { return detail ?? "" }
         return metricValue.accessibilityValue(unit: "", detail: detail ?? "")
-    }
-
-    public init(
-        title: String?,
-        value: String,
-        detail: String?,
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        textColor: Color = PevDashboardColors.primaryText,
-        secondaryTextColor: Color = PevDashboardColors.mutedText
-    ) {
-        self.init(
-            title: title,
-            metricValue: PevDashboardMetricValue(display: value),
-            detail: detail,
-            fill: fill,
-            stroke: stroke,
-            textColor: textColor,
-            secondaryTextColor: secondaryTextColor
-        )
     }
 
     public init(

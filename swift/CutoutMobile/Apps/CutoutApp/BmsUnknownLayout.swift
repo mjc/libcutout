@@ -24,28 +24,38 @@ struct BmsUnknownLayout: View {
             ) {
                 PevDashboardMetricTile(
                     label: "reported voltage",
-                    value: voltageText(snapshot.voltage),
+                    metricValue: snapshot.voltage.map {
+                        .available(display: voltageText($0), accessibility: voltageText($0))
+                    } ?? .unavailable,
                     unit: "V",
                     detail: snapshot.unknownTopologyVoltageDetail,
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
                     label: "cell count",
-                    value: snapshot.unknownTopologyCellCountValue,
+                    metricValue: .available(
+                        display: snapshot.unknownTopologyCellCountValue,
+                        accessibility: snapshot.unknownTopologyCellCountValue
+                    ),
                     unit: "",
                     detail: snapshot.unknownTopologyCellCountDetail,
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
                     label: "temps",
-                    value: snapshot.unknownTopologyTemperatureValue,
+                    metricValue: snapshot.unknownTopologyTemperatureSensorCount.map {
+                        let value = String($0)
+                        return .available(display: value, accessibility: value)
+                    } ?? .unavailable,
                     unit: "sensors",
                     detail: snapshot.unknownTopologyTemperatureDetail,
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
                     label: "fault bits",
-                    value: snapshot.faults.first?.code ?? "--",
+                    metricValue: snapshot.faults.first.map {
+                        .available(display: $0.code, accessibility: $0.code)
+                    } ?? .unavailable,
                     unit: "",
                     detail: snapshot.faults.first?.label ?? "",
                     detailColor: PevColors.primaryText

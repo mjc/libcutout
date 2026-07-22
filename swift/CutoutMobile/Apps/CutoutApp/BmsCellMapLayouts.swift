@@ -11,7 +11,10 @@ struct BmsInlineLayout: View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: localizedAppText("bms.inline.topology_fits"),
-                value: snapshot.cellMapVisibilitySummary,
+                metricValue: .available(
+                    display: snapshot.cellMapVisibilitySummary,
+                    accessibility: snapshot.cellMapVisibilitySummary
+                ),
                 detail: snapshot.topology.layoutLabel
             )
 
@@ -30,7 +33,10 @@ struct BmsInlineLayout: View {
 
             PevDashboardWideCard(
                 title: localizedAppText("bms.inline.range_of_interest"),
-                value: snapshot.cellMapSpreadSummary,
+                metricValue: .available(
+                    display: snapshot.cellMapSpreadSummary,
+                    accessibility: snapshot.cellMapSpreadSummary
+                ),
                 detail: snapshot.cellMapFocusSummary
             )
 
@@ -73,7 +79,10 @@ struct BmsScrollableLayout: View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: localizedAppText("bms.scroll.large_packs"),
-                value: snapshot.cellMapVisibilitySummary,
+                metricValue: .available(
+                    display: snapshot.cellMapVisibilitySummary,
+                    accessibility: snapshot.cellMapVisibilitySummary
+                ),
                 detail: snapshot.topology.layoutLabel
             )
 
@@ -89,7 +98,10 @@ struct BmsScrollableLayout: View {
 
             PevDashboardWideCard(
                 title: localizedAppText("bms.scroll.interesting_groups"),
-                value: snapshot.cellMapFocusSummary,
+                metricValue: .available(
+                    display: snapshot.cellMapFocusSummary,
+                    accessibility: snapshot.cellMapFocusSummary
+                ),
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
                 stroke: PevColors.orange
             )
@@ -191,14 +203,19 @@ struct BmsDetailLayout: View {
                     ) {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.detail.temperature"),
-                            value: temperatureText(selectedGroup.temperature),
+                            metricValue: selectedGroup.temperature.map {
+                                .available(display: temperatureText($0), accessibility: temperatureText($0))
+                            } ?? .unavailable,
                             unit: "°C",
                             detail: "",
                             detailColor: PevColors.primaryText
                         )
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.detail.resistance"),
-                            value: selectedGroup.resistance.map { String($0.value) } ?? "--",
+                            metricValue: selectedGroup.resistance.map {
+                                let value = String($0.value)
+                                return .available(display: value, accessibility: value)
+                            } ?? .unavailable,
                             unit: "mΩ",
                             detail: "",
                             detailColor: PevColors.primaryText
@@ -207,7 +224,10 @@ struct BmsDetailLayout: View {
 
                     PevDashboardWideCard(
                         title: nil,
-                        value: localizedAppText("bms.detail.trend", snapshot.detailGroupTrend(for: selectedGroup.index)),
+                        metricValue: {
+                            let value = localizedAppText("bms.detail.trend", snapshot.detailGroupTrend(for: selectedGroup.index))
+                            return .available(display: value, accessibility: value)
+                        }(),
                         detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index)
                     )
                 }

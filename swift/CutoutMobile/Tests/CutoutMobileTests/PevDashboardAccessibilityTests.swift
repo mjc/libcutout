@@ -7,7 +7,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     func testMetricSemanticsGroupValueUnitAndDetail() {
         let tile = PevDashboardMetricTile(
             label: "Pack voltage",
-            value: "84",
+            metricValue: .available(display: "84", accessibility: "84"),
             unit: "volts",
             detail: "stale"
         )
@@ -15,10 +15,10 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")
     }
 
-    func testLegacyUnavailableMetricIsBridgedToTypedPresentation() {
+    func testUnavailableMetricRequiresTypedPresentation() {
         let tile = PevDashboardMetricTile(
             label: "Pack voltage",
-            value: PevDashboardMetricValue.unavailable.displayText,
+            metricValue: .unavailable,
             unit: "volts",
             detail: "stale"
         )
@@ -50,7 +50,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     func testWideCardWithoutTitleUsesValueAsItsAccessibilityLabel() {
         let card = PevDashboardWideCard(
             title: nil,
-            value: "Trend stable",
+            metricValue: .available(display: "Trend stable", accessibility: "Trend stable"),
             detail: "No change"
         )
 
@@ -61,7 +61,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     func testWideCardSpeaksUnavailableInsteadOfTheDisplaySentinel() {
         let card = PevDashboardWideCard(
             title: "Pack telemetry",
-            value: "--",
+            metricValue: .unavailable,
             detail: "connect device"
         )
 
