@@ -3,6 +3,10 @@ import XCTest
 import CutoutMobile
 
 final class PevScreenThemeTests: XCTestCase {
+    func testBmsScreenPresentationUsesTheAppCatalog() {
+        XCTAssertEqual(localizedAppText("bms.screen.subtitle"), "CutOut · BMS")
+    }
+
     func testEucRideAppPresentationUsesTheAppCatalog() {
         XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
         XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")

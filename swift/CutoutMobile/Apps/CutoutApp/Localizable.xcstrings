@@ -137,6 +137,10 @@
       "comment" : "BMS diagnostics disclosure title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "BMS diagnostics" } } }
     },
+    "bms.screen.subtitle" : {
+      "comment" : "Subtitle below the BMS screen title; CutOut is the product name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CutOut · BMS" } } }
+    },
     "bms.no_data.confidence" : {
       "comment" : "No-data BMS section heading for the controller estimate confidence.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CONFIDENCE" } } }

@@ -81,7 +81,7 @@ struct BmsScreenView: View {
     }
 
     private var header: some View {
-        PevScreenTitleBlock(title: screen.title, subtitle: "CutOut · BMS")
+        PevScreenTitleBlock(title: screen.title, subtitle: localizedAppText("bms.screen.subtitle"))
     }
 
     private var chipRow: some View {
