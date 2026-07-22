@@ -333,7 +333,11 @@ public struct PevDashboardScanningPill: View {
                 return
             }
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(260))
+                do {
+                    try await Task.sleep(for: .milliseconds(260))
+                } catch {
+                    return
+                }
                 phase = (phase + 1) % 3
             }
         }
