@@ -328,31 +328,6 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
     }
 }
 
-func unavailableSafetyBars(from bars: [PevSafetyBar]) -> [PevSafetyBar] {
-    bars.map {
-        PevSafetyBar(
-            id: $0.id,
-            label: $0.label,
-            value: localizedAppText("ride.value.unavailable"),
-            progress: 0,
-            accent: $0.accent
-        )
-    }
-}
-
-func unavailableDashboardTiles(from tiles: [PevDashboardTile]) -> [PevDashboardTile] {
-    tiles.map {
-        PevDashboardTile(
-            kind: $0.kind,
-            label: $0.label,
-            metricValue: .unavailable,
-            unit: $0.unit,
-            detail: localizedAppText("ride.value.unavailable"),
-            accent: $0.accent
-        )
-    }
-}
-
 func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
     let values = [telemetry.controllerTemperature, telemetry.motorTemperature, telemetry.batteryTemperature]
         .compactMap { $0?.value }
