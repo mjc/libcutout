@@ -425,6 +425,58 @@
       "comment" : "Device picker dashboard section heading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Setup" } } }
     },
+    "ride.hero.accessibility.available" : {
+      "comment" : "VoiceOver Ride hero speed. The placeholders are value, unit, availability, provenance, freshness, and severity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@, %4$@, %5$@, %6$@" } } }
+    },
+    "ride.hero.accessibility.unavailable" : {
+      "comment" : "VoiceOver Ride hero when speed is unavailable. The placeholders are availability, provenance, freshness, and severity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@, %4$@" } } }
+    },
+    "ride.hero.freshness.fresh" : {
+      "comment" : "VoiceOver freshness for current Ride hero telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "fresh" } } }
+    },
+    "ride.hero.freshness.stale" : {
+      "comment" : "VoiceOver freshness for outdated Ride hero telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "stale" } } }
+    },
+    "ride.hero.freshness.unavailable" : {
+      "comment" : "VoiceOver freshness when Ride hero telemetry timing is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "freshness unavailable" } } }
+    },
+    "ride.hero.provenance.vehicle_telemetry" : {
+      "comment" : "VoiceOver provenance for a Ride hero value reported by the vehicle.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "vehicle telemetry" } } }
+    },
+    "ride.hero.severity.caution" : {
+      "comment" : "VoiceOver Ride hero safety severity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "caution" } } }
+    },
+    "ride.hero.severity.critical" : {
+      "comment" : "VoiceOver Ride hero safety severity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "critical" } } }
+    },
+    "ride.hero.severity.nominal" : {
+      "comment" : "VoiceOver Ride hero safety severity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "nominal" } } }
+    },
+    "ride.hero.severity.unavailable" : {
+      "comment" : "VoiceOver Ride hero safety severity when it cannot be determined.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "severity unavailable" } } }
+    },
+    "ride.hero.value.available" : {
+      "comment" : "VoiceOver Ride hero availability state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "available" } } }
+    },
+    "ride.hero.value.unavailable" : {
+      "comment" : "Ride hero visible speed placeholder and VoiceOver availability state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "ride.hero.value.unavailable_accessibility" : {
+      "comment" : "VoiceOver sentence fragment for unavailable Ride hero speed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
+    },
     "picker.section.supported_now" : {
       "comment" : "Device picker heading for devices that can connect immediately.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Supported now" } } }

@@ -22,7 +22,7 @@ enum PevRideMetricProvenance: Equatable {
 
     var accessibilityText: String {
         switch self {
-        case .vehicleTelemetry: "vehicle telemetry"
+        case .vehicleTelemetry: localizedAppText("ride.hero.provenance.vehicle_telemetry")
         }
     }
 }
@@ -52,10 +52,10 @@ enum PevRideMetricSeverity: Equatable {
 
     var accessibilityText: String {
         switch self {
-        case .nominal: "nominal"
-        case .caution: "caution"
-        case .critical: "critical"
-        case .unavailable: "severity unavailable"
+        case .nominal: localizedAppText("ride.hero.severity.nominal")
+        case .caution: localizedAppText("ride.hero.severity.caution")
+        case .critical: localizedAppText("ride.hero.severity.critical")
+        case .unavailable: localizedAppText("ride.hero.severity.unavailable")
         }
     }
 }
@@ -77,7 +77,7 @@ enum PevRideHeroReadout: Equatable {
     var displayValue: String {
         switch self {
         case .available(let value, _, _, _, _): value
-        case .unavailable: "Unavailable"
+        case .unavailable: localizedAppText("ride.hero.value.unavailable")
         }
     }
 
@@ -91,24 +91,23 @@ enum PevRideHeroReadout: Equatable {
     var accessibilityValue: String {
         switch self {
         case .available(let value, let unit, let provenance, let freshness, let severity):
-            [
+            localizedAppText(
+                "ride.hero.accessibility.available",
                 value,
                 unit,
-                "available",
+                localizedAppText("ride.hero.value.available"),
                 provenance.accessibilityText,
                 freshness.accessibilityText,
-                severity.accessibilityText,
-            ]
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
+                severity.accessibilityText
+            )
         case .unavailable(let provenance, let freshness, let severity):
-            [
-                "unavailable",
+            localizedAppText(
+                "ride.hero.accessibility.unavailable",
+                localizedAppText("ride.hero.value.unavailable_accessibility"),
                 provenance.accessibilityText,
                 freshness.accessibilityText,
-                severity.accessibilityText,
-            ]
-            .joined(separator: ", ")
+                severity.accessibilityText
+            )
         }
     }
 
@@ -176,9 +175,9 @@ enum PevRideHeroReadout: Equatable {
 private extension EucRideUpdateFreshness {
     var accessibilityText: String {
         switch self {
-        case .fresh: "fresh"
-        case .stale: "stale"
-        case .unavailable: "freshness unavailable"
+        case .fresh: localizedAppText("ride.hero.freshness.fresh")
+        case .stale: localizedAppText("ride.hero.freshness.stale")
+        case .unavailable: localizedAppText("ride.hero.freshness.unavailable")
         }
     }
 }
