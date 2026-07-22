@@ -495,9 +495,7 @@ final class CutoutAppUITests: XCTestCase {
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
-        let auditTypes = XCUIAccessibilityAuditType.all
-            .subtracting(.dynamicType)
-            .subtracting(excluded)
+        let auditTypes = XCUIAccessibilityAuditType.all.subtracting(excluded)
         try app.performAccessibilityAudit(for: auditTypes) { issue in
             let elementDescription = issue.element?.debugDescription ?? "No element"
             print("Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)")
