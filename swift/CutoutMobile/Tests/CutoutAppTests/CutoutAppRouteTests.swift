@@ -3,8 +3,6 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppRouteTests: XCTestCase {
-    deinit {}
-
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)

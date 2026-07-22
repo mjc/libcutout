@@ -202,8 +202,6 @@ final class CutoutAppModel {
         }
     }
 
-    deinit {}
-
     func start() {
         core.start()
     }

@@ -109,8 +109,6 @@ struct CutoutNavigationCommands: Commands {
 
 #if os(macOS)
 final class CutoutAppDelegate: NSObject, NSApplicationDelegate {
-    deinit {}
-
     func applicationDidFinishLaunching(_: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
