@@ -48,8 +48,23 @@ struct BmsNoDataLayout: View {
     private var packCurrent: BatteryCurrent? {
         rideState?.telemetry?.batteryCurrent ?? snapshot.current
     }
-    private var rideSagText: String? {
-        rideState?.voltageSag.map { String(format: "%.1f", abs(Double($0.value)) / 1_000.0) }
+    private var packVoltageMetricValue: PevDashboardMetricValue {
+        packVoltage.map { voltage in
+            let value = RideUnits.voltageText(millivolts: voltage.value)
+            return .available(display: value, accessibility: value)
+        } ?? .unavailable
+    }
+    private var rideSagMetricValue: PevDashboardMetricValue {
+        rideState?.voltageSag.map { voltageSag in
+            let value = decimalString(abs(Double(voltageSag.value)) / 1_000.0, fractionDigits: 1)
+            return .available(display: value, accessibility: value)
+        } ?? .unavailable
+    }
+    private var loadMetricValue: PevDashboardMetricValue {
+        packCurrent.map { current in
+            let value = decimalString(Double(current.value) / 1_000.0, fractionDigits: 0)
+            return .available(display: value, accessibility: value)
+        } ?? .unavailable
     }
     private var fallbackEstimateDetail: String {
         if snapshot.voltage != nil, snapshot.current != nil {
@@ -86,11 +101,9 @@ struct BmsNoDataLayout: View {
                     )
 
                     BmsNoDataTelemetryCard(
-                        voltageValue: voltageText(packVoltage),
-                        rideSagValue: rideSagText ?? "--",
-                        rideSagUnit: rideSagText == nil ? "" : "V",
-                        loadValue: currentText(packCurrent) ?? "--",
-                        loadUnit: currentUnitText(packCurrent) ?? ""
+                        voltageMetricValue: packVoltageMetricValue,
+                        rideSagMetricValue: rideSagMetricValue,
+                        loadMetricValue: loadMetricValue
                     )
 
                     BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows)
@@ -116,14 +129,6 @@ struct BmsNoDataLayout: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(PevColors.pageBackground)
         .foregroundStyle(PevColors.primaryText)
-    }
-
-    private func currentText(_ value: BatteryCurrent?) -> String? {
-        value.map { decimalString(Double($0.value) / 1_000.0, fractionDigits: 0) }
-    }
-
-    private func currentUnitText(_ value: BatteryCurrent?) -> String? {
-        value.map { _ in "A" }
     }
 
 }

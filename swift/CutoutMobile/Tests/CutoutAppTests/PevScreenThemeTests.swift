@@ -152,4 +152,15 @@ final class PevScreenThemeTests: XCTestCase {
             "0 percent"
         )
     }
+
+    @MainActor
+    func testBmsNoDataMetricSpeaksTypedUnavailableValue() {
+        let metric = BmsNoDataMetric(
+            metricValue: .unavailable,
+            unit: "V",
+            label: "Pack voltage"
+        )
+
+        XCTAssertEqual(metric.accessibilityValueText, "unavailable")
+    }
 }

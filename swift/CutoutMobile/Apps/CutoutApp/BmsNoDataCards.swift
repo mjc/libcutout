@@ -140,11 +140,9 @@ struct BmsNoDataPackEstimateCard: View {
 }
 
 struct BmsNoDataTelemetryCard: View {
-    let voltageValue: String
-    let rideSagValue: String
-    let rideSagUnit: String
-    let loadValue: String
-    let loadUnit: String
+    let voltageMetricValue: PevDashboardMetricValue
+    let rideSagMetricValue: PevDashboardMetricValue
+    let loadMetricValue: PevDashboardMetricValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -153,9 +151,9 @@ struct BmsNoDataTelemetryCard: View {
                 columns: [GridItem(.adaptive(minimum: 100), spacing: 18)],
                 spacing: 18
             ) {
-                BmsNoDataMetric(value: voltageValue, unit: "V", label: "pack voltage")
-                BmsNoDataMetric(value: rideSagValue, unit: rideSagUnit, label: "ride sag")
-                BmsNoDataMetric(value: loadValue, unit: loadUnit, label: "load now")
+                BmsNoDataMetric(metricValue: voltageMetricValue, unit: "V", label: "pack voltage")
+                BmsNoDataMetric(metricValue: rideSagMetricValue, unit: "V", label: "ride sag")
+                BmsNoDataMetric(metricValue: loadMetricValue, unit: "A", label: "load now")
             }
         }
         .padding(.horizontal, 20)

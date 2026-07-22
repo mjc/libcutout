@@ -1,14 +1,19 @@
+import CutoutMobile
 import SwiftUI
 
 struct BmsNoDataMetric: View {
-    let value: String
+    let metricValue: PevDashboardMetricValue
     let unit: String
     let label: String
+
+    var accessibilityValueText: String {
+        metricValue.accessibilityValue(unit: unit, detail: "")
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(value)
+                Text(metricValue.displayText)
                     .font(.title3.weight(.black))
                     .monospacedDigit()
                 Text(unit)
@@ -22,6 +27,6 @@ struct BmsNoDataMetric: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
-        .accessibilityValue([value, unit].filter { !$0.isEmpty }.joined(separator: " "))
+        .accessibilityValue(accessibilityValueText)
     }
 }
