@@ -93,6 +93,72 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("telemetry.power_flow.negative_unknown"), "regen/discharge unverified")
     }
 
+    @MainActor
+    func testVescDashboardPresentationUsesTheAppCatalog() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .refloat,
+            controllerState: .unknown,
+            batteryVoltage: Voltage(value: 54_300),
+            batteryLevelReported: BatteryLevel(value: 71),
+            batteryCurrent: BatteryCurrent(value: 12_400),
+            powerFlow: .discharge,
+            motorCurrent: PhaseCurrent(value: 71_000),
+            boardAngle: Angle(value: -1_800),
+            balanceAngle: Angle(value: 500),
+            controllerTemperature: Temperature(value: 54_000),
+            motorTemperature: Temperature(value: 49_000)
+        )
+        let view = VescRideScreenView(
+            liveSnapshot: snapshot,
+            phase: .live,
+            now: MonotonicMilliseconds(1_000),
+            captureStatusText: nil
+        )
+
+        XCTAssertEqual(view.dashboardTiles.map(\.label), [
+            "voltage", "motor current", "board angle", "controller",
+        ])
+        XCTAssertEqual(view.dashboardTiles.map(\.detail), [
+            "battery 71% reported · current 12.4 A",
+            "discharging",
+            "nose down · balance 0.5°",
+            "motor 49.0 °C",
+        ])
+        XCTAssertEqual(localizedAppText("vesc.metric.battery_voltage"), "voltage")
+        XCTAssertEqual(
+            localizedAppText("vesc.battery_detail.reported_current", "71%", "12.4"),
+            "battery 71% reported · current 12.4 A"
+        )
+        XCTAssertEqual(
+            localizedAppText("vesc.battery_detail.reported_unavailable", "71%"),
+            "battery 71% reported · current unavailable"
+        )
+        XCTAssertEqual(
+            localizedAppText("vesc.battery_detail.estimated_current", "71%", "12.4"),
+            "battery 71% estimated · current 12.4 A"
+        )
+        XCTAssertEqual(
+            localizedAppText("vesc.battery_detail.estimated_unavailable", "71%"),
+            "battery 71% estimated · current unavailable"
+        )
+        XCTAssertEqual(
+            localizedAppText("vesc.battery_detail.unavailable_current", "12.4"),
+            "battery level unavailable · current 12.4 A"
+        )
+        XCTAssertEqual(
+            localizedAppText("vesc.battery_detail.unavailable_unavailable"),
+            "battery level unavailable · current unavailable"
+        )
+        XCTAssertEqual(
+            localizedAppText("vesc.board_angle.nose_down_with_balance", "0.5"),
+            "nose down · balance 0.5°"
+        )
+        XCTAssertEqual(localizedAppText("vesc.board_angle.nose_up"), "nose up")
+        XCTAssertEqual(localizedAppText("vesc.board_angle.level"), "level")
+    }
+
     func testUnavailableDashboardTilesCarryTypedAvailability() {
         let source = PevDashboardTile(
             kind: .packVoltage,

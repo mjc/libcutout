@@ -19,7 +19,7 @@ struct VescRideScreenView: View {
         if let liveSnapshot {
             return liveSnapshot.screenSubtitle
         }
-        return phase == .live ? "Telemetry pending" : phase.displayText
+        return phase == .live ? localizedAppText("vesc.subtitle.telemetry_pending") : phase.displayText
     }
 
     private var speedReadout: PevRideHeroReadout {
@@ -30,7 +30,10 @@ struct VescRideScreenView: View {
         guard let liveSnapshot else { return nil }
         switch liveSnapshot.warning {
         case .pushbackSoon:
-            return PevWarningCard(title: "Pushback soon", detail: footpadText ?? "Live telemetry.")
+            return PevWarningCard(
+                title: localizedAppText("vesc.warning.pushback_soon"),
+                detail: footpadText ?? localizedAppText("vesc.warning.live_telemetry")
+            )
         case .none, .unknown:
             return nil
         }
@@ -53,34 +56,57 @@ struct VescRideScreenView: View {
 
     private var batteryDetail: String {
         guard let liveSnapshot else { return "" }
-        let battery = liveSnapshot.batteryLevelReported.map {
-            "battery \(percentText($0)) reported"
-        } ?? liveSnapshot.batteryLevelEstimated.map {
-            "battery \(percentText($0)) estimated"
+        if let battery = liveSnapshot.batteryLevelReported {
+            if let current = liveSnapshot.batteryCurrent {
+                return localizedAppText(
+                    "vesc.battery_detail.reported_current",
+                    percentText(battery),
+                    currentText(current)
+                )
+            }
+            return localizedAppText(
+                "vesc.battery_detail.reported_unavailable",
+                percentText(battery)
+            )
         }
-        let details = [
-            battery ?? "battery level unavailable",
-            liveSnapshot.batteryCurrent.map { "current \(currentText($0)) A" } ?? "current unavailable",
-        ]
-        return details.joined(separator: " · ")
+        if let battery = liveSnapshot.batteryLevelEstimated {
+            if let current = liveSnapshot.batteryCurrent {
+                return localizedAppText(
+                    "vesc.battery_detail.estimated_current",
+                    percentText(battery),
+                    currentText(current)
+                )
+            }
+            return localizedAppText(
+                "vesc.battery_detail.estimated_unavailable",
+                percentText(battery)
+            )
+        }
+        if let current = liveSnapshot.batteryCurrent {
+            return localizedAppText(
+                "vesc.battery_detail.unavailable_current",
+                currentText(current)
+            )
+        }
+        return localizedAppText("vesc.battery_detail.unavailable_unavailable")
     }
 
     private var motorCurrentDetail: String {
         guard let liveSnapshot, liveSnapshot.motorCurrent != nil else {
-            return "current unavailable"
+            return localizedAppText("vesc.current.unavailable")
         }
         return powerFlowDetail(
             liveSnapshot.powerFlow,
-            fallback: "phase current"
+            fallback: localizedAppText("vesc.phase_current")
         )
     }
 
-    private var dashboardTiles: [PevDashboardTile] {
+    var dashboardTiles: [PevDashboardTile] {
         guard let liveSnapshot else { return [] }
         return [
             PevDashboardTile(
                 kind: .batteryVoltage,
-                label: "voltage",
+                label: localizedAppText("vesc.metric.battery_voltage"),
                 value: voltageText(liveSnapshot.batteryVoltage),
                 unit: "V",
                 detail: batteryDetail,
@@ -88,7 +114,7 @@ struct VescRideScreenView: View {
             ),
             PevDashboardTile(
                 kind: .motorCurrent,
-                label: "motor current",
+                label: localizedAppText("vesc.metric.motor_current"),
                 value: phaseCurrentText(liveSnapshot.motorCurrent),
                 unit: "A",
                 detail: motorCurrentDetail,
@@ -96,18 +122,24 @@ struct VescRideScreenView: View {
             ),
             PevDashboardTile(
                 kind: .boardAngle,
-                label: "board angle",
+                label: localizedAppText("vesc.metric.board_angle"),
                 value: angleText(liveSnapshot.boardAngle),
                 unit: "°",
-                detail: boardAngleDetail ?? "angle unavailable",
+                detail: boardAngleDetail ?? localizedAppText("vesc.board_angle.unavailable"),
                 accent: .cyan
             ),
             PevDashboardTile(
                 kind: .controller,
-                label: "controller",
+                label: localizedAppText("vesc.metric.controller"),
                 value: temperatureText(liveSnapshot.controllerTemperature),
                 unit: "°C",
-                detail: liveSnapshot.motorTemperature.map { "motor \(temperatureText($0)) \(RideUnits.temperatureUnit)" } ?? "motor unavailable",
+                detail: liveSnapshot.motorTemperature.map {
+                    localizedAppText(
+                        "vesc.motor_temperature.available",
+                        temperatureText($0),
+                        RideUnits.temperatureUnit
+                    )
+                } ?? localizedAppText("vesc.motor_temperature.unavailable"),
                 accent: .green
             ),
         ]
@@ -119,26 +151,33 @@ struct VescRideScreenView: View {
 
     private var boardAngleDetail: String? {
         guard let angle = liveSnapshot?.boardAngle else { return nil }
-        let balance = liveSnapshot?.balanceAngle.map { " · balance \(angleText($0))°" } ?? ""
+        let direction: String
         if angle.value < 0 {
-            return "nose down\(balance)"
+            direction = "nose_down"
+        } else if angle.value > 0 {
+            direction = "nose_up"
+        } else {
+            direction = "level"
         }
-        if angle.value > 0 {
-            return "nose up\(balance)"
+        if let balance = liveSnapshot?.balanceAngle {
+            return localizedAppText(
+                "vesc.board_angle.\(direction)_with_balance",
+                angleText(balance)
+            )
         }
-        return "level\(balance)"
+        return localizedAppText("vesc.board_angle.\(direction)")
     }
 
     var body: some View {
         PevRideDashboardShell(
-            sectionTitle: "Ride",
+            sectionTitle: localizedAppText("navigation.section.ride"),
             heroStyle: .vescOnewheel,
             title: title,
             subtitle: subtitle,
             statusFill: PevColors.purple,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
-            speedCaption: "board speed",
+            speedCaption: localizedAppText("vesc.speed.caption"),
             allowsVerticalScroll: true,
         ) {
 
@@ -148,8 +187,11 @@ struct VescRideScreenView: View {
 
             if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
                 PevDashboardWarningCard(
-                    title: "Telemetry stale",
-                    detail: "Last update \(elapsed.rawValue) ms ago.",
+                    title: localizedAppText("vesc.warning.telemetry_stale"),
+                    detail: localizedAppText(
+                        "vesc.warning.telemetry_stale_detail",
+                        Int64(elapsed.rawValue)
+                    ),
                     accent: PevColors.primaryText,
                     detailColor: PevColors.primaryText,
                     fill: PevColors.cardFill,
@@ -159,9 +201,9 @@ struct VescRideScreenView: View {
                 .padding(.top, 12)
             } else if let dutyHeadroom {
                 PevDashboardProgressCard(
-                    label: "Duty headroom",
+                    label: localizedAppText("vesc.duty_headroom.label"),
                     value: percentText(dutyHeadroom),
-                    detail: "Nose authority is the ride-critical value here.",
+                    detail: localizedAppText("vesc.duty_headroom.detail"),
                     progress: Double(dutyHeadroom.value) / 100.0,
                     accent: PevColors.primaryText,
                     fill: PevColors.cardFill,
@@ -174,8 +216,8 @@ struct VescRideScreenView: View {
                     .padding(.top, 12)
             } else if liveSnapshot == nil && phase == .live {
                 PevDashboardWarningCard(
-                    title: "Telemetry pending",
-                    detail: "Waiting for live values.",
+                    title: localizedAppText("vesc.subtitle.telemetry_pending"),
+                    detail: localizedAppText("vesc.telemetry_pending.detail"),
                     accent: PevColors.purple,
                     detailColor: PevColors.primaryText,
                     fill: PevColors.purple.opacity(0.18),
@@ -200,9 +242,9 @@ struct VescRideScreenView: View {
 
             if let footpad = liveSnapshot?.footpad {
                 PevDashboardFootpadReadout(
-                    leftLabel: "left / adc1",
+                    leftLabel: localizedAppText("vesc.footpad.left"),
                     leftValue: footpad.adc1DisplayText,
-                    rightLabel: "right / adc2",
+                    rightLabel: localizedAppText("vesc.footpad.right"),
                     rightValue: footpad.adc2DisplayText,
                     detail: footpad.stateDisplayText,
                     fill: PevColors.cardFill,
