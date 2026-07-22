@@ -25,6 +25,20 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.detail.back_to_cell_map"), "Back to cell map")
         XCTAssertEqual(localizedAppText("bms.detail.group", Int64(3)), "Group 3")
         XCTAssertEqual(localizedAppText("bms.detail.trend", "stable"), "Trend: stable")
+        XCTAssertEqual(localizedAppText("bms.overview.usable_energy"), "Usable energy")
+        XCTAssertEqual(localizedAppText("bms.overview.average_group"), "Average group")
+        XCTAssertEqual(localizedAppText("bms.overview.lowest_group"), "Lowest group")
+        XCTAssertEqual(localizedAppText("bms.overview.highest_temperature"), "Highest temperature")
+        XCTAssertEqual(localizedAppText("bms.overview.balancing"), "Balancing")
+        XCTAssertEqual(localizedAppText("bms.overview.fault_state"), "Fault state")
+        XCTAssertEqual(localizedAppText("bms.overview.pack_telemetry"), "Pack telemetry")
+        XCTAssertEqual(localizedAppText("bms.unknown.title"), "Do not pretend certainty")
+        XCTAssertEqual(localizedAppText("bms.unknown.reported_voltage"), "Reported voltage")
+        XCTAssertEqual(localizedAppText("bms.unknown.cell_count"), "Cell count")
+        XCTAssertEqual(localizedAppText("bms.unknown.temperatures"), "Temperatures")
+        XCTAssertEqual(localizedAppText("bms.unknown.fault_bits"), "Fault bits")
+        XCTAssertEqual(localizedAppText("bms.unknown.next_capture_flow"), "Next capture flow")
+        XCTAssertEqual(localizedAppText("bms.unknown.capture_unavailable"), "Unavailable")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

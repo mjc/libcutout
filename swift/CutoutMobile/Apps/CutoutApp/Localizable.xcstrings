@@ -1,6 +1,62 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.overview.average_group" : {
+      "comment" : "BMS overview metric label for the average cell-group voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Average group" } } }
+    },
+    "bms.overview.balancing" : {
+      "comment" : "BMS overview card title describing active cell balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Balancing" } } }
+    },
+    "bms.overview.fault_state" : {
+      "comment" : "BMS overview card title describing the reported BMS fault state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Fault state" } } }
+    },
+    "bms.overview.highest_temperature" : {
+      "comment" : "BMS overview metric label for the highest reported cell-group temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Highest temperature" } } }
+    },
+    "bms.overview.lowest_group" : {
+      "comment" : "BMS overview metric label for the lowest cell-group voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lowest group" } } }
+    },
+    "bms.overview.pack_telemetry" : {
+      "comment" : "BMS overview fallback card title when usable energy is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack telemetry" } } }
+    },
+    "bms.overview.usable_energy" : {
+      "comment" : "BMS overview hero-card eyebrow for the usable pack energy percentage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Usable energy" } } }
+    },
+    "bms.unknown.capture_unavailable" : {
+      "comment" : "Fallback title when an unknown-topology BMS has no recommended capture action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "bms.unknown.cell_count" : {
+      "comment" : "Unknown-topology BMS metric label for reported cell count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell count" } } }
+    },
+    "bms.unknown.fault_bits" : {
+      "comment" : "Unknown-topology BMS metric label for raw fault bits.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Fault bits" } } }
+    },
+    "bms.unknown.next_capture_flow" : {
+      "comment" : "Unknown-topology BMS card heading for the next capture action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Next capture flow" } } }
+    },
+    "bms.unknown.reported_voltage" : {
+      "comment" : "Unknown-topology BMS metric label for the reported pack voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reported voltage" } } }
+    },
+    "bms.unknown.temperatures" : {
+      "comment" : "Unknown-topology BMS metric label for available temperature readings.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperatures" } } }
+    },
+    "bms.unknown.title" : {
+      "comment" : "Unknown-topology BMS warning card title that tells the rider the topology is not confirmed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Do not pretend certainty" } } }
+    },
     "bms.detail.back_to_cell_map" : {
       "comment" : "Button title returning from a BMS group detail to the cell map.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back to cell map" } } }

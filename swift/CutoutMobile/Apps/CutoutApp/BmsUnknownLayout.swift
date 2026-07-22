@@ -9,7 +9,7 @@ struct BmsUnknownLayout: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
-                title: "do not pretend certainty",
+                title: localizedAppText("bms.unknown.title"),
                 metricValue: faultMetricValue,
                 detail: snapshot.faultDetail ?? "",
                 stroke: PevColors.orange
@@ -23,7 +23,7 @@ struct BmsUnknownLayout: View {
                 spacing: 14
             ) {
                 PevDashboardMetricTile(
-                    label: "reported voltage",
+                    label: localizedAppText("bms.unknown.reported_voltage"),
                     metricValue: snapshot.voltage.map {
                         .available(display: voltageText($0), accessibility: voltageText($0))
                     } ?? .unavailable,
@@ -32,7 +32,7 @@ struct BmsUnknownLayout: View {
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
-                    label: "cell count",
+                    label: localizedAppText("bms.unknown.cell_count"),
                     metricValue: .available(
                         display: snapshot.unknownTopologyCellCountValue,
                         accessibility: snapshot.unknownTopologyCellCountValue
@@ -42,7 +42,7 @@ struct BmsUnknownLayout: View {
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
-                    label: "temps",
+                    label: localizedAppText("bms.unknown.temperatures"),
                     metricValue: snapshot.unknownTopologyTemperatureSensorCount.map {
                         let value = String($0)
                         return .available(display: value, accessibility: value)
@@ -52,7 +52,7 @@ struct BmsUnknownLayout: View {
                     detailColor: PevColors.primaryText
                 )
                 PevDashboardMetricTile(
-                    label: "fault bits",
+                    label: localizedAppText("bms.unknown.fault_bits"),
                     metricValue: snapshot.faults.first.map {
                         .available(display: $0.code, accessibility: $0.code)
                     } ?? .unavailable,
@@ -63,11 +63,11 @@ struct BmsUnknownLayout: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("next capture flow")
+                Text(localizedAppText("bms.unknown.next_capture_flow"))
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityHeading(.h2)
-                Text(snapshot.captureActionTitle ?? "--")
+                Text(snapshot.captureActionTitle ?? localizedAppText("bms.unknown.capture_unavailable"))
                     .font(.title2.weight(.black))
                 Text(snapshot.unknownTopologyCaptureDetail)
                     .font(.body.weight(.semibold))

@@ -17,7 +17,7 @@ struct BmsOverviewLayout: View {
                 ) {
                     if let averageGroupVoltage {
                         PevDashboardMetricTile(
-                            label: "average group",
+                            label: localizedAppText("bms.overview.average_group"),
                             metricValue: .available(
                                 display: groupVoltageText(averageGroupVoltage),
                                 accessibility: groupVoltageText(averageGroupVoltage)
@@ -29,7 +29,7 @@ struct BmsOverviewLayout: View {
                     }
                     if let lowestGroupVoltage {
                         PevDashboardMetricTile(
-                            label: "lowest group",
+                            label: localizedAppText("bms.overview.lowest_group"),
                             metricValue: .available(
                                 display: groupVoltageText(lowestGroupVoltage),
                                 accessibility: groupVoltageText(lowestGroupVoltage)
@@ -44,7 +44,7 @@ struct BmsOverviewLayout: View {
 
             if hasTemperatureEvidence {
                 PevDashboardMetricTile(
-                    label: "highest temp",
+                    label: localizedAppText("bms.overview.highest_temperature"),
                     metricValue: snapshot.highestTemperature.map {
                         .available(display: temperatureText($0), accessibility: temperatureText($0))
                     } ?? .unavailable,
@@ -56,7 +56,7 @@ struct BmsOverviewLayout: View {
 
             if let balancingSummary = snapshot.balancingSummary {
                 PevDashboardWideCard(
-                    title: "balancing",
+                    title: localizedAppText("bms.overview.balancing"),
                     metricValue: .available(display: balancingSummary, accessibility: balancingSummary),
                     detail: snapshot.balancingDetail ?? ""
                 )
@@ -64,7 +64,7 @@ struct BmsOverviewLayout: View {
 
             if let faultSummary = snapshot.faultSummary {
                 PevDashboardWideCard(
-                    title: "fault state",
+                    title: localizedAppText("bms.overview.fault_state"),
                     metricValue: .available(display: faultSummary, accessibility: faultSummary),
                     detail: snapshot.faultDetail ?? "",
                     stroke: PevColors.red
@@ -77,7 +77,7 @@ struct BmsOverviewLayout: View {
     private var summaryCard: some View {
         if let energyProgress = snapshot.energyProgress {
             PevDashboardHeroCard(
-                eyebrow: "usable energy",
+                eyebrow: localizedAppText("bms.overview.usable_energy"),
                 value: percentText(snapshot.energyPercent),
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
@@ -86,7 +86,7 @@ struct BmsOverviewLayout: View {
             )
         } else {
             PevDashboardWideCard(
-                title: "pack telemetry",
+                title: localizedAppText("bms.overview.pack_telemetry"),
                 metricValue: telemetryMetricValue,
                 detail: snapshot.topology.layoutLabel
             )
