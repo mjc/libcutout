@@ -9,7 +9,6 @@ import AppKit
 private enum PevSystemColors {
     #if os(iOS)
     static let pageBackground = Color(uiColor: .systemBackground)
-    static let cardFill = Color(uiColor: .secondarySystemBackground)
     static let disabledFill = pageBackground
     static let yellow = Color(uiColor: .systemYellow)
     static let cyan = Color(uiColor: .systemCyan)
@@ -19,8 +18,6 @@ private enum PevSystemColors {
     static let teal = Color(uiColor: .systemTeal)
     static let brown = Color(uiColor: .systemBrown)
     static let purple = Color(uiColor: .systemPurple)
-    static let primaryText = Color(uiColor: .label)
-    static let mutedText = Color(uiColor: .label)
     static let brand = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
             ? UIColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
@@ -28,7 +25,6 @@ private enum PevSystemColors {
     })
     #elseif os(macOS)
     static let pageBackground = Color(nsColor: .windowBackgroundColor)
-    static let cardFill = Color(nsColor: .underPageBackgroundColor)
     static let disabledFill = pageBackground
     static let yellow = Color(nsColor: .systemYellow)
     static let cyan = Color(nsColor: .systemCyan)
@@ -38,8 +34,6 @@ private enum PevSystemColors {
     static let teal = Color(nsColor: .systemTeal)
     static let brown = Color(nsColor: .systemBrown)
     static let purple = Color(nsColor: .systemPurple)
-    static let primaryText = Color(nsColor: .labelColor)
-    static let mutedText = Color(nsColor: .labelColor)
     static let brand = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
@@ -77,13 +71,13 @@ enum PevColors {
     // Semantic system colors keep the visual hierarchy intact while honoring
     // the user's light/dark appearance and contrast settings.
     static let pageBackground = PevSystemColors.pageBackground
-    static let cardFill = PevSystemColors.cardFill
-    static let cardStroke = Color.secondary.opacity(0.35)
+    static let cardFill = PevDashboardColors.cardFill
+    static let cardStroke = PevDashboardColors.cardStroke
     static let disabledFill = PevSystemColors.disabledFill
-    static let primaryText = PevSystemColors.primaryText
+    static let primaryText = PevDashboardColors.primaryText
     static let disabledText = Color.primary.opacity(0.58)
     static let disabledSecondaryText = Color.primary.opacity(0.48)
-    static let muted = PevSystemColors.mutedText
+    static let muted = PevDashboardColors.mutedText
     static let brand = PevSystemColors.brand
     static let yellow = PevSystemColors.yellow
     static let cyan = PevSystemColors.cyan
