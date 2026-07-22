@@ -75,10 +75,18 @@ struct BmsNoDataWarningCard: View {
 }
 
 struct BmsNoDataPackEstimateCard: View {
-    let percentText: String
+    let metricValue: PevDashboardMetricValue
     let detail: String
     let confidenceTitle: String
     let confidenceDetail: String
+
+    var accessibilityValueText: String {
+        localizedAppText(
+            "bms.no_data.pack_estimate_accessibility_value",
+            metricValue.accessibilityText,
+            detail
+        )
+    }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
@@ -101,7 +109,7 @@ struct BmsNoDataPackEstimateCard: View {
         VStack(alignment: .leading, spacing: 8) {
             PevDashboardSectionLabel(title: localizedAppText("bms.no_data.pack_estimate"), font: .caption.weight(.bold))
             HStack(alignment: .firstTextBaseline, spacing: 4) {
-                Text(percentText)
+                Text(metricValue.displayText)
                     .font(.largeTitle.weight(.black))
                     .monospacedDigit()
                 Text("%")
@@ -115,9 +123,7 @@ struct BmsNoDataPackEstimateCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(localizedAppText("bms.no_data.pack_estimate_accessibility"))
-        .accessibilityValue(
-            localizedAppText("bms.no_data.pack_estimate_accessibility_value", percentText, detail)
-        )
+        .accessibilityValue(accessibilityValueText)
     }
 
     private var confidence: some View {

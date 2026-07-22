@@ -8,11 +8,10 @@ struct BmsNoDataLayout: View {
     let liveSnapshot: BmsSnapshot?
 
     private var snapshot: BmsSnapshot { content.snapshot }
-    private var controllerEstimatePercentText: String {
-        if let percent = rideState?.controllerOnlyEstimatePercent ?? snapshot.energyPercent {
-            return RideUnits.decimalString(Double(percent.value), fractionDigits: 0)
-        }
-        return "--"
+    private var controllerEstimateMetricValue: PevDashboardMetricValue {
+        bmsNoDataPackEstimateMetricValue(
+            rideState?.controllerOnlyEstimatePercent ?? snapshot.energyPercent
+        )
     }
     private var controllerEstimateDetail: String {
         switch rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail {
@@ -100,7 +99,7 @@ struct BmsNoDataLayout: View {
                     BmsNoDataWarningCard(snapshot: snapshot)
 
                     BmsNoDataPackEstimateCard(
-                        percentText: controllerEstimatePercentText,
+                        metricValue: controllerEstimateMetricValue,
                         detail: controllerEstimateDetail,
                         confidenceTitle: controllerConfidenceTitle,
                         confidenceDetail: controllerConfidenceDetail
@@ -134,4 +133,10 @@ struct BmsNoDataLayout: View {
         .foregroundStyle(PevColors.primaryText)
     }
 
+}
+
+func bmsNoDataPackEstimateMetricValue(_ percent: BatteryLevel?) -> PevDashboardMetricValue {
+    guard let percent else { return .unavailable }
+    let value = RideUnits.decimalString(Double(percent.value), fractionDigits: 0)
+    return .available(display: value, accessibility: value)
 }

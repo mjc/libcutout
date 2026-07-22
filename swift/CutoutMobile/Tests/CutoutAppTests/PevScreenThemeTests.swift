@@ -400,4 +400,25 @@ final class PevScreenThemeTests: XCTestCase {
 
         XCTAssertEqual(metric.accessibilityValueText, "unavailable")
     }
+
+    func testBmsNoDataPackEstimateSpeaksTypedUnavailableValue() {
+        let metricValue = bmsNoDataPackEstimateMetricValue(nil)
+        let detail = "Controller telemetry is unavailable."
+        let card = BmsNoDataPackEstimateCard(
+            metricValue: metricValue,
+            detail: detail,
+            confidenceTitle: "Unknown",
+            confidenceDetail: "Telemetry unavailable"
+        )
+
+        XCTAssertEqual(metricValue, .unavailable)
+        XCTAssertEqual(
+            card.accessibilityValueText,
+            localizedAppText(
+                "bms.no_data.pack_estimate_accessibility_value",
+                "unavailable",
+                detail
+            )
+        )
+    }
 }
