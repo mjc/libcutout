@@ -18,6 +18,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .vescDebug), .vescDebug)
     }
 
+    func testEucPackRouteRejectsNonPackScreens() {
+        XCTAssertNil(EucPackScreen(screenID: .vescRide))
+        XCTAssertNil(EucPackScreen(screenID: .vescDebug))
+        XCTAssertEqual(EucPackScreen(screenID: .bmsOverview), .bmsOverview)
+    }
+
     func testRouteFocusIdentityDistinguishesEveryDestination() {
         let routes: Set<CutoutAppRoute> = [
             .devicePicker,

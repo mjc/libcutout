@@ -1,9 +1,44 @@
 import CutoutMobile
 
+enum EucPackScreen: Hashable {
+    case bmsOverview
+    case bmsCellMap6S
+    case bmsCellMap40S
+    case bmsCellDetail
+    case bmsUnknownTopology
+    case bmsNoData
+    case eucGarage
+
+    init?(screenID: PevScreenID) {
+        switch screenID {
+        case .bmsOverview: self = .bmsOverview
+        case .bmsCellMap6S: self = .bmsCellMap6S
+        case .bmsCellMap40S: self = .bmsCellMap40S
+        case .bmsCellDetail: self = .bmsCellDetail
+        case .bmsUnknownTopology: self = .bmsUnknownTopology
+        case .bmsNoData: self = .bmsNoData
+        case .eucGarage: self = .eucGarage
+        case .eucRide, .vescRide, .vescDebug: return nil
+        }
+    }
+
+    var screenID: PevScreenID {
+        switch self {
+        case .bmsOverview: .bmsOverview
+        case .bmsCellMap6S: .bmsCellMap6S
+        case .bmsCellMap40S: .bmsCellMap40S
+        case .bmsCellDetail: .bmsCellDetail
+        case .bmsUnknownTopology: .bmsUnknownTopology
+        case .bmsNoData: .bmsNoData
+        case .eucGarage: .eucGarage
+        }
+    }
+}
+
 enum CutoutAppRoute: Hashable {
     case devicePicker
     case eucRide
-    case eucPack(PevScreenID)
+    case eucPack(EucPackScreen)
     case vescRide
     case vescDebug
     case capture
@@ -19,7 +54,7 @@ enum CutoutAppRoute: Hashable {
         case .vescRide:
             .vescRide
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData, .eucGarage:
-            .eucPack(screenID)
+            .eucPack(EucPackScreen(screenID: screenID)!)
         case .vescDebug:
             .vescDebug
         }
@@ -55,8 +90,8 @@ enum CutoutAppRoute: Hashable {
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)
-        case .eucPack(let screenID):
-            PevRideTabs.eucRideTabs(selected: screenID)
+        case .eucPack(let screen):
+            PevRideTabs.eucRideTabs(selected: screen.screenID)
         case .vescRide:
             PevRideTabs.vescRideTabs(selected: .vescRide)
         case .vescDebug:

@@ -251,8 +251,8 @@ struct ContentView: View {
             nil
         case .eucRide:
             catalog.screen(id: .eucRide)
-        case .eucPack(let screenID):
-            catalog.screen(id: screenID).map {
+        case .eucPack(let screen):
+            catalog.screen(id: screen.screenID).map {
                 catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
             }
         case .vescRide:
