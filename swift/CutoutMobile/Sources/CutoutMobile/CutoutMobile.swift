@@ -1259,6 +1259,21 @@ public extension FootpadTelemetry {
     var stateDisplayText: String {
         "state \(state)"
     }
+
+    var accessibilityValue: String {
+        [
+            "left / adc1",
+            adc1Milliunits == nil ? "unavailable" : "\(adc1DisplayText), available",
+            "right / adc2",
+            adc2Milliunits == nil ? "unavailable" : "\(adc2DisplayText), available",
+            stateDisplayText,
+        ]
+        .joined(separator: ", ")
+    }
+
+    var summaryText: String {
+        "footpad \(stateDisplayText) · adc1 left \(adc1Milliunits == nil ? "unavailable" : adc1DisplayText) · adc2 right \(adc2Milliunits == nil ? "unavailable" : adc2DisplayText)"
+    }
 }
 
 private func formatFootpadReading(_ value: Int32?) -> String {

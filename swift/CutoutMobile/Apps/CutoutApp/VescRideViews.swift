@@ -2,20 +2,6 @@ import Accessibility
 import CutoutMobile
 import SwiftUI
 
-func vescFootpadAccessibilityValue(_ footpad: FootpadTelemetry) -> String {
-    [
-        "left / adc1",
-        footpad.adc1Milliunits == nil ? "unavailable" : footpad.adc1DisplayText,
-        footpad.adc1Milliunits == nil ? "" : "available",
-        "right / adc2",
-        footpad.adc2Milliunits == nil ? "unavailable" : footpad.adc2DisplayText,
-        footpad.adc2Milliunits == nil ? "" : "available",
-        footpad.stateDisplayText,
-    ]
-    .filter { !$0.isEmpty }
-    .joined(separator: ", ")
-}
-
 struct VescRideScreenView: View {
     let liveSnapshot: VescRideSnapshot?
     let phase: SessionConnectionPhase
@@ -49,9 +35,7 @@ struct VescRideScreenView: View {
     }
 
     private var footpadText: String? {
-        liveSnapshot?.footpad.map {
-            "footpad \($0.stateDisplayText) · adc1 left \($0.adc1DisplayText) · adc2 right \($0.adc2DisplayText)"
-        }
+        liveSnapshot?.footpad?.summaryText
     }
 
     private var dutyHeadroom: BatteryLevel? {
@@ -216,7 +200,7 @@ struct VescRideScreenView: View {
                     stroke: PevColors.cardStroke,
                     textColor: PevColors.primaryText,
                     secondaryTextColor: PevColors.muted,
-                    accessibilityValue: vescFootpadAccessibilityValue(footpad)
+                    accessibilityValue: footpad.accessibilityValue
                 )
                 .padding(.top, 8)
             }

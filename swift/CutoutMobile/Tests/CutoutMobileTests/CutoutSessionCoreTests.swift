@@ -356,6 +356,14 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(footpad.adc1DisplayText, "1.25")
         XCTAssertEqual(footpad.adc2DisplayText, "--")
         XCTAssertEqual(footpad.stateDisplayText, "state 3")
+        XCTAssertEqual(
+            footpad.accessibilityValue,
+            "left / adc1, 1.25, available, right / adc2, unavailable, state 3"
+        )
+        XCTAssertEqual(
+            footpad.summaryText,
+            "footpad state 3 · adc1 left 1.25 · adc2 right unavailable"
+        )
     }
 
     func testVescRideSnapshotProjectsAngleOnlyTelemetry() throws {
