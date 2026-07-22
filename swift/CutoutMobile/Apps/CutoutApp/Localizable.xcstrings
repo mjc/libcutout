@@ -133,6 +133,42 @@
       "comment" : "VESC diagnostics value. The placeholder is a voltage in volts.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ V" } } }
     },
+    "vesc.debug.protocol.bike" : {
+      "comment" : "VESC diagnostics protocol name for a bike controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bike" } } }
+    },
+    "vesc.debug.protocol.eskate" : {
+      "comment" : "VESC diagnostics protocol name for an electric skateboard controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "eSkate" } } }
+    },
+    "vesc.debug.protocol.generic" : {
+      "comment" : "VESC diagnostics protocol name for an unclassified VESC controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC" } } }
+    },
+    "vesc.debug.protocol.refloat" : {
+      "comment" : "VESC diagnostics protocol name for a Refloat controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Refloat" } } }
+    },
+    "vesc.debug.state.charging" : {
+      "comment" : "VESC diagnostics vehicle state while charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charging" } } }
+    },
+    "vesc.debug.state.parked" : {
+      "comment" : "VESC diagnostics vehicle state while parked.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Parked" } } }
+    },
+    "vesc.debug.state.riding" : {
+      "comment" : "VESC diagnostics vehicle state while riding.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding" } } }
+    },
+    "vesc.debug.state.standing" : {
+      "comment" : "VESC diagnostics vehicle state while stationary.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Standing" } } }
+    },
+    "vesc.debug.state.unknown" : {
+      "comment" : "VESC diagnostics controller state when telemetry does not report an armed state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown" } } }
+    },
     "bms.diagnostics.detail" : {
       "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }

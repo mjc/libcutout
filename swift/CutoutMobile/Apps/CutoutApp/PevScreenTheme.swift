@@ -290,8 +290,8 @@ func vescDebugRows(
 
     return [
         PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), value: phase.displayText),
-        PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), value: String(describing: snapshot.subProtocol)),
-        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: String(describing: snapshot.operatingState)),
+        PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), value: vescDebugProtocolText(snapshot.subProtocol)),
+        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: vescDebugOperatingStateText(snapshot)),
         PevDashboardKeyValueRow(id: "notifications", label: localizedAppText("vesc.debug.row.notifications"), value: String(notificationCount)),
         PevDashboardKeyValueRow(
             id: "voltage",
@@ -325,6 +325,34 @@ func vescDebugRows(
             } ?? .unavailable
         ),
     ]
+}
+
+func vescDebugProtocolText(_ subProtocol: VescSubProtocol) -> String {
+    switch subProtocol {
+    case .refloat:
+        localizedAppText("vesc.debug.protocol.refloat")
+    case .bike:
+        localizedAppText("vesc.debug.protocol.bike")
+    case .eskate:
+        localizedAppText("vesc.debug.protocol.eskate")
+    case .generic:
+        localizedAppText("vesc.debug.protocol.generic")
+    }
+}
+
+func vescDebugOperatingStateText(_ snapshot: VescRideSnapshot) -> String {
+    switch snapshot.operatingState {
+    case .parked:
+        localizedAppText("vesc.debug.state.parked")
+    case .standing:
+        localizedAppText("vesc.debug.state.standing")
+    case .riding:
+        localizedAppText("vesc.debug.state.riding")
+    case .charging:
+        localizedAppText("vesc.debug.state.charging")
+    case .unknown:
+        localizedAppText("vesc.debug.state.unknown")
+    }
 }
 
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {

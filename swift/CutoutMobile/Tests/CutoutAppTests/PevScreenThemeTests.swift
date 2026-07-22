@@ -96,6 +96,19 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testVescDebugEnumValuesUseTheAppCatalog() {
+        XCTAssertEqual(vescDebugProtocolText(.generic), "VESC")
+
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            operatingState: .riding
+        )
+        XCTAssertEqual(vescDebugOperatingStateText(snapshot), "Riding")
+    }
+
     func testVescFootpadPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("vesc.footpad.left"), "LEFT / ADC1")
         XCTAssertEqual(localizedAppText("vesc.footpad.right"), "RIGHT / ADC2")
