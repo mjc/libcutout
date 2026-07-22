@@ -127,10 +127,10 @@ struct BmsDiagnosticsSection: View {
             .padding(.top, 8)
         } label: {
             VStack(alignment: .leading, spacing: 3) {
-                Text("BMS diagnostics")
+                Text(localizedAppText("bms.diagnostics.title"))
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText)
-                Text("raw readback, available when we need to debug")
+                Text(localizedAppText("bms.diagnostics.detail"))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(PevColors.muted)
             }

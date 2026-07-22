@@ -1,6 +1,14 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.diagnostics.detail" : {
+      "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }
+    },
+    "bms.diagnostics.title" : {
+      "comment" : "BMS diagnostics disclosure title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "BMS diagnostics" } } }
+    },
     "bms.no_data.confidence" : {
       "comment" : "No-data BMS section heading for the controller estimate confidence.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "CONFIDENCE" } } }
