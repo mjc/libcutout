@@ -325,6 +325,7 @@ final class CutoutAppUITests: XCTestCase {
         let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
         XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
         XCTAssertTrue(debugTab.isSelected)
+        assertMetricIsReachable("duty", in: debugScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
