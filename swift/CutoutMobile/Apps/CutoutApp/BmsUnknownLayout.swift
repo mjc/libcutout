@@ -44,7 +44,7 @@ struct BmsUnknownLayout: View {
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.temperatures"),
                     metricValue: snapshot.unknownTopologyTemperatureSensorCount.map {
-                        let value = String($0)
+                        let value = RideUnits.decimalString(Double($0), fractionDigits: 0)
                         return .available(display: value, accessibility: value)
                     } ?? .unavailable,
                     unit: localizedAppText("bms.unknown.temperature_sensors"),
