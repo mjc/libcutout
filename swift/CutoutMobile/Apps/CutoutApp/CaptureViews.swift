@@ -17,7 +17,7 @@ struct CaptureRecordingScreen: View {
             contentSpacing: 16,
             horizontalPadding: 18,
             showsHeader: false
-        ) { _ in
+        ) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top) {
                     titleBlock

@@ -83,7 +83,7 @@ struct EucRideScreenView: View {
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
             speedCaption: "speed",
-        ) { columns in
+        ) {
             VStack(spacing: 10) {
                 ForEach(safetyBars) { bar in
                     PevDashboardProgressBar(
@@ -110,7 +110,7 @@ struct EucRideScreenView: View {
                     .padding(.top, 14)
             }
 
-            PevDashboardGrid(columns: columns, spacing: 12) {
+            PevDashboardGrid(columnSpacing: 12, spacing: 12) {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 104)
                 }

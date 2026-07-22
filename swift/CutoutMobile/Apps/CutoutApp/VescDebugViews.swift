@@ -62,13 +62,13 @@ struct VescDebugScreenView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) { columns in
+        PevDashboardScaffold(sectionTitle: "VESC debug", bottomPadding: 20, showsHeader: false) {
             PevScreenTitleBlock(
                 title: snapshot?.title ?? "VESC Debug",
                 subtitle: captureStatusText ?? phase.displayText
             )
 
-            PevDashboardGrid(columns: columns, spacing: 20) {
+            PevDashboardGrid(spacing: 20) {
                 ForEach(tiles) { tile in
                     PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 104)
                 }

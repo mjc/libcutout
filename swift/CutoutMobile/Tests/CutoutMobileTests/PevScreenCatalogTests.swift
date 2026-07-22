@@ -1,8 +1,28 @@
 import XCTest
 import CutoutMobileFFI
+import SwiftUI
 @testable import CutoutMobile
 
 final class PevScreenCatalogTests: XCTestCase {
+    func testAdaptiveDashboardGridWidensOnlyForAccessibilityTextSizes() {
+        XCTAssertEqual(
+            PevDashboardGrid<EmptyView>.adaptiveMinimumColumnWidth(
+                for: .large,
+                default: 150,
+                accessibility: 240
+            ),
+            150
+        )
+        XCTAssertEqual(
+            PevDashboardGrid<EmptyView>.adaptiveMinimumColumnWidth(
+                for: .accessibility3,
+                default: 150,
+                accessibility: 240
+            ),
+            240
+        )
+    }
+
     func testDashboardMetricAccessibilityKeepsUnavailableTyped() {
         XCTAssertEqual(
             PevDashboardMetricValue.unavailable.accessibilityValue(unit: "V", detail: "stale"),

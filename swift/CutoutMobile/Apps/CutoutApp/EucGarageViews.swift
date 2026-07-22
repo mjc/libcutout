@@ -47,13 +47,13 @@ struct EucGarageScreenView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24, showsHeader: false) { columns in
+        PevDashboardScaffold(sectionTitle: "EUC pack", bottomPadding: 24, showsHeader: false) {
             PevScreenTitleBlock(
                 title: screen.title,
                 subtitle: screen.subtitle
             )
 
-            PevDashboardGrid(columns: columns, spacing: 16) {
+            PevDashboardGrid(spacing: 16) {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(
                         tile,

@@ -2,50 +2,40 @@ import CutoutMobile
 import SwiftUI
 
 struct PevDashboardScaffold<Content: View>: View {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     let sectionTitle: String
     let bottomPadding: CGFloat
     let allowsVerticalScroll: Bool
-    let columnSpacing: CGFloat
     let contentSpacing: CGFloat
     let horizontalPadding: CGFloat
     let showsHeader: Bool
-    private let content: ([GridItem]) -> Content
+    private let content: Content
 
     init(
         sectionTitle: String,
         bottomPadding: CGFloat,
         allowsVerticalScroll: Bool = true,
-        columnSpacing: CGFloat = 26,
         contentSpacing: CGFloat = 16,
         horizontalPadding: CGFloat = 24,
         showsHeader: Bool = true,
-        @ViewBuilder content: @escaping ([GridItem]) -> Content
+        @ViewBuilder content: () -> Content
     ) {
         self.sectionTitle = sectionTitle
         self.bottomPadding = bottomPadding
         self.allowsVerticalScroll = allowsVerticalScroll
-        self.columnSpacing = columnSpacing
         self.contentSpacing = contentSpacing
         self.horizontalPadding = horizontalPadding
         self.showsHeader = showsHeader
-        self.content = content
+        self.content = content()
     }
 
     var body: some View {
-        let minimumColumnWidth: CGFloat = dynamicTypeSize.isAccessibilitySize ? 240 : 150
-        let columns = [
-            GridItem(.adaptive(minimum: minimumColumnWidth), spacing: columnSpacing),
-        ]
-
         Group {
             if allowsVerticalScroll {
                 ScrollView(.vertical, showsIndicators: false) {
-                    scaffoldContent(columns: columns)
+                    scaffoldContent
                 }
             } else {
-                scaffoldContent(columns: columns)
+                scaffoldContent
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -53,13 +43,13 @@ struct PevDashboardScaffold<Content: View>: View {
         .foregroundStyle(PevColors.primaryText)
     }
 
-    private func scaffoldContent(columns: [GridItem]) -> some View {
+    private var scaffoldContent: some View {
         VStack(alignment: .leading, spacing: contentSpacing) {
             if showsHeader {
                 PevDashboardHeader(sectionTitle: sectionTitle)
             }
 
-            content(columns)
+            content
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.bottom, bottomPadding)

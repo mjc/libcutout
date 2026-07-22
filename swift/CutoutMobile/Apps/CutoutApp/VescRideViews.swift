@@ -150,7 +150,7 @@ struct VescRideScreenView: View {
             speedReadout: speedReadout,
             speedCaption: "board speed",
             allowsVerticalScroll: true,
-        ) { columns in
+        ) {
 
             if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
                 PevDashboardWarningCard(
@@ -221,7 +221,7 @@ struct VescRideScreenView: View {
                 .padding(.top, 8)
             }
 
-            PevDashboardGrid(columns: columns, spacing: 12) {
+            PevDashboardGrid(columnSpacing: 12, spacing: 12) {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 96)
                 }
