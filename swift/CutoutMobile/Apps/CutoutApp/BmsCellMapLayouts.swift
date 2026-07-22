@@ -130,18 +130,9 @@ struct BmsScrollableLayout: View {
 
 struct BmsDetailLayout: View {
     let content: PevBmsContent
+    let selectedGroupIndex: Int?
+    let showGroupDetail: (Int) -> Void
     let showCellMap: () -> Void
-    @State private var selectedGroupIndex: Int?
-
-    init(
-        content: PevBmsContent,
-        selectedGroupIndex: Int?,
-        showCellMap: @escaping () -> Void
-    ) {
-        self.content = content
-        self.showCellMap = showCellMap
-        _selectedGroupIndex = State(initialValue: selectedGroupIndex)
-    }
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var selectedGroup: BmsGroupSnapshot? {
@@ -175,7 +166,7 @@ struct BmsDetailLayout: View {
                     BmsGroupIndexCell(
                         group: group,
                         isSelected: group.index == selectedGroup?.index,
-                        action: { selectedGroupIndex = group.index }
+                        action: { showGroupDetail(group.index) }
                     )
                 }
             }

@@ -71,6 +71,7 @@ struct BmsScreenView: View {
             BmsDetailLayout(
                 content: content,
                 selectedGroupIndex: selectedGroupIndex,
+                showGroupDetail: showGroupDetail,
                 showCellMap: showCellMap
             )
         case .unknownTopology:
