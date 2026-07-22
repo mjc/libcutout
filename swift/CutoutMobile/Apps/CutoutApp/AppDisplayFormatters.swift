@@ -227,11 +227,11 @@ extension EucRideWarningSeverity {
     var accessibilityAnnouncement: String? {
         switch self {
         case .caution:
-            "Caution. Riding headroom is getting low."
+            localizedAppText("accessibility.euc_warning.caution")
         case .reduceAcceleration:
-            "Warning. Reduce acceleration."
+            localizedAppText("accessibility.euc_warning.reduce_acceleration")
         case .limpHome:
-            "Critical warning. Slow down and stop safely."
+            localizedAppText("accessibility.euc_warning.limp_home")
         case .normal, .unavailable, .failed:
             nil
         }
@@ -242,7 +242,7 @@ extension VescRideWarning {
     var accessibilityAnnouncement: String? {
         switch self {
         case .pushbackSoon:
-            "Warning. Pushback soon."
+            localizedAppText("accessibility.vesc_warning.pushback")
         case .none, .unknown:
             nil
         }
@@ -253,9 +253,9 @@ extension BmsAlertLevel {
     var accessibilityAnnouncement: String? {
         switch self {
         case .warning:
-            "Battery warning. Check BMS details."
+            localizedAppText("accessibility.bms_alert.warning")
         case .critical:
-            "Critical battery warning. Check BMS details."
+            localizedAppText("accessibility.bms_alert.critical")
         case .nominal, .unknown:
             nil
         }

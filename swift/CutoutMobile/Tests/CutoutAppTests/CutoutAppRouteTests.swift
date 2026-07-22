@@ -257,6 +257,30 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testSafetyAnnouncementCopyResolvesFromTheAppCatalog() {
+        XCTAssertEqual(
+            localizedAppText("accessibility.euc_warning.caution"),
+            "Caution. Riding headroom is getting low."
+        )
+        XCTAssertEqual(
+            localizedAppText("accessibility.euc_warning.reduce_acceleration"),
+            "Warning. Reduce acceleration."
+        )
+        XCTAssertEqual(
+            localizedAppText("accessibility.euc_warning.limp_home"),
+            "Critical warning. Slow down and stop safely."
+        )
+        XCTAssertEqual(localizedAppText("accessibility.vesc_warning.pushback"), "Warning. Pushback soon.")
+        XCTAssertEqual(
+            localizedAppText("accessibility.bms_alert.warning"),
+            "Battery warning. Check BMS details."
+        )
+        XCTAssertEqual(
+            localizedAppText("accessibility.bms_alert.critical"),
+            "Critical battery warning. Check BMS details."
+        )
+    }
+
     func testSafetyAnnouncementsCoverTypedEscalationsWithoutTelemetryChatter() {
         XCTAssertNil(EucRideWarningSeverity.normal.accessibilityAnnouncement)
         XCTAssertEqual(

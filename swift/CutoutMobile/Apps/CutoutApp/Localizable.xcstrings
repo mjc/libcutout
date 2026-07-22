@@ -9,6 +9,30 @@
       "comment" : "Disabled app command shown when no device is connected.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No connected device" } } }
     },
+    "accessibility.bms_alert.critical" : {
+      "comment" : "VoiceOver announcement for a critical BMS alert.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical battery warning. Check BMS details." } } }
+    },
+    "accessibility.bms_alert.warning" : {
+      "comment" : "VoiceOver announcement for a BMS warning alert.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery warning. Check BMS details." } } }
+    },
+    "accessibility.euc_warning.caution" : {
+      "comment" : "VoiceOver announcement when EUC riding headroom becomes low.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Caution. Riding headroom is getting low." } } }
+    },
+    "accessibility.euc_warning.limp_home" : {
+      "comment" : "VoiceOver announcement for the EUC critical limp-home warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical warning. Slow down and stop safely." } } }
+    },
+    "accessibility.euc_warning.reduce_acceleration" : {
+      "comment" : "VoiceOver announcement when the rider should reduce acceleration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Reduce acceleration." } } }
+    },
+    "accessibility.vesc_warning.pushback" : {
+      "comment" : "VoiceOver announcement for an impending VESC pushback warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Pushback soon." } } }
+    },
     "euc.metric.gps_speed" : {
       "comment" : "EUC ride dashboard metric label for phone GPS speed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS speed" } } }
