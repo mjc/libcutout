@@ -198,18 +198,24 @@ struct PevRideHeroSection: View {
     let speedCaption: String
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 12) {
-                titleText
-                Spacer(minLength: 8)
-                statusPill
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                titleText
-                statusPill
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    titleText
+                    statusPill
+                }
+            } else {
+                HStack(alignment: .center, spacing: 12) {
+                    titleText
+                    Spacer(minLength: 8)
+                    statusPill
+                }
             }
         }
         .padding(.top, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(subtitle)")
+        .accessibilityHeading(.h1)
 
         if let captureStatusText {
             PevStatusStrip(
@@ -247,9 +253,8 @@ struct PevRideHeroSection: View {
 
     private var titleText: some View {
         Text(title)
-            .font(.headline)
+            .font(.system(.headline, design: .default, weight: .semibold))
             .foregroundStyle(PevColors.primaryText)
-            .accessibilityHeading(.h1)
     }
 
     private var statusPill: some View {

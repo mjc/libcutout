@@ -252,9 +252,9 @@ public struct PevDashboardStatusPill: View {
 
     public var body: some View {
         Text(title)
-            .font(.callout.weight(.black))
+            .font(.system(.callout, design: .default, weight: .black))
             .foregroundStyle(foreground)
-            .fixedSize(horizontal: fixedHorizontal, vertical: true)
+            .fixedSize(horizontal: fixedHorizontal, vertical: false)
             .padding(.horizontal, horizontalPadding)
             .frame(minWidth: width)
             .frame(minHeight: height)
