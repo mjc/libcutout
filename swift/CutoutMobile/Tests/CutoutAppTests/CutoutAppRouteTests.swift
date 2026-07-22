@@ -60,6 +60,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.unavailable"), "Estimate unavailable")
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
         XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Raw readback, available when we need to debug")
+        XCTAssertEqual(localizedAppText("picker.section.setup"), "Setup")
+        XCTAssertEqual(localizedAppText("picker.capture_kind.label"), "Device kind for capture")
+        XCTAssertEqual(localizedAppText("picker.capture_kind.placeholder"), "Device model")
+        XCTAssertEqual(localizedAppText("picker.capture_kind.hint"), "Enter the device family and model, for example EUC NOSFET Aeon")
+        XCTAssertEqual(localizedAppText("picker.section.supported_now"), "Supported now")
+        XCTAssertEqual(localizedAppText("picker.section.probe_first"), "Probe first")
+        XCTAssertEqual(localizedAppText("picker.section.record_only"), "Record only")
+        XCTAssertEqual(localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

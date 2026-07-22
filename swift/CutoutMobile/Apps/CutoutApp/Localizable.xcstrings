@@ -377,6 +377,38 @@
       "comment" : "Device picker title and its VoiceOver route label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose device" } } }
     },
+    "picker.capture_kind.hint" : {
+      "comment" : "VoiceOver hint explaining what to enter in the capture device-kind field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter the device family and model, for example EUC NOSFET Aeon" } } }
+    },
+    "picker.capture_kind.label" : {
+      "comment" : "Label and VoiceOver name for the capture device-kind field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device kind for capture" } } }
+    },
+    "picker.capture_kind.placeholder" : {
+      "comment" : "Placeholder for the capture device-kind field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device model" } } }
+    },
+    "picker.capture_kind_required_hint" : {
+      "comment" : "VoiceOver hint explaining why a capture action needs a device kind.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter a device kind above to enable capture" } } }
+    },
+    "picker.section.probe_first" : {
+      "comment" : "Device picker heading for devices that need a protocol probe before connection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Probe first" } } }
+    },
+    "picker.section.record_only" : {
+      "comment" : "Device picker heading for unsupported devices that can only be captured.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record only" } } }
+    },
+    "picker.section.setup" : {
+      "comment" : "Device picker dashboard section heading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Setup" } } }
+    },
+    "picker.section.supported_now" : {
+      "comment" : "Device picker heading for devices that can connect immediately.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Supported now" } } }
+    },
     "picker.announcement.bluetooth_unavailable" : {
       "comment" : "VoiceOver announcement when Bluetooth is unavailable.",
       "localizations" : {

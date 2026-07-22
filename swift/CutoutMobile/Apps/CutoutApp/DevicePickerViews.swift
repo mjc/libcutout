@@ -23,7 +23,7 @@ struct DevicePickerView: View {
 
     var body: some View {
         PevDashboardScaffold(
-            sectionTitle: "setup",
+            sectionTitle: localizedAppText("picker.section.setup"),
             bottomPadding: 24,
             allowsVerticalScroll: true,
             contentSpacing: 10,
@@ -59,8 +59,8 @@ struct DevicePickerView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                PevDashboardSectionLabel(title: "Device kind for capture")
-                TextField("Device model", text: $recordOnlyDeviceKind)
+                PevDashboardSectionLabel(title: localizedAppText("picker.capture_kind.label"))
+                TextField(localizedAppText("picker.capture_kind.placeholder"), text: $recordOnlyDeviceKind)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(PevColors.primaryText)
                     .padding(.horizontal, 14)
@@ -69,24 +69,24 @@ struct DevicePickerView: View {
                     .focused($isCaptureKindFocused)
                     .submitLabel(.done)
                     .onSubmit { isCaptureKindFocused = false }
-                    .accessibilityLabel("Device kind for capture")
-                    .accessibilityHint("Enter the device family and model, for example euc nosfet aeon")
+                    .accessibilityLabel(localizedAppText("picker.capture_kind.label"))
+                    .accessibilityHint(localizedAppText("picker.capture_kind.hint"))
                     .accessibilityIdentifier("device-picker.capture-kind")
             }
 
             VStack(alignment: .leading, spacing: 18) {
                 deviceSection(
-                    title: "Supported now",
+                    title: localizedAppText("picker.section.supported_now"),
                     rows: sections.supported,
                     allowsPairing: true
                 )
                 deviceSection(
-                    title: "Probe first",
+                    title: localizedAppText("picker.section.probe_first"),
                     rows: sections.probeRecommended,
                     allowsPairing: false
                 )
                 deviceSection(
-                    title: "Record only",
+                    title: localizedAppText("picker.section.record_only"),
                     rows: sections.unsupported,
                     allowsPairing: false
                 )
@@ -149,7 +149,7 @@ struct DevicePickerView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(row.captureActionAccessibilityLabel)
-        .accessibilityHint(hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture")
+        .accessibilityHint(hasRecordOnlyDeviceKind ? "" : localizedAppText("picker.capture_kind_required_hint"))
         .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
 
