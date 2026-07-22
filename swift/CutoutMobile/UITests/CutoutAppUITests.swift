@@ -10,7 +10,7 @@ final class CutoutAppUITests: XCTestCase {
         try skipLiveActivityTestsOnSimulator()
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
-        app.launchArguments = launchArguments
+        app.launchArguments = launchArguments + ["-CUTOUT_UI_TEST_FIXTURE", fixtureEnvironmentValue]
         app.launch()
         allowDeviceAuthorizationAlerts()
     }
@@ -229,7 +229,7 @@ final class CutoutAppUITests: XCTestCase {
         assertMetricIsReachable("speed", in: rideScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
 
-        let packTab = app.descendants(matching: .any)["dashboard.nav.pack"]
+        let packTab = app.tabBars.buttons["Pack"]
         XCTAssertTrue(packTab.waitForExistence(timeout: 5))
         XCTAssertTrue(packTab.isHittable)
         packTab.tap()
@@ -262,7 +262,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
-        let debugTab = app.descendants(matching: .any)["dashboard.nav.debug"]
+        let debugTab = app.tabBars.buttons["Debug"]
         XCTAssertTrue(debugTab.waitForExistence(timeout: 5))
         XCTAssertTrue(debugTab.isHittable)
         debugTab.tap()
@@ -333,14 +333,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.top.navigation"].exists)
 
         for tab in family.tabNames {
-            let element = app.descendants(matching: .any)["dashboard.nav.\(tab)"]
+            let element = tabBar.buttons[tab.capitalized]
             XCTAssertTrue(element.exists)
             XCTAssertTrue(element.isHittable)
             XCTAssertEqual(element.isSelected, tab == "ride")
         }
 
         for unavailableTab in family.unavailableTabNames {
-            XCTAssertFalse(app.descendants(matching: .any)["dashboard.nav.\(unavailableTab)"].exists)
+            XCTAssertFalse(tabBar.buttons[unavailableTab.capitalized].exists)
         }
 
         if let requiredMetricLabel {
@@ -395,6 +395,14 @@ final class CutoutAppUITests: XCTestCase {
 
     private var isLandscapeTest: Bool {
         name.contains("InLandscape")
+    }
+
+    private var fixtureEnvironmentValue: String {
+        if name.contains("LiveActivityAutoFixture") { return "vesc-live-activity-auto" }
+        if name.contains("LiveActivityFixture") { return "vesc-live-activity" }
+        if name.contains("FailedVescConnection") { return "vesc-failure" }
+        if name.contains("EucRideAndBms") { return "euc" }
+        return "vesc"
     }
 
     private func accessibilityLaunchArguments(fixture: String) -> [String] {

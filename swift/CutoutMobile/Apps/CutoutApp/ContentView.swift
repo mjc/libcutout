@@ -123,8 +123,8 @@ struct ContentView: View {
                             connectedDestination(for: tabRoute)
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
-                                .accessibilityIdentifier(tab.accessibilityIdentifier)
                         }
+                        .accessibilityIdentifier(tab.accessibilityIdentifier)
                     }
                 }
             }

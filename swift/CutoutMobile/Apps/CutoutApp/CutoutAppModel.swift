@@ -60,6 +60,32 @@ enum CaptureStatus: Equatable {
 }
 
 @MainActor
+private protocol CutoutSessionDriving: AnyObject {
+    var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
+    var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
+    var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
+    var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
+    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)? { get set }
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
+    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)? { get set }
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
+    var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
+
+    func start()
+    func pair(platformIdentifier: String) -> Bool
+    func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool
+    func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
+    func annotateCapture(label: String)
+    func annotateCapture(key: String, value: String)
+    func flushCapture()
+    func disconnectAndScan()
+    func now() -> MonotonicMilliseconds
+}
+
+extension CutoutSessionCore: CutoutSessionDriving {}
+
+@MainActor
 @Observable
 final class CutoutAppModel {
     private(set) var displayState = RideDisplayState()
@@ -98,7 +124,7 @@ final class CutoutAppModel {
         captureStatus?.displayText
     }
 
-    private let core = CutoutSessionCore()
+    private let core: any CutoutSessionDriving
     private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
     private let selectedDeviceStore = DevicePickerSelectionStore()
     private var liveActivityIdentity: LiveActivityRideIdentity?
@@ -110,59 +136,35 @@ final class CutoutAppModel {
     private var captureLabel: String?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
-    #if DEBUG
-    private var usesVescUIFailureFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-vesc-failure")
-    }
-
-    private var usesVescUILiveActivityFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-live-activity")
-    }
-
-    private var usesVescUILiveActivityAutoFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-live-activity-auto")
-    }
-
-    private var usesVescUITestFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-vesc")
-            || usesVescUIFailureFixture
-            || usesVescUILiveActivityFixture
-            || usesVescUILiveActivityAutoFixture
-    }
-
-    private var usesEucUITestFixture: Bool {
-        CommandLine.arguments.contains("--ui-test-euc")
-    }
-    #endif
-
     init() {
-        core.onDisplayStateChange = { [weak self] displayState in
+        core = Self.makeSessionDriver()
+        self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
             self?.syncLiveActivity()
         }
-        core.onPhaseChange = { [weak self] phase in
+        self.core.onPhaseChange = { [weak self] phase in
             self?.handlePhaseChange(phase)
             self?.syncLiveActivity()
         }
-        core.onScanStateChange = { [weak self] scanState in
+        self.core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
         }
-        core.onSettingsReadbackChange = { [weak self] settingsReadback in
+        self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
             self?.settingsReadback = settingsReadback
         }
-        core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
+        self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
         }
-        core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
+        self.core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
             self?.bmsSnapshot = bmsSnapshot
         }
-        core.onPhoneLocationSnapshotChange = { [weak self] snapshot in
+        self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot in
             self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot)
         }
-        core.onProtocolIdentityCandidateChange = { [weak self] candidate in
+        self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
-        core.onCaptureEvent = { [weak self] event in
+        self.core.onCaptureEvent = { [weak self] event in
             self?.applyCaptureEvent(event)
         }
     }
@@ -170,36 +172,10 @@ final class CutoutAppModel {
     deinit {}
 
     func start() {
-        #if DEBUG
-        if usesVescUILiveActivityAutoFixture {
-            showVescUITestRide()
-            return
-        }
-        if usesVescUITestFixture {
-            showVescUITestPicker()
-            return
-        }
-        if usesEucUITestFixture {
-            showEucUITestPicker()
-            return
-        }
-        #endif
         core.start()
     }
 
     func pair(platformIdentifier: String) -> Bool {
-        #if DEBUG
-        if usesVescUIFailureFixture, platformIdentifier == "ui-test-vesc" {
-            return startVescUITestConnection(failing: true)
-        }
-        if usesVescUITestFixture, platformIdentifier == "ui-test-vesc" {
-            return startVescUITestConnection(failing: false)
-        }
-        if usesEucUITestFixture, platformIdentifier == "ui-test-euc" {
-            showEucUITestRide()
-            return true
-        }
-        #endif
         let rows = devicePickerScanState?.rows ?? []
         guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
             phase = .scanning
@@ -236,13 +212,6 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
-        #if DEBUG
-        if usesVescUITestFixture {
-            isRecordOnlyCapture = true
-            recordOnlyDeviceKind = annotationKind
-            return true
-        }
-        #endif
         let annotations = ["device_kind=\(annotationKind)"]
         let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let didStart = switch modelHint {
@@ -310,173 +279,8 @@ final class CutoutAppModel {
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         selectedDeviceStore.clear()
-        #if DEBUG
-        if usesVescUITestFixture {
-            showVescUITestPicker()
-            return
-        }
-        if usesEucUITestFixture {
-            showEucUITestPicker()
-            return
-        }
-        #endif
         core.disconnectAndScan()
     }
-
-    #if DEBUG
-    private func showVescUITestPicker() {
-        let candidate = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "ui-test-vesc",
-            displayName: "Refloat VESC",
-            productCategory: "VESC Onewheel",
-            evidence: "UI test fixture",
-            detail: "Deterministic accessibility test device",
-            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
-            symbolName: "circle.hexagongrid.circle"
-        )
-        showUITestPicker(candidate)
-    }
-
-    private func showEucUITestPicker() {
-        let candidate = DevicePickerDiscoveryCandidate(
-            platformIdentifier: "ui-test-euc",
-            displayName: "Test EUC",
-            productCategory: "Electric unicycle",
-            evidence: "UI test fixture",
-            detail: "Deterministic accessibility test device",
-            support: .supported(
-                connectionRoute: .electricUnicycle,
-                electricUnicycleModel: .aero
-            ),
-            symbolName: "circle.hexagongrid.circle"
-        )
-        showUITestPicker(candidate)
-    }
-
-    private func showUITestPicker(_ candidate: DevicePickerDiscoveryCandidate) {
-        displayState = RideDisplayState()
-        devicePickerScanState = DevicePickerScanState(status: .idle, rows: [candidate.pickerRow])
-        phase = .scanning
-    }
-
-    private func showVescUITestRide() {
-        let now = core.now()
-        let telemetry = TelemetrySnapshot(
-            at: now,
-            speed: Speed(value: 8_000),
-            speedSource: .reported,
-            speedQuality: .known,
-            operatingState: .riding,
-            voltage: Voltage(value: 50_400),
-            batteryCurrent: BatteryCurrent(value: 12_000),
-            controllerTemperature: Temperature(value: 32_000),
-            batteryLevelReported: BatteryLevel(value: 72)
-        )
-        selectedRideTitle = "Refloat VESC"
-        selectedConnectionRoute = .vescOnewheel
-        displayState = RideDisplayState(
-            speed: SpeedReadout(snapshot: telemetry),
-            telemetry: telemetry,
-            notificationCount: 1,
-            lastUpdate: now
-        )
-        if usesVescUILiveActivityFixture || usesVescUILiveActivityAutoFixture {
-            liveActivityIdentity = .device(selectedRideTitle ?? VescRideSnapshot.defaultTitle)
-            liveActivityGlyph = .floatwheelAtom
-        }
-        phase = .live
-        syncLiveActivity()
-    }
-
-    private func startVescUITestConnection(failing: Bool) -> Bool {
-        selectedRideTitle = "Refloat VESC"
-        selectedConnectionRoute = .vescOnewheel
-        phase = .discoveringServices
-
-        Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(failing ? 3_000 : 250))
-            } catch {
-                return
-            }
-            guard let self, self.phase == .discoveringServices else { return }
-
-            if failing {
-                self.handlePhaseChange(.failed(.connectFailed("deterministic fixture")))
-            } else {
-                self.showVescUITestRide()
-            }
-        }
-        return true
-    }
-
-    private func showEucUITestRide() {
-        let now = core.now()
-        let telemetry = TelemetrySnapshot(
-            at: now,
-            speed: Speed(value: 12_000),
-            speedSource: .reported,
-            speedQuality: .known,
-            operatingState: .riding,
-            voltage: Voltage(value: 82_000),
-            batteryCurrent: BatteryCurrent(value: 8_000),
-            controllerTemperature: Temperature(value: 31_000),
-            batteryLevelReported: BatteryLevel(value: 64)
-        )
-        selectedRideTitle = "Test EUC"
-        selectedConnectionRoute = .electricUnicycle
-        displayState = RideDisplayState(
-            speed: SpeedReadout(snapshot: telemetry),
-            telemetry: telemetry,
-            notificationCount: 1,
-            lastUpdate: now
-        )
-        bmsSnapshot = BmsSnapshot(
-            topology: BmsTopology(
-                layoutLabel: "20S4P test pack",
-                seriesGroupCount: 20,
-                parallelCount: 4,
-                packCount: 1,
-                bmsCount: 1,
-                confidence: .verified
-            ),
-            pageKind: "overview",
-            pageVerification: .hardwareVerified,
-            energyPercent: BatteryLevel(value: 64),
-            voltage: Voltage(value: 82_000),
-            current: BatteryCurrent(value: 8_000),
-            cellDelta: VoltageDelta(value: 24),
-            lowestGroupIndex: 7,
-            highestTemperature: Temperature(value: 38_000),
-            temperatureReadings: [Temperature(value: 38_000), Temperature(value: 34_000)],
-            highestTemperatureLabel: "right pack",
-            balancingSummary: "balancing 2 groups",
-            balancingDetail: "groups 7 and 12",
-            faultSummary: "no active faults",
-            faultDetail: "last fault unavailable",
-            groups: [
-                BmsGroupSnapshot(
-                    index: 7,
-                    label: "right pack group 7",
-                    voltage: Voltage(value: 4_036),
-                    temperature: Temperature(value: 38_000),
-                    isBalancing: true,
-                    alertLevel: .warning,
-                    detail: "lowest group"
-                ),
-                BmsGroupSnapshot(
-                    index: 12,
-                    label: "right pack group 12",
-                    voltage: Voltage(value: 4_060),
-                    temperature: Temperature(value: 34_000),
-                    isBalancing: true,
-                    alertLevel: .nominal
-                )
-            ]
-        )
-        phase = .live
-    }
-    #endif
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
         liveActivityCoordinator.end(reason: reason)
@@ -517,9 +321,29 @@ final class CutoutAppModel {
 
     private func handlePhaseChange(_ phase: SessionConnectionPhase) {
         self.phase = phase
+        if phase == .live,
+           selectedConnectionRoute == nil,
+           let candidate = core.protocolIdentityCandidate,
+           candidate.support.isSupported {
+            maybeSetSelectedRideTitle(from: candidate)
+            selectedConnectionRoute = candidate.support.connectionRoute
+        }
         guard case .failed = phase else { return }
         let rows = devicePickerScanState?.rows ?? []
         devicePickerScanState = .failed(phase.displayText, rows: rows)
+    }
+
+    private static func makeSessionDriver() -> any CutoutSessionDriving {
+        #if DEBUG
+        if let fixture = CutoutUITestSessionFixture(
+            value: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE")
+        ) ?? CutoutUITestSessionFixture(
+            value: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"]
+        ) ?? CutoutUITestSessionFixture(arguments: CommandLine.arguments) {
+            return CutoutUITestSessionDriver(fixture: fixture)
+        }
+        #endif
+        return CutoutSessionCore()
     }
 
     private func syncLiveActivity() {
@@ -746,3 +570,249 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
         }
     }
 }
+
+#if DEBUG
+private enum CutoutUITestSessionFixture {
+    case vesc
+    case failedVesc
+    case euc
+    case vescLiveActivity
+    case autoVescLiveActivity
+
+    init?(value: String?) {
+        switch value {
+        case "vesc": self = .vesc
+        case "vesc-failure": self = .failedVesc
+        case "euc": self = .euc
+        case "vesc-live-activity": self = .vescLiveActivity
+        case "vesc-live-activity-auto": self = .autoVescLiveActivity
+        default: return nil
+        }
+    }
+
+    init?(arguments: [String]) {
+        if arguments.contains("--ui-test-live-activity-auto") {
+            self = .autoVescLiveActivity
+        } else if arguments.contains("--ui-test-vesc-failure") {
+            self = .failedVesc
+        } else if arguments.contains("--ui-test-euc") {
+            self = .euc
+        } else if arguments.contains("--ui-test-live-activity") {
+            self = .vescLiveActivity
+        } else if arguments.contains("--ui-test-vesc") {
+            self = .vesc
+        } else {
+            return nil
+        }
+    }
+
+    var candidate: DevicePickerDiscoveryCandidate {
+        switch self {
+        case .euc:
+            DevicePickerDiscoveryCandidate(
+                platformIdentifier: "ui-test-euc",
+                displayName: "Test EUC",
+                productCategory: "Electric unicycle",
+                evidence: "UI test fixture",
+                detail: "Deterministic accessibility test device",
+                support: .supported(
+                    connectionRoute: .electricUnicycle,
+                    electricUnicycleModel: .aero
+                ),
+                symbolName: "circle.hexagongrid.circle"
+            )
+        case .vesc, .failedVesc, .vescLiveActivity, .autoVescLiveActivity:
+            DevicePickerDiscoveryCandidate(
+                platformIdentifier: "ui-test-vesc",
+                displayName: "Refloat VESC",
+                productCategory: "VESC Onewheel",
+                evidence: "UI test fixture",
+                detail: "Deterministic accessibility test device",
+                support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+                symbolName: "circle.hexagongrid.circle"
+            )
+        }
+    }
+
+    var startsLive: Bool { self == .autoVescLiveActivity }
+    var failsConnection: Bool { self == .failedVesc }
+}
+
+@MainActor
+private final class CutoutUITestSessionDriver: CutoutSessionDriving {
+    var onDisplayStateChange: ((RideDisplayState) -> Void)?
+    var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    var onCaptureEvent: ((CaptureEvent) -> Void)?
+    var onScanStateChange: ((DevicePickerScanState) -> Void)?
+    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
+    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
+    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)?
+    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+
+    private let fixture: CutoutUITestSessionFixture
+    private var connectionTask: Task<Void, Never>?
+
+    init(fixture: CutoutUITestSessionFixture) {
+        self.fixture = fixture
+    }
+
+    deinit {
+        connectionTask?.cancel()
+    }
+
+    func start() {
+        connectionTask?.cancel()
+        onDisplayStateChange?(RideDisplayState())
+        if fixture.startsLive {
+            emitLiveState()
+            return
+        }
+        onScanStateChange?(DevicePickerScanState(status: .idle, rows: [fixture.candidate.pickerRow]))
+        onPhaseChange?(.scanning)
+    }
+
+    func pair(platformIdentifier: String) -> Bool {
+        guard platformIdentifier == fixture.candidate.platformIdentifier else { return false }
+        connectionTask?.cancel()
+        onPhaseChange?(.discoveringServices)
+        connectionTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(self.fixture.failsConnection ? 3_000 : 250))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            if self.fixture.failsConnection {
+                self.onPhaseChange?(.failed(.connectFailed("deterministic fixture")))
+            } else {
+                self.emitLiveState()
+            }
+        }
+        return true
+    }
+
+    func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
+        pair(platformIdentifier: platformIdentifier)
+    }
+
+    func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool {
+        platformIdentifier == fixture.candidate.platformIdentifier
+    }
+
+    func annotateCapture(label: String) {}
+
+    func annotateCapture(key: String, value: String) {}
+
+    func flushCapture() {}
+
+    func disconnectAndScan() {
+        connectionTask?.cancel()
+        protocolIdentityCandidate = nil
+        onProtocolIdentityCandidateChange?(nil)
+        onDisplayStateChange?(RideDisplayState())
+        onScanStateChange?(DevicePickerScanState(status: .idle, rows: [fixture.candidate.pickerRow]))
+        onPhaseChange?(.scanning)
+    }
+
+    func now() -> MonotonicMilliseconds {
+        MonotonicMilliseconds(UInt64(ProcessInfo.processInfo.systemUptime * 1_000))
+    }
+
+    private func emitLiveState() {
+        let now = now()
+        if fixture.startsLive {
+            protocolIdentityCandidate = fixture.candidate
+            onProtocolIdentityCandidateChange?(fixture.candidate)
+        }
+
+        if fixture == .euc {
+            let telemetry = TelemetrySnapshot(
+                at: now,
+                speed: Speed(value: 12_000),
+                speedSource: .reported,
+                speedQuality: .known,
+                operatingState: .riding,
+                voltage: Voltage(value: 82_000),
+                batteryCurrent: BatteryCurrent(value: 8_000),
+                controllerTemperature: Temperature(value: 31_000),
+                batteryLevelReported: BatteryLevel(value: 64)
+            )
+            onDisplayStateChange?(RideDisplayState(
+                speed: SpeedReadout(snapshot: telemetry),
+                telemetry: telemetry,
+                notificationCount: 1,
+                lastUpdate: now
+            ))
+            onBmsSnapshotChange?(eucBmsSnapshot)
+        } else {
+            let telemetry = TelemetrySnapshot(
+                at: now,
+                speed: Speed(value: 8_000),
+                speedSource: .reported,
+                speedQuality: .known,
+                operatingState: .riding,
+                voltage: Voltage(value: 50_400),
+                batteryCurrent: BatteryCurrent(value: 12_000),
+                controllerTemperature: Temperature(value: 32_000),
+                batteryLevelReported: BatteryLevel(value: 72)
+            )
+            onDisplayStateChange?(RideDisplayState(
+                speed: SpeedReadout(snapshot: telemetry),
+                telemetry: telemetry,
+                notificationCount: 1,
+                lastUpdate: now
+            ))
+        }
+        onPhaseChange?(.live)
+    }
+
+    private var eucBmsSnapshot: BmsSnapshot {
+        BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "20S4P test pack",
+                seriesGroupCount: 20,
+                parallelCount: 4,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            pageKind: "overview",
+            pageVerification: .hardwareVerified,
+            energyPercent: BatteryLevel(value: 64),
+            voltage: Voltage(value: 82_000),
+            current: BatteryCurrent(value: 8_000),
+            cellDelta: VoltageDelta(value: 24),
+            lowestGroupIndex: 7,
+            highestTemperature: Temperature(value: 38_000),
+            temperatureReadings: [Temperature(value: 38_000), Temperature(value: 34_000)],
+            highestTemperatureLabel: "right pack",
+            balancingSummary: "balancing 2 groups",
+            balancingDetail: "groups 7 and 12",
+            faultSummary: "no active faults",
+            faultDetail: "last fault unavailable",
+            groups: [
+                BmsGroupSnapshot(
+                    index: 7,
+                    label: "right pack group 7",
+                    voltage: Voltage(value: 4_036),
+                    temperature: Temperature(value: 38_000),
+                    isBalancing: true,
+                    alertLevel: .warning,
+                    detail: "lowest group"
+                ),
+                BmsGroupSnapshot(
+                    index: 12,
+                    label: "right pack group 12",
+                    voltage: Voltage(value: 4_060),
+                    temperature: Temperature(value: 34_000),
+                    isBalancing: true,
+                    alertLevel: .nominal
+                )
+            ]
+        )
+    }
+}
+#endif
