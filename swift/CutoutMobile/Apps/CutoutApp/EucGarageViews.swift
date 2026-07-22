@@ -56,11 +56,7 @@ struct EucGarageScreenView: View {
             PevDashboardGrid(columns: columns, spacing: 16) {
                 ForEach(dashboardTiles) { tile in
                     PevDashboardMetricTile(
-                        label: tile.label,
-                        value: tile.value,
-                        unit: tile.unit,
-                        detail: tile.detail,
-                        accent: tile.accent.color,
+                        tile,
                         cornerRadius: 16,
                         minHeight: 104
                     )

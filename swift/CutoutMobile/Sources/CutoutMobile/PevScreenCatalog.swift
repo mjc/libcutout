@@ -101,6 +101,13 @@ public enum PevDashboardMetricValue: Equatable, Hashable, Sendable {
         case .unavailable: "unavailable"
         }
     }
+
+    public func accessibilityValue(unit: String, detail: String) -> String {
+        guard case .available = self else { return accessibilityText }
+        return [accessibilityText, unit, detail]
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
 }
 
 public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {

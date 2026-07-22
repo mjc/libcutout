@@ -133,7 +133,7 @@ extension PevDashboardMetricTile {
             value: tile.value,
             unit: tile.unit,
             detail: tile.detail,
-            accessibilityValue: pevDashboardAccessibilityValue([tile.metricValue.accessibilityText, tile.unit, tile.detail]),
+            accessibilityValue: tile.metricValue.accessibilityValue(unit: tile.unit, detail: tile.detail),
             accent: tile.accent.color,
             fill: fill,
             stroke: stroke,

@@ -3,6 +3,20 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class PevScreenCatalogTests: XCTestCase {
+    func testDashboardMetricAccessibilityKeepsUnavailableTyped() {
+        XCTAssertEqual(
+            PevDashboardMetricValue.unavailable.accessibilityValue(unit: "V", detail: "stale"),
+            "unavailable"
+        )
+        XCTAssertEqual(
+            PevDashboardMetricValue.available(display: "84", accessibility: "84").accessibilityValue(
+                unit: "V",
+                detail: "fresh"
+            ),
+            "84, V, fresh"
+        )
+    }
+
     func testLiveCatalogContainsOnlyProductionRouteMetadata() {
         XCTAssertEqual(
             PevScreenCatalog.live.screens.map(\.id),
