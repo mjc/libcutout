@@ -16,7 +16,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             detail: "stale"
         )
 
-        XCTAssertEqual(tile.accessibilityValueText, "84, volts, stale")
+        XCTAssertEqual(tile.accessibilityValueText, "84, volts, and stale")
     }
 
     func testUnavailableMetricRequiresTypedPresentation() {
@@ -48,7 +48,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
 
         XCTAssertEqual(card.clampedProgress, 1)
-        XCTAssertEqual(card.accessibilityValueText, "82, percent, charging")
+        XCTAssertEqual(card.accessibilityValueText, "82, percent, and charging")
     }
 
     func testWideCardWithoutTitleUsesValueAsItsAccessibilityLabel() {

@@ -33,7 +33,7 @@ final class PevScreenCatalogTests: XCTestCase {
                 unit: "V",
                 detail: "fresh"
             ),
-            "84, V, fresh"
+            "84, V, and fresh"
         )
     }
 

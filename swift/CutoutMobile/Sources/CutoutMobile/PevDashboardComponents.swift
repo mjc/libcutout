@@ -25,7 +25,7 @@ public enum PevDashboardColors {
 }
 
 public func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
-    parts.filter { !$0.isEmpty }.joined(separator: ", ")
+    parts.filter { !$0.isEmpty }.formatted(.list(type: .and))
 }
 
 nonisolated func pevDashboardResolvedLineWidth(
