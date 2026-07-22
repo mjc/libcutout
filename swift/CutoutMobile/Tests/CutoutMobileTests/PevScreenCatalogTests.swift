@@ -71,6 +71,55 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
     }
 
+    func testEucConnectionAndRidePresentationResolveFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("euc.connection.starting"), "Starting Bluetooth...")
+        XCTAssertEqual(pevLocalizedText("euc.connection.unavailable", Int64(4)), "Bluetooth unavailable: state 4")
+        XCTAssertEqual(pevLocalizedText("euc.connection.scanning"), "Scanning for rides...")
+        XCTAssertEqual(pevLocalizedText("euc.connection.connecting", "Aero"), "Connecting to Aero...")
+        XCTAssertEqual(pevLocalizedText("euc.connection.discovering_services"), "Discovering services...")
+        XCTAssertEqual(pevLocalizedText("euc.connection.subscribing"), "Subscribing...")
+        XCTAssertEqual(pevLocalizedText("euc.connection.live"), "Live")
+        XCTAssertEqual(pevLocalizedText("euc.failure.missing_notify_channel"), "Missing notify channel")
+        XCTAssertEqual(pevLocalizedText("euc.failure.missing_write_channel"), "Missing write channel")
+        XCTAssertEqual(pevLocalizedText("euc.failure.session", "link dropped"), "Session failed: link dropped")
+        XCTAssertEqual(pevLocalizedText("euc.failure.connect", "link dropped"), "Connect failed: link dropped")
+        XCTAssertEqual(
+            pevLocalizedText("euc.failure.service_discovery", "link dropped"),
+            "Service discovery failed: link dropped"
+        )
+        XCTAssertEqual(
+            pevLocalizedText("euc.failure.characteristic_discovery", "link dropped"),
+            "Characteristic discovery failed: link dropped"
+        )
+        XCTAssertEqual(pevLocalizedText("euc.failure.notification", "link dropped"), "Notification failed: link dropped")
+        XCTAssertEqual(
+            pevLocalizedText("euc.failure.notification_ingest", "link dropped"),
+            "Notification ingest failed: link dropped"
+        )
+        XCTAssertEqual(
+            pevLocalizedText("euc.failure.read_only_write_skipped"),
+            "Read-only MVP skipped a write operation"
+        )
+        XCTAssertEqual(pevLocalizedText("euc.warning.connection_failed"), "Connection failed")
+        XCTAssertEqual(pevLocalizedText("euc.warning.reduce_acceleration"), "Reduce acceleration")
+        XCTAssertEqual(pevLocalizedText("euc.warning.low_pwm_headroom"), "PWM headroom is low while riding")
+        XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_live"), "Telemetry live")
+        XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_speed"), "Waiting for speed telemetry")
+        XCTAssertEqual(pevLocalizedText("euc.warning.live_telemetry_detail"), "Live telemetry from typed Rust/FFI state")
+        XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_telemetry"), "Waiting for telemetry")
+        XCTAssertEqual(pevLocalizedText("euc.warning.subscribed_no_values"), "Subscribed; no ride values yet")
+        XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_unavailable"), "Telemetry unavailable")
+        XCTAssertEqual(pevLocalizedText("euc.warning.no_live_snapshot"), "No live snapshot yet")
+        XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_live_telemetry"), "Waiting for live telemetry")
+        XCTAssertEqual(pevLocalizedText("euc.warning.screen_inactive"), "Ride screen is not active yet")
+        XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_stale"), "Telemetry stale")
+        XCTAssertEqual(pevLocalizedText("euc.warning.last_update", "3000"), "Last update 3000 ms ago")
+        XCTAssertEqual(pevLocalizedText("euc.status.parked"), "Parked")
+        XCTAssertEqual(pevLocalizedText("euc.status.standing"), "Standing")
+        XCTAssertEqual(pevLocalizedText("euc.status.riding"), "Riding")
+        XCTAssertEqual(pevLocalizedText("euc.status.charging"), "Charging")
+    }
+
     func testVescRideTabsKeepUnavailableDestinationsDisabled() {
         let tabs = PevRideTabs.vescRideTabs()
 

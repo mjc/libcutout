@@ -93,6 +93,142 @@
       "comment" : "Dashboard title for VESC diagnostics state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC state" } } }
     },
+    "euc.connection.connecting" : {
+      "comment" : "Bluetooth connection phase. The placeholder is the selected EUC model name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting to %@..." } } }
+    },
+    "euc.connection.discovering_services" : {
+      "comment" : "Bluetooth connection phase while the device's services are discovered.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discovering services..." } } }
+    },
+    "euc.connection.live" : {
+      "comment" : "Bluetooth connection phase after the EUC is connected and live.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live" } } }
+    },
+    "euc.connection.scanning" : {
+      "comment" : "Bluetooth connection phase while searching for rideable devices.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning for rides..." } } }
+    },
+    "euc.connection.starting" : {
+      "comment" : "Bluetooth connection phase while Bluetooth starts.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting Bluetooth..." } } }
+    },
+    "euc.connection.subscribing" : {
+      "comment" : "Bluetooth connection phase while subscribing to live device notifications.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Subscribing..." } } }
+    },
+    "euc.connection.unavailable" : {
+      "comment" : "Bluetooth connection phase when Bluetooth is unavailable. The placeholder is the platform Bluetooth state code.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth unavailable: state %lld" } } }
+    },
+    "euc.failure.characteristic_discovery" : {
+      "comment" : "Connection failure. The placeholder is the platform's characteristic-discovery error description.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Characteristic discovery failed: %@" } } }
+    },
+    "euc.failure.connect" : {
+      "comment" : "Connection failure. The placeholder is the platform's connection error description.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect failed: %@" } } }
+    },
+    "euc.failure.missing_notify_channel" : {
+      "comment" : "Connection failure when the device does not expose a notification channel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Missing notify channel" } } }
+    },
+    "euc.failure.missing_write_channel" : {
+      "comment" : "Connection failure when the device does not expose a writable channel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Missing write channel" } } }
+    },
+    "euc.failure.notification" : {
+      "comment" : "Connection failure. The placeholder is the platform's notification-subscription error description.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Notification failed: %@" } } }
+    },
+    "euc.failure.notification_ingest" : {
+      "comment" : "Connection failure. The placeholder is the telemetry notification processing error description.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Notification ingest failed: %@" } } }
+    },
+    "euc.failure.read_only_write_skipped" : {
+      "comment" : "Connection status when a write is intentionally skipped for a read-only device session.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only MVP skipped a write operation" } } }
+    },
+    "euc.failure.service_discovery" : {
+      "comment" : "Connection failure. The placeholder is the platform's service-discovery error description.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Service discovery failed: %@" } } }
+    },
+    "euc.failure.session" : {
+      "comment" : "Connection failure. The placeholder is the underlying session error description.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Session failed: %@" } } }
+    },
+    "euc.status.charging" : {
+      "comment" : "EUC operating state while charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charging" } } }
+    },
+    "euc.status.parked" : {
+      "comment" : "EUC operating state while parked.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Parked" } } }
+    },
+    "euc.status.riding" : {
+      "comment" : "EUC operating state while riding.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding" } } }
+    },
+    "euc.status.standing" : {
+      "comment" : "EUC operating state while standing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Standing" } } }
+    },
+    "euc.warning.connection_failed" : {
+      "comment" : "Ride warning title when the Bluetooth connection has failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection failed" } } }
+    },
+    "euc.warning.last_update" : {
+      "comment" : "Stale telemetry warning detail. The placeholder is elapsed milliseconds since the last update.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last update %@ ms ago" } } }
+    },
+    "euc.warning.live_telemetry_detail" : {
+      "comment" : "Ride warning detail explaining that current telemetry came from the typed Rust/FFI layer.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live telemetry from typed Rust/FFI state" } } }
+    },
+    "euc.warning.low_pwm_headroom" : {
+      "comment" : "Safety warning detail when PWM headroom is low during riding.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM headroom is low while riding" } } }
+    },
+    "euc.warning.no_live_snapshot" : {
+      "comment" : "Ride warning detail when no live telemetry snapshot has arrived.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No live snapshot yet" } } }
+    },
+    "euc.warning.reduce_acceleration" : {
+      "comment" : "Safety warning title advising the rider to reduce acceleration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reduce acceleration" } } }
+    },
+    "euc.warning.screen_inactive" : {
+      "comment" : "Ride warning detail while the ride screen is not connected to an active session.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride screen is not active yet" } } }
+    },
+    "euc.warning.subscribed_no_values" : {
+      "comment" : "Ride warning detail after notification subscription succeeds but before live values arrive.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Subscribed; no ride values yet" } } }
+    },
+    "euc.warning.telemetry_live" : {
+      "comment" : "Ride warning title while live telemetry is healthy.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry live" } } }
+    },
+    "euc.warning.telemetry_stale" : {
+      "comment" : "Ride warning title when live telemetry is older than the freshness threshold.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry stale" } } }
+    },
+    "euc.warning.telemetry_unavailable" : {
+      "comment" : "Ride warning title when no telemetry is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry unavailable" } } }
+    },
+    "euc.warning.waiting_for_live_telemetry" : {
+      "comment" : "Ride warning detail while the connection is still preparing live telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for live telemetry" } } }
+    },
+    "euc.warning.waiting_for_speed" : {
+      "comment" : "Ride warning detail while live telemetry lacks a speed value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for speed telemetry" } } }
+    },
+    "euc.warning.waiting_for_telemetry" : {
+      "comment" : "Ride warning title while waiting for the first telemetry values.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for telemetry" } } }
+    },
     "live_activity.accessibility.device" : {
       "comment" : "VoiceOver identity used when no specific vehicle name is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device" } } }

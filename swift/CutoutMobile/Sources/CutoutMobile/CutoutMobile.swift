@@ -2894,37 +2894,51 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     public var warningState: EucRideWarningState {
         switch phase {
         case .failed(let failure):
-            return EucRideWarningState(severity: .failed, title: "Connection failed", detail: failure.displayText)
+            return EucRideWarningState(
+                severity: .failed,
+                title: pevLocalizedText("euc.warning.connection_failed"),
+                detail: failure.displayText
+            )
         case .live where telemetryAvailability == .populated:
             if shouldReduceAcceleration {
                 return EucRideWarningState(
                     severity: .reduceAcceleration,
-                    title: "Reduce acceleration",
-                    detail: "PWM headroom is low while riding"
+                    title: pevLocalizedText("euc.warning.reduce_acceleration"),
+                    detail: pevLocalizedText("euc.warning.low_pwm_headroom")
                 )
             }
 
             return EucRideWarningState(
                 severity: .normal,
-                title: "Telemetry live",
-                detail: telemetry?.speed == nil ? "Waiting for speed telemetry" : "Live telemetry from typed Rust/FFI state"
+                title: pevLocalizedText("euc.warning.telemetry_live"),
+                detail: telemetry?.speed == nil
+                    ? pevLocalizedText("euc.warning.waiting_for_speed")
+                    : pevLocalizedText("euc.warning.live_telemetry_detail")
             )
         case .live where telemetryAvailability == .waitingForValues:
             return EucRideWarningState(
                 severity: .caution,
-                title: "Waiting for telemetry",
-                detail: "Subscribed; no ride values yet"
+                title: pevLocalizedText("euc.warning.waiting_for_telemetry"),
+                detail: pevLocalizedText("euc.warning.subscribed_no_values")
             )
         case .live:
             return EucRideWarningState(
                 severity: .unavailable,
-                title: "Telemetry unavailable",
-                detail: "No live snapshot yet"
+                title: pevLocalizedText("euc.warning.telemetry_unavailable"),
+                detail: pevLocalizedText("euc.warning.no_live_snapshot")
             )
         case .connecting, .discoveringServices, .subscribing:
-            return EucRideWarningState(severity: .caution, title: phaseText, detail: "Waiting for live telemetry")
+            return EucRideWarningState(
+                severity: .caution,
+                title: phaseText,
+                detail: pevLocalizedText("euc.warning.waiting_for_live_telemetry")
+            )
         case .starting, .bluetoothUnavailable, .scanning:
-            return EucRideWarningState(severity: .unavailable, title: phaseText, detail: "Ride screen is not active yet")
+            return EucRideWarningState(
+                severity: .unavailable,
+                title: phaseText,
+                detail: pevLocalizedText("euc.warning.screen_inactive")
+            )
         }
     }
 
@@ -2936,8 +2950,8 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         if phase == .live, age.freshness == .stale, let elapsed = age.elapsed {
             return EucRideWarningState(
                 severity: .caution,
-                title: "Telemetry stale",
-                detail: "Last update \(elapsed.rawValue) ms ago"
+                title: pevLocalizedText("euc.warning.telemetry_stale"),
+                detail: pevLocalizedText("euc.warning.last_update", String(elapsed.rawValue))
             )
         }
         return warningState
@@ -2954,15 +2968,15 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 
         switch operatingState {
         case .parked:
-            return "Parked"
+            return pevLocalizedText("euc.status.parked")
         case .standing:
-            return "Standing"
+            return pevLocalizedText("euc.status.standing")
         case .riding:
-            return "Riding"
+            return pevLocalizedText("euc.status.riding")
         case .charging:
-            return "Charging"
+            return pevLocalizedText("euc.status.charging")
         case .unknown:
-            return "Live"
+            return pevLocalizedText("euc.connection.live")
         }
     }
 
@@ -3146,23 +3160,23 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     public var displayText: String {
         switch self {
         case .missingNotifyChannel:
-            "Missing notify channel"
+            pevLocalizedText("euc.failure.missing_notify_channel")
         case .missingWriteChannel:
-            "Missing write channel"
+            pevLocalizedText("euc.failure.missing_write_channel")
         case .sessionFailed(let message):
-            "Session failed: \(message)"
+            pevLocalizedText("euc.failure.session", message)
         case .connectFailed(let message):
-            "Connect failed: \(message)"
+            pevLocalizedText("euc.failure.connect", message)
         case .serviceDiscoveryFailed(let message):
-            "Service discovery failed: \(message)"
+            pevLocalizedText("euc.failure.service_discovery", message)
         case .characteristicDiscoveryFailed(let message):
-            "Characteristic discovery failed: \(message)"
+            pevLocalizedText("euc.failure.characteristic_discovery", message)
         case .notificationFailed(let message):
-            "Notification failed: \(message)"
+            pevLocalizedText("euc.failure.notification", message)
         case .notificationIngestFailed(let message):
-            "Notification ingest failed: \(message)"
+            pevLocalizedText("euc.failure.notification_ingest", message)
         case .skippedReadOnlyWrite:
-            "Read-only MVP skipped a write operation"
+            pevLocalizedText("euc.failure.read_only_write_skipped")
         }
     }
 }
@@ -3180,19 +3194,19 @@ public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
     public var displayText: String {
         switch self {
         case .starting:
-            "Starting Bluetooth..."
+            pevLocalizedText("euc.connection.starting")
         case .bluetoothUnavailable(let rawState):
-            "Bluetooth unavailable: state \(rawState)"
+            pevLocalizedText("euc.connection.unavailable", rawState)
         case .scanning:
-            "Scanning for rides..."
+            pevLocalizedText("euc.connection.scanning")
         case .connecting(let model):
-            "Connecting to \(model.displayName)..."
+            pevLocalizedText("euc.connection.connecting", model.displayName)
         case .discoveringServices:
-            "Discovering services..."
+            pevLocalizedText("euc.connection.discovering_services")
         case .subscribing:
-            "Subscribing..."
+            pevLocalizedText("euc.connection.subscribing")
         case .live:
-            "Live"
+            pevLocalizedText("euc.connection.live")
         case .failed(let failure):
             failure.displayText
         }
