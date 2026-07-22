@@ -58,6 +58,16 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(card.accessibilityValueText, "No change")
     }
 
+    func testWideCardSpeaksUnavailableInsteadOfTheDisplaySentinel() {
+        let card = PevDashboardWideCard(
+            title: "Pack telemetry",
+            value: "--",
+            detail: "connect device"
+        )
+
+        XCTAssertEqual(card.accessibilityValueText, "unavailable")
+    }
+
     func testWarningCardUsesTypedDetailAsItsAccessibilityValue() {
         let card = PevDashboardWarningCard(
             title: "Connection warning",

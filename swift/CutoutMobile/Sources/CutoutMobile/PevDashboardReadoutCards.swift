@@ -240,7 +240,8 @@ public struct PevDashboardHeroCard: View {
 
 public struct PevDashboardWideCard: View {
     let title: String?
-    let value: String
+    let metricValue: PevDashboardMetricValue
+    var value: String { metricValue.displayText }
     let detail: String?
     let fill: Color
     let stroke: Color
@@ -248,13 +249,12 @@ public struct PevDashboardWideCard: View {
     let secondaryTextColor: Color
 
     var accessibilityLabelText: String {
-        title ?? value
+        title ?? metricValue.accessibilityText
     }
 
     var accessibilityValueText: String {
-        title == nil
-            ? (detail ?? "")
-            : pevDashboardAccessibilityValue([value, detail ?? ""])
+        guard title != nil else { return detail ?? "" }
+        return metricValue.accessibilityValue(unit: "", detail: detail ?? "")
     }
 
     public init(
@@ -266,8 +266,28 @@ public struct PevDashboardWideCard: View {
         textColor: Color = PevDashboardColors.primaryText,
         secondaryTextColor: Color = PevDashboardColors.mutedText
     ) {
+        self.init(
+            title: title,
+            metricValue: PevDashboardMetricValue(display: value),
+            detail: detail,
+            fill: fill,
+            stroke: stroke,
+            textColor: textColor,
+            secondaryTextColor: secondaryTextColor
+        )
+    }
+
+    public init(
+        title: String?,
+        metricValue: PevDashboardMetricValue,
+        detail: String?,
+        fill: Color = PevDashboardColors.cardFill,
+        stroke: Color = PevDashboardColors.cardStroke,
+        textColor: Color = PevDashboardColors.primaryText,
+        secondaryTextColor: Color = PevDashboardColors.mutedText
+    ) {
         self.title = title
-        self.value = value
+        self.metricValue = metricValue
         self.detail = detail
         self.fill = fill
         self.stroke = stroke
