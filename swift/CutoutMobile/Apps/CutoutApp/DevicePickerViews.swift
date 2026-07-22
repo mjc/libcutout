@@ -37,6 +37,7 @@ struct DevicePickerView: View {
                 isScanning: renderedScanState.status == .scanning || isConnecting,
             )
                 .padding(.top, 4)
+                .accessibilityIdentifier("device-picker.connection-status")
 
             if let captureStatusText {
                 PevStatusStrip(

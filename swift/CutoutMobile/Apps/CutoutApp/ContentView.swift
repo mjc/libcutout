@@ -65,7 +65,7 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
             if case .failed = phase {
-                disconnectAndReturnToPicker()
+                navigate(to: .devicePicker)
                 return
             }
             openRideScreen(ifNeededFor: phase)
@@ -80,6 +80,7 @@ struct ContentView: View {
     private func pair(_ row: DevicePickerRow) {
         guard row.isSupported else { return }
 
+        connectionAnnouncements.beginUserInitiatedAttempt()
         guard model.pair(platformIdentifier: row.id) else { return }
     }
 

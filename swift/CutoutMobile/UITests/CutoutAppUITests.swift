@@ -230,9 +230,22 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
+        let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
+        let connecting = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@", "Connecting"),
+            object: connectionStatus
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
+
         let picker = app.descendants(matching: .any)["device-picker.screen"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        let failed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Connect failed: deterministic fixture"),
+            object: connectionStatus
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 5), .completed)
+        XCTAssertTrue(picker.exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
+        XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
     }
 
     func testEucRideAndBmsSurfacesRemainAccessible() throws {

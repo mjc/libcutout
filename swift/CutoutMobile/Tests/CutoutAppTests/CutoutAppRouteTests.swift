@@ -81,10 +81,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs.isEmpty)
     }
 
-    func testPairingProgressOpensTheRideSurface() {
-        XCTAssertTrue(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
-        XCTAssertTrue(SessionConnectionPhase.discoveringServices.opensRideScreen)
-        XCTAssertTrue(SessionConnectionPhase.subscribing.opensRideScreen)
+    func testOnlyLivePhaseOpensTheRideSurface() {
+        XCTAssertFalse(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
+        XCTAssertFalse(SessionConnectionPhase.discoveringServices.opensRideScreen)
+        XCTAssertFalse(SessionConnectionPhase.subscribing.opensRideScreen)
         XCTAssertTrue(SessionConnectionPhase.live.opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.starting.opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.scanning.opensRideScreen)
@@ -106,7 +106,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(SessionConnectionPhase.live.accessibilityAnnouncement, "Connected.")
         XCTAssertEqual(
             SessionConnectionPhase.failed(.connectFailed("timed out")).accessibilityAnnouncement,
-            "Connection lost. Retrying. Connect failed: timed out"
+            "Connection failed. Choose a device to try again. Connect failed: timed out"
         )
     }
 
@@ -121,11 +121,17 @@ final class CutoutAppRouteTests: XCTestCase {
             .failed(.connectFailed("still timed out")),
         ].compactMap { announcements.next(for: $0) }
 
-        XCTAssertEqual(messages, ["Connection lost. Retrying. Connect failed: timed out"])
+        XCTAssertEqual(messages, ["Connection failed. Choose a device to try again. Connect failed: timed out"])
         XCTAssertEqual(announcements.next(for: .live), "Connected.")
         XCTAssertEqual(
             announcements.next(for: .failed(.connectFailed("lost after connecting"))),
-            "Connection lost. Retrying. Connect failed: lost after connecting"
+            "Connection failed. Choose a device to try again. Connect failed: lost after connecting"
+        )
+
+        announcements.beginUserInitiatedAttempt()
+        XCTAssertEqual(
+            announcements.next(for: .failed(.connectFailed("timed out again"))),
+            "Connection failed. Choose a device to try again. Connect failed: timed out again"
         )
     }
 

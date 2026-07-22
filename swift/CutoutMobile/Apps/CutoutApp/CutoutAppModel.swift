@@ -190,14 +190,10 @@ final class CutoutAppModel {
     func pair(platformIdentifier: String) -> Bool {
         #if DEBUG
         if usesVescUIFailureFixture, platformIdentifier == "ui-test-vesc" {
-            selectedRideTitle = "Refloat VESC"
-            selectedConnectionRoute = .vescOnewheel
-            phase = .failed(.connectFailed("deterministic fixture"))
-            return true
+            return startVescUITestConnection(failing: true)
         }
         if usesVescUITestFixture, platformIdentifier == "ui-test-vesc" {
-            showVescUITestRide()
-            return true
+            return startVescUITestConnection(failing: false)
         }
         if usesEucUITestFixture, platformIdentifier == "ui-test-euc" {
             showEucUITestRide()
@@ -390,6 +386,28 @@ final class CutoutAppModel {
         }
         phase = .live
         syncLiveActivity()
+    }
+
+    private func startVescUITestConnection(failing: Bool) -> Bool {
+        selectedRideTitle = "Refloat VESC"
+        selectedConnectionRoute = .vescOnewheel
+        phase = .discoveringServices
+
+        Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(failing ? 3_000 : 250))
+            } catch {
+                return
+            }
+            guard let self, self.phase == .discoveringServices else { return }
+
+            if failing {
+                self.handlePhaseChange(.failed(.connectFailed("deterministic fixture")))
+            } else {
+                self.showVescUITestRide()
+            }
+        }
+        return true
     }
 
     private func showEucUITestRide() {

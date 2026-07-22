@@ -75,9 +75,9 @@ extension PevScreen {
 extension SessionConnectionPhase {
     var opensRideScreen: Bool {
         switch self {
-        case .connecting, .discoveringServices, .subscribing, .live:
+        case .live:
             true
-        case .starting, .bluetoothUnavailable, .scanning, .failed:
+        case .starting, .bluetoothUnavailable, .scanning, .connecting, .discoveringServices, .subscribing, .failed:
             false
         }
     }
@@ -93,13 +93,17 @@ extension SessionConnectionPhase {
         case .live:
             "Connected."
         case .failed(let failure):
-            "Connection lost. Retrying. \(failure.displayText)"
+            "Connection failed. Choose a device to try again. \(failure.displayText)"
         }
     }
 }
 
 struct ConnectionAccessibilityAnnouncements {
     private var hasAnnouncedFailure = false
+
+    mutating func beginUserInitiatedAttempt() {
+        hasAnnouncedFailure = false
+    }
 
     mutating func next(for phase: SessionConnectionPhase) -> String? {
         switch phase {
