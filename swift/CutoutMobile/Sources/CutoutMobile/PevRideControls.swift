@@ -8,24 +8,13 @@ public struct PevRideDisconnectButton: View {
     }
 
     public var body: some View {
-        PevActionButton(
-            title: "Disconnect",
-            systemImageName: nil,
-            isEnabled: true,
-            fillsAvailableWidth: false,
-            width: nil,
-            height: 30,
-            cornerRadius: 8,
-            horizontalPadding: 12,
-            iconSpacing: 0,
-            foregroundEnabled: PevDashboardColors.primaryText,
-            foregroundDisabled: PevDashboardColors.primaryText,
-            fillEnabled: PevDashboardColors.cardFill,
-            fillDisabled: PevDashboardColors.cardFill,
-            strokeEnabled: PevDashboardColors.cardStroke,
-            strokeDisabled: PevDashboardColors.cardStroke,
-            accessibilityIdentifierText: "dashboard.disconnect",
-            action: action
-        )
+        Button("Disconnect", action: action)
+            .font(.callout.weight(.bold))
+            .foregroundStyle(PevDashboardColors.primaryText)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(PevDashboardCardBackground(cornerRadius: 8))
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("dashboard.disconnect")
     }
 }

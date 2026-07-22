@@ -127,28 +127,26 @@ struct DevicePickerView: View {
     }
 
     private func captureButton(for row: DevicePickerRow) -> some View {
-        PevActionButton(
-            title: row.captureActionTitle,
-            systemImageName: "record.circle",
-            isEnabled: hasRecordOnlyDeviceKind,
-            fillsAvailableWidth: true,
-            width: nil,
-            height: 44,
-            cornerRadius: 8,
-            horizontalPadding: 0,
-            iconSpacing: 8,
-            foregroundEnabled: PevColors.yellow,
-            foregroundDisabled: PevColors.primaryText,
-            fillEnabled: PevColors.warningFill,
-            fillDisabled: PevColors.disabledFill,
-            strokeEnabled: PevColors.warningStroke,
-            strokeDisabled: PevColors.cardStroke,
-            accessibilityLabelText: row.captureActionAccessibilityLabel,
-            accessibilityHintText: hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture",
-            accessibilityIdentifierText: "device-picker.record.\(row.id)"
-        ) {
+        Button {
             recordOnly(row, trimmedRecordOnlyDeviceKind)
+        } label: {
+            Label(row.captureActionTitle, systemImage: "record.circle")
+                .font(.callout.weight(.bold))
+                .foregroundStyle(hasRecordOnlyDeviceKind ? PevColors.yellow : PevColors.primaryText)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(
+                    PevDashboardCardBackground(
+                        cornerRadius: 8,
+                        fill: hasRecordOnlyDeviceKind ? PevColors.warningFill : PevColors.disabledFill,
+                        stroke: hasRecordOnlyDeviceKind ? PevColors.warningStroke : PevColors.cardStroke
+                    )
+                )
         }
+        .buttonStyle(.plain)
+        .disabled(!hasRecordOnlyDeviceKind)
+        .accessibilityLabel(row.captureActionAccessibilityLabel)
+        .accessibilityHint(hasRecordOnlyDeviceKind ? "" : "Enter a device kind above to enable capture")
+        .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
 
     private var connectionPresentation: DevicePickerConnectionPresentation {
