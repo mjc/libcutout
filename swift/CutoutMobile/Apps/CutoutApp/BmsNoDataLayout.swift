@@ -63,13 +63,13 @@ struct BmsNoDataLayout: View {
     }
     private var rideSagMetricValue: PevDashboardMetricValue {
         rideState?.voltageSag.map { voltageSag in
-            let value = decimalString(abs(Double(voltageSag.value)) / 1_000.0, fractionDigits: 1)
+            let value = RideUnits.decimalString(abs(Double(voltageSag.value)) / 1_000.0, fractionDigits: 1)
             return .available(display: value, accessibility: value)
         } ?? .unavailable
     }
     private var loadMetricValue: PevDashboardMetricValue {
         packCurrent.map { current in
-            let value = decimalString(Double(current.value) / 1_000.0, fractionDigits: 0)
+            let value = RideUnits.decimalString(Double(current.value) / 1_000.0, fractionDigits: 0)
             return .available(display: value, accessibility: value)
         } ?? .unavailable
     }

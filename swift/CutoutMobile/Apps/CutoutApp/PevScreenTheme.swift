@@ -176,7 +176,7 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
             PevDashboardTile(
                 kind: .packVoltage,
                 label: localizedAppText("ride.metric.pack"),
-                value: decimalString(fromMillivolts: voltage.value, fractionDigits: 1),
+                value: RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1),
                 unit: "V",
                 detail: telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
                     ?? localizedAppText("ride.detail.sag_unavailable"),
@@ -212,7 +212,7 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
             PevDashboardTile(
                 kind: .limpHomeRange,
                 label: localizedAppText("ride.metric.limp_home"),
-                value: decimalString(fromMillimetres: range.value, unit: distanceUnit, fractionDigits: 1),
+                value: RideUnits.distanceText(millimetres: range.value, unit: distanceUnit, fractionDigits: 1),
                 unit: distanceUnit,
                 detail: localizedAppText("ride.detail.typed_range_estimate"),
                 accent: .cyan
@@ -250,8 +250,8 @@ func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
 }
 
 func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {
-    let voltage = decimalString(
-        fromMillivolts: abs(sag.deltaMillivolts),
+    let voltage = RideUnits.voltageText(
+        millivolts: abs(sag.deltaMillivolts),
         fractionDigits: 1
     )
     let current = RideUnits.currentText(milliamps: abs(sag.loadCurrent.value))
@@ -271,8 +271,8 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
         return PevDashboardTile(
             kind: .power,
             label: localizedAppText("ride.metric.power"),
-            value: decimalString(
-                fromMilliwatts: milliwatts,
+            value: RideUnits.powerText(
+                milliwatts: milliwatts,
                 fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
             ),
             unit: "kW",
@@ -288,8 +288,8 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
         return PevDashboardTile(
             kind: .power,
             label: localizedAppText("ride.metric.power"),
-            value: decimalString(
-                fromMilliwatts: power.value,
+            value: RideUnits.powerText(
+                milliwatts: power.value,
                 fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
             ),
             unit: "kW",
@@ -359,18 +359,18 @@ func liveThermalValue(telemetry: TelemetrySnapshot) -> String {
     guard let maxValue = values.max() else {
         return "--"
     }
-    return decimalString(fromMillicelsius: maxValue, fractionDigits: 0)
+    return RideUnits.temperatureText(millicelsius: maxValue, fractionDigits: 0)
 }
 
 func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
     let controller = telemetry.controllerTemperature.map {
-        decimalString(fromMillicelsius: $0.value, fractionDigits: 0)
+        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
     }
     let motor = telemetry.motorTemperature.map {
-        decimalString(fromMillicelsius: $0.value, fractionDigits: 0)
+        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
     }
     let battery = telemetry.batteryTemperature.map {
-        decimalString(fromMillicelsius: $0.value, fractionDigits: 0)
+        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
     }
     let unit = RideUnits.temperatureUnit
 
@@ -410,26 +410,6 @@ func percentageString<T: BinaryInteger>(fromPermille permille: T) -> String {
     localizedAppText("ride.value.percent", RideUnits.permillePercentText(permille))
 }
 
-func decimalString<T: BinaryInteger>(fromMillivolts value: T, fractionDigits: Int) -> String {
-    RideUnits.voltageText(millivolts: value, fractionDigits: fractionDigits)
-}
-
-func decimalString<T: BinaryInteger>(fromMilliwatts value: T, fractionDigits: Int) -> String {
-    RideUnits.powerText(milliwatts: value, fractionDigits: fractionDigits)
-}
-
 func powerFractionDigits<T: BinaryInteger>(fromMilliwatts value: T) -> Int {
     abs(Int64(value)) < 1_000_000 ? 2 : 1
-}
-
-func decimalString<T: BinaryInteger>(fromMillicelsius value: T, fractionDigits: Int) -> String {
-    RideUnits.temperatureText(millicelsius: value, fractionDigits: fractionDigits)
-}
-
-func decimalString<T: BinaryInteger>(fromMillimetres value: T, unit: String, fractionDigits: Int) -> String {
-    RideUnits.distanceText(millimetres: value, unit: unit, fractionDigits: fractionDigits)
-}
-
-func decimalString(_ value: Double, fractionDigits: Int) -> String {
-    RideUnits.decimalString(value, fractionDigits: fractionDigits)
 }
