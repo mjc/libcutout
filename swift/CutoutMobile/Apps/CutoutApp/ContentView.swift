@@ -12,8 +12,6 @@ struct ContentView: View {
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
 
-    private let catalog = PevScreenCatalog.live
-
     init(model: CutoutAppModel, navigationPath: Binding<[CutoutAppRoute]>) {
         self.model = model
         _navigationPath = navigationPath
@@ -166,36 +164,14 @@ struct ContentView: View {
     private func routedContent(for destination: CutoutAppRoute) -> some View {
         switch destination {
         case .eucRide:
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                EucRideScreenView(
-                    rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
-                        ? nil
-                        : model.rideState,
-                    rideTitle: model.selectedRideTitle,
-                    now: model.currentMonotonicTime,
-                    captureStatusText: model.captureStatusText,
-                    phoneLocationReadback: model.phoneLocationReadback
-                )
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("dashboard.screen.eucRide")
-            }
+            EucRideRouteView(model: model)
         case .eucPack(let packScreen):
-            if let screen = bmsScreen(for: packScreen) {
-                BmsScreenView(
-                    screen: screen,
-                    rideState: model.rideState,
-                    bmsSnapshot: model.bmsSnapshot,
-                    selectedGroupIndex: destination.selectedBmsGroupIndex,
-                    showGroupDetail: { groupIndex in
-                        navigate(to: .eucPack(.bmsCellDetail(groupIndex)))
-                    },
-                    showCellMap: {
-                        navigate(to: .eucPack(.root))
-                    }
-                )
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
-            }
+            EucPackRouteView(
+                model: model,
+                packScreen: packScreen,
+                selectedGroupIndex: destination.selectedBmsGroupIndex,
+                navigate: navigate
+            )
         case .vescRide:
             VescRideRouteView(model: model)
         case .vescDebug:
@@ -268,8 +244,57 @@ struct ContentView: View {
         #endif
     }
 
-    private func bmsScreen(for screen: EucPackScreen) -> PevScreen? {
-        if let screenID = screen.screenID {
+}
+
+private struct EucRideRouteView: View {
+    let model: CutoutAppModel
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            EucRideScreenView(
+                rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
+                    ? nil
+                    : model.rideState,
+                rideTitle: model.selectedRideTitle,
+                now: model.currentMonotonicTime,
+                captureStatusText: model.captureStatusText,
+                phoneLocationReadback: model.phoneLocationReadback
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dashboard.screen.eucRide")
+        }
+    }
+}
+
+private struct EucPackRouteView: View {
+    let model: CutoutAppModel
+    let packScreen: EucPackScreen
+    let selectedGroupIndex: Int?
+    let navigate: (CutoutAppRoute) -> Void
+
+    private let catalog = PevScreenCatalog.live
+
+    var body: some View {
+        if let screen = bmsScreen {
+            BmsScreenView(
+                screen: screen,
+                rideState: model.rideState,
+                bmsSnapshot: model.bmsSnapshot,
+                selectedGroupIndex: selectedGroupIndex,
+                showGroupDetail: { groupIndex in
+                    navigate(.eucPack(.bmsCellDetail(groupIndex)))
+                },
+                showCellMap: {
+                    navigate(.eucPack(.root))
+                }
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
+        }
+    }
+
+    private var bmsScreen: PevScreen? {
+        if let screenID = packScreen.screenID {
             catalog.screen(id: screenID).map {
                 catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
             }
