@@ -230,6 +230,7 @@ final class CutoutAppModel {
             )
             return false
         }
+        guard selectedRow.isSupported else { return false }
 
         selectedRideTitle = selectedRow.title
         selectedConnectionRoute = selectedRow.connectionRoute

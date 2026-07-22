@@ -57,6 +57,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testNonSupportedPickerRowCannotStartTheConnection() {
+        let driver = SessionDriverSpy(
+            rows: [
+                DevicePickerRow(
+                    id: "probe-1234",
+                    title: "Probe first",
+                    subtitle: "Unknown device",
+                    detail: "Device 1234",
+                    state: DevicePickerRowState(action: .probe),
+                    symbolName: "questionmark.circle"
+                ),
+            ]
+        )
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertFalse(model.pair(platformIdentifier: "probe-1234"))
+        XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+    }
+
+    @MainActor
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
