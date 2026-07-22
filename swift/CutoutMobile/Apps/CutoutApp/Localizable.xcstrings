@@ -2,7 +2,7 @@
   "sourceLanguage" : "en",
   "strings" : {
     "capture.announcement.failed" : {
-      "comment" : "VoiceOver announcement when capture fails.",
+      "comment" : "Visible status and VoiceOver announcement when capture fails.",
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture failed" } }
       }
@@ -24,6 +24,50 @@
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture saved" } }
       }
+    },
+    "capture.status.label_started" : {
+      "comment" : "Visible capture status after a label begins. The placeholder is the label name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ started" } } }
+    },
+    "capture.status.label_started_file" : {
+      "comment" : "Visible capture status after a label begins. Placeholders are label, notification count, and filename.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ started: %lld notifications → %@" } } }
+    },
+    "capture.status.label_stopped" : {
+      "comment" : "Visible capture status after a label ends. The placeholder is the label name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ stopped" } } }
+    },
+    "capture.status.label_stopped_file" : {
+      "comment" : "Visible capture status after a label ends. Placeholders are label, notification count, and filename.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ stopped: %lld notifications → %@" } } }
+    },
+    "capture.status.recording" : {
+      "comment" : "Visible capture status. The placeholder is the notification count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording: %lld notifications" } } }
+    },
+    "capture.status.recording_file" : {
+      "comment" : "Visible capture status. Placeholders are notification count and filename.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording: %lld notifications → %@" } } }
+    },
+    "capture.status.recording_labeled" : {
+      "comment" : "Visible capture status. Placeholders are label and notification count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@: %lld notifications" } } }
+    },
+    "capture.status.recording_labeled_file" : {
+      "comment" : "Visible capture status. Placeholders are label, notification count, and filename.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@: %lld notifications → %@" } } }
+    },
+    "capture.status.recording_locally" : {
+      "comment" : "Visible capture status. The placeholder is the capture filename.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording locally: %@" } } }
+    },
+    "capture.status.recording_locally_without_file" : {
+      "comment" : "Visible capture status when a local capture has no filename yet.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording locally" } } }
+    },
+    "capture.status.saved" : {
+      "comment" : "Visible capture status. The placeholder is the saved filename.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved capture: %@" } } }
     },
     "picker.announcement.bluetooth_unavailable" : {
       "comment" : "VoiceOver announcement when Bluetooth is unavailable.",

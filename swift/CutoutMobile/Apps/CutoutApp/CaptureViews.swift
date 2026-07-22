@@ -31,7 +31,11 @@ struct CaptureRecordingScreen: View {
             }
 
             PevStatusStrip(
-                text: captureStatusText ?? "Recording locally",
+                text: captureStatusText ?? String(
+                    localized: "capture.status.recording_locally_without_file",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                ),
                 indicatorColor: PevColors.green,
                 background: PevColors.cardFill,
                 foreground: PevColors.primaryText,

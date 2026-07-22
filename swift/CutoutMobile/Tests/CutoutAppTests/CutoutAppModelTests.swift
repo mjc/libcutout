@@ -53,6 +53,33 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(CaptureStatus.recordingLocally(fileName: "ride.cutout").accessibilityAnnouncement)
     }
 
+    func testCaptureStatusPreservesVisibleLifecycleText() {
+        XCTAssertEqual(
+            CaptureStatus.recordingLocally(fileName: "ride.cutout").displayText,
+            "Recording locally: ride.cutout"
+        )
+        XCTAssertEqual(
+            CaptureStatus.recording(label: nil, notificationCount: 2, fileName: nil).displayText,
+            "Recording: 2 notifications"
+        )
+        XCTAssertEqual(
+            CaptureStatus.recording(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
+            "Ride: 3 notifications → ride.cutout"
+        )
+        XCTAssertEqual(
+            CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout").displayText,
+            "Ride started: 3 notifications → ride.cutout"
+        )
+        XCTAssertEqual(
+            CaptureStatus.labelStopped(label: "Ride", notificationCount: 4, fileName: nil).displayText,
+            "Ride stopped"
+        )
+        XCTAssertEqual(
+            CaptureStatus.saved(fileName: "ride.cutout").displayText,
+            "Saved capture: ride.cutout"
+        )
+    }
+
     @MainActor
     func testCaptureStatusConsumesTypedCoreEvents() {
         let model = CutoutAppModel()
