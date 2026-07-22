@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "picker.announcement.bluetooth_unavailable" : {
+      "comment" : "VoiceOver announcement when Bluetooth is unavailable.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth unavailable. Turn on Bluetooth to reconnect." } }
+      }
+    },
+    "picker.announcement.connected" : {
+      "comment" : "VoiceOver announcement after a successful device connection.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connected." } }
+      }
+    },
+    "picker.announcement.connecting" : {
+      "comment" : "VoiceOver announcement while connecting. The placeholder is a device model name.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting to %@." } }
+      }
+    },
+    "picker.announcement.connection_failed" : {
+      "comment" : "VoiceOver announcement after a connection failure. The placeholder is the specific failure detail.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection failed. Choose a device to try again. %@" } }
+      }
+    },
     "bms.display_modes" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Display modes" } }

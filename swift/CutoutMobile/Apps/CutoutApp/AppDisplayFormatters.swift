@@ -163,13 +163,33 @@ extension SessionConnectionPhase {
         case .starting, .scanning, .discoveringServices, .subscribing:
             nil
         case .bluetoothUnavailable:
-            "Bluetooth unavailable. Turn on Bluetooth to reconnect."
+            String(
+                localized: "picker.announcement.bluetooth_unavailable",
+                table: "Localizable",
+                bundle: appLocalizationBundle
+            )
         case .connecting(let model):
-            "Connecting to \(model.displayName)."
+            String(
+                format: String(
+                    localized: "picker.announcement.connecting",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                ),
+                locale: .current,
+                model.displayName
+            )
         case .live:
-            "Connected."
+            String(localized: "picker.announcement.connected", table: "Localizable", bundle: appLocalizationBundle)
         case .failed(let failure):
-            "Connection failed. Choose a device to try again. \(failure.displayText)"
+            String(
+                format: String(
+                    localized: "picker.announcement.connection_failed",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                ),
+                locale: .current,
+                failure.displayText
+            )
         }
     }
 }
