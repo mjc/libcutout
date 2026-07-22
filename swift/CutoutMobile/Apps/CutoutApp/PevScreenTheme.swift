@@ -227,7 +227,16 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
 }
 
 func vescDebugTiles(_ snapshot: VescRideSnapshot) -> [PevDashboardTile] {
-    [
+    let balanceMetricValue = snapshot.balanceAngle.map { angle in
+        let value = RideUnits.angleText(millidegrees: angle.value)
+        return PevDashboardMetricValue.available(display: value, accessibility: value)
+    } ?? .unavailable
+    let motorTemperatureMetricValue = snapshot.motorTemperature.map { temperature in
+        let value = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
+        return PevDashboardMetricValue.available(display: value, accessibility: value)
+    } ?? .unavailable
+
+    return [
         PevDashboardTile(
             kind: .dutyCycle,
             label: localizedAppText("vesc.debug.metric.duty"),
@@ -258,7 +267,7 @@ func vescDebugTiles(_ snapshot: VescRideSnapshot) -> [PevDashboardTile] {
                 return .available(display: value, accessibility: value)
             } ?? .unavailable,
             unit: "°",
-            detail: localizedAppText("vesc.debug.detail.balance", angleText(snapshot.balanceAngle)),
+            detail: localizedAppText("vesc.debug.detail.balance", balanceMetricValue.accessibilityText),
             accent: .cyan
         ),
         PevDashboardTile(
@@ -269,7 +278,10 @@ func vescDebugTiles(_ snapshot: VescRideSnapshot) -> [PevDashboardTile] {
                 return .available(display: value, accessibility: value)
             } ?? .unavailable,
             unit: "°C",
-            detail: localizedAppText("vesc.debug.detail.motor_temperature", temperatureText(snapshot.motorTemperature)),
+            detail: localizedAppText(
+                "vesc.debug.detail.motor_temperature",
+                motorTemperatureMetricValue.accessibilityText
+            ),
             accent: .green
         ),
     ]

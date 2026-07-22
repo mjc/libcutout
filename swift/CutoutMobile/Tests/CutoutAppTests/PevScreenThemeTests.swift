@@ -48,9 +48,19 @@ final class PevScreenThemeTests: XCTestCase {
             controllerState: .unknown
         )
 
+        let tiles = vescDebugTiles(snapshot)
+
         XCTAssertEqual(
-            vescDebugTiles(snapshot).map(\.metricValue),
+            tiles.map(\.metricValue),
             [.unavailable, .unavailable, .unavailable, .unavailable]
+        )
+        XCTAssertEqual(
+            tiles[2].detail,
+            localizedAppText("vesc.debug.detail.balance", "unavailable")
+        )
+        XCTAssertEqual(
+            tiles[3].detail,
+            localizedAppText("vesc.debug.detail.motor_temperature", "unavailable")
         )
     }
 

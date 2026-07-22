@@ -97,24 +97,20 @@ func percentText(_ value: BatteryLevel?) -> String {
     return "\(value.value)%"
 }
 
-func voltageText(_ value: Voltage?) -> String {
-    value.map { RideUnits.voltageText(millivolts: $0.value) } ?? "--"
+func voltageText(_ value: Voltage) -> String {
+    RideUnits.voltageText(millivolts: value.value)
 }
 
-func currentText(_ value: BatteryCurrent?) -> String {
-    value.map { RideUnits.currentText(milliamps: $0.value) } ?? "--"
+func currentText(_ value: BatteryCurrent) -> String {
+    RideUnits.currentText(milliamps: value.value)
 }
 
-func phaseCurrentText(_ value: PhaseCurrent?) -> String {
-    value.map { RideUnits.currentText(milliamps: $0.value) } ?? "--"
+func angleText(_ value: CutoutMobile.Angle) -> String {
+    RideUnits.angleText(millidegrees: value.value)
 }
 
-func angleText(_ value: CutoutMobile.Angle?) -> String {
-    value.map { RideUnits.angleText(millidegrees: $0.value) } ?? "--"
-}
-
-func temperatureText(_ value: Temperature?) -> String {
-    value.map { RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1) } ?? "--"
+func temperatureText(_ value: Temperature) -> String {
+    RideUnits.temperatureText(millicelsius: value.value, fractionDigits: 1)
 }
 
 extension PevDashboardTile {
