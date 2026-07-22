@@ -4,6 +4,10 @@ import XCTest
 
 @MainActor
 final class PevDashboardAccessibilityTests: XCTestCase {
+    func testRideDisconnectControlCopyResolvesFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("ride.action.disconnect"), "Disconnect")
+    }
+
     func testMetricSemanticsGroupValueUnitAndDetail() {
         let tile = PevDashboardMetricTile(
             label: "Pack voltage",

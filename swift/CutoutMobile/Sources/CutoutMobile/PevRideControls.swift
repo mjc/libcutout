@@ -8,7 +8,9 @@ public struct PevRideDisconnectButton: View {
     }
 
     public var body: some View {
-        Button("Disconnect", action: action)
+        Button(action: action) {
+            Text("ride.action.disconnect", bundle: .module)
+        }
             .font(.callout.weight(.bold))
             .foregroundStyle(PevDashboardColors.primaryText)
             .padding(.horizontal, 12)

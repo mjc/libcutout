@@ -481,6 +481,10 @@
       "comment" : "Device picker status after a Bluetooth scan finishes with no rideable device found.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } } }
     },
+    "ride.action.disconnect" : {
+      "comment" : "Ride screen button that disconnects from the current device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }
+    },
     "tab.debug" : {
       "comment" : "Bottom navigation tab for diagnostics.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }
