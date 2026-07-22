@@ -1257,22 +1257,27 @@ public extension FootpadTelemetry {
     }
 
     var stateDisplayText: String {
-        "state \(state)"
+        pevLocalizedText("footpad.state", Int64(state))
     }
 
     var accessibilityValue: String {
-        [
-            "left / adc1",
-            adc1Milliunits == nil ? "unavailable" : "\(adc1DisplayText), available",
-            "right / adc2",
-            adc2Milliunits == nil ? "unavailable" : "\(adc2DisplayText), available",
-            stateDisplayText,
-        ]
-        .joined(separator: ", ")
+        pevLocalizedText(
+            "footpad.accessibility.summary",
+            pevLocalizedText("footpad.adc1"),
+            footpadAvailabilityText(for: adc1Milliunits, displayText: adc1DisplayText),
+            pevLocalizedText("footpad.adc2"),
+            footpadAvailabilityText(for: adc2Milliunits, displayText: adc2DisplayText),
+            stateDisplayText
+        )
     }
 
     var summaryText: String {
-        "footpad \(stateDisplayText) · adc1 left \(adc1Milliunits == nil ? "unavailable" : adc1DisplayText) · adc2 right \(adc2Milliunits == nil ? "unavailable" : adc2DisplayText)"
+        pevLocalizedText(
+            "footpad.summary",
+            stateDisplayText,
+            adc1Milliunits == nil ? pevLocalizedText("footpad.unavailable") : adc1DisplayText,
+            adc2Milliunits == nil ? pevLocalizedText("footpad.unavailable") : adc2DisplayText
+        )
     }
 }
 
@@ -1280,7 +1285,13 @@ private func formatFootpadReading(_ value: Int32?) -> String {
     guard let value else {
         return "--"
     }
-    return String(format: "%.2f", Double(value) / 1_000)
+    return RideUnits.decimalString(Double(value) / 1_000, fractionDigits: 2)
+}
+
+private func footpadAvailabilityText(for value: Int32?, displayText: String) -> String {
+    value == nil
+        ? pevLocalizedText("footpad.unavailable")
+        : pevLocalizedText("footpad.available", displayText)
 }
 
 public enum VescControllerState: Equatable, Hashable, Sendable {

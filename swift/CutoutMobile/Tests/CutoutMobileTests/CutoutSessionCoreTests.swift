@@ -366,6 +366,17 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
     }
 
+    func testFootpadPresentationCopyResolvesFromThePackageCatalog() {
+        XCTAssertEqual(
+            Bundle.module.localizedString(forKey: "footpad.state", value: nil, table: "Localizable"),
+            "state %lld"
+        )
+        XCTAssertEqual(
+            Bundle.module.localizedString(forKey: "footpad.accessibility.summary", value: nil, table: "Localizable"),
+            "%1$@, %2$@, %3$@, %4$@, %5$@"
+        )
+    }
+
     func testVescRideSnapshotProjectsAngleOnlyTelemetry() throws {
         let telemetry = TelemetrySnapshot(pitch: angleValue(14_200))
         let displayState = RideDisplayState(telemetry: telemetry, notificationCount: 1)

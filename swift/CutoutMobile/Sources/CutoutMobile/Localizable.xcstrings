@@ -505,6 +505,34 @@
       "comment" : "Reason shown when the Logs tab is disabled.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Logs are not available yet." } } }
     },
+    "footpad.accessibility.summary" : {
+      "comment" : "VoiceOver footpad summary. Arguments: left ADC label, left reading state, right ADC label, right reading state, controller state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@, %3$@, %4$@, %5$@" } } }
+    },
+    "footpad.adc1" : {
+      "comment" : "Label for the left footpad ADC channel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "left / adc1" } } }
+    },
+    "footpad.adc2" : {
+      "comment" : "Label for the right footpad ADC channel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "right / adc2" } } }
+    },
+    "footpad.available" : {
+      "comment" : "Available footpad ADC reading. Argument is the formatted reading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@, available" } } }
+    },
+    "footpad.state" : {
+      "comment" : "Raw controller footpad state for diagnostics. Argument is the state number.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "state %lld" } } }
+    },
+    "footpad.summary" : {
+      "comment" : "Footpad warning summary. Arguments: controller state, left ADC reading or unavailable, right ADC reading or unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "footpad %1$@ · adc1 left %2$@ · adc2 right %3$@" } } }
+    },
+    "footpad.unavailable" : {
+      "comment" : "Footpad ADC state with no reported reading.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
+    },
     "tab.reason.map_unavailable" : {
       "comment" : "Reason shown when the Map tab is disabled.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Map is not available yet." } } }
