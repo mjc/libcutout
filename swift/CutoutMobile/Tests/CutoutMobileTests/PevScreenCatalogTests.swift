@@ -58,6 +58,19 @@ final class PevScreenCatalogTests: XCTestCase {
         })
     }
 
+    func testBmsAndDashboardMetadataResolveFromThePackageCatalog() {
+        let catalog = PevScreenCatalog.live
+
+        XCTAssertEqual(catalog.screen(id: .eucRide)?.title, "EUC ride")
+        XCTAssertEqual(catalog.screen(id: .eucRide)?.subtitle, "Live telemetry")
+        XCTAssertEqual(catalog.screen(id: .bmsCellDetail)?.title, "Cell detail")
+        XCTAssertEqual(catalog.screen(id: .bmsCellDetail)?.subtitle, "Live BMS readback")
+        XCTAssertEqual(catalog.screen(id: .bmsUnknownTopology)?.subtitle, "Topology unavailable")
+        XCTAssertEqual(catalog.screen(id: .vescDebug)?.title, "VESC state")
+        XCTAssertEqual(pevLocalizedText("bms.chip.bms_online", Int64(2)), "2 BMS online")
+        XCTAssertEqual(pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
+    }
+
     func testVescRideTabsKeepUnavailableDestinationsDisabled() {
         let tabs = PevRideTabs.vescRideTabs()
 

@@ -364,22 +364,23 @@ private extension PevBmsScreenKind {
     func liveTitle(snapshot: BmsSnapshot) -> String {
         switch self {
         case .overview:
-            "Pack overview"
+            pevLocalizedText("bms.title.pack_overview")
         case .cellMapInline, .cellMapScrollable:
-            snapshot.topology.seriesGroupCount.map { "\($0)S cell map" } ?? "Cell map"
+            snapshot.topology.seriesGroupCount.map { pevLocalizedText("bms.title.cell_map_series", Int64($0)) }
+                ?? pevLocalizedText("bms.title.cell_map")
         case .cellDetail:
-            "Cell detail"
+            pevLocalizedText("bms.title.cell_detail")
         case .unknownTopology:
-            "Unknown BMS"
+            pevLocalizedText("bms.title.unknown")
         case .noData:
-            "Battery"
+            pevLocalizedText("bms.title.battery")
         }
     }
 
     func liveSubtitle(snapshot: BmsSnapshot, fallback: String) -> String {
         switch self {
         case .noData:
-            "\(snapshot.topology.layoutLabel) · controller-only estimate"
+            pevLocalizedText("bms.subtitle.controller_estimate", snapshot.topology.layoutLabel)
         default:
             fallback
         }
@@ -399,27 +400,27 @@ private extension PevBmsScreenKind {
         case .overview:
             var chips = [PevBmsChip(id: .topology, title: snapshot.topology.layoutLabel, accent: .yellow)]
             if snapshot.topology.bmsCount > 0 {
-                chips.append(PevBmsChip(id: .bmsStatus, title: "\(snapshot.topology.bmsCount) BMS online", accent: .green))
+                chips.append(PevBmsChip(id: .bmsStatus, title: pevLocalizedText("bms.chip.bms_online", Int64(snapshot.topology.bmsCount)), accent: .green))
             }
             return chips
         case .cellMapInline, .cellMapScrollable:
             return [
-                PevBmsChip(id: .liveReadback, title: "live readback", accent: .cyan),
+                PevBmsChip(id: .liveReadback, title: pevLocalizedText("bms.chip.live_readback"), accent: .cyan),
                 PevBmsChip(id: .topology, title: snapshot.topology.layoutLabel, accent: .yellow),
             ]
         case .cellDetail:
             return [
-                PevBmsChip(id: .liveReadback, title: "live readback", accent: .cyan),
-                PevBmsChip(id: .selectedGroup, title: selectedGroupIndex.map { "group \($0)" } ?? "selected group", accent: .orange),
+                PevBmsChip(id: .liveReadback, title: pevLocalizedText("bms.chip.live_readback"), accent: .cyan),
+                PevBmsChip(id: .selectedGroup, title: selectedGroupIndex.map { pevLocalizedText("bms.chip.group", Int64($0)) } ?? pevLocalizedText("bms.chip.selected_group"), accent: .orange),
             ]
         case .unknownTopology:
             return [
-                PevBmsChip(id: .dataStatus, title: "partial data", accent: .orange),
-                PevBmsChip(id: .topologyStatus, title: "topology unverified", accent: .green),
+                PevBmsChip(id: .dataStatus, title: pevLocalizedText("bms.chip.partial_data"), accent: .orange),
+                PevBmsChip(id: .topologyStatus, title: pevLocalizedText("bms.chip.topology_unverified"), accent: .green),
             ]
         case .noData:
             return [
-                PevBmsChip(id: .captureStatus, title: snapshot.captureActionState ?? "limited data", accent: .yellow),
+                PevBmsChip(id: .captureStatus, title: snapshot.captureActionState ?? pevLocalizedText("bms.chip.limited_data"), accent: .yellow),
             ]
         }
     }
@@ -971,7 +972,7 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
         let snapshot = BmsSnapshot(
             availability: .unavailable,
             topology: BmsTopology(
-                layoutLabel: "live BMS readback unavailable",
+                layoutLabel: pevLocalizedText("bms.layout.no_live_readback"),
                 seriesGroupCount: nil,
                 parallelCount: nil,
                 packCount: 0,
@@ -982,29 +983,29 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
 
         return PevScreen(
             id: .bmsNoData,
-            title: "Battery",
-            subtitle: "live BMS readback unavailable",
-            secondaryValue: "no live BMS",
+            title: pevLocalizedText("bms.title.battery"),
+            subtitle: pevLocalizedText("bms.layout.no_live_readback"),
+            secondaryValue: pevLocalizedText("bms.secondary.no_live_bms"),
             bmsContent: PevBmsContent(
                 kind: .noData,
                 snapshot: snapshot,
                 chips: [
-                    PevBmsChip(id: .availability, title: "no live BMS", accent: .yellow),
+                    PevBmsChip(id: .availability, title: pevLocalizedText("bms.chip.no_live_bms"), accent: .yellow),
                 ]
             ),
         )
     }
 
     public static let live = PevScreenCatalog(screens: [
-        liveScreen(id: .eucRide, title: "EUC ride", subtitle: "Live telemetry"),
-        liveScreen(id: .bmsOverview, title: "Battery", subtitle: "Live BMS readback"),
-        liveScreen(id: .bmsCellMap6S, title: "Cell map", subtitle: "Live BMS readback"),
-        liveScreen(id: .bmsCellMap40S, title: "Cell map", subtitle: "Live BMS readback"),
-        liveScreen(id: .bmsCellDetail, title: "Cell detail", subtitle: "Live BMS readback"),
-        liveScreen(id: .bmsUnknownTopology, title: "Battery", subtitle: "Topology unavailable"),
-        liveScreen(id: .bmsNoData, title: "Battery", subtitle: "Live BMS readback unavailable"),
-        liveScreen(id: .vescRide, title: "VESC ride", subtitle: "Live telemetry"),
-        liveScreen(id: .vescDebug, title: "VESC state", subtitle: "Live telemetry")
+        liveScreen(id: .eucRide, title: pevLocalizedText("dashboard.title.euc_ride"), subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
+        liveScreen(id: .bmsOverview, title: pevLocalizedText("bms.title.battery"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(id: .bmsCellMap6S, title: pevLocalizedText("bms.title.cell_map"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(id: .bmsCellMap40S, title: pevLocalizedText("bms.title.cell_map"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(id: .bmsCellDetail, title: pevLocalizedText("bms.title.cell_detail"), subtitle: pevLocalizedText("bms.subtitle.live_readback")),
+        liveScreen(id: .bmsUnknownTopology, title: pevLocalizedText("bms.title.battery"), subtitle: pevLocalizedText("bms.subtitle.topology_unavailable")),
+        liveScreen(id: .bmsNoData, title: pevLocalizedText("bms.title.battery"), subtitle: pevLocalizedText("bms.layout.no_live_readback")),
+        liveScreen(id: .vescRide, title: pevLocalizedText("dashboard.title.vesc_ride"), subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry")),
+        liveScreen(id: .vescDebug, title: pevLocalizedText("dashboard.title.vesc_state"), subtitle: pevLocalizedText("dashboard.subtitle.live_telemetry"))
     ])
 
     private static func liveScreen(id: PevScreenID, title: String, subtitle: String) -> PevScreen {

@@ -1,6 +1,98 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "bms.chip.bms_online" : {
+      "comment" : "BMS status chip. The placeholder is the number of online BMS controllers.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld BMS online" } } }
+    },
+    "bms.chip.group" : {
+      "comment" : "BMS status chip. The placeholder is the selected cell-group index.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Group %lld" } } }
+    },
+    "bms.chip.limited_data" : {
+      "comment" : "BMS status chip when only limited data is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Limited data" } } }
+    },
+    "bms.chip.live_readback" : {
+      "comment" : "BMS status chip identifying live data readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live readback" } } }
+    },
+    "bms.chip.no_live_bms" : {
+      "comment" : "BMS status chip when no live BMS is present.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "no live BMS" } } }
+    },
+    "bms.chip.partial_data" : {
+      "comment" : "BMS status chip when data is incomplete.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Partial data" } } }
+    },
+    "bms.chip.selected_group" : {
+      "comment" : "BMS status chip when a specific cell group has not been selected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Selected group" } } }
+    },
+    "bms.chip.topology_unverified" : {
+      "comment" : "BMS status chip when pack topology is not verified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Topology unverified" } } }
+    },
+    "bms.layout.no_live_readback" : {
+      "comment" : "BMS topology label when no live BMS readback exists.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live BMS readback unavailable" } } }
+    },
+    "bms.secondary.no_live_bms" : {
+      "comment" : "BMS secondary value when no live BMS is present.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "no live BMS" } } }
+    },
+    "bms.subtitle.controller_estimate" : {
+      "comment" : "BMS no-data subtitle. The placeholder is the topology/layout label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ · controller-only estimate" } } }
+    },
+    "bms.subtitle.live_readback" : {
+      "comment" : "BMS screen subtitle for live BMS telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live BMS readback" } } }
+    },
+    "bms.subtitle.topology_unavailable" : {
+      "comment" : "BMS screen subtitle when pack topology is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Topology unavailable" } } }
+    },
+    "bms.title.battery" : {
+      "comment" : "BMS screen title for the vehicle battery.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery" } } }
+    },
+    "bms.title.cell_detail" : {
+      "comment" : "BMS screen title for one cell-group detail view.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell detail" } } }
+    },
+    "bms.title.cell_map" : {
+      "comment" : "BMS screen title for a cell map when the series count is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell map" } } }
+    },
+    "bms.title.cell_map_series" : {
+      "comment" : "BMS screen title for a cell map. The placeholder is the number of series groups.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lldS cell map" } } }
+    },
+    "bms.title.pack_overview" : {
+      "comment" : "BMS screen title for pack overview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack overview" } } }
+    },
+    "bms.title.unknown" : {
+      "comment" : "BMS screen title when the BMS type or topology is unknown.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown BMS" } } }
+    },
+    "dashboard.subtitle.live_telemetry" : {
+      "comment" : "Dashboard subtitle for live telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live telemetry" } } }
+    },
+    "dashboard.title.euc_ride" : {
+      "comment" : "Dashboard title for an electric unicycle ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "EUC ride" } } }
+    },
+    "dashboard.title.vesc_ride" : {
+      "comment" : "Dashboard title for a VESC ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC ride" } } }
+    },
+    "dashboard.title.vesc_state" : {
+      "comment" : "Dashboard title for VESC diagnostics state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC state" } } }
+    },
     "picker.action.capture_for_device" : {
       "comment" : "Accessibility label for starting a capture. The placeholder is the selected device name.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ for %@" } } }
