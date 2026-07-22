@@ -67,16 +67,7 @@ struct PickerDeviceRow: View {
     }
 
     private var statusPill: some View {
-        PevDashboardStatusPill(
-            title: row.state.actionTitle,
-            fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
-            foreground: row.state.isSupported ? .black : PevColors.muted,
-            stroke: row.state.isSupported ? nil : PevColors.cardStroke,
-            width: row.state.isSupported ? 76 : 64,
-            horizontalPadding: row.state.isSupported ? 10 : 8,
-            height: row.state.isSupported ? 38 : 30,
-            fixedHorizontal: true
-        )
+        PickerRowStatusPill(state: row.state)
     }
 }
 
@@ -115,14 +106,22 @@ struct ManualPickerRow: View {
     }
 
     private var statusPill: some View {
+        PickerRowStatusPill(state: row.state)
+    }
+}
+
+private struct PickerRowStatusPill: View {
+    let state: DevicePickerRowState
+
+    var body: some View {
         PevDashboardStatusPill(
-            title: row.state.actionTitle,
-            fill: row.state.isSupported ? PevColors.yellow : PevColors.disabledFill,
-            foreground: row.state.isSupported ? .black : PevColors.muted,
-            stroke: row.state.isSupported ? nil : PevColors.cardStroke,
-            width: row.state.isSupported ? 76 : 64,
-            horizontalPadding: row.state.isSupported ? 10 : 8,
-            height: row.state.isSupported ? 38 : 30,
+            title: state.actionTitle,
+            fill: state.isSupported ? PevColors.yellow : PevColors.disabledFill,
+            foreground: state.isSupported ? .black : PevColors.muted,
+            stroke: state.isSupported ? nil : PevColors.cardStroke,
+            width: state.isSupported ? 76 : 64,
+            horizontalPadding: state.isSupported ? 10 : 8,
+            height: state.isSupported ? 38 : 30,
             fixedHorizontal: true
         )
     }
