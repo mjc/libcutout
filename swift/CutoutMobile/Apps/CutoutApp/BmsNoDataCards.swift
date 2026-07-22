@@ -28,15 +28,17 @@ struct BmsNoDataHeader: View {
 }
 
 struct BmsNoDataWarningCard: View {
+    @ScaledMetric(relativeTo: .headline) private var warningIconSize = 28.0
+
     let snapshot: BmsSnapshot
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 14) {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 28, weight: .bold))
+                    .font(.system(size: warningIconSize, weight: .bold))
                     .foregroundStyle(PevColors.yellow)
-                    .frame(width: 28, height: 28)
+                    .frame(width: warningIconSize, height: warningIconSize)
                     .accessibilityHidden(true)
 
                 Text(snapshot.noDataWarningTitle)
