@@ -212,7 +212,10 @@ final class CutoutAppModel {
         let rows = devicePickerScanState?.rows ?? []
         guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
             phase = .scanning
-            devicePickerScanState = .failed("Device is no longer available", rows: rows)
+            devicePickerScanState = .failed(
+                localizedAppText("picker.error.device_no_longer_available"),
+                rows: rows
+            )
             return false
         }
 
@@ -232,7 +235,10 @@ final class CutoutAppModel {
             syncLiveActivity()
         } else {
             phase = .scanning
-            devicePickerScanState = .failed("Device is no longer available", rows: rows)
+            devicePickerScanState = .failed(
+                localizedAppText("picker.error.device_no_longer_available"),
+                rows: rows
+            )
         }
         return didPair
     }

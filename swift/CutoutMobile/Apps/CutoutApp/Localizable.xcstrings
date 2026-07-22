@@ -389,6 +389,10 @@
       "comment" : "Device picker title and its VoiceOver route label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose device" } } }
     },
+    "picker.error.device_no_longer_available" : {
+      "comment" : "Device picker failure shown when a selected scan result disappears before connection starts.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device is no longer available" } } }
+    },
     "picker.use_action.hint" : {
       "comment" : "VoiceOver hint for the device picker action that starts connecting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect to this device" } } }

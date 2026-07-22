@@ -69,6 +69,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("picker.section.record_only"), "Record only")
         XCTAssertEqual(localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
         XCTAssertEqual(localizedAppText("picker.use_action.hint"), "Connect to this device")
+        XCTAssertEqual(localizedAppText("picker.error.device_no_longer_available"), "Device is no longer available")
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
             "71%. Derived from voltage curve"
