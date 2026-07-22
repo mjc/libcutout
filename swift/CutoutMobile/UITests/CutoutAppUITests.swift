@@ -502,6 +502,8 @@ final class CutoutAppUITests: XCTestCase {
         let metric = screen.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", label)
         ).firstMatch
+        let scrollView = screen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : screen
 
         if metric.exists {
             let hittableExpectation = XCTNSPredicateExpectation(
@@ -526,12 +528,12 @@ final class CutoutAppUITests: XCTestCase {
 
         for index in 0..<6 where !metric.exists || (!metric.isHittable && !metric.frame.intersects(screen.frame)) {
             if index < 3 {
-                let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
-                let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+                let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+                let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
                 start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             } else {
-                let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
-                let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
+                let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
+                let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
                 start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
             }
         }

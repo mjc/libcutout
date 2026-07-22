@@ -3,6 +3,9 @@ import CutoutMobile
 import SwiftUI
 
 struct VescRideScreenView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     let liveSnapshot: VescRideSnapshot?
     let phase: SessionConnectionPhase
     let now: MonotonicMilliseconds
@@ -110,6 +113,10 @@ struct VescRideScreenView: View {
         ]
     }
 
+    private var prioritizesMetrics: Bool {
+        dynamicTypeSize.isAccessibilitySize && verticalSizeClass == .compact
+    }
+
     private var boardAngleDetail: String? {
         guard let angle = liveSnapshot?.boardAngle else { return nil }
         let balance = liveSnapshot?.balanceAngle.map { " · balance \(angleText($0))°" } ?? ""
@@ -134,6 +141,10 @@ struct VescRideScreenView: View {
             speedCaption: "board speed",
             allowsVerticalScroll: true,
         ) {
+
+            if prioritizesMetrics {
+                metricsGrid
+            }
 
             if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
                 PevDashboardWarningCard(
@@ -204,12 +215,9 @@ struct VescRideScreenView: View {
                 .padding(.top, 8)
             }
 
-            PevDashboardGrid(columnSpacing: 12, spacing: 12) {
-                ForEach(dashboardTiles) { tile in
-                    PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 96)
-                }
+            if !prioritizesMetrics {
+                metricsGrid
             }
-            .padding(.top, 8)
         }
         .accessibilityElement(children: .contain)
         .onChange(of: liveSnapshot?.warning) { _, warning in
@@ -217,5 +225,14 @@ struct VescRideScreenView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
+    }
+
+    private var metricsGrid: some View {
+        PevDashboardGrid(columnSpacing: 12, spacing: 12) {
+            ForEach(dashboardTiles) { tile in
+                PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 96)
+            }
+        }
+        .padding(.top, 8)
     }
 }
