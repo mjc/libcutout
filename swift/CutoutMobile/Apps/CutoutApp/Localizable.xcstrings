@@ -17,6 +17,10 @@
       "comment" : "VoiceOver label for the no-data BMS confidence summary.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confidence" } } }
     },
+    "bms.no_data.confidence_accessibility_value" : {
+      "comment" : "VoiceOver value for no-data BMS confidence. First placeholder is the confidence level; second is its safety qualification.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@. %2$@" } } }
+    },
     "bms.no_data.confidence.low" : {
       "comment" : "No-data BMS controller-estimate confidence when only partial evidence is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low" } } }
@@ -60,6 +64,10 @@
     "bms.no_data.pack_estimate_accessibility" : {
       "comment" : "VoiceOver label for the no-data BMS controller-only pack estimate.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack estimate" } } }
+    },
+    "bms.no_data.pack_estimate_accessibility_value" : {
+      "comment" : "VoiceOver value for the no-data BMS pack estimate. First placeholder is the estimated whole-number percentage; second is the estimate provenance.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@%%. %2$@" } } }
     },
     "bms.no_data.pack_voltage" : {
       "comment" : "No-data BMS metric label for reported pack voltage.",

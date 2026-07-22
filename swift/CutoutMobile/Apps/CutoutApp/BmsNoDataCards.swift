@@ -109,7 +109,9 @@ struct BmsNoDataPackEstimateCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(localizedAppText("bms.no_data.pack_estimate_accessibility"))
-        .accessibilityValue("\(percentText) percent. \(detail)")
+        .accessibilityValue(
+            localizedAppText("bms.no_data.pack_estimate_accessibility_value", percentText, detail)
+        )
     }
 
     private var confidence: some View {
@@ -135,7 +137,9 @@ struct BmsNoDataPackEstimateCard: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(localizedAppText("bms.no_data.confidence_accessibility"))
-        .accessibilityValue("\(confidenceTitle). \(confidenceDetail)")
+        .accessibilityValue(
+            localizedAppText("bms.no_data.confidence_accessibility_value", confidenceTitle, confidenceDetail)
+        )
     }
 }
 

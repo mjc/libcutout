@@ -69,6 +69,14 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("picker.section.record_only"), "Record only")
         XCTAssertEqual(localizedAppText("picker.capture_kind_required_hint"), "Enter a device kind above to enable capture")
         XCTAssertEqual(
+            localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),
+            "71%. Derived from voltage curve"
+        )
+        XCTAssertEqual(
+            localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Not cell-safe"),
+            "Medium. Not cell-safe"
+        )
+        XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"
         )
