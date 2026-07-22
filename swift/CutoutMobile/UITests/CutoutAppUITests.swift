@@ -319,6 +319,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescRidePassesAccessibilityAuditAtExtraExtraExtraLargeType() throws {
+        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+    }
+
     func testVescRidePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
@@ -450,6 +454,11 @@ final class CutoutAppUITests: XCTestCase {
                 arguments += [
                     "-UIPreferredContentSizeCategoryName",
                     "UICTContentSizeCategoryAccessibilityXXXL",
+                ]
+            } else if name.contains("ExtraExtraExtraLarge") {
+                arguments += [
+                    "-UIPreferredContentSizeCategoryName",
+                    "UICTContentSizeCategoryXXXL",
                 ]
             }
         }
