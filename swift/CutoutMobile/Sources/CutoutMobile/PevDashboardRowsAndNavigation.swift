@@ -290,6 +290,10 @@ public struct PevDashboardScanningPill: View {
         isScanning && !reduceMotion
     }
 
+    static func showsIndicators(isScanning: Bool) -> Bool {
+        isScanning
+    }
+
     public var body: some View {
         HStack {
             Text(title)
@@ -297,15 +301,17 @@ public struct PevDashboardScanningPill: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
             Spacer(minLength: 12)
-            HStack(spacing: 9) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .frame(width: 13, height: 13)
-                        .opacity(!isScanning || index == phase ? 1 : 0.32)
+            if Self.showsIndicators(isScanning: isScanning) {
+                HStack(spacing: 9) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .frame(width: 13, height: 13)
+                            .opacity(index == phase ? 1 : 0.32)
+                    }
                 }
+                .foregroundStyle(.yellow)
+                .accessibilityHidden(true)
             }
-            .foregroundStyle(.yellow)
-            .accessibilityHidden(true)
         }
         .foregroundStyle(PevDashboardColors.primaryText)
         .padding(.horizontal, 22)

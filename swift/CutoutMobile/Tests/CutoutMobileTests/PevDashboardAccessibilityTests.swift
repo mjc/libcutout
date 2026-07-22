@@ -82,6 +82,8 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     }
 
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
+        XCTAssertTrue(PevDashboardScanningPill.showsIndicators(isScanning: true))
+        XCTAssertFalse(PevDashboardScanningPill.showsIndicators(isScanning: false))
         XCTAssertTrue(
             PevDashboardScanningPill.shouldAnimate(
                 isScanning: true,
