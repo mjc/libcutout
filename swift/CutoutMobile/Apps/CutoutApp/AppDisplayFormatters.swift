@@ -94,8 +94,6 @@ extension PevScreen {
             "Cells"
         case .bmsUnknownTopology:
             "Faults"
-        case .eucGarage:
-            "Pack"
         case .vescRide:
             "VESC"
         case .vescDebug:

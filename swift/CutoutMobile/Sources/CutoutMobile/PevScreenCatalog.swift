@@ -9,13 +9,13 @@ public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
     case bmsCellDetail
     case bmsUnknownTopology
     case bmsNoData
-    case eucGarage
     case vescRide
     case vescDebug
 }
 
 public enum PevNavigationTarget: Equatable, Hashable, Sendable {
     case screen(PevScreenID)
+    case eucPack
     case vescRide
 }
 
@@ -312,8 +312,8 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
 }
 
 private extension PevBmsScreenKind {
-    init(liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) {
-        if let explicitKind = Self(explicitScreenID: preferredScreenID) {
+    init(liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID? = nil) {
+        if let preferredScreenID, let explicitKind = Self(explicitScreenID: preferredScreenID) {
             self = explicitKind
             return
         }
@@ -356,7 +356,7 @@ private extension PevBmsScreenKind {
             self = .unknownTopology
         case .bmsNoData:
             self = .noData
-        case .eucRide, .eucGarage, .vescRide, .vescDebug:
+        case .eucRide, .vescRide, .vescDebug:
             return nil
         }
     }
@@ -931,28 +931,31 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
         screens.first { $0.id == id }
     }
 
+    public func presentedBmsScreen(liveBmsSnapshot: BmsSnapshot?) -> PevScreen {
+        resolvedBmsScreen(liveBmsSnapshot: liveBmsSnapshot, preferredScreenID: nil)
+    }
+
     public func presentedScreen(
         for screen: PevScreen,
         liveBmsSnapshot: BmsSnapshot?
     ) -> PevScreen {
-        guard let liveBmsSnapshot else {
-            guard screen.id == .eucGarage || screen.id.isBmsScreen else {
-                return screen
-            }
-            return Self.noLiveBmsReadbackScreen()
-        }
+        guard screen.id.isBmsScreen else { return screen }
+        return resolvedBmsScreen(liveBmsSnapshot: liveBmsSnapshot, preferredScreenID: screen.id)
+    }
 
-        let preferredScreenID = screen.id == .eucGarage ? PevScreenID.eucGarage : screen.id
-        let isBmsPresentation = screen.id == .eucGarage || screen.id.isBmsScreen
+    private func resolvedBmsScreen(
+        liveBmsSnapshot: BmsSnapshot?,
+        preferredScreenID: PevScreenID?
+    ) -> PevScreen {
+        guard let liveBmsSnapshot else { return Self.noLiveBmsReadbackScreen() }
 
-        guard isBmsPresentation else {
-            return screen
-        }
+        let resolvedKind = PevBmsScreenKind(
+            liveSnapshot: liveBmsSnapshot,
+            preferredScreenID: preferredScreenID
+        )
+        let bmsScreenID = preferredScreenID ?? resolvedKind.presentationScreenID
 
-        let resolvedKind = PevBmsScreenKind(liveSnapshot: liveBmsSnapshot, preferredScreenID: preferredScreenID)
-        let bmsScreenID = screen.id == .eucGarage ? resolvedKind.presentationScreenID : screen.id
-
-        let metadata = self.screen(id: bmsScreenID) ?? screen
+        let metadata = self.screen(id: bmsScreenID) ?? Self.noLiveBmsReadbackScreen()
         let resolvedContent = PevBmsContent.live(with: liveBmsSnapshot, preferredScreenID: bmsScreenID)
 
         return PevScreen(
@@ -1000,7 +1003,6 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
         liveScreen(id: .bmsCellDetail, title: "Cell detail", subtitle: "Live BMS readback"),
         liveScreen(id: .bmsUnknownTopology, title: "Battery", subtitle: "Topology unavailable"),
         liveScreen(id: .bmsNoData, title: "Battery", subtitle: "Live BMS readback unavailable"),
-        liveScreen(id: .eucGarage, title: "EUC health", subtitle: "Live readbacks"),
         liveScreen(id: .vescRide, title: "VESC ride", subtitle: "Live telemetry"),
         liveScreen(id: .vescDebug, title: "VESC state", subtitle: "Live telemetry")
     ])
@@ -1020,7 +1022,7 @@ private extension PevScreenID {
         switch self {
         case .bmsOverview, .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail, .bmsUnknownTopology, .bmsNoData:
             true
-        case .eucRide, .eucGarage, .vescRide, .vescDebug:
+        case .eucRide, .vescRide, .vescDebug:
             false
         }
     }

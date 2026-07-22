@@ -48,7 +48,6 @@ final class PevScreenCatalogTests: XCTestCase {
                 .bmsCellDetail,
                 .bmsUnknownTopology,
                 .bmsNoData,
-                .eucGarage,
                 .vescRide,
                 .vescDebug,
             ]
@@ -74,13 +73,13 @@ final class PevScreenCatalogTests: XCTestCase {
     func testRideTabsNavigateToTheirProductionSurfaces() {
         XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
         XCTAssertNil(PevRideTabs.eucRideTabs().first?.destinationScreenID)
-        XCTAssertEqual(PevRideTabs.eucRideTabs()[1].destinationTarget, .screen(.eucGarage))
+        XCTAssertEqual(PevRideTabs.eucRideTabs()[1].destinationTarget, .eucPack)
         XCTAssertEqual(PevRideTabs.vescRideTabs().first?.destinationTarget, .vescRide)
         XCTAssertEqual(PevRideTabs.vescRideTabs()[1].destinationTarget, .screen(.vescDebug))
     }
 
     func testSelectedTabSemanticsTrackExplicitRoutes() {
-        XCTAssertTrue(PevRideTabs.eucRideTabs(selected: .eucGarage)[1].isSelected)
+        XCTAssertTrue(PevRideTabs.eucRideTabs(selected: .bmsOverview)[1].isSelected)
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescRide)[0].isSelected)
         XCTAssertFalse(PevRideTabs.vescRideTabs(selected: .vescDebug)[0].isSelected)
         XCTAssertTrue(PevRideTabs.vescRideTabs(selected: .vescDebug)[1].isSelected)
@@ -219,7 +218,6 @@ final class PevScreenCatalogTests: XCTestCase {
     }
 
     func testPresentedPackScreenUsesLiveBmsState() throws {
-        let pack = try XCTUnwrap(PevScreenCatalog.live.screen(id: .eucGarage))
         let snapshot = BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "6S1P pack",
@@ -234,7 +232,7 @@ final class PevScreenCatalogTests: XCTestCase {
             }
         )
 
-        let presented = PevScreenCatalog.live.presentedScreen(for: pack, liveBmsSnapshot: snapshot)
+        let presented = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: snapshot)
 
         XCTAssertEqual(presented.id, .bmsCellMap6S)
         XCTAssertEqual(presented.bmsContent?.snapshot, snapshot)
@@ -289,9 +287,7 @@ final class PevScreenCatalogTests: XCTestCase {
     }
 
     func testPresentedPackWithoutBmsUsesExplicitUnavailableState() throws {
-        let pack = try XCTUnwrap(PevScreenCatalog.live.screen(id: .eucGarage))
-
-        let presented = PevScreenCatalog.live.presentedScreen(for: pack, liveBmsSnapshot: nil)
+        let presented = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: nil)
 
         XCTAssertEqual(presented.id, .bmsNoData)
         XCTAssertEqual(presented.secondaryValue, "no live BMS")

@@ -5,8 +5,6 @@ struct PevScreenContainer: View {
     let screen: PevScreen
     let rideState: EucRideScreenState?
     let rideTitle: String?
-    let settingsReadback: SettingsReadback?
-    let faultHistoryReadback: FaultHistoryReadback?
     let bmsSnapshot: BmsSnapshot?
     let phoneLocationReadback: PhoneLocationReadback
     let vescSnapshot: VescRideSnapshot?
@@ -39,13 +37,6 @@ struct PevScreenContainer: View {
                     selectedGroupIndex: selectedBmsGroupIndex,
                     showGroupDetail: showBmsGroupDetail,
                     showCellMap: showBmsCellMap
-                )
-            case .eucGarage:
-                EucGarageScreenView(
-                    screen: screen,
-                    settingsReadback: settingsReadback,
-                    faultHistoryReadback: faultHistoryReadback,
-                    bmsSnapshot: bmsSnapshot
                 )
             case .vescRide:
                 VescRideScreenView(

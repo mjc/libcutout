@@ -14,7 +14,6 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsCellDetail), .eucPack(.bmsCellDetail(nil)))
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsUnknownTopology), .eucPack(.bmsUnknownTopology))
         XCTAssertEqual(CutoutAppRoute.route(for: .bmsNoData), .eucPack(.bmsNoData))
-        XCTAssertEqual(CutoutAppRoute.route(for: .eucGarage), .eucPack(.eucGarage))
         XCTAssertEqual(CutoutAppRoute.route(for: .vescDebug), .vescDebug)
     }
 
@@ -34,7 +33,7 @@ final class CutoutAppRouteTests: XCTestCase {
             .eucPack(.bmsCellDetail(nil)),
             .eucPack(.bmsUnknownTopology),
             .eucPack(.bmsNoData),
-            .eucPack(.eucGarage),
+            .eucPack(.root),
             .vescRide,
             .vescDebug,
             .capture,
@@ -64,6 +63,9 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.vescRide.navigationTabs.map(\.id), [.ride, .debug, .map, .logs])
         XCTAssertTrue(
             CutoutAppRoute.eucPack(.bmsOverview).navigationTabs.first(where: { $0.id == .pack })?.isSelected == true
+        )
+        XCTAssertTrue(
+            CutoutAppRoute.eucPack(.root).navigationTabs.first(where: { $0.id == .pack })?.isSelected == true
         )
         XCTAssertTrue(
             CutoutAppRoute.vescDebug.navigationTabs.first(where: { $0.id == .debug })?.isSelected == true

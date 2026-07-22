@@ -195,8 +195,6 @@ struct ContentView: View {
                 ? nil
                 : model.rideState,
             rideTitle: model.selectedRideTitle,
-            settingsReadback: model.settingsReadback,
-            faultHistoryReadback: model.faultHistoryReadback,
             bmsSnapshot: model.bmsSnapshot,
             phoneLocationReadback: model.phoneLocationReadback,
             vescSnapshot: model.vescRideSnapshot,
@@ -210,7 +208,7 @@ struct ContentView: View {
                 navigate(to: .eucPack(.bmsCellDetail(groupIndex)))
             },
             showBmsCellMap: {
-                navigate(to: .eucPack(.eucGarage))
+                navigate(to: .eucPack(.root))
             }
         )
     }
@@ -276,8 +274,12 @@ struct ContentView: View {
         case .eucRide:
             catalog.screen(id: .eucRide)
         case .eucPack(let screen):
-            catalog.screen(id: screen.screenID).map {
-                catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
+            if let screenID = screen.screenID {
+                catalog.screen(id: screenID).map {
+                    catalog.presentedScreen(for: $0, liveBmsSnapshot: model.bmsSnapshot)
+                }
+            } else {
+                catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
             }
         case .vescRide:
             catalog.screen(id: .vescRide)

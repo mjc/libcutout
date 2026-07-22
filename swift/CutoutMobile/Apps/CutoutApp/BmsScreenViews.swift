@@ -105,3 +105,40 @@ struct BmsScreenView: View {
         )
     }
 }
+
+struct BmsDiagnosticsSection: View {
+    let snapshot: BmsSnapshot
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            PevDashboardKeyValueRows(
+                rows: snapshot.readbackRows
+                    .filter { $0.label != "page" && $0.label != "page verification" }
+                    .map { row in
+                        PevDashboardKeyValueRow(id: row.label, label: row.label, value: row.value)
+                    },
+                fill: PevColors.cardFill,
+                stroke: PevColors.cardStroke,
+                labelColor: PevColors.muted,
+                valueColor: PevColors.primaryText,
+                verticalPadding: 6
+            )
+            .padding(.top, 8)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("BMS diagnostics")
+                    .font(.headline)
+                    .foregroundStyle(PevColors.primaryText)
+                Text("raw readback, available when we need to debug")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(PevColors.muted)
+            }
+        }
+        .tint(PevColors.muted)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(PevDashboardCardBackground(cornerRadius: 20))
+        .accessibilityIdentifier("bms.diagnostics")
+    }
+}
