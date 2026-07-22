@@ -93,6 +93,34 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(action.label, "Start Ride")
     }
 
+    func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+
+        let disconnect = app.buttons["dashboard.disconnect"]
+        XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
+        disconnect.tap()
+
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        let forget = app.buttons["device-picker.forget-saved-device"]
+        XCTAssertTrue(forget.waitForExistence(timeout: 5))
+        XCTAssertEqual(forget.label, "Forget saved device")
+        XCTAssertTrue(forget.isHittable)
+
+        let dashboard = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "dashboard.screen.")
+        ).firstMatch
+        let reconnect = expectation(
+            for: NSPredicate(format: "exists == 1"),
+            evaluatedWith: dashboard
+        )
+        reconnect.isInverted = true
+        wait(for: [reconnect], timeout: 2)
+
+        forget.tap()
+        XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
+    }
+
     func testCapturePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         enterCapture()
 

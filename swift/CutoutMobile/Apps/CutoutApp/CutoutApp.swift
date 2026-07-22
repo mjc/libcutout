@@ -36,7 +36,7 @@ struct CutoutApp: App {
                 navigationTabs: navigationTabs,
                 currentRoute: currentRoute,
                 navigationPath: $navigationPath,
-                disconnect: model.disconnectAndSearch
+                disconnect: model.disconnectTransport
             )
         }
     }

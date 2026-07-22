@@ -17,6 +17,22 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.devicePickerScanState?.statusText, "Device is no longer available")
     }
 
+    @MainActor
+    func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
+        let store = DevicePickerSelectionStore()
+        store.save(platformIdentifier: "saved-device")
+        defer { store.clear() }
+        let model = CutoutAppModel()
+
+        model.disconnectTransport()
+
+        XCTAssertEqual(store.platformIdentifier, "saved-device")
+
+        model.forgetSavedDevice()
+
+        XCTAssertNil(store.platformIdentifier)
+    }
+
     func testCaptureStatusAnnouncesOnlyMeaningfulTransitions() {
         XCTAssertEqual(
             CaptureStatus.labelStarted(label: "Ride", notificationCount: 3, fileName: "ride.cutout")

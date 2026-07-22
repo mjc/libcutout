@@ -103,6 +103,7 @@ final class CutoutAppModel {
     private(set) var isRecordOnlyCapture = false
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
+    private(set) var hasSavedDevice = false
 
     var speed: SpeedReadout {
         displayState.speed
@@ -134,10 +135,12 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private var permitsStoredDeviceAutoPairing = true
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     init() {
         core = Self.makeSessionDriver()
+        hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
             self?.syncLiveActivity()
@@ -185,6 +188,7 @@ final class CutoutAppModel {
 
         selectedRideTitle = selectedRow.title
         selectedConnectionRoute = selectedRow.connectionRoute
+        permitsStoredDeviceAutoPairing = true
         phase = .discoveringServices
         let didPair = core.pair(platformIdentifier: platformIdentifier)
         if didPair {
@@ -192,6 +196,7 @@ final class CutoutAppModel {
             captureLabel = nil
             recordOnlyDeviceKind = nil
             selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+            hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
             syncLiveActivity()
@@ -228,6 +233,8 @@ final class CutoutAppModel {
         }
         if didStart {
             selectedDeviceStore.clear()
+            hasSavedDevice = false
+            permitsStoredDeviceAutoPairing = false
             if modelHint != .unknown {
                 core.annotateCapture(key: "device_kind", value: annotationKind)
             }
@@ -268,7 +275,7 @@ final class CutoutAppModel {
         )
     }
 
-    func disconnectAndSearch() {
+    func disconnectTransport() {
         endLiveActivity(reason: .disconnected)
         isRecordOnlyCapture = false
         activeCaptureLabels.removeAll()
@@ -278,8 +285,14 @@ final class CutoutAppModel {
         selectedConnectionRoute = nil
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
-        selectedDeviceStore.clear()
+        permitsStoredDeviceAutoPairing = false
         core.disconnectAndScan()
+    }
+
+    func forgetSavedDevice() {
+        disconnectTransport()
+        selectedDeviceStore.clear()
+        hasSavedDevice = false
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
@@ -314,6 +327,7 @@ final class CutoutAppModel {
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
         devicePickerScanState = scanState
         guard phase == .starting || phase == .scanning else { return }
+        guard permitsStoredDeviceAutoPairing else { return }
         guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
         guard scanState.storedSupportedRow(platformIdentifier: platformIdentifier) != nil else { return }
         _ = pair(platformIdentifier: platformIdentifier)

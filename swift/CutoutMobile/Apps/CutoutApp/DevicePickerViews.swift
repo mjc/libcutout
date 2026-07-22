@@ -6,7 +6,9 @@ struct DevicePickerView: View {
     var connectionPhase: SessionConnectionPhase? = nil
     let captureStatusText: String?
     let isRecordOnlyCapture: Bool
+    let hasSavedDevice: Bool
     let pair: (DevicePickerRow) -> Void
+    let forgetSavedDevice: () -> Void
     let recordOnly: (DevicePickerRow, String) -> Void
     @State private var recordOnlyDeviceKind = ""
     @FocusState private var isCaptureKindFocused: Bool
@@ -38,6 +40,12 @@ struct DevicePickerView: View {
             )
                 .padding(.top, 4)
                 .accessibilityIdentifier("device-picker.connection-status")
+
+            if hasSavedDevice {
+                Button("Forget saved device", role: .destructive, action: forgetSavedDevice)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("device-picker.forget-saved-device")
+            }
 
             if let captureStatusText {
                 PevStatusStrip(

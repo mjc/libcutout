@@ -34,7 +34,9 @@ struct ContentView: View {
                     connectionPhase: model.phase,
                     captureStatusText: model.captureStatusText,
                     isRecordOnlyCapture: model.isRecordOnlyCapture,
+                    hasSavedDevice: model.hasSavedDevice,
                     pair: pair,
+                    forgetSavedDevice: model.forgetSavedDevice,
                     recordOnly: { row, deviceKind in
                         if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
                             navigate(to: model.isRecordOnlyCapture ? .capture : .eucRide)
@@ -101,7 +103,7 @@ struct ContentView: View {
     }
 
     private func disconnectAndReturnToPicker() {
-        model.disconnectAndSearch()
+        model.disconnectTransport()
         navigate(to: .devicePicker)
     }
 
