@@ -70,6 +70,10 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(rows.suffix(4).map(\.accessibilityValueText), Array(repeating: "unavailable", count: 4))
     }
 
+    func testLiveThermalValueUsesTypedUnavailableMetricValue() {
+        XCTAssertEqual(liveThermalValue(telemetry: TelemetrySnapshot()), .unavailable)
+    }
+
     func testVescFootpadPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("vesc.footpad.left"), "LEFT / ADC1")
         XCTAssertEqual(localizedAppText("vesc.footpad.right"), "RIGHT / ADC2")
