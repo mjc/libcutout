@@ -11,7 +11,7 @@ struct BmsNoDataLayout: View {
     private var snapshot: BmsSnapshot { content.snapshot }
     private var controllerEstimatePercentText: String {
         if let percent = rideState?.controllerOnlyEstimatePercent ?? snapshot.energyPercent {
-            return String(percent.value)
+            return RideUnits.decimalString(Double(percent.value), fractionDigits: 0)
         }
         return "--"
     }

@@ -204,7 +204,7 @@ struct BmsDetailLayout: View {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.detail.resistance"),
                             metricValue: selectedGroup.resistance.map {
-                                let value = String($0.value)
+                                let value = RideUnits.decimalString(Double($0.value), fractionDigits: 0)
                                 return .available(display: value, accessibility: value)
                             } ?? .unavailable,
                             unit: "mΩ",
