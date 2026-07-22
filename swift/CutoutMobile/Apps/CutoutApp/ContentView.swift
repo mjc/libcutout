@@ -197,25 +197,9 @@ struct ContentView: View {
                 .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
             }
         case .vescRide:
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                VescRideScreenView(
-                    liveSnapshot: model.vescRideSnapshot,
-                    phase: model.phase,
-                    now: model.currentMonotonicTime,
-                    captureStatusText: model.captureStatusText
-                )
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("dashboard.screen.vescRide")
-            }
+            VescRideRouteView(model: model)
         case .vescDebug:
-            VescDebugScreenView(
-                snapshot: model.vescRideSnapshot,
-                phase: model.phase,
-                notificationCount: model.displayState.notificationCount,
-                captureStatusText: model.captureStatusText
-            )
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier("dashboard.screen.vescDebug")
+            VescDebugRouteView(model: model)
         case .capture:
             CaptureRecordingScreen(
                 deviceKind: model.recordOnlyDeviceKind,
@@ -292,6 +276,38 @@ struct ContentView: View {
         } else {
             catalog.presentedBmsScreen(liveBmsSnapshot: model.bmsSnapshot)
         }
+    }
+}
+
+private struct VescRideRouteView: View {
+    let model: CutoutAppModel
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            VescRideScreenView(
+                liveSnapshot: model.vescRideSnapshot,
+                phase: model.phase,
+                now: model.currentMonotonicTime,
+                captureStatusText: model.captureStatusText
+            )
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("dashboard.screen.vescRide")
+        }
+    }
+}
+
+private struct VescDebugRouteView: View {
+    let model: CutoutAppModel
+
+    var body: some View {
+        VescDebugScreenView(
+            snapshot: model.vescRideSnapshot,
+            phase: model.phase,
+            notificationCount: model.displayState.notificationCount,
+            captureStatusText: model.captureStatusText
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("dashboard.screen.vescDebug")
     }
 }
 
