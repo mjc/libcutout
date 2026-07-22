@@ -6,7 +6,6 @@ struct BmsNoDataLayout: View {
     let content: PevBmsContent
     let rideState: EucRideScreenState?
     let liveSnapshot: BmsSnapshot?
-    @State private var showsDiagnostics = false
 
     private var snapshot: BmsSnapshot { content.snapshot }
     private var controllerEstimatePercentText: String {
@@ -121,10 +120,7 @@ struct BmsNoDataLayout: View {
                     )
 
                     if let liveSnapshot, liveSnapshot.shouldRenderReadback {
-                        BmsDiagnosticsSection(
-                            snapshot: liveSnapshot,
-                            isExpanded: $showsDiagnostics
-                        )
+                        BmsDiagnosticsSection(snapshot: liveSnapshot)
                     }
                 }
                 .padding(.horizontal, 24)

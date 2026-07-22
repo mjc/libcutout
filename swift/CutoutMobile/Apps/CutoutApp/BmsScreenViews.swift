@@ -8,7 +8,6 @@ struct BmsScreenView: View {
     let selectedGroupIndex: Int?
     let showGroupDetail: (Int) -> Void
     let showCellMap: () -> Void
-    @State private var showsDiagnostics = false
 
     private var content: PevBmsContent {
         screen.bmsContent ?? PevBmsContent(
@@ -43,7 +42,7 @@ struct BmsScreenView: View {
                             chipRow
                             contentSection()
                             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
-                                liveReadbackSection(snapshot: bmsSnapshot)
+                                BmsDiagnosticsSection(snapshot: bmsSnapshot)
                             }
                         }
                         .padding(.horizontal, 23)
@@ -99,17 +98,11 @@ struct BmsScreenView: View {
         }
     }
 
-    private func liveReadbackSection(snapshot: BmsSnapshot) -> some View {
-        BmsDiagnosticsSection(
-            snapshot: snapshot,
-            isExpanded: $showsDiagnostics
-        )
-    }
 }
 
 struct BmsDiagnosticsSection: View {
     let snapshot: BmsSnapshot
-    @Binding var isExpanded: Bool
+    @State private var isExpanded = false
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
