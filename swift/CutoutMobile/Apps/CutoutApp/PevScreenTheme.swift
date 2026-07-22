@@ -291,7 +291,7 @@ func vescDebugRows(
     return [
         PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), value: phase.displayText),
         PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), value: vescDebugProtocolText(snapshot.subProtocol)),
-        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: vescDebugOperatingStateText(snapshot)),
+        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: vescOperatingStateText(snapshot)),
         PevDashboardKeyValueRow(id: "notifications", label: localizedAppText("vesc.debug.row.notifications"), value: String(notificationCount)),
         PevDashboardKeyValueRow(
             id: "voltage",
@@ -340,7 +340,7 @@ func vescDebugProtocolText(_ subProtocol: VescSubProtocol) -> String {
     }
 }
 
-func vescDebugOperatingStateText(_ snapshot: VescRideSnapshot) -> String {
+func vescOperatingStateText(_ snapshot: VescRideSnapshot) -> String {
     switch snapshot.operatingState {
     case .parked:
         localizedAppText("vesc.debug.state.parked")
@@ -353,6 +353,13 @@ func vescDebugOperatingStateText(_ snapshot: VescRideSnapshot) -> String {
     case .unknown:
         localizedAppText("vesc.debug.state.unknown")
     }
+}
+
+func vescRideSubtitle(_ snapshot: VescRideSnapshot) -> String {
+    if case .unknown = snapshot.operatingState {
+        return snapshot.vehicleKind.shortDisplayName
+    }
+    return vescOperatingStateText(snapshot)
 }
 
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {

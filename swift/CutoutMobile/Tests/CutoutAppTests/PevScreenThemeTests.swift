@@ -106,7 +106,19 @@ final class PevScreenThemeTests: XCTestCase {
             controllerState: .unknown,
             operatingState: .riding
         )
-        XCTAssertEqual(vescDebugOperatingStateText(snapshot), "Riding")
+        XCTAssertEqual(vescOperatingStateText(snapshot), "Riding")
+    }
+
+    func testVescRideSubtitleUsesTheSharedLocalizedOperatingState() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            operatingState: .charging
+        )
+
+        XCTAssertEqual(vescRideSubtitle(snapshot), "Charging")
     }
 
     func testVescFootpadPresentationUsesTheAppCatalog() {

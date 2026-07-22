@@ -17,7 +17,7 @@ struct VescRideScreenView: View {
 
     private var subtitle: String {
         if let liveSnapshot {
-            return liveSnapshot.screenSubtitle
+            return vescRideSubtitle(liveSnapshot)
         }
         return phase == .live ? localizedAppText("vesc.subtitle.telemetry_pending") : phase.displayText
     }
