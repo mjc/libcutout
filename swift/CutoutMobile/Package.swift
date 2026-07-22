@@ -37,7 +37,8 @@ let package = Package(
         .executableTarget(
             name: "CutoutApp",
             dependencies: ["CutoutMobile"],
-            path: "Apps/CutoutApp"
+            path: "Apps/CutoutApp",
+            resources: [.process("Localizable.xcstrings")]
         ),
         .executableTarget(
             name: "CutoutLiveActivityExtension",

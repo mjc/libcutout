@@ -1,4 +1,11 @@
+import Foundation
 import CutoutMobile
+
+#if SWIFT_PACKAGE
+private let appLocalizationBundle = Bundle.module
+#else
+private let appLocalizationBundle = Bundle.main
+#endif
 
 struct DevicePickerConnectionPresentation: Equatable {
     let title: String
@@ -14,27 +21,60 @@ struct DevicePickerConnectionPresentation: Equatable {
     init(scanState: DevicePickerScanState?, phase: SessionConnectionPhase?) {
         switch phase {
         case .bluetoothUnavailable:
-            self = .init(title: "Bluetooth unavailable", showsActivity: false, symbolName: "bolt.slash.fill")
+            self = .init(
+                title: String(localized: "picker.status.bluetooth_unavailable", table: "Localizable", bundle: appLocalizationBundle),
+                showsActivity: false,
+                symbolName: "bolt.slash.fill"
+            )
         case .failed(let failure):
             self = .init(title: failure.displayText, showsActivity: false, symbolName: "xmark.octagon.fill")
         case .connecting, .discoveringServices, .subscribing:
-            self = .init(title: "Connecting…", showsActivity: true)
+            self = .init(title: String(localized: "picker.status.connecting", table: "Localizable", bundle: appLocalizationBundle), showsActivity: true)
         case .starting:
-            self = .init(title: "Starting Bluetooth…", showsActivity: false, symbolName: "bolt.horizontal.circle")
+            self = .init(
+                title: String(localized: "picker.status.starting_bluetooth", table: "Localizable", bundle: appLocalizationBundle),
+                showsActivity: false,
+                symbolName: "bolt.horizontal.circle"
+            )
         case .scanning:
             self = .init(
-                title: scanState?.statusText ?? "Scanning Bluetooth",
+                title: pickerScanStatusTitle(scanState),
                 showsActivity: scanState?.status == .scanning || scanState == nil
             )
         case .live:
-            self = .init(title: "Live", showsActivity: false, symbolName: "checkmark.circle.fill")
+            self = .init(
+                title: String(localized: "picker.status.live", table: "Localizable", bundle: appLocalizationBundle),
+                showsActivity: false,
+                symbolName: "checkmark.circle.fill"
+            )
         case nil:
             self = .init(
-                title: scanState?.statusText ?? "Starting Bluetooth…",
+                title: pickerScanStatusTitle(scanState),
                 showsActivity: false,
                 symbolName: "bolt.horizontal.circle"
             )
         }
+    }
+}
+
+private func pickerScanStatusTitle(_ scanState: DevicePickerScanState?) -> String {
+    guard let scanState else {
+        return String(localized: "picker.status.starting_bluetooth", table: "Localizable", bundle: appLocalizationBundle)
+    }
+
+    return switch scanState.status {
+    case .scanning:
+        String(localized: "picker.status.scanning_bluetooth", table: "Localizable", bundle: appLocalizationBundle)
+    case .idle where scanState.rows.isEmpty:
+        String(localized: "picker.status.no_devices", table: "Localizable", bundle: appLocalizationBundle)
+    case .idle:
+        String(localized: "picker.status.scan_complete", table: "Localizable", bundle: appLocalizationBundle)
+    case .bluetoothUnavailable:
+        String(localized: "picker.status.bluetooth_unavailable", table: "Localizable", bundle: appLocalizationBundle)
+    case .permissionDenied:
+        String(localized: "picker.status.bluetooth_permission_denied", table: "Localizable", bundle: appLocalizationBundle)
+    case .failed(let message):
+        message
     }
 }
 

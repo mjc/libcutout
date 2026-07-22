@@ -1,0 +1,61 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "bms.display_modes" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Display modes" } }
+      }
+    },
+    "capture.stop" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop capture" } }
+      }
+    },
+    "picker.saved_device.forget" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget saved device" } }
+      }
+    },
+    "picker.status.bluetooth_permission_denied" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth permission denied" } }
+      }
+    },
+    "picker.status.bluetooth_unavailable" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth unavailable" } }
+      }
+    },
+    "picker.status.connecting" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting…" } }
+      }
+    },
+    "picker.status.live" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Live" } }
+      }
+    },
+    "picker.status.no_devices" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } }
+      }
+    },
+    "picker.status.scan_complete" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth scan complete" } }
+      }
+    },
+    "picker.status.scanning_bluetooth" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Scanning Bluetooth" } }
+      }
+    },
+    "picker.status.starting_bluetooth" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Starting Bluetooth…" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
