@@ -601,7 +601,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
 
-    func testVescLiveOwnerKeepsRetryingAfterNonRealtimeNotification() throws {
+    func testVescLiveOwnerRetriesAfterNonRealtimeNotification() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
@@ -628,7 +628,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             at: MonotonicMilliseconds(2)
         )
 
-        let retryExpectation = expectation(description: "vesc telemetry retries after generic notification")
+        let retryExpectation = expectation(description: "bounded VESC telemetry retries after generic notification")
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
             retryExpectation.fulfill()
         }
