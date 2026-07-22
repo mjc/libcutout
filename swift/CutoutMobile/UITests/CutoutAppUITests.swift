@@ -262,12 +262,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(packTab.isHittable)
         packTab.tap()
 
-        let bmsScreen = app.descendants(matching: .any)["dashboard.screen.bmsOverview"]
+        let bmsScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellMap6S"]
         XCTAssertTrue(bmsScreen.waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
-        for label in ["usable energy", "lowest group", "highest temp", "balancing", "fault state"] {
-            assertMetricIsReachable(label, in: bmsScreen)
-        }
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 

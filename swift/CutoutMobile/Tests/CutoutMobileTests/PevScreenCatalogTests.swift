@@ -40,6 +40,7 @@ final class PevScreenCatalogTests: XCTestCase {
     func testRideTabsNavigateToTheirProductionSurfaces() {
         XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
         XCTAssertNil(PevRideTabs.eucRideTabs().first?.destinationScreenID)
+        XCTAssertEqual(PevRideTabs.eucRideTabs()[1].destinationTarget, .screen(.eucGarage))
         XCTAssertEqual(PevRideTabs.vescRideTabs().first?.destinationTarget, .vescRide)
         XCTAssertEqual(PevRideTabs.vescRideTabs()[1].destinationTarget, .screen(.vescDebug))
     }

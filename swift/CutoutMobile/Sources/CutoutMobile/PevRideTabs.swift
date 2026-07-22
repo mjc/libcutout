@@ -4,7 +4,7 @@ public enum PevRideTabs {
     public static func eucRideTabs(selected: PevScreenID? = nil) -> [PevScreenTab] {
         [
             PevScreenTab(id: .ride, title: "Ride", isSelected: selected == nil || selected == .eucRide, destinationTarget: .screen(.eucRide)),
-            PevScreenTab(id: .pack, title: "Pack", isSelected: selected == .eucGarage || selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationScreenID: .bmsOverview),
+            PevScreenTab(id: .pack, title: "Pack", isSelected: selected == .eucGarage || selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationScreenID: .eucGarage),
             unavailableTab(id: .map, title: "Map", reason: "Map is not available yet."),
             unavailableTab(id: .tune, title: "Tune", reason: "Tune is not available yet."),
         ]
