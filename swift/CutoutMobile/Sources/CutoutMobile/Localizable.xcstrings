@@ -1,0 +1,86 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "picker.action.capture_for_device" : {
+      "comment" : "Accessibility label for starting a capture. The placeholder is the selected device name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ for %@" } } }
+    },
+    "picker.action.start_capture" : {
+      "comment" : "Action title for starting a capture.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start capture" } } }
+    },
+    "picker.action.start_probe" : {
+      "comment" : "Action title for starting a device protocol probe.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start probe" } } }
+    },
+    "picker.action.use_device" : {
+      "comment" : "Accessibility label for using a selected device. The placeholder is the device name.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use %@" } } }
+    },
+    "picker.device.with_identifier" : {
+      "comment" : "Accessible device name with a short identifier. Placeholders are the device title and identifier suffix.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@, device %@" } } }
+    },
+    "picker.row.action.probe" : {
+      "comment" : "Short action displayed for a device that needs probing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Probe" } } }
+    },
+    "picker.row.action.confirm" : {
+      "comment" : "Short action displayed when device support needs confirmation.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirm" } } }
+    },
+    "picker.row.action.later" : {
+      "comment" : "Short action displayed for a manually entered device that can be handled later.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Later" } } }
+    },
+    "picker.row.action.record" : {
+      "comment" : "Short action displayed for a record-only device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record" } } }
+    },
+    "picker.row.action.review" : {
+      "comment" : "Short action displayed when device support needs review.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Review" } } }
+    },
+    "picker.row.action.use" : {
+      "comment" : "Short action displayed for a supported device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Use" } } }
+    },
+    "tab.debug" : {
+      "comment" : "Bottom navigation tab for diagnostics.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }
+    },
+    "tab.logs" : {
+      "comment" : "Bottom navigation tab for logs.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Logs" } } }
+    },
+    "tab.map" : {
+      "comment" : "Bottom navigation tab for maps.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Map" } } }
+    },
+    "tab.pack" : {
+      "comment" : "Bottom navigation tab for battery pack information.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack" } } }
+    },
+    "tab.reason.logs_unavailable" : {
+      "comment" : "Reason shown when the Logs tab is disabled.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Logs are not available yet." } } }
+    },
+    "tab.reason.map_unavailable" : {
+      "comment" : "Reason shown when the Map tab is disabled.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Map is not available yet." } } }
+    },
+    "tab.reason.tune_unavailable" : {
+      "comment" : "Reason shown when the Tune tab is disabled.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune is not available yet." } } }
+    },
+    "tab.ride" : {
+      "comment" : "Bottom navigation tab for live riding telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
+    },
+    "tab.tune" : {
+      "comment" : "Bottom navigation tab for tuning controls.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
+    }
+  },
+  "version" : "1.0"
+}

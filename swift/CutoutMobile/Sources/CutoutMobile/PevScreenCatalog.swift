@@ -532,20 +532,20 @@ public extension DevicePickerRow {
     }
 
     var captureActionTitle: String {
-        isProbeRecommended ? "Start probe" : "Start capture"
+        pevLocalizedText(isProbeRecommended ? "picker.action.start_probe" : "picker.action.start_capture")
     }
 
     var useActionAccessibilityLabel: String {
-        "Use \(accessibilityDeviceName)"
+        pevLocalizedText("picker.action.use_device", accessibilityDeviceName)
     }
 
     var captureActionAccessibilityLabel: String {
-        "\(captureActionTitle) for \(accessibilityDeviceName)"
+        pevLocalizedText("picker.action.capture_for_device", captureActionTitle, accessibilityDeviceName)
     }
 
     private var accessibilityDeviceName: String {
         guard id != title else { return title }
-        return "\(title), device \(id.suffix(4).uppercased())"
+        return pevLocalizedText("picker.device.with_identifier", title, String(id.suffix(4).uppercased()))
     }
 }
 
@@ -553,17 +553,17 @@ public extension DevicePickerRowState {
     init(action: DiscoveryCandidateAction) {
         switch action {
         case .use:
-            self = .supported(action: "Use")
+            self = .supported(action: pevLocalizedText("picker.row.action.use"))
         case .probe:
-            self = .probeRecommended(action: "Probe")
+            self = .probeRecommended(action: pevLocalizedText("picker.row.action.probe"))
         case .record:
-            self = .unsupported(action: "Record")
+            self = .unsupported(action: pevLocalizedText("picker.row.action.record"))
         case .confirm:
-            self = .unsupported(action: "Confirm")
+            self = .unsupported(action: pevLocalizedText("picker.row.action.confirm"))
         case .review:
-            self = .unsupported(action: "Review")
+            self = .unsupported(action: pevLocalizedText("picker.row.action.review"))
         case .later:
-            self = .manual(action: "later")
+            self = .manual(action: pevLocalizedText("picker.row.action.later"))
         }
     }
 

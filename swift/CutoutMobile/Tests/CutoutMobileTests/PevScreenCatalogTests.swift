@@ -70,6 +70,26 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertNil(tabs[3].destinationTarget)
     }
 
+    func testSharedPickerAndNavigationCopyResolvesFromThePackageCatalog() {
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "",
+            detail: "",
+            state: DevicePickerRowState(action: .probe),
+            symbolName: "bolt"
+        )
+
+        XCTAssertEqual(row.captureActionTitle, "Start probe")
+        XCTAssertEqual(row.useActionAccessibilityLabel, "Use VESC, device 1234")
+        XCTAssertEqual(row.captureActionAccessibilityLabel, "Start probe for VESC, device 1234")
+        XCTAssertEqual(DevicePickerRowState(action: .confirm).actionTitle, "Confirm")
+        XCTAssertEqual(DevicePickerRowState(action: .review).actionTitle, "Review")
+        XCTAssertEqual(DevicePickerRowState(action: .later).actionTitle, "Later")
+        XCTAssertEqual(PevRideTabs.eucRideTabs().map(\.title), ["Ride", "Pack", "Map", "Tune"])
+        XCTAssertEqual(PevRideTabs.vescRideTabs()[2].disabledReason, "Map is not available yet.")
+    }
+
     func testRideTabsNavigateToTheirProductionSurfaces() {
         XCTAssertEqual(PevRideTabs.eucRideTabs().first?.destinationTarget, .screen(.eucRide))
         XCTAssertNil(PevRideTabs.eucRideTabs().first?.destinationScreenID)

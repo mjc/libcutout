@@ -19,7 +19,8 @@ let package = Package(
             name: "CutoutMobile",
             dependencies: [
                 .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
-            ]
+            ],
+            resources: [.process("Localizable.xcstrings")]
         ),
         .testTarget(
             name: "CutoutMobileTests",
