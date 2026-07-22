@@ -303,6 +303,26 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("vesc.board_angle.level"), "level")
     }
 
+    func testVescDashboardUsesTypedUnavailableMetricValues() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown
+        )
+        let view = VescRideScreenView(
+            liveSnapshot: snapshot,
+            phase: .live,
+            now: MonotonicMilliseconds(1_000),
+            captureStatusText: nil
+        )
+
+        XCTAssertEqual(
+            view.dashboardTiles.map(\.metricValue),
+            [.unavailable, .unavailable, .unavailable, .unavailable]
+        )
+    }
+
     @MainActor
     func testBmsAlertIndicatorAlwaysShowsNonNominalSeverity() {
         XCTAssertEqual(BmsAlertIndicator.systemImageName(

@@ -107,7 +107,10 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .batteryVoltage,
                 label: localizedAppText("vesc.metric.battery_voltage"),
-                value: voltageText(liveSnapshot.batteryVoltage),
+                metricValue: liveSnapshot.batteryVoltage.map { voltage in
+                    let text = RideUnits.voltageText(millivolts: voltage.value)
+                    return .available(display: text, accessibility: text)
+                } ?? .unavailable,
                 unit: "V",
                 detail: batteryDetail,
                 accent: .yellow
@@ -115,7 +118,10 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .motorCurrent,
                 label: localizedAppText("vesc.metric.motor_current"),
-                value: phaseCurrentText(liveSnapshot.motorCurrent),
+                metricValue: liveSnapshot.motorCurrent.map { current in
+                    let text = RideUnits.currentText(milliamps: current.value)
+                    return .available(display: text, accessibility: text)
+                } ?? .unavailable,
                 unit: "A",
                 detail: motorCurrentDetail,
                 accent: .orange
@@ -123,7 +129,10 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .boardAngle,
                 label: localizedAppText("vesc.metric.board_angle"),
-                value: angleText(liveSnapshot.boardAngle),
+                metricValue: liveSnapshot.boardAngle.map { angle in
+                    let text = RideUnits.angleText(millidegrees: angle.value)
+                    return .available(display: text, accessibility: text)
+                } ?? .unavailable,
                 unit: "°",
                 detail: boardAngleDetail ?? localizedAppText("vesc.board_angle.unavailable"),
                 accent: .cyan
@@ -131,7 +140,10 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .controller,
                 label: localizedAppText("vesc.metric.controller"),
-                value: temperatureText(liveSnapshot.controllerTemperature),
+                metricValue: liveSnapshot.controllerTemperature.map { temperature in
+                    let text = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
+                    return .available(display: text, accessibility: text)
+                } ?? .unavailable,
                 unit: "°C",
                 detail: liveSnapshot.motorTemperature.map {
                     localizedAppText(
