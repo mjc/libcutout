@@ -8,41 +8,7 @@ struct VescDebugScreenView: View {
     let captureStatusText: String?
 
     private var tiles: [PevDashboardTile] {
-        guard let snapshot else { return [] }
-        return [
-            PevDashboardTile(
-                kind: .dutyCycle,
-                label: localizedAppText("vesc.debug.metric.duty"),
-                value: snapshot.dutyCycle.map { RideUnits.percentText(abs(Int($0.permille)) / 10) } ?? "--",
-                unit: "%",
-                detail: localizedAppText("vesc.debug.detail.motor_duty"),
-                accent: .orange
-            ),
-            PevDashboardTile(
-                kind: .headroom,
-                label: localizedAppText("vesc.debug.metric.headroom"),
-                value: percentText(snapshot.dutyHeadroom),
-                unit: "%",
-                detail: localizedAppText("vesc.debug.detail.remaining_duty"),
-                accent: .yellow
-            ),
-            PevDashboardTile(
-                kind: .boardAngle,
-                label: localizedAppText("vesc.debug.metric.board"),
-                value: angleText(snapshot.boardAngle),
-                unit: "°",
-                detail: localizedAppText("vesc.debug.detail.balance", angleText(snapshot.balanceAngle)),
-                accent: .cyan
-            ),
-            PevDashboardTile(
-                kind: .controller,
-                label: localizedAppText("vesc.debug.metric.controller"),
-                value: temperatureText(snapshot.controllerTemperature),
-                unit: "°C",
-                detail: localizedAppText("vesc.debug.detail.motor_temperature", temperatureText(snapshot.motorTemperature)),
-                accent: .green
-            ),
-        ]
+        snapshot.map(vescDebugTiles) ?? []
     }
 
     private var rows: [PevDashboardKeyValueRow] {

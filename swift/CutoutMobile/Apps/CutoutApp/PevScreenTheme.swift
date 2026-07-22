@@ -228,6 +228,55 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
     ]
 }
 
+func vescDebugTiles(_ snapshot: VescRideSnapshot) -> [PevDashboardTile] {
+    [
+        PevDashboardTile(
+            kind: .dutyCycle,
+            label: localizedAppText("vesc.debug.metric.duty"),
+            metricValue: snapshot.dutyCycle.map { dutyCycle in
+                let value = RideUnits.percentText(abs(Int(dutyCycle.permille)) / 10)
+                return .available(display: value, accessibility: value)
+            } ?? .unavailable,
+            unit: "%",
+            detail: localizedAppText("vesc.debug.detail.motor_duty"),
+            accent: .orange
+        ),
+        PevDashboardTile(
+            kind: .headroom,
+            label: localizedAppText("vesc.debug.metric.headroom"),
+            metricValue: snapshot.dutyHeadroom.map { headroom in
+                let value = RideUnits.percentText(headroom.value)
+                return .available(display: value, accessibility: value)
+            } ?? .unavailable,
+            unit: "%",
+            detail: localizedAppText("vesc.debug.detail.remaining_duty"),
+            accent: .yellow
+        ),
+        PevDashboardTile(
+            kind: .boardAngle,
+            label: localizedAppText("vesc.debug.metric.board"),
+            metricValue: snapshot.boardAngle.map { angle in
+                let value = RideUnits.angleText(millidegrees: angle.value)
+                return .available(display: value, accessibility: value)
+            } ?? .unavailable,
+            unit: "°",
+            detail: localizedAppText("vesc.debug.detail.balance", angleText(snapshot.balanceAngle)),
+            accent: .cyan
+        ),
+        PevDashboardTile(
+            kind: .controller,
+            label: localizedAppText("vesc.debug.metric.controller"),
+            metricValue: snapshot.controllerTemperature.map { temperature in
+                let value = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
+                return .available(display: value, accessibility: value)
+            } ?? .unavailable,
+            unit: "°C",
+            detail: localizedAppText("vesc.debug.detail.motor_temperature", temperatureText(snapshot.motorTemperature)),
+            accent: .green
+        ),
+    ]
+}
+
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
     let estimate = state.chargeEstimate
     let detail = if let voltageSag = estimate.voltageSag {
