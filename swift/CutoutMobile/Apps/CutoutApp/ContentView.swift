@@ -42,7 +42,7 @@ struct ContentView: View {
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .accessibilityLabel("Choose device")
+                .accessibilityLabel(localizedAppText("picker.title"))
                 .accessibilityFocused($focusedRoute, equals: .devicePicker)
             }
             .navigationDestination(for: CutoutAppRoute.self) { destination in
@@ -186,15 +186,15 @@ struct ContentView: View {
     private func appSectionTitle(for destination: CutoutAppRoute) -> String {
         switch destination {
         case .eucRide, .vescRide:
-            "Ride"
+            localizedAppText("navigation.section.ride")
         case .eucPack:
-            "Pack"
+            localizedAppText("navigation.section.pack")
         case .vescDebug:
-            "Debug"
+            localizedAppText("navigation.section.debug")
         case .capture:
-            "Capture"
+            localizedAppText("navigation.section.capture")
         case .devicePicker:
-            "Ride"
+            localizedAppText("navigation.section.ride")
         }
     }
 

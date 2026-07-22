@@ -13,7 +13,7 @@ enum CaptureStatus: Equatable {
     var displayText: String {
         switch self {
         case let .recordingLocally(fileName):
-            localizedCaptureText("capture.status.recording_locally", fileName)
+            localizedAppText("capture.status.recording_locally", fileName)
         case let .recording(label, notificationCount, fileName):
             captureProgressText(label: label, notificationCount: notificationCount, fileName: fileName)
         case let .labelStarted(label, notificationCount, fileName):
@@ -21,7 +21,7 @@ enum CaptureStatus: Equatable {
         case let .labelStopped(label, notificationCount, fileName):
             captureLabelText(label: label, action: "stopped", notificationCount: notificationCount, fileName: fileName)
         case let .saved(fileName):
-            localizedCaptureText("capture.status.saved", fileName)
+            localizedAppText("capture.status.saved", fileName)
         case .failed:
             String(localized: "capture.announcement.failed", table: "Localizable", bundle: appLocalizationBundle)
         }
@@ -61,13 +61,13 @@ enum CaptureStatus: Equatable {
     private func captureProgressText(label: String?, notificationCount: Int, fileName: String?) -> String {
         switch (label, fileName) {
         case let (.some(label), .some(fileName)):
-            localizedCaptureText("capture.status.recording_labeled_file", label, Int64(notificationCount), fileName)
+            localizedAppText("capture.status.recording_labeled_file", label, Int64(notificationCount), fileName)
         case let (.some(label), nil):
-            localizedCaptureText("capture.status.recording_labeled", label, Int64(notificationCount))
+            localizedAppText("capture.status.recording_labeled", label, Int64(notificationCount))
         case let (nil, .some(fileName)):
-            localizedCaptureText("capture.status.recording_file", Int64(notificationCount), fileName)
+            localizedAppText("capture.status.recording_file", Int64(notificationCount), fileName)
         case (nil, nil):
-            localizedCaptureText("capture.status.recording", Int64(notificationCount))
+            localizedAppText("capture.status.recording", Int64(notificationCount))
         }
     }
 
@@ -83,17 +83,9 @@ enum CaptureStatus: Equatable {
         case ("started", nil): "capture.status.label_started"
         default: "capture.status.label_stopped"
         }
-        guard let fileName else { return localizedCaptureText(key, label) }
-        return localizedCaptureText(key, label, Int64(notificationCount), fileName)
+        guard let fileName else { return localizedAppText(key, label) }
+        return localizedAppText(key, label, Int64(notificationCount), fileName)
     }
-}
-
-private func localizedCaptureText(_ key: String, _ arguments: CVarArg...) -> String {
-    String(
-        format: appLocalizationBundle.localizedString(forKey: key, value: nil, table: "Localizable"),
-        locale: .current,
-        arguments: arguments
-    )
 }
 
 @MainActor
@@ -549,11 +541,11 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
     var id: String { annotationValue }
 
     func actionTitle(isActive: Bool) -> String {
-        localizedCaptureText(isActive ? "capture.label.stop" : "capture.label.start", title)
+        localizedAppText(isActive ? "capture.label.stop" : "capture.label.start", title)
     }
 
     var title: String {
-        localizedCaptureText("capture.label.\(annotationValue)")
+        localizedAppText("capture.label.\(annotationValue)")
     }
 
     var annotationValue: String {

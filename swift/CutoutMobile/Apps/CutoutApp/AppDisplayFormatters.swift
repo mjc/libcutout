@@ -7,6 +7,14 @@ let appLocalizationBundle = Bundle.module
 let appLocalizationBundle = Bundle.main
 #endif
 
+func localizedAppText(_ key: String, _ arguments: CVarArg...) -> String {
+    String(
+        format: appLocalizationBundle.localizedString(forKey: key, value: nil, table: "Localizable"),
+        locale: .current,
+        arguments: arguments
+    )
+}
+
 struct DevicePickerConnectionPresentation: Equatable {
     let title: String
     let showsActivity: Bool
@@ -137,9 +145,9 @@ extension PevScreen {
         case .bmsOverview, .bmsNoData:
             "BMS"
         case .bmsCellMap6S, .bmsCellMap40S, .bmsCellDetail:
-            "Cells"
+            localizedAppText("navigation.tab.cells")
         case .bmsUnknownTopology:
-            "Faults"
+            localizedAppText("navigation.tab.faults")
         case .vescRide:
             "VESC"
         case .vescDebug:

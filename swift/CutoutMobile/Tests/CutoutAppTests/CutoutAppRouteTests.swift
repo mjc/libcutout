@@ -17,6 +17,21 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(for: .vescDebug), .vescDebug)
     }
 
+    func testNavigationLabelsResolveFromTheAppCatalog() {
+        XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
+        XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
+        XCTAssertEqual(localizedAppText("picker.title"), "Choose device")
+        XCTAssertEqual(localizedAppText("picker.subtitle.nearby_devices"), "Nearby Bluetooth devices")
+        XCTAssertEqual(
+            PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
+            "Cells"
+        )
+        XCTAssertEqual(
+            PevScreen(id: .bmsUnknownTopology, title: "", subtitle: "", secondaryValue: "").tabTitle,
+            "Faults"
+        )
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))

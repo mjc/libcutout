@@ -30,8 +30,8 @@ struct DevicePickerView: View {
             horizontalPadding: 24
         ) {
             PevScreenTitleBlock(
-                title: "Choose device",
-                subtitle: "Nearby Bluetooth devices"
+                title: localizedAppText("picker.title"),
+                subtitle: localizedAppText("picker.subtitle.nearby_devices")
             )
 
             PevDashboardScanningPill(

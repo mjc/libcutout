@@ -169,6 +169,38 @@
       "comment" : "Visible capture status. The placeholder is the saved filename.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved capture: %@" } } }
     },
+    "navigation.section.capture" : {
+      "comment" : "Top-level app navigation title for recording a capture.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture" } } }
+    },
+    "navigation.section.debug" : {
+      "comment" : "Top-level app navigation title for diagnostics.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }
+    },
+    "navigation.section.pack" : {
+      "comment" : "Top-level app navigation title for the battery pack.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack" } } }
+    },
+    "navigation.section.ride" : {
+      "comment" : "Top-level app navigation title for live riding telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
+    },
+    "navigation.tab.cells" : {
+      "comment" : "Compact navigation tab title for battery cells.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cells" } } }
+    },
+    "navigation.tab.faults" : {
+      "comment" : "Compact navigation tab title for battery faults.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Faults" } } }
+    },
+    "picker.subtitle.nearby_devices" : {
+      "comment" : "Device picker subtitle describing the scan results list.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Nearby Bluetooth devices" } } }
+    },
+    "picker.title" : {
+      "comment" : "Device picker title and its VoiceOver route label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Choose device" } } }
+    },
     "picker.announcement.bluetooth_unavailable" : {
       "comment" : "VoiceOver announcement when Bluetooth is unavailable.",
       "localizations" : {
