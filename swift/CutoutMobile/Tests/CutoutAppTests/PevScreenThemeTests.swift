@@ -2,6 +2,7 @@ import XCTest
 @testable import CutoutApp
 import CutoutMobile
 
+@MainActor
 final class PevScreenThemeTests: XCTestCase {
     func testBmsScreenPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("bms.screen.subtitle"), "CutOut · BMS")
@@ -72,6 +73,27 @@ final class PevScreenThemeTests: XCTestCase {
 
     func testLiveThermalValueUsesTypedUnavailableMetricValue() {
         XCTAssertEqual(liveThermalValue(telemetry: TelemetrySnapshot()), .unavailable)
+    }
+
+    func testBmsNoDataWarningUsesLocaleAwareAccessibilityList() {
+        let card = BmsNoDataWarningCard(
+            snapshot: BmsSnapshot(
+                availability: .unavailable,
+                topology: BmsTopology(
+                    layoutLabel: "test",
+                    seriesGroupCount: nil,
+                    parallelCount: nil,
+                    packCount: 0,
+                    bmsCount: 0,
+                    confidence: .unverified
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            card.accessibilityValueText,
+            "CutOut can’t see individual cell balance or weak groups. and BMS temperature, faults, or cutout reason stay unavailable."
+        )
     }
 
     func testVescFootpadPresentationUsesTheAppCatalog() {

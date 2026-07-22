@@ -32,6 +32,10 @@ struct BmsNoDataWarningCard: View {
 
     let snapshot: BmsSnapshot
 
+    var accessibilityValueText: String {
+        pevDashboardAccessibilityValue(snapshot.noDataWarningLines.map(\.text))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 14) {
@@ -65,7 +69,7 @@ struct BmsNoDataWarningCard: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(snapshot.noDataWarningTitle)
-        .accessibilityValue(snapshot.noDataWarningLines.map(\.text).joined(separator: ". "))
+        .accessibilityValue(accessibilityValueText)
         .accessibilityIdentifier("bms.no-data.warning")
     }
 }
