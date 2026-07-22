@@ -11,6 +11,29 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("euc.speed.caption"), "speed")
     }
 
+    func testVescDebugPresentationUsesTheAppCatalog() {
+        XCTAssertEqual(localizedAppText("vesc.debug.section"), "VESC debug")
+        XCTAssertEqual(localizedAppText("vesc.debug.title"), "VESC Debug")
+        XCTAssertEqual(localizedAppText("vesc.debug.metric.duty"), "duty")
+        XCTAssertEqual(localizedAppText("vesc.debug.detail.motor_duty"), "motor duty cycle")
+        XCTAssertEqual(localizedAppText("vesc.debug.metric.headroom"), "headroom")
+        XCTAssertEqual(localizedAppText("vesc.debug.detail.remaining_duty"), "remaining duty")
+        XCTAssertEqual(localizedAppText("vesc.debug.metric.board"), "board")
+        XCTAssertEqual(localizedAppText("vesc.debug.detail.balance", "0.5"), "balance 0.5°")
+        XCTAssertEqual(localizedAppText("vesc.debug.metric.controller"), "controller")
+        XCTAssertEqual(localizedAppText("vesc.debug.detail.motor_temperature", "49.0"), "motor 49.0 °C")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.session"), "Session")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.protocol"), "Protocol")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.state"), "State")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.notifications"), "Notifications")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.pack_voltage"), "Pack voltage")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.battery_current"), "Battery current")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.motor_current"), "Motor current")
+        XCTAssertEqual(localizedAppText("vesc.debug.row.footpad"), "Footpad")
+        XCTAssertEqual(localizedAppText("vesc.debug.value.voltage", "54.3"), "54.3 V")
+        XCTAssertEqual(localizedAppText("vesc.debug.value.current", "12.4"), "12.4 A")
+    }
+
     func testRideHeroReadoutSharesExplicitAvailabilitySemantics() {
         let unavailable = PevRideHeroReadout.unavailable(
             provenance: .vehicleTelemetry,

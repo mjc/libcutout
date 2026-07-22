@@ -49,6 +49,86 @@
       "comment" : "Short caption below the primary EUC ride speed readout.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "speed" } } }
     },
+    "vesc.debug.detail.balance" : {
+      "comment" : "VESC diagnostics tile detail. The placeholder is the board balance angle in degrees.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "balance %@°" } } }
+    },
+    "vesc.debug.detail.motor_duty" : {
+      "comment" : "VESC diagnostics tile detail for motor duty cycle.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "motor duty cycle" } } }
+    },
+    "vesc.debug.detail.motor_temperature" : {
+      "comment" : "VESC diagnostics tile detail. The placeholder is motor temperature in Celsius.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "motor %@ °C" } } }
+    },
+    "vesc.debug.detail.remaining_duty" : {
+      "comment" : "VESC diagnostics tile detail for remaining motor duty headroom.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "remaining duty" } } }
+    },
+    "vesc.debug.metric.board" : {
+      "comment" : "VESC diagnostics tile label for board angle.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "board" } } }
+    },
+    "vesc.debug.metric.controller" : {
+      "comment" : "VESC diagnostics tile label for controller temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "controller" } } }
+    },
+    "vesc.debug.metric.duty" : {
+      "comment" : "VESC diagnostics tile label for motor duty cycle.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "duty" } } }
+    },
+    "vesc.debug.metric.headroom" : {
+      "comment" : "VESC diagnostics tile label for remaining duty headroom.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "headroom" } } }
+    },
+    "vesc.debug.row.battery_current" : {
+      "comment" : "VESC diagnostics row label for battery current.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Battery current" } } }
+    },
+    "vesc.debug.row.footpad" : {
+      "comment" : "VESC diagnostics row label for footpad state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Footpad" } } }
+    },
+    "vesc.debug.row.motor_current" : {
+      "comment" : "VESC diagnostics row label for motor current.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Motor current" } } }
+    },
+    "vesc.debug.row.notifications" : {
+      "comment" : "VESC diagnostics row label for received notification count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Notifications" } } }
+    },
+    "vesc.debug.row.pack_voltage" : {
+      "comment" : "VESC diagnostics row label for battery pack voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pack voltage" } } }
+    },
+    "vesc.debug.row.protocol" : {
+      "comment" : "VESC diagnostics row label for the active protocol.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Protocol" } } }
+    },
+    "vesc.debug.row.session" : {
+      "comment" : "VESC diagnostics row label for the Bluetooth session state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Session" } } }
+    },
+    "vesc.debug.row.state" : {
+      "comment" : "VESC diagnostics row label for vehicle operating state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "State" } } }
+    },
+    "vesc.debug.section" : {
+      "comment" : "VESC diagnostics screen section title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC debug" } } }
+    },
+    "vesc.debug.title" : {
+      "comment" : "VESC diagnostics screen fallback title when the controller has no device title.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC Debug" } } }
+    },
+    "vesc.debug.value.current" : {
+      "comment" : "VESC diagnostics value. The placeholder is a current in amperes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ A" } } }
+    },
+    "vesc.debug.value.voltage" : {
+      "comment" : "VESC diagnostics value. The placeholder is a voltage in volts.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ V" } } }
+    },
     "bms.diagnostics.detail" : {
       "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }
