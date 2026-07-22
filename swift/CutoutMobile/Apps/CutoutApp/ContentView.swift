@@ -177,14 +177,7 @@ struct ContentView: View {
         case .vescDebug:
             VescDebugRouteView(model: model)
         case .capture:
-            CaptureRecordingScreen(
-                deviceKind: model.recordOnlyDeviceKind,
-                captureStatusText: model.captureStatusText,
-                activeLabels: model.activeCaptureLabels,
-                disconnect: disconnectAndReturnToPicker,
-                startCaptureLabel: model.startCaptureLabel,
-                stopCaptureLabel: model.stopCaptureLabel
-            )
+            CaptureRouteView(model: model, disconnect: disconnectAndReturnToPicker)
         case .devicePicker:
             EmptyView()
         }
@@ -263,6 +256,22 @@ private struct EucRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
         }
+    }
+}
+
+private struct CaptureRouteView: View {
+    let model: CutoutAppModel
+    let disconnect: () -> Void
+
+    var body: some View {
+        CaptureRecordingScreen(
+            deviceKind: model.recordOnlyDeviceKind,
+            captureStatusText: model.captureStatusText,
+            activeLabels: model.activeCaptureLabels,
+            disconnect: disconnect,
+            startCaptureLabel: model.startCaptureLabel,
+            stopCaptureLabel: model.stopCaptureLabel
+        )
     }
 }
 
