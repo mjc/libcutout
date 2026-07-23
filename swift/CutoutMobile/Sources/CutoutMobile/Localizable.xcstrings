@@ -613,6 +613,18 @@
       "comment" : "Device picker status after a Bluetooth scan finishes with no rideable device found.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } } }
     },
+    "readback.availability.available" : {
+      "comment" : "Readback availability when live data is present.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "available" } } }
+    },
+    "readback.availability.unavailable" : {
+      "comment" : "Readback availability when data is temporarily unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
+    },
+    "readback.availability.unsupported" : {
+      "comment" : "Readback availability when a device does not support this data.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unsupported" } } }
+    },
     "ride.action.disconnect" : {
       "comment" : "Ride screen button that disconnects from the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }

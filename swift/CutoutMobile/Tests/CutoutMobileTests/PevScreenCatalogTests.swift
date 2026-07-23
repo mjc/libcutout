@@ -92,6 +92,12 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("charge.estimate.duration.hours_minutes", Int64(1), Int64(30)), "1h 30m")
     }
 
+    func testReadbackAvailabilityResolvesFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("readback.availability.available"), "available")
+        XCTAssertEqual(pevLocalizedText("readback.availability.unavailable"), "unavailable")
+        XCTAssertEqual(pevLocalizedText("readback.availability.unsupported"), "unsupported")
+    }
+
     func testEucConnectionAndRidePresentationResolveFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("euc.connection.starting"), "Starting Bluetooth...")
         XCTAssertEqual(pevLocalizedText("euc.connection.unavailable", Int64(4)), "Bluetooth unavailable: state 4")

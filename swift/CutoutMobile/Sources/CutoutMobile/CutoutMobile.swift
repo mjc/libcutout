@@ -2607,11 +2607,11 @@ public extension ReadbackAvailability {
     var displayText: String {
         switch self {
         case .available:
-            "available"
+            pevLocalizedText("readback.availability.available")
         case .unavailable:
-            "unavailable"
+            pevLocalizedText("readback.availability.unavailable")
         case .unsupported:
-            "unsupported"
+            pevLocalizedText("readback.availability.unsupported")
         }
     }
 }
