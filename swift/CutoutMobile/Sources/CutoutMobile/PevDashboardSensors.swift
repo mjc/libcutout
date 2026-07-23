@@ -9,10 +9,6 @@ public struct PevDashboardFootpadReadout: View {
     let rightLabel: String
     let rightValue: String
     let detail: String
-    let fill: Color
-    let stroke: Color
-    let textColor: Color
-    let secondaryTextColor: Color
     let accessibilityValueText: String
 
     public init(
@@ -22,10 +18,6 @@ public struct PevDashboardFootpadReadout: View {
         rightLabel: String = "right",
         rightValue: String,
         detail: String,
-        fill: Color,
-        stroke: Color,
-        textColor: Color,
-        secondaryTextColor: Color,
         accessibilityValue: String? = nil
     ) {
         self.title = title
@@ -34,10 +26,6 @@ public struct PevDashboardFootpadReadout: View {
         self.rightLabel = rightLabel
         self.rightValue = rightValue
         self.detail = detail
-        self.fill = fill
-        self.stroke = stroke
-        self.textColor = textColor
-        self.secondaryTextColor = secondaryTextColor
         accessibilityValueText = accessibilityValue ?? [
             leftLabel,
             leftValue,
@@ -52,11 +40,11 @@ public struct PevDashboardFootpadReadout: View {
             HStack {
                 Text(title)
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(secondaryTextColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
                 Spacer()
                 Text(detail)
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(secondaryTextColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
             }
 
             if dynamicTypeSize.isAccessibilitySize {
@@ -84,8 +72,8 @@ public struct PevDashboardFootpadReadout: View {
         .background(
             PevDashboardCardBackground(
                 cornerRadius: 14,
-                fill: fill,
-                stroke: stroke
+                fill: PevDashboardColors.cardFill,
+                stroke: PevDashboardColors.cardStroke
             )
         )
         .accessibilityElement(children: .ignore)
@@ -98,11 +86,11 @@ public struct PevDashboardFootpadReadout: View {
             HStack(spacing: 5) {
                 Text(label)
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(secondaryTextColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
             }
             Text(value)
                 .font(.title3.weight(.black))
-                .foregroundStyle(textColor)
+                .foregroundStyle(PevDashboardColors.primaryText)
                 .monospacedDigit()
         }
         .frame(maxWidth: .infinity, alignment: .leading)

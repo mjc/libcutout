@@ -191,10 +191,6 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             rightLabel: "right",
             rightValue: "unavailable",
             detail: "engaged",
-            fill: .gray,
-            stroke: .gray,
-            textColor: .primary,
-            secondaryTextColor: .secondary,
             accessibilityValue: accessibilityValue
         )
     }

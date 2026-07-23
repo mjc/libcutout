@@ -262,10 +262,6 @@ struct VescRideScreenView: View {
                     rightLabel: localizedAppText("vesc.footpad.right"),
                     rightValue: footpad.adc2DisplayText,
                     detail: footpad.stateDisplayText,
-                    fill: PevColors.cardFill,
-                    stroke: PevColors.cardStroke,
-                    textColor: PevColors.primaryText,
-                    secondaryTextColor: PevColors.muted,
                     accessibilityValue: footpad.accessibilityValue
                 )
                 .padding(.top, 8)
