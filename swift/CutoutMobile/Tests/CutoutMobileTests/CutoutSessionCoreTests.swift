@@ -427,6 +427,17 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
     }
 
+    func testFootpadTelemetryKeepsZeroAdcAvailable() {
+        let footpad = FootpadTelemetry(state: 0, adc1Milliunits: 0, adc2Milliunits: 0)
+
+        XCTAssertEqual(footpad.adc1DisplayText, "0.00")
+        XCTAssertEqual(footpad.adc2DisplayText, "0.00")
+        XCTAssertEqual(
+            footpad.accessibilityValue,
+            "left / adc1, 0.00, available, right / adc2, 0.00, available, state 0"
+        )
+    }
+
     func testFootpadPresentationCopyResolvesFromThePackageCatalog() {
         XCTAssertEqual(
             Bundle.module.localizedString(forKey: "footpad.state", value: nil, table: "Localizable"),
