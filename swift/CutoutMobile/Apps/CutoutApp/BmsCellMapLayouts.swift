@@ -181,7 +181,7 @@ struct BmsDetailLayout: View {
                     Text(localizedAppText("bms.detail.group", Int64(selectedGroup.index)))
                         .font(.headline)
                         .foregroundStyle(PevColors.muted)
-                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityHeading(.h2)
                     Text(bmsGroupVoltageMetricValue(selectedGroup).displayText)
                         .font(.largeTitle.weight(.black))
                         .monospacedDigit()

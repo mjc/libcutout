@@ -11,13 +11,12 @@ struct PevScreenTitleBlock: View {
                 .font(.largeTitle.weight(.bold))
                 .foregroundStyle(PevColors.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityHeading(.h1)
             Text(subtitle)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(PevColors.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(.isHeader)
+        .accessibilityHeading(.h1)
     }
 }
