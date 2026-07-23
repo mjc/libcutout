@@ -3,6 +3,16 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class BmsSnapshotContractTests: XCTestCase {
+    func testBmsCellMapPresentationResolvesFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("bms.cell_map.groups_visible", Int64(4)), "4 groups visible")
+        XCTAssertEqual(pevLocalizedText("bms.cell_map.flagged", "17, 18"), "groups 17, 18 flagged")
+        XCTAssertEqual(
+            pevLocalizedText("bms.detail.group_from_average", Int64(17), Int64(18)),
+            "group 17 · 18 mV from pack avg"
+        )
+        XCTAssertEqual(pevLocalizedText("bms.detail.history_unavailable"), "not enough history")
+    }
+
     func testBmsAccessibilityCopyResolvesFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("bms.accessibility.group", Int64(7)), "Cell group 7")
         XCTAssertEqual(pevLocalizedText("bms.accessibility.group_named", Int64(7), "left pack"), "Cell group 7, left pack")

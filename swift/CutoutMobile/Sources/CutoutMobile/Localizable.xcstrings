@@ -121,6 +121,14 @@
       "comment" : "BMS screen title when the BMS type or topology is unknown.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown BMS" } } }
     },
+    "bms.cell_map.flagged" : { "comment" : "Cell-map summary. Argument: comma-separated flagged group indices.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "groups %@ flagged" } } } },
+    "bms.cell_map.group_label" : { "comment" : "Cell-group label. Argument: one-based group index.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "group %lld" } } } },
+    "bms.cell_map.groups_visible" : { "comment" : "Cell-map summary. Argument: visible cell-group count.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld groups visible" } } } },
+    "bms.cell_map.lowest" : { "comment" : "Cell-map summary. Argument: label of the lowest group.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ lowest" } } } },
+    "bms.cell_map.spread" : { "comment" : "Cell-map voltage spread. Argument: millivolt difference.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld mV spread" } } } },
+    "bms.cell_map.spread_unavailable" : { "comment" : "Cell-map summary when no voltage spread is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "delta unavailable" } } } },
+    "bms.detail.group_from_average" : { "comment" : "Cell-group detail. Arguments: group index and millivolts from pack average.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "group %1$lld · %2$lld mV from pack avg" } } } },
+    "bms.detail.history_unavailable" : { "comment" : "Cell-group detail when history is insufficient.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "not enough history" } } } },
     "charge.estimate.confidence.high" : {
       "comment" : "Charge estimate confidence level.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "high" } } }

@@ -2294,23 +2294,24 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var lowestGroupLabel: String? {
-        lowestGroupIndex.map { "group \($0)" }
+        lowestGroupIndex.map { pevLocalizedText("bms.cell_map.group_label", Int64($0)) }
     }
 
     public var cellMapVisibilitySummary: String {
-        "\(groups.count) groups visible"
+        pevLocalizedText("bms.cell_map.groups_visible", Int64(groups.count))
     }
 
     public var cellMapSpreadSummary: String {
-        cellDelta.map { "\($0.value) mV spread" } ?? "delta unavailable"
+        cellDelta.map { pevLocalizedText("bms.cell_map.spread", Int64($0.value)) }
+            ?? pevLocalizedText("bms.cell_map.spread_unavailable")
     }
 
     public var cellMapFocusSummary: String {
         let flaggedIndices = flaggedGroups.map(\.index)
         guard !flaggedIndices.isEmpty else {
-            return lowestGroupLabel.map { "\($0) lowest" } ?? topology.layoutLabel
+            return lowestGroupLabel.map { pevLocalizedText("bms.cell_map.lowest", $0) } ?? topology.layoutLabel
         }
-        return "groups \(flaggedIndices.map(String.init).joined(separator: ", ")) flagged"
+        return pevLocalizedText("bms.cell_map.flagged", flaggedIndices.map(String.init).joined(separator: ", "))
     }
 
     public var cellMapFocusDetail: String? {
@@ -2334,11 +2335,11 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
 
         let delta = abs(Int(averageGroupVoltage.value) - Int(groupVoltage.value))
-        return "group \(group.index) · \(delta) mV from pack avg"
+        return pevLocalizedText("bms.detail.group_from_average", Int64(group.index), Int64(delta))
     }
 
     public func detailGroupTrend(for index: Int) -> String {
-        groups.first(where: { $0.index == index })?.detail ?? "not enough history"
+        groups.first(where: { $0.index == index })?.detail ?? pevLocalizedText("bms.detail.history_unavailable")
     }
 
     public func detailGroupTrendDetail(for index: Int) -> String {
