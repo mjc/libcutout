@@ -220,6 +220,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(store.platformIdentifier, "saved-device")
         XCTAssertTrue(model.hasSavedDevice)
+        XCTAssertEqual(model.phaseNavigationIntent, .stay)
     }
 
     @MainActor
