@@ -57,6 +57,40 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStoredDeviceAutoPairingUsesTheCandidateRideRoute() {
+        let cases: [(id: String, route: DevicePickerConnectionRoute)] = [
+            ("euc-1234", .electricUnicycle),
+            ("vesc-1234", .vescOnewheel),
+        ]
+
+        for testCase in cases {
+            let suiteName = "CutoutAppModelTests.autoPair.\(testCase.id)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defaults.removePersistentDomain(forName: suiteName)
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+
+            let store = DevicePickerSelectionStore(defaults: defaults)
+            store.save(platformIdentifier: testCase.id)
+            let row = DevicePickerRow(
+                id: testCase.id,
+                title: testCase.route == .vescOnewheel ? "VESC" : "EUC",
+                subtitle: "Supported device",
+                detail: "Device 1234",
+                state: DevicePickerRowState(action: .use),
+                symbolName: "circle.hexagongrid.circle",
+                connectionRoute: testCase.route
+            )
+            let driver = SessionDriverSpy(rows: [row])
+            let model = CutoutAppModel(core: driver, selectedDeviceStore: store)
+
+            model.start()
+
+            XCTAssertEqual(driver.pairedPlatformIdentifiers, [testCase.id])
+            XCTAssertEqual(model.selectedConnectionRoute, testCase.route)
+        }
+    }
+
+    @MainActor
     func testRejectedPickerActionReturnsToThePickerWithAnError() {
         let suiteName = "CutoutAppModelTests.rejectedPickerAction"
         let defaults = UserDefaults(suiteName: suiteName)!
