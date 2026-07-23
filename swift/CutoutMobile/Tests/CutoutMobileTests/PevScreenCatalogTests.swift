@@ -75,6 +75,20 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
     }
 
+    func testChargeEstimatePresentationResolvesFromThePackageCatalog() {
+        XCTAssertEqual(pevLocalizedText("charge.estimate.value.collecting"), "estimating")
+        XCTAssertEqual(
+            pevLocalizedText("charge.estimate.detail.collecting.plural", Int64(2)),
+            "estimating charge time · 2 samples"
+        )
+        XCTAssertEqual(pevLocalizedText("charge.estimate.kind.profile_backed"), "profile-backed")
+        XCTAssertEqual(pevLocalizedText("charge.estimate.confidence.medium"), "medium")
+        XCTAssertEqual(
+            pevLocalizedText("charge.estimate.unavailable.capacity_missing"),
+            "usable pack capacity unavailable"
+        )
+    }
+
     func testEucConnectionAndRidePresentationResolveFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("euc.connection.starting"), "Starting Bluetooth...")
         XCTAssertEqual(pevLocalizedText("euc.connection.unavailable", Int64(4)), "Bluetooth unavailable: state 4")

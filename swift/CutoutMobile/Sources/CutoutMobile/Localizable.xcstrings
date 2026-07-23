@@ -121,6 +121,118 @@
       "comment" : "BMS screen title when the BMS type or topology is unknown.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown BMS" } } }
     },
+    "charge.estimate.confidence.high" : {
+      "comment" : "Charge estimate confidence level.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "high" } } }
+    },
+    "charge.estimate.confidence.low" : {
+      "comment" : "Charge estimate confidence level.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "low" } } }
+    },
+    "charge.estimate.confidence.medium" : {
+      "comment" : "Charge estimate confidence level.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "medium" } } }
+    },
+    "charge.estimate.detail.available" : {
+      "comment" : "Charge estimate detail. Arguments: estimate basis and confidence level.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@ confidence" } } }
+    },
+    "charge.estimate.detail.collecting.plural" : {
+      "comment" : "Charge estimate detail while collecting multiple samples. Argument: sample count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimating charge time · %lld samples" } } }
+    },
+    "charge.estimate.detail.collecting.singular" : {
+      "comment" : "Charge estimate detail while collecting one sample.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimating charge time · 1 sample" } } }
+    },
+    "charge.estimate.detail.failed" : {
+      "comment" : "Charge estimate detail when calculation fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "calculation failed" } } }
+    },
+    "charge.estimate.detail.stale" : {
+      "comment" : "Charge estimate detail while waiting for fresh source telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "waiting for fresh telemetry" } } }
+    },
+    "charge.estimate.detail.unavailable" : {
+      "comment" : "Charge estimate detail when no estimate can be shown.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimate unavailable" } } }
+    },
+    "charge.estimate.kind.observed_taper" : {
+      "comment" : "Charge estimate basis derived from observed charging taper.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "observed taper" } } }
+    },
+    "charge.estimate.kind.present_current" : {
+      "comment" : "Charge estimate basis derived from the current charging rate.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "at present current" } } }
+    },
+    "charge.estimate.kind.profile_backed" : {
+      "comment" : "Charge estimate basis derived from a battery profile.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "profile-backed" } } }
+    },
+    "charge.estimate.unavailable.battery_level_missing" : {
+      "comment" : "Charge estimate unavailable reason when battery level is missing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery level unavailable" } } }
+    },
+    "charge.estimate.unavailable.capacity_missing" : {
+      "comment" : "Charge estimate unavailable reason when usable pack capacity is missing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "usable pack capacity unavailable" } } }
+    },
+    "charge.estimate.unavailable.contradictory_inputs" : {
+      "comment" : "Charge estimate unavailable reason when source inputs disagree.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging inputs disagree" } } }
+    },
+    "charge.estimate.unavailable.current_direction_unverified" : {
+      "comment" : "Charge estimate unavailable reason when current direction is unverified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "current direction unverified" } } }
+    },
+    "charge.estimate.unavailable.current_missing" : {
+      "comment" : "Charge estimate unavailable reason when battery current is missing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "battery current unavailable" } } }
+    },
+    "charge.estimate.unavailable.current_too_small" : {
+      "comment" : "Charge estimate unavailable reason when charging current is too small.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging current too small" } } }
+    },
+    "charge.estimate.unavailable.full_or_near_full" : {
+      "comment" : "Charge estimate unavailable reason when the battery is already nearly full.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "near full" } } }
+    },
+    "charge.estimate.unavailable.not_charging" : {
+      "comment" : "Charge estimate unavailable reason when the battery is not charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "not charging" } } }
+    },
+    "charge.estimate.unavailable.stale_input" : {
+      "comment" : "Charge estimate unavailable reason when source telemetry is stale.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "telemetry stale" } } }
+    },
+    "charge.estimate.unavailable.temperature_out_of_model" : {
+      "comment" : "Charge estimate unavailable reason when temperature is outside the supported model.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "temperature outside model" } } }
+    },
+    "charge.estimate.unavailable.unstable_current" : {
+      "comment" : "Charge estimate unavailable reason when charging current is unstable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging current unstable" } } }
+    },
+    "charge.estimate.unavailable.unsupported_profile" : {
+      "comment" : "Charge estimate unavailable reason when no compatible charging profile is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "charging profile unavailable" } } }
+    },
+    "charge.estimate.value.collecting" : {
+      "comment" : "Charge estimate value while collecting samples.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "estimating" } } }
+    },
+    "charge.estimate.value.failed" : {
+      "comment" : "Charge estimate value when calculation fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "failed" } } }
+    },
+    "charge.estimate.value.near_full" : {
+      "comment" : "Charge estimate value when the battery is nearly full.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "near full" } } }
+    },
+    "charge.estimate.value.stale" : {
+      "comment" : "Charge estimate value when source telemetry is stale.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "stale" } } }
+    },
     "dashboard.subtitle.live_telemetry" : {
       "comment" : "Dashboard subtitle for live telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live telemetry" } } }

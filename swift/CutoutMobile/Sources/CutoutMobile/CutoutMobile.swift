@@ -578,18 +578,18 @@ public enum ChargeEstimateUnavailableReason: Equatable, Hashable, Sendable {
 
     fileprivate var displayText: String {
         switch self {
-        case .notCharging: "not charging"
-        case .currentMissing: "battery current unavailable"
-        case .currentDirectionUnverified: "current direction unverified"
-        case .currentTooSmall: "charging current too small"
-        case .batteryLevelMissing: "battery level unavailable"
-        case .capacityMissing: "usable pack capacity unavailable"
-        case .unsupportedProfile: "charging profile unavailable"
-        case .unstableCurrent: "charging current unstable"
-        case .staleInput: "telemetry stale"
-        case .temperatureOutOfModel: "temperature outside model"
-        case .fullOrNearFull: "near full"
-        case .contradictoryInputs: "charging inputs disagree"
+        case .notCharging: pevLocalizedText("charge.estimate.unavailable.not_charging")
+        case .currentMissing: pevLocalizedText("charge.estimate.unavailable.current_missing")
+        case .currentDirectionUnverified: pevLocalizedText("charge.estimate.unavailable.current_direction_unverified")
+        case .currentTooSmall: pevLocalizedText("charge.estimate.unavailable.current_too_small")
+        case .batteryLevelMissing: pevLocalizedText("charge.estimate.unavailable.battery_level_missing")
+        case .capacityMissing: pevLocalizedText("charge.estimate.unavailable.capacity_missing")
+        case .unsupportedProfile: pevLocalizedText("charge.estimate.unavailable.unsupported_profile")
+        case .unstableCurrent: pevLocalizedText("charge.estimate.unavailable.unstable_current")
+        case .staleInput: pevLocalizedText("charge.estimate.unavailable.stale_input")
+        case .temperatureOutOfModel: pevLocalizedText("charge.estimate.unavailable.temperature_out_of_model")
+        case .fullOrNearFull: pevLocalizedText("charge.estimate.unavailable.full_or_near_full")
+        case .contradictoryInputs: pevLocalizedText("charge.estimate.unavailable.contradictory_inputs")
         }
     }
 }
@@ -806,31 +806,39 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
     public var displayValue: String {
         switch kind {
         case .available:
-            estimate?.expected.displayText ?? "unavailable"
+            estimate?.expected.displayText ?? pevLocalizedText("metric.availability.unavailable")
         case .collectingSamples:
-            "estimating"
+            pevLocalizedText("charge.estimate.value.collecting")
         case .stale:
-            "stale"
+            pevLocalizedText("charge.estimate.value.stale")
         case .unavailable:
-            unavailableReason == .fullOrNearFull ? "near full" : "unavailable"
+            unavailableReason == .fullOrNearFull
+                ? pevLocalizedText("charge.estimate.value.near_full")
+                : pevLocalizedText("metric.availability.unavailable")
         case .failed:
-            "failed"
+            pevLocalizedText("charge.estimate.value.failed")
         }
     }
 
     public var displayDetail: String {
         switch kind {
         case .available:
-            guard let estimate else { return "estimate unavailable" }
-            return "\(estimate.kind.displayText), \(estimate.confidence.displayText) confidence"
+            guard let estimate else { return pevLocalizedText("charge.estimate.detail.unavailable") }
+            return pevLocalizedText(
+                "charge.estimate.detail.available",
+                estimate.kind.displayText,
+                estimate.confidence.displayText
+            )
         case .collectingSamples:
-            return "estimating charge time · \(samples) sample\(samples == 1 ? "" : "s")"
+            return samples == 1
+                ? pevLocalizedText("charge.estimate.detail.collecting.singular")
+                : pevLocalizedText("charge.estimate.detail.collecting.plural", Int64(samples))
         case .stale:
-            return "waiting for fresh telemetry"
+            return pevLocalizedText("charge.estimate.detail.stale")
         case .unavailable:
-            return unavailableReason?.displayText ?? "estimate unavailable"
+            return unavailableReason?.displayText ?? pevLocalizedText("charge.estimate.detail.unavailable")
         case .failed:
-            return "calculation failed"
+            return pevLocalizedText("charge.estimate.detail.failed")
         }
     }
 }
@@ -875,9 +883,9 @@ public struct ChargeEstimateProfile: Equatable, Hashable, Sendable {
 private extension ChargeEstimateKind {
     var displayText: String {
         switch self {
-        case .atPresentCurrent: "at present current"
-        case .profileBackedTimeToFull: "profile-backed"
-        case .observedTaperTimeToFull: "observed taper"
+        case .atPresentCurrent: pevLocalizedText("charge.estimate.kind.present_current")
+        case .profileBackedTimeToFull: pevLocalizedText("charge.estimate.kind.profile_backed")
+        case .observedTaperTimeToFull: pevLocalizedText("charge.estimate.kind.observed_taper")
         }
     }
 }
@@ -885,9 +893,9 @@ private extension ChargeEstimateKind {
 private extension ChargeEstimateConfidence {
     var displayText: String {
         switch self {
-        case .low: "low"
-        case .medium: "medium"
-        case .high: "high"
+        case .low: pevLocalizedText("charge.estimate.confidence.low")
+        case .medium: pevLocalizedText("charge.estimate.confidence.medium")
+        case .high: pevLocalizedText("charge.estimate.confidence.high")
         }
     }
 }
