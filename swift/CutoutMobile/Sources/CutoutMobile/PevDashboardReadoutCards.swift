@@ -119,11 +119,6 @@ public struct PevDashboardHeroCard: View {
     let unit: String
     let detail: String
     let progress: Double
-    let fill: Color
-    let stroke: Color
-    let track: Color
-    let textColor: Color
-    let secondaryTextColor: Color
 
     var clampedProgress: Double {
         max(0, min(1, progress))
@@ -138,45 +133,35 @@ public struct PevDashboardHeroCard: View {
         value: String,
         unit: String,
         detail: String,
-        progress: Double,
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        track: Color = PevDashboardColors.cardStroke,
-        textColor: Color = PevDashboardColors.primaryText,
-        secondaryTextColor: Color = PevDashboardColors.mutedText
+        progress: Double
     ) {
         self.eyebrow = eyebrow
         self.value = value
         self.unit = unit
         self.detail = detail
         self.progress = progress
-        self.fill = fill
-        self.stroke = stroke
-        self.track = track
-        self.textColor = textColor
-        self.secondaryTextColor = secondaryTextColor
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(eyebrow)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(secondaryTextColor)
+                .foregroundStyle(PevDashboardColors.mutedText)
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(value)
                     .font(.largeTitle.weight(.black))
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(PevDashboardColors.primaryText)
                     .monospacedDigit()
                 Text(unit)
                     .font(.headline.weight(.black))
-                    .foregroundStyle(secondaryTextColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
             }
             Text(detail)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(secondaryTextColor)
+                .foregroundStyle(PevDashboardColors.mutedText)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(track)
+                    Capsule().fill(PevDashboardColors.cardStroke)
                     Capsule()
                         .fill(PevDashboardColors.primaryText)
                         .frame(width: clampedProgress * proxy.size.width)
@@ -190,8 +175,8 @@ public struct PevDashboardHeroCard: View {
         .background(
             PevDashboardCardBackground(
                 cornerRadius: 24,
-                fill: fill,
-                stroke: stroke
+                fill: PevDashboardColors.cardFill,
+                stroke: PevDashboardColors.cardStroke
             )
         )
         .accessibilityRepresentation {
@@ -208,10 +193,7 @@ public struct PevDashboardWideCard: View {
     let metricValue: PevDashboardMetricValue
     var value: String { metricValue.displayText }
     let detail: String?
-    let fill: Color
     let stroke: Color
-    let textColor: Color
-    let secondaryTextColor: Color
 
     var accessibilityLabelText: String {
         title ?? metricValue.accessibilityText
@@ -226,18 +208,12 @@ public struct PevDashboardWideCard: View {
         title: String?,
         metricValue: PevDashboardMetricValue,
         detail: String?,
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        textColor: Color = PevDashboardColors.primaryText,
-        secondaryTextColor: Color = PevDashboardColors.mutedText
+        stroke: Color = PevDashboardColors.cardStroke
     ) {
         self.title = title
         self.metricValue = metricValue
         self.detail = detail
-        self.fill = fill
         self.stroke = stroke
-        self.textColor = textColor
-        self.secondaryTextColor = secondaryTextColor
     }
 
     public var body: some View {
@@ -245,15 +221,15 @@ public struct PevDashboardWideCard: View {
             if let title {
                 Text(title)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(secondaryTextColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
             }
             Text(value)
                 .font(.title3.weight(.black))
-                .foregroundStyle(textColor)
+                .foregroundStyle(PevDashboardColors.primaryText)
             if let detail, !detail.isEmpty {
                 Text(detail)
                     .font(.subheadline.weight(.black))
-                    .foregroundStyle(secondaryTextColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
             }
         }
         .padding(.horizontal, 18)
@@ -262,7 +238,6 @@ public struct PevDashboardWideCard: View {
         .background(
             PevDashboardCardBackground(
                 cornerRadius: 24,
-                fill: fill,
                 stroke: stroke,
                 lineWidth: 1.2
             )
