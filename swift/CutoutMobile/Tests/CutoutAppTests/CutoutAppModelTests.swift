@@ -369,6 +369,49 @@ final class CutoutAppModelTests: XCTestCase {
         model.applyProtocolIdentityCandidate(second)
         XCTAssertEqual(model.selectedRideTitle, "Little FOCer BT")
     }
+
+    @MainActor
+    func testLiveActivityStartFailureIsObservableInAppState() async {
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(
+            core: driver,
+            liveActivityManager: FailingLiveActivityManager(error: .authorizationDenied)
+        )
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+
+        for _ in 0 ..< 10 {
+            if model.liveActivityError != nil { break }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(model.liveActivityError, .authorizationDenied)
+    }
+}
+
+private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
+    let error: LiveActivityRideLifecycleError
+
+    init(error: LiveActivityRideLifecycleError) {
+        self.error = error
+    }
+
+    func start(snapshot _: LiveActivityRideSnapshot) async throws {
+        throw error
+    }
+
+    func update(snapshot _: LiveActivityRideSnapshot) async throws {}
+
+    func end(reason _: LiveActivityRideLifecycleEndReason) async throws {}
 }
 
 @MainActor

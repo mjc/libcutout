@@ -152,6 +152,7 @@ final class CutoutAppModel {
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
     private(set) var captureStatus: CaptureStatus?
+    private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var isRecordOnlyCapture = false
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
@@ -193,7 +194,7 @@ final class CutoutAppModel {
     }
 
     private let core: any CutoutSessionDriving
-    private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
+    private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
@@ -209,28 +210,33 @@ final class CutoutAppModel {
         self.init(
             core: Self.makeSessionDriver(),
             permitsStoredDeviceAutoPairing: Self.uiTestFixture == nil,
-            selectedDeviceStore: DevicePickerSelectionStore()
+            selectedDeviceStore: DevicePickerSelectionStore(),
+            liveActivityManager: LiveActivityRideActivityKitManager()
         )
     }
 
     convenience init(
         core: any CutoutSessionDriving,
-        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager()
     ) {
         self.init(
             core: core,
             permitsStoredDeviceAutoPairing: true,
-            selectedDeviceStore: selectedDeviceStore
+            selectedDeviceStore: selectedDeviceStore,
+            liveActivityManager: liveActivityManager
         )
     }
 
     private init(
         core: any CutoutSessionDriving,
         permitsStoredDeviceAutoPairing: Bool,
-        selectedDeviceStore: DevicePickerSelectionStore
+        selectedDeviceStore: DevicePickerSelectionStore,
+        liveActivityManager: any LiveActivityRideLifecycleManaging
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: liveActivityManager)
         self.selectedDeviceStore = selectedDeviceStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
@@ -395,8 +401,9 @@ final class CutoutAppModel {
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
-        Task { [liveActivityCoordinator] in
+        Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.end(reason: reason)
+            self?.liveActivityError = await liveActivityCoordinator.lastError
         }
         lastLiveActivitySnapshot = nil
         lastLiveActivityUpdate = nil
@@ -497,12 +504,13 @@ final class CutoutAppModel {
             .sessionEnded
         }
         guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
-        Task { [liveActivityCoordinator] in
+        Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.reconcile(
                 snapshot: snapshot,
                 shouldBeActive: shouldBeActive,
                 endReason: endReason
             )
+            self?.liveActivityError = await liveActivityCoordinator.lastError
         }
     }
 
