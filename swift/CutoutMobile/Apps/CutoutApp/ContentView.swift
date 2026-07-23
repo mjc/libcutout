@@ -329,7 +329,8 @@ private struct VescRideRouteView: View {
                 liveSnapshot: model.vescRideSnapshot,
                 phase: model.phase,
                 now: model.currentMonotonicTime,
-                captureStatusText: model.captureStatusText
+                captureStatusText: model.captureStatusText,
+                connectionStatusText: model.connectionStatusText
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
@@ -345,7 +346,8 @@ private struct VescDebugRouteView: View {
             snapshot: model.vescRideSnapshot,
             phase: model.phase,
             notificationCount: model.displayState.notificationCount,
-            captureStatusText: model.captureStatusText
+            captureStatusText: model.captureStatusText,
+            connectionStatusText: model.connectionStatusText
         )
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.screen.vescDebug")

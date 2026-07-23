@@ -280,7 +280,8 @@ final class PevScreenThemeTests: XCTestCase {
             liveSnapshot: snapshot,
             phase: .live,
             now: MonotonicMilliseconds(1_000),
-            captureStatusText: nil
+            captureStatusText: nil,
+            connectionStatusText: nil
         )
 
         XCTAssertEqual(view.dashboardTiles.map(\.label), [
@@ -336,7 +337,8 @@ final class PevScreenThemeTests: XCTestCase {
             liveSnapshot: snapshot,
             phase: .live,
             now: MonotonicMilliseconds(1_000),
-            captureStatusText: nil
+            captureStatusText: nil,
+            connectionStatusText: nil
         )
 
         XCTAssertEqual(

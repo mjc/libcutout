@@ -10,6 +10,7 @@ struct VescRideScreenView: View {
     let phase: SessionConnectionPhase
     let now: MonotonicMilliseconds
     let captureStatusText: String?
+    let connectionStatusText: String?
 
     private var title: String {
         liveSnapshot?.title ?? VescRideSnapshot.defaultTitle
@@ -19,7 +20,9 @@ struct VescRideScreenView: View {
         if let liveSnapshot {
             return vescRideSubtitle(liveSnapshot)
         }
-        return phase == .live ? localizedAppText("vesc.subtitle.telemetry_pending") : phase.displayText
+        return phase == .live
+            ? localizedAppText("vesc.subtitle.telemetry_pending")
+            : connectionStatusText ?? phase.displayText
     }
 
     private var speedReadout: PevRideHeroReadout {

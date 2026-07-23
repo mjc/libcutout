@@ -185,6 +185,13 @@ final class CutoutAppModel {
         captureStatus?.displayText
     }
 
+    var connectionStatusText: String {
+        if case .retrying = connectionState {
+            return localizedAppText("picker.status.retrying")
+        }
+        return phase.displayText
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
     private let selectedDeviceStore = DevicePickerSelectionStore()

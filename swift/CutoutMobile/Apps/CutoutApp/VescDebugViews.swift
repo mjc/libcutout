@@ -6,6 +6,7 @@ struct VescDebugScreenView: View {
     let phase: SessionConnectionPhase
     let notificationCount: UInt64
     let captureStatusText: String?
+    let connectionStatusText: String?
 
     private var tiles: [PevDashboardTile] {
         snapshot.map(vescDebugTiles) ?? []
@@ -19,7 +20,7 @@ struct VescDebugScreenView: View {
         PevDashboardScaffold(sectionTitle: localizedAppText("vesc.debug.section"), bottomPadding: 20, showsHeader: false) {
             PevScreenTitleBlock(
                 title: snapshot?.title ?? localizedAppText("vesc.debug.title"),
-                subtitle: captureStatusText ?? phase.displayText
+                subtitle: captureStatusText ?? connectionStatusText ?? phase.displayText
             )
 
             PevDashboardGrid(spacing: 20) {

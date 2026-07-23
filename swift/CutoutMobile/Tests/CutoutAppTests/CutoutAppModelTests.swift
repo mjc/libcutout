@@ -191,6 +191,7 @@ final class CutoutAppModelTests: XCTestCase {
                 attempt: 1
             )
         )
+        XCTAssertEqual(model.connectionStatusText, "Retrying connection…")
     }
 
     @MainActor

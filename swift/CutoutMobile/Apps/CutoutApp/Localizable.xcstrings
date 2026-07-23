@@ -970,6 +970,12 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Live" } }
       }
     },
+    "picker.status.retrying" : {
+      "comment" : "Connection status shown after an established connection drops and the app is reconnecting.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retrying connection…" } }
+      }
+    },
     "picker.status.no_devices" : {
       "localizations" : {
         "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } }
