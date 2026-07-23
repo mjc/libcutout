@@ -439,4 +439,9 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(metricValue, .unavailable)
         XCTAssertEqual(card.titleAccessibilityText, "unavailable")
     }
+
+    func testBmsGroupVoltageUsesTypedUnavailableMetricValue() {
+        let voltage: Voltage? = nil
+        XCTAssertEqual(bmsGroupVoltageMetricValue(voltage), .unavailable)
+    }
 }

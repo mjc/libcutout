@@ -169,7 +169,7 @@ struct BmsDetailLayout: View {
                         .font(.headline)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityAddTraits(.isHeader)
-                    Text(groupVoltageText(selectedGroup))
+                    Text(bmsGroupVoltageMetricValue(selectedGroup).displayText)
                         .font(.largeTitle.weight(.black))
                         .monospacedDigit()
                         .accessibilityLabel(selectedGroup.accessibilityLabel)
