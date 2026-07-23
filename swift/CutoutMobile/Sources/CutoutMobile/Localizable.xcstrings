@@ -169,6 +169,10 @@
       "comment" : "Bluetooth connection phase when Bluetooth is unavailable. The placeholder is the platform Bluetooth state code.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bluetooth unavailable: state %lld" } } }
     },
+    "metric.availability.unavailable" : {
+      "comment" : "Generic metric availability used visually and by VoiceOver when no reading exists.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
+    },
     "euc.failure.characteristic_discovery" : {
       "comment" : "Connection failure. The placeholder is the platform's characteristic-discovery error description.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Characteristic discovery failed: %@" } } }

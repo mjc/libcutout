@@ -24,9 +24,11 @@ final class PevScreenCatalogTests: XCTestCase {
     }
 
     func testDashboardMetricAccessibilityKeepsUnavailableTyped() {
+        let unavailable = pevLocalizedText("metric.availability.unavailable")
+
         XCTAssertEqual(
             PevDashboardMetricValue.unavailable.accessibilityValue(unit: "V", detail: "stale"),
-            "unavailable"
+            unavailable
         )
         XCTAssertEqual(
             PevDashboardMetricValue.available(display: "84", accessibility: "84").accessibilityValue(
@@ -38,6 +40,8 @@ final class PevScreenCatalogTests: XCTestCase {
     }
 
     func testLiveCatalogContainsOnlyProductionRouteMetadata() {
+        let unavailable = pevLocalizedText("metric.availability.unavailable")
+
         XCTAssertEqual(
             PevScreenCatalog.live.screens.map(\.id),
             [
@@ -53,7 +57,7 @@ final class PevScreenCatalogTests: XCTestCase {
             ]
         )
         XCTAssertTrue(PevScreenCatalog.live.screens.allSatisfy { screen in
-            screen.secondaryValue == "unavailable"
+            screen.secondaryValue == unavailable
                 && screen.bmsContent == nil
         })
     }

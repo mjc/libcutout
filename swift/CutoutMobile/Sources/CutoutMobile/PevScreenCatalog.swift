@@ -98,7 +98,7 @@ public enum PevDashboardMetricValue: Equatable, Hashable, Sendable {
     public var accessibilityText: String {
         switch self {
         case .available(_, let accessibility): accessibility
-        case .unavailable: "unavailable"
+        case .unavailable: pevLocalizedText("metric.availability.unavailable")
         }
     }
 
@@ -951,7 +951,10 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
             id: metadata.id,
             title: resolvedKind.liveTitle(snapshot: liveBmsSnapshot),
             subtitle: resolvedKind.liveSubtitle(snapshot: liveBmsSnapshot, fallback: metadata.subtitle),
-            secondaryValue: resolvedKind.liveSecondaryValue(snapshot: liveBmsSnapshot, fallback: "unavailable"),
+            secondaryValue: resolvedKind.liveSecondaryValue(
+                snapshot: liveBmsSnapshot,
+                fallback: pevLocalizedText("metric.availability.unavailable")
+            ),
             bmsContent: resolvedContent
         )
     }
@@ -1001,7 +1004,7 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
             id: id,
             title: title,
             subtitle: subtitle,
-            secondaryValue: "unavailable"
+            secondaryValue: pevLocalizedText("metric.availability.unavailable")
         )
     }
 }
