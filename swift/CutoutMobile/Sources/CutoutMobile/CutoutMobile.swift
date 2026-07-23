@@ -2332,7 +2332,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             let averageGroupVoltage,
             let groupVoltage = group.voltage
         else {
-            return group.label ?? "group \(group.index)"
+            return group.label ?? pevLocalizedText("bms.detail.unnamed_group", Int64(group.index))
         }
 
         let delta = abs(Int(averageGroupVoltage.value) - Int(groupVoltage.value))

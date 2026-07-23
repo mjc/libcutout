@@ -11,6 +11,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             "group 17 · 18 mV from pack avg"
         )
         XCTAssertEqual(pevLocalizedText("bms.detail.history_unavailable"), "not enough history")
+        XCTAssertEqual(pevLocalizedText("bms.detail.unnamed_group", Int64(17)), "group 17")
         XCTAssertEqual(pevLocalizedText("bms.topology.layout_verified"), "layout verified")
         XCTAssertEqual(
             pevLocalizedText("bms.cell_map.hint.resistance"),
