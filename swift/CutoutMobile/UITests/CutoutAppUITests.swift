@@ -344,6 +344,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescRidePassesAccessibilityAuditWithIncreasedContrast() throws {
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: "voltage",
+            auditExclusions: []
+        )
+    }
+
     func testVescRidePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
@@ -371,9 +379,28 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testVescDebugPassesAccessibilityAuditWithIncreasedContrast() throws {
+        guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let debugTab = app.tabBars.buttons["Debug"]
+        XCTAssertTrue(debugTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(debugTab.isHittable)
+        debugTab.tap()
+
+        let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
+        XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
+        assertMetricIsReachable("duty", in: debugScreen)
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     private func assertConnectedSurface(
         for family: ConnectedDeviceFamily,
-        requiredMetricLabel: String? = nil
+        requiredMetricLabel: String? = nil,
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
     ) throws {
         let pairingAttempted = pairAvailableDevice(family)
 
@@ -461,7 +488,7 @@ final class CutoutAppUITests: XCTestCase {
             assertMetricIsReachable(requiredMetricLabel, in: screen)
         }
 
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
     private var launchArguments: [String] {
