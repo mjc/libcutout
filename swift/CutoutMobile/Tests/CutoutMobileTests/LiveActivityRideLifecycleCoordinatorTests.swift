@@ -97,8 +97,23 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
         await coordinator.end(reason: .sessionEnded)
 
+        let error = await coordinator.lastError
+        XCTAssertEqual(error, .requestFailed)
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(snapshot)])
+    }
+
+    func testFailedUpdateIsRetainedAsTypedLifecycleError() async {
+        let manager = RecordingLiveActivityRideLifecycleManager(updateError: .activityUnavailable)
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let updated = liveSnapshot(label: "Connected ride", speedMph: 20.1)
+
+        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        await coordinator.reconcile(snapshot: updated, shouldBeActive: true)
+
+        let error = await coordinator.lastError
+        XCTAssertEqual(error, .activityUnavailable)
     }
 
     func testConcurrentReconciliationsDoNotOverlapLifecycleOperations() async {
@@ -138,6 +153,7 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
 
     private var events: [Event] = []
     private let startError: LiveActivityRideLifecycleError?
+    private let updateError: LiveActivityRideLifecycleError?
     private let blockFirstStart: Bool
     private var firstStartBlocked = false
     private var firstStartWaiter: CheckedContinuation<Void, Never>?
@@ -145,9 +161,11 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
 
     init(
         startError: LiveActivityRideLifecycleError? = nil,
+        updateError: LiveActivityRideLifecycleError? = nil,
         blockFirstStart: Bool = false
     ) {
         self.startError = startError
+        self.updateError = updateError
         self.blockFirstStart = blockFirstStart
     }
 
@@ -162,8 +180,9 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
         await withCheckedContinuation { firstStartWaiter = $0 }
     }
 
-    func update(snapshot: LiveActivityRideSnapshot) {
+    func update(snapshot: LiveActivityRideSnapshot) throws {
         events.append(.update(snapshot))
+        if let updateError { throw updateError }
     }
 
     func end(reason: LiveActivityRideLifecycleEndReason) {

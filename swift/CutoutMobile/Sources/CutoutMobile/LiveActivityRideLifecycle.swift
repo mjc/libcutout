@@ -24,6 +24,7 @@ public actor LiveActivityRideLifecycleCoordinator {
     private let manager: any LiveActivityRideLifecycleManaging
     private var isActive = false
     private var lastSnapshot: LiveActivityRideSnapshot?
+    public private(set) var lastError: LiveActivityRideLifecycleError?
     private var isOperationInFlight = false
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -67,9 +68,11 @@ public actor LiveActivityRideLifecycleCoordinator {
         do {
             try await manager.update(snapshot: snapshot)
             lastSnapshot = snapshot
+            lastError = nil
         } catch {
             isActive = false
             lastSnapshot = nil
+            lastError = Self.lifecycleError(from: error)
         }
     }
 
@@ -104,10 +107,16 @@ public actor LiveActivityRideLifecycleCoordinator {
             try await manager.start(snapshot: snapshot)
             isActive = true
             lastSnapshot = snapshot
+            lastError = nil
         } catch {
             isActive = false
             lastSnapshot = nil
+            lastError = Self.lifecycleError(from: error)
         }
+    }
+
+    private static func lifecycleError(from error: Error) -> LiveActivityRideLifecycleError {
+        (error as? LiveActivityRideLifecycleError) ?? .requestFailed
     }
 
     private func endIfNeeded(reason: LiveActivityRideLifecycleEndReason) async {
