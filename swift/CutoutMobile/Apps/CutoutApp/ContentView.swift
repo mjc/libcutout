@@ -27,20 +27,7 @@ struct ContentView: View {
                 PevColors.pageBackground
                     .ignoresSafeArea()
 
-                DevicePickerView(
-                    scanState: model.devicePickerScanState,
-                    connectionPhase: model.phase,
-                    captureStatusText: model.captureStatusText,
-                    isRecordOnlyCapture: model.isRecordOnlyCapture,
-                    hasSavedDevice: model.hasSavedDevice,
-                    pair: pair,
-                    forgetSavedDevice: model.forgetSavedDevice,
-                    recordOnly: { row, deviceKind in
-                        if model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) {
-                            navigate(to: model.isRecordOnlyCapture ? .capture : .eucRide)
-                        }
-                    }
-                )
+                DevicePickerRouteView(model: model, pair: pair, navigate: navigate)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .accessibilityLabel(localizedAppText("picker.title"))
                 .accessibilityFocused($focusedRoute, equals: .devicePicker)
@@ -249,6 +236,28 @@ struct ContentView: View {
         #endif
     }
 
+}
+
+private struct DevicePickerRouteView: View {
+    let model: CutoutAppModel
+    let pair: (DevicePickerRow) -> Void
+    let navigate: (CutoutAppRoute) -> Void
+
+    var body: some View {
+        DevicePickerView(
+            scanState: model.devicePickerScanState,
+            connectionPhase: model.phase,
+            captureStatusText: model.captureStatusText,
+            isRecordOnlyCapture: model.isRecordOnlyCapture,
+            hasSavedDevice: model.hasSavedDevice,
+            pair: pair,
+            forgetSavedDevice: model.forgetSavedDevice,
+            recordOnly: { row, deviceKind in
+                guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return }
+                navigate(model.isRecordOnlyCapture ? .capture : .eucRide)
+            }
+        )
+    }
 }
 
 private struct EucRideRouteView: View {
