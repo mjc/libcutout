@@ -87,6 +87,9 @@ final class PevScreenCatalogTests: XCTestCase {
             pevLocalizedText("charge.estimate.unavailable.capacity_missing"),
             "usable pack capacity unavailable"
         )
+        XCTAssertEqual(pevLocalizedText("charge.estimate.duration.under_minute"), "under 1 min")
+        XCTAssertEqual(pevLocalizedText("charge.estimate.duration.minutes", Int64(45)), "45 min")
+        XCTAssertEqual(pevLocalizedText("charge.estimate.duration.hours_minutes", Int64(1), Int64(30)), "1h 30m")
     }
 
     func testEucConnectionAndRidePresentationResolveFromThePackageCatalog() {

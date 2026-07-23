@@ -691,9 +691,11 @@ public struct ChargeEstimateDuration: Equatable, Hashable, Sendable {
 
     fileprivate var displayText: String {
         let minutes = milliseconds / 60_000
-        if minutes == 0 { return "under 1 min" }
+        if minutes == 0 { return pevLocalizedText("charge.estimate.duration.under_minute") }
         let hours = minutes / 60
-        return hours == 0 ? "\(minutes) min" : "\(hours)h \(minutes % 60)m"
+        return hours == 0
+            ? pevLocalizedText("charge.estimate.duration.minutes", Int64(minutes))
+            : pevLocalizedText("charge.estimate.duration.hours_minutes", Int64(hours), Int64(minutes % 60))
     }
 }
 

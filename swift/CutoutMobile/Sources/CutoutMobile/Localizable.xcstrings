@@ -133,6 +133,18 @@
       "comment" : "Charge estimate confidence level.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "medium" } } }
     },
+    "charge.estimate.duration.hours_minutes" : {
+      "comment" : "Charge estimate duration. Arguments: whole hours and remaining whole minutes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$lldh %2$lldm" } } }
+    },
+    "charge.estimate.duration.minutes" : {
+      "comment" : "Charge estimate duration shorter than an hour. Argument: whole minutes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld min" } } }
+    },
+    "charge.estimate.duration.under_minute" : {
+      "comment" : "Charge estimate duration shorter than one whole minute.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "under 1 min" } } }
+    },
     "charge.estimate.detail.available" : {
       "comment" : "Charge estimate detail. Arguments: estimate basis and confidence level.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%1$@, %2$@ confidence" } } }
