@@ -5,6 +5,15 @@ import UIKit
 import AppKit
 #endif
 
+extension LiveActivityRideValue {
+    static func speedPresentation(for speed: Self) -> Self {
+        guard speed.unit != nil else {
+            return .unavailable(label: speed.label, accessibilityDetail: speed.accessibilityDetail)
+        }
+        return speed
+    }
+}
+
 private enum PevLiveActivitySystemColors {
     #if os(iOS)
     static let background = Color(uiColor: .systemBackground)
@@ -116,7 +125,8 @@ public struct PevLiveActivitySpeedGauge: View {
     }
 
     public var body: some View {
-        let gaugeEnd = 0.12 + (0.76 * (snapshot.speed.speedGaugeProgressValue ?? 0.0))
+        let speed = LiveActivityRideValue.speedPresentation(for: snapshot.speed)
+        let gaugeEnd = 0.12 + (0.76 * (speed.speedGaugeProgressValue ?? 0.0))
 
         ZStack {
             Circle()
@@ -134,19 +144,21 @@ public struct PevLiveActivitySpeedGauge: View {
                 )
                 .rotationEffect(.degrees(38))
             VStack(spacing: 0) {
-                Text(snapshot.speed.displayValue)
+                Text(speed.displayValue)
                     .font(.system(size: diameter * 0.35 * speedScale, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
-                Text(snapshot.speed.unit ?? "mph")
-                    .font(.system(size: diameter * 0.13 * unitScale, weight: .medium))
-                    .foregroundStyle(PevLiveActivityPalette.secondaryText)
+                if let unit = speed.unit {
+                    Text(unit)
+                        .font(.system(size: diameter * 0.13 * unitScale, weight: .medium))
+                        .foregroundStyle(PevLiveActivityPalette.secondaryText)
+                }
             }
         }
         .frame(width: diameter, height: diameter)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(snapshot.speed.label)
-        .accessibilityValue(snapshot.speed.accessibilityValue)
+        .accessibilityLabel(speed.label)
+        .accessibilityValue(speed.accessibilityValue)
     }
 }
 

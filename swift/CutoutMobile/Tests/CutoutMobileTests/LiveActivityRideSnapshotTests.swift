@@ -667,6 +667,20 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(values.map { $0.0.speedGaugeProgressValue }, values.map(\.1))
     }
 
+    func testSpeedGaugeMakesMissingUnitExplicitlyUnavailable() {
+        let speed = LiveActivityRideValue.available(
+            label: "Speed",
+            value: "27",
+            unit: nil,
+            source: .liveTelemetry
+        )
+
+        XCTAssertEqual(
+            LiveActivityRideValue.speedPresentation(for: speed),
+            .unavailable(label: "Speed")
+        )
+    }
+
     func testDisplayValueNormalizesUnavailableAndNotApplicableValues() {
         let values: [(LiveActivityRideValue, String)] = [
             (.available(label: "Speed", value: "25.0", unit: "mph", source: .liveTelemetry), "25.0"),
