@@ -300,6 +300,25 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertNil(announcements.next(for: .retrying(selection, attempt: 1)))
     }
 
+    func testReconnectStateAnnouncesAgainAfterConnectionRestores() {
+        let selection = ConnectionSelection(
+            platformIdentifier: "vesc-1234",
+            title: "VESC",
+            route: .vescOnewheel
+        )
+        var announcements = ConnectionAccessibilityAnnouncements()
+
+        XCTAssertEqual(
+            announcements.next(for: .retrying(selection, attempt: 1)),
+            "Connection lost. Retrying connection."
+        )
+        XCTAssertNil(announcements.next(for: .connected(selection)))
+        XCTAssertEqual(
+            announcements.next(for: .retrying(selection, attempt: 1)),
+            "Connection lost. Retrying connection."
+        )
+    }
+
     func testSafetyAnnouncementCopyResolvesFromTheAppCatalog() {
         XCTAssertEqual(
             localizedAppText("accessibility.euc_warning.caution"),
