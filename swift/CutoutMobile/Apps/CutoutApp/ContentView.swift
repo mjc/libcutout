@@ -325,6 +325,10 @@ private struct EucPackRouteView: View {
             )
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.\(screen.id.rawValue)")
+            .onChange(of: model.bmsSnapshot?.groups.map(\.index), initial: true) { _, groupIndices in
+                guard !packScreen.hasAvailableSelectedGroup(in: groupIndices) else { return }
+                navigate(.eucPack(.root))
+            }
         }
     }
 

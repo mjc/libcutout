@@ -32,6 +32,14 @@ enum EucPackScreen: Hashable {
         case .bmsNoData: .bmsNoData
         }
     }
+
+    func hasAvailableSelectedGroup(in groupIndices: [Int]?) -> Bool {
+        guard case let .bmsCellDetail(selectedGroupIndex?) = self,
+              let groupIndices else {
+            return true
+        }
+        return groupIndices.contains(selectedGroupIndex)
+    }
 }
 
 enum CutoutAppRoute: Hashable {
