@@ -174,11 +174,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         PevDashboardProgressBar(
             label: "Headroom",
             value: "42 percent",
-            progress: progress,
-            accent: .yellow,
-            track: .gray,
-            labelColor: .primary,
-            valueColor: .primary
+            progress: progress
         )
     }
 

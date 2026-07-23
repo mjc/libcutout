@@ -4,10 +4,7 @@ public struct PevDashboardProgressBar: View {
     let label: String
     let value: String
     let progress: Double
-    let accent: Color
     let track: Color
-    let labelColor: Color
-    let valueColor: Color
     let height: CGFloat
 
     var clampedProgress: Double {
@@ -18,19 +15,13 @@ public struct PevDashboardProgressBar: View {
         label: String,
         value: String,
         progress: Double,
-        accent: Color,
-        track: Color,
-        labelColor: Color,
-        valueColor: Color,
+        track: Color = PevDashboardColors.cardFill,
         height: CGFloat = 17
     ) {
         self.label = label
         self.value = value
         self.progress = progress
-        self.accent = accent
         self.track = track
-        self.labelColor = labelColor
-        self.valueColor = valueColor
         self.height = height
     }
 
@@ -39,11 +30,11 @@ public struct PevDashboardProgressBar: View {
             HStack {
                 Text(label)
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(labelColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
                 Spacer()
                 Text(value)
                     .font(.headline.weight(.black))
-                    .foregroundStyle(valueColor)
+                    .foregroundStyle(PevDashboardColors.primaryText)
                     .monospacedDigit()
             }
 
@@ -52,7 +43,7 @@ public struct PevDashboardProgressBar: View {
                     Capsule()
                         .fill(track)
                     Capsule()
-                        .fill(accent)
+                        .fill(PevDashboardColors.primaryText)
                         .frame(width: clampedProgress * proxy.size.width)
                 }
             }
@@ -69,38 +60,17 @@ public struct PevDashboardProgressCard: View {
     let value: String
     let detail: String
     let progress: Double
-    let accent: Color
-    let fill: Color
-    let stroke: Color
-    let track: Color
-    let labelColor: Color
-    let valueColor: Color
-    let detailColor: Color
 
     public init(
         label: String,
         value: String,
         detail: String,
-        progress: Double,
-        accent: Color,
-        fill: Color,
-        stroke: Color,
-        track: Color,
-        labelColor: Color,
-        valueColor: Color,
-        detailColor: Color
+        progress: Double
     ) {
         self.label = label
         self.value = value
         self.detail = detail
         self.progress = progress
-        self.accent = accent
-        self.fill = fill
-        self.stroke = stroke
-        self.track = track
-        self.labelColor = labelColor
-        self.valueColor = valueColor
-        self.detailColor = detailColor
     }
 
     public var body: some View {
@@ -109,16 +79,13 @@ public struct PevDashboardProgressCard: View {
                 label: label,
                 value: value,
                 progress: progress,
-                accent: accent,
-                track: track,
-                labelColor: labelColor,
-                valueColor: valueColor
+                track: PevDashboardColors.cardStroke
             )
 
             if !detail.isEmpty {
                 Text(detail)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(detailColor)
+                    .foregroundStyle(PevDashboardColors.mutedText)
             }
         }
         .padding(.horizontal, 22)
@@ -127,8 +94,8 @@ public struct PevDashboardProgressCard: View {
         .background(
             PevDashboardCardBackground(
                 cornerRadius: 25,
-                fill: fill,
-                stroke: stroke
+                fill: PevDashboardColors.cardFill,
+                stroke: PevDashboardColors.cardStroke
             )
         )
         .accessibilityElement(children: .combine)

@@ -219,14 +219,7 @@ struct VescRideScreenView: View {
                     label: localizedAppText("vesc.duty_headroom.label"),
                     value: percentText(dutyHeadroom),
                     detail: localizedAppText("vesc.duty_headroom.detail"),
-                    progress: Double(dutyHeadroom.value) / 100.0,
-                    accent: PevColors.primaryText,
-                    fill: PevColors.cardFill,
-                    stroke: PevColors.cardStroke,
-                    track: PevColors.cardStroke,
-                    labelColor: PevColors.muted,
-                    valueColor: PevColors.primaryText,
-                    detailColor: PevColors.muted
+                    progress: Double(dutyHeadroom.value) / 100.0
                 )
                     .padding(.top, 12)
             } else if liveSnapshot == nil && phase == .live {

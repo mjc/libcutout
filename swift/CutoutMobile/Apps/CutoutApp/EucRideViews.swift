@@ -85,11 +85,7 @@ struct EucRideScreenView: View {
                     PevDashboardProgressBar(
                         label: bar.label,
                         value: bar.value,
-                        progress: bar.progress,
-                        accent: PevColors.primaryText,
-                        track: PevColors.cardFill,
-                        labelColor: PevColors.muted,
-                        valueColor: PevColors.primaryText
+                        progress: bar.progress
                     )
                 }
             }
