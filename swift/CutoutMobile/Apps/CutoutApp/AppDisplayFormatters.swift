@@ -203,9 +203,11 @@ extension SessionConnectionPhase {
 
 struct ConnectionAccessibilityAnnouncements {
     private var hasAnnouncedFailure = false
+    private var hasAnnouncedRetry = false
 
     mutating func beginUserInitiatedAttempt() {
         hasAnnouncedFailure = false
+        hasAnnouncedRetry = false
     }
 
     mutating func next(for phase: SessionConnectionPhase) -> String? {
@@ -219,6 +221,20 @@ struct ConnectionAccessibilityAnnouncements {
             break
         }
         return phase.accessibilityAnnouncement
+    }
+
+    mutating func next(for state: ConnectionState) -> String? {
+        switch state {
+        case .retrying:
+            guard !hasAnnouncedRetry else { return nil }
+            hasAnnouncedRetry = true
+            return localizedAppText("picker.announcement.retrying")
+        case .connected:
+            hasAnnouncedRetry = false
+            return nil
+        case .picker, .identified, .connecting, .failed:
+            return nil
+        }
     }
 
     mutating func next(for scanState: DevicePickerScanState) -> String? {

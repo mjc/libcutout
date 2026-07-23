@@ -70,6 +70,11 @@ struct ContentView: View {
             }
             openRideScreen(ifNeededFor: phase)
         }
+        .onChange(of: model.connectionState) { _, state in
+            if let announcement = connectionAnnouncements.next(for: state) {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
         .onChange(of: model.devicePickerScanState?.status) { _, _ in
             guard let scanState = model.devicePickerScanState,
                   let announcement = connectionAnnouncements.next(for: scanState) else {

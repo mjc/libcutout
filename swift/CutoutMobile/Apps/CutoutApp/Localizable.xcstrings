@@ -923,6 +923,12 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Connecting to %@." } }
       }
     },
+    "picker.announcement.retrying" : {
+      "comment" : "VoiceOver announcement after an established connection drops and the app starts a bounded reconnect attempt.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection lost. Retrying connection." } }
+      }
+    },
     "picker.announcement.connection_failed" : {
       "comment" : "VoiceOver announcement after a connection failure. The placeholder is the specific failure detail.",
       "localizations" : {
