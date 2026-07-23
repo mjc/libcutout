@@ -112,24 +112,6 @@ func temperatureText(_ value: Temperature) -> String {
     RideUnits.temperatureText(millicelsius: value.value, fractionDigits: 1)
 }
 
-extension PevDashboardTile {
-    func replacing(
-        label: String? = nil,
-        value: String,
-        unit: String? = nil,
-        detail: String
-    ) -> PevDashboardTile {
-        PevDashboardTile(
-            kind: kind,
-            label: label ?? self.label,
-            value: value,
-            unit: unit ?? self.unit,
-            detail: detail,
-            accent: accent
-        )
-    }
-}
-
 extension PevScreen {
     var displaySubtitle: String {
         subtitle.replacingOccurrences(of: " - ", with: " · ")
