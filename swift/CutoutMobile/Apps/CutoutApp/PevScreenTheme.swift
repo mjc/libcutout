@@ -180,10 +180,11 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
     return [
         chargeEstimateTile(from: state),
         telemetry.voltage.map { voltage in
-            PevDashboardTile(
+            let value = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
+            return PevDashboardTile(
                 kind: .packVoltage,
                 label: localizedAppText("ride.metric.pack"),
-                value: RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1),
+                metricValue: .available(display: value, accessibility: value),
                 unit: "V",
                 detail: telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
                     ?? localizedAppText("ride.detail.sag_unavailable"),
@@ -207,10 +208,11 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
             accent: .green
         ),
         state.limpHomeRange.map { range in
-            PevDashboardTile(
+            let value = RideUnits.distanceText(millimetres: range.value, unit: distanceUnit, fractionDigits: 1)
+            return PevDashboardTile(
                 kind: .limpHomeRange,
                 label: localizedAppText("ride.metric.limp_home"),
-                value: RideUnits.distanceText(millimetres: range.value, unit: distanceUnit, fractionDigits: 1),
+                metricValue: .available(display: value, accessibility: value),
                 unit: distanceUnit,
                 detail: localizedAppText("ride.detail.typed_range_estimate"),
                 accent: .cyan
@@ -414,13 +416,14 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
        let current = telemetry.batteryCurrent,
        current.value != 0 {
         let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
+        let value = RideUnits.powerText(
+            milliwatts: milliwatts,
+            fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
+        )
         return PevDashboardTile(
             kind: .power,
             label: localizedAppText("ride.metric.power"),
-            value: RideUnits.powerText(
-                milliwatts: milliwatts,
-                fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
-            ),
+            metricValue: .available(display: value, accessibility: value),
             unit: "kW",
             detail: powerFlowDetail(
                 telemetry.powerFlow,
@@ -431,13 +434,14 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
     }
 
     if let power = telemetry.power {
+        let value = RideUnits.powerText(
+            milliwatts: power.value,
+            fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
+        )
         return PevDashboardTile(
             kind: .power,
             label: localizedAppText("ride.metric.power"),
-            value: RideUnits.powerText(
-                milliwatts: power.value,
-                fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
-            ),
+            metricValue: .available(display: value, accessibility: value),
             unit: "kW",
             detail: powerFlowDetail(
                 telemetry.powerFlow,

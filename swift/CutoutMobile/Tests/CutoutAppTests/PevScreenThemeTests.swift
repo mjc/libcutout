@@ -260,7 +260,12 @@ final class PevScreenThemeTests: XCTestCase {
             motorTemperature: Temperature(value: 49_000)
         )
 
+        let expectedPower = RideUnits.powerText(milliwatts: 673_320, fractionDigits: 2)
         XCTAssertEqual(livePowerTile(from: telemetry).label, "power")
+        XCTAssertEqual(
+            livePowerTile(from: telemetry).metricValue,
+            .available(display: expectedPower, accessibility: expectedPower)
+        )
         XCTAssertEqual(livePowerTile(from: telemetry).detail, "discharging")
         XCTAssertEqual(liveThermalDetail(telemetry: telemetry), "ESC 54 °C · motor 49 °C")
         XCTAssertEqual(localizedAppText("ride.metric.power"), "power")
