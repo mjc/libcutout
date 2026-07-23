@@ -11,6 +11,16 @@ final class BmsSnapshotContractTests: XCTestCase {
             "group 17 · 18 mV from pack avg"
         )
         XCTAssertEqual(pevLocalizedText("bms.detail.history_unavailable"), "not enough history")
+        XCTAssertEqual(pevLocalizedText("bms.topology.layout_verified"), "layout verified")
+        XCTAssertEqual(
+            pevLocalizedText("bms.cell_map.hint.resistance"),
+            "tap a group for history, IR estimate, and BMS raw fields"
+        )
+        XCTAssertEqual(
+            pevLocalizedText("bms.cell_map.overview_rule", Int64(40)),
+            "40 groups need overview before exact cells"
+        )
+        XCTAssertEqual(pevLocalizedText("bms.no_data.title"), "No cell-level BMS data")
     }
 
     func testBmsAccessibilityCopyResolvesFromThePackageCatalog() {

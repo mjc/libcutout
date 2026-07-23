@@ -2324,7 +2324,8 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
 
         if lowestGroupIndex == group.index {
-            return cellDelta.map { "lowest group · \($0.value) mV below pack avg" } ?? "lowest group"
+            return cellDelta.map { pevLocalizedText("bms.detail.lowest_below_average", Int64($0.value)) }
+                ?? pevLocalizedText("bms.detail.lowest_group")
         }
 
         guard
@@ -2360,11 +2361,11 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public var unknownTopologyCellCountDetail: String {
         switch topology.confidence {
         case .verified:
-            "layout verified"
+            pevLocalizedText("bms.topology.layout_verified")
         case .inferred:
-            "layout inferred"
+            pevLocalizedText("bms.topology.layout_inferred")
         case .unverified:
-            "layout unverified"
+            pevLocalizedText("bms.topology.layout_unverified")
         }
     }
 
@@ -2374,7 +2375,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var unknownTopologyTemperatureDetail: String {
-        highestTemperatureLabel ?? "sensor names unavailable"
+        highestTemperatureLabel ?? pevLocalizedText("bms.topology.sensor_names_unavailable")
     }
 
     public var unknownTopologyCaptureDetail: String {
@@ -2404,27 +2405,29 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public var cellMapInteractionHint: String {
         if groups.contains(where: { $0.resistance != nil }) {
-            return "tap a group for history, IR estimate, and BMS raw fields"
+            return pevLocalizedText("bms.cell_map.hint.resistance")
         }
         if groups.contains(where: { $0.temperature != nil }) {
-            return "tap a group for voltage and temperature detail"
+            return pevLocalizedText("bms.cell_map.hint.temperature")
         }
-        return "tap a group for exact voltage detail"
+        return pevLocalizedText("bms.cell_map.hint.voltage")
     }
 
     public var scrollableCellMapRule: String {
         guard !groups.isEmpty else {
             return topology.layoutLabel
         }
-        return "\(groups.count) groups need overview before exact cells"
+        return pevLocalizedText("bms.cell_map.overview_rule", Int64(groups.count))
     }
 
     public var scrollableCellMapFocusHint: String {
-        flaggedGroups.isEmpty ? "scan the raw table after the overview" : "show flagged groups before the raw table"
+        flaggedGroups.isEmpty
+            ? pevLocalizedText("bms.cell_map.focus.none")
+            : pevLocalizedText("bms.cell_map.focus.flagged")
     }
 
     public var noDataWarningTitle: String {
-        "No cell-level BMS data"
+        pevLocalizedText("bms.no_data.title")
     }
 
     public var noDataWarningLines: [BmsNoDataTextRow] {
