@@ -18,7 +18,7 @@ struct BmsOverviewLayout: View {
                     if let averageGroupVoltage {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.average_group"),
-                            metricValue: bmsGroupVoltageMetricValue(averageGroupVoltage),
+                            metricValue: bmsVoltageMetricValue(averageGroupVoltage),
                             unit: "V",
                             detail: "",
                             detailColor: PevColors.primaryText
@@ -27,7 +27,7 @@ struct BmsOverviewLayout: View {
                     if let lowestGroupVoltage {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.lowest_group"),
-                            metricValue: bmsGroupVoltageMetricValue(lowestGroupVoltage),
+                            metricValue: bmsVoltageMetricValue(lowestGroupVoltage),
                             unit: "V",
                             detail: snapshot.lowestGroupLabel ?? "",
                             detailColor: PevColors.primaryText
