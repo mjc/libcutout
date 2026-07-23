@@ -110,35 +110,6 @@ extension PevAccent {
     }
 }
 
-extension PevDashboardMetricTile {
-    init(
-        _ tile: PevDashboardTile,
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        labelColor: Color = PevDashboardColors.mutedText,
-        valueColor: Color = PevDashboardColors.primaryText,
-        unitColor: Color? = nil,
-        detailColor: Color = PevDashboardColors.mutedText,
-        cornerRadius: CGFloat = 20,
-        minHeight: CGFloat = 106
-    ) {
-        self.init(
-            label: tile.label,
-            metricValue: tile.metricValue,
-            unit: tile.unit,
-            detail: tile.detail,
-            fill: fill,
-            stroke: stroke,
-            labelColor: labelColor,
-            valueColor: valueColor,
-            unitColor: unitColor,
-            detailColor: detailColor,
-            cornerRadius: cornerRadius,
-            minHeight: minHeight
-        )
-    }
-}
-
 func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
     [
         state.pwmHeadroomPermille.map { headroomPermille in

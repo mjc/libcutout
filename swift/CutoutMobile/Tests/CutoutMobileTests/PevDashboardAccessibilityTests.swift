@@ -19,6 +19,21 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, and stale")
     }
 
+    func testTypedDashboardTileKeepsItsAccessibilityValue() {
+        let tile = PevDashboardMetricTile(
+            PevDashboardTile(
+                kind: .chargeEstimate,
+                label: "Charge",
+                metricValue: .status(display: "stale", accessibility: "stale"),
+                unit: "",
+                detail: "waiting for telemetry",
+                accent: .green
+            )
+        )
+
+        XCTAssertEqual(tile.accessibilityValueText, "stale and waiting for telemetry")
+    }
+
     func testUnavailableMetricRequiresTypedPresentation() {
         let tile = PevDashboardMetricTile(
             label: "Pack voltage",

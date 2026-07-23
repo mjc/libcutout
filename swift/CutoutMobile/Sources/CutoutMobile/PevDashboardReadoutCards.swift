@@ -67,6 +67,22 @@ public struct PevDashboardMetricTile: View {
         self.minHeight = minHeight
     }
 
+    public init(
+        _ tile: PevDashboardTile,
+        cornerRadius: CGFloat = 20,
+        minHeight: CGFloat = 106
+    ) {
+        self.init(
+            label: tile.label,
+            metricValue: tile.metricValue,
+            unit: tile.unit,
+            detail: tile.detail,
+            detailColor: PevDashboardColors.mutedText,
+            cornerRadius: cornerRadius,
+            minHeight: minHeight
+        )
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
