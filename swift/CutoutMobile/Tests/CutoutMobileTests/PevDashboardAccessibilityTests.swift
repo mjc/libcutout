@@ -108,6 +108,12 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(card.accessibilityValueText, "Retrying in 5 seconds")
     }
 
+    func testStatusStripUsesVisibleTextAsItsAccessibilityLabel() {
+        let strip = PevStatusStrip(text: "Saved capture")
+
+        XCTAssertEqual(strip.accessibilityLabelText, "Saved capture")
+    }
+
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
         XCTAssertTrue(PevDashboardScanningPill.showsIndicators(isScanning: true))
         XCTAssertFalse(PevDashboardScanningPill.showsIndicators(isScanning: false))

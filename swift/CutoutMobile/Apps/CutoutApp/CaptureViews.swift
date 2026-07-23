@@ -35,8 +35,7 @@ struct CaptureRecordingScreen: View {
                     localized: "capture.status.recording_locally_without_file",
                     table: "Localizable",
                     bundle: appLocalizationBundle
-                ),
-                indicatorColor: PevColors.green
+                )
             )
 
             ScrollView(.vertical, showsIndicators: false) {

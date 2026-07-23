@@ -217,8 +217,7 @@ struct PevRideHeroSection: View {
 
         if let captureStatusText {
             PevStatusStrip(
-                text: captureStatusText,
-                indicatorColor: PevColors.green
+                text: captureStatusText
             )
         }
 

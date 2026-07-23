@@ -49,10 +49,7 @@ struct DevicePickerView: View {
             }
 
             if let captureStatusText {
-                PevStatusStrip(
-                    text: captureStatusText,
-                    indicatorColor: PevColors.green
-                )
+                PevStatusStrip(text: captureStatusText)
             }
 
             VStack(alignment: .leading, spacing: 8) {

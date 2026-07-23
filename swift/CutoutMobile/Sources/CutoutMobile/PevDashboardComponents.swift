@@ -10,10 +10,12 @@ private enum PevSystemColors {
     static let cardFill = Color(uiColor: .secondarySystemBackground)
     static let primaryText = Color(uiColor: .label)
     static let mutedText = Color(uiColor: .label)
+    static let nominal = Color(uiColor: .systemGreen)
     #elseif os(macOS)
     static let cardFill = Color(nsColor: .underPageBackgroundColor)
     static let primaryText = Color(nsColor: .labelColor)
     static let mutedText = Color(nsColor: .labelColor)
+    static let nominal = Color(nsColor: .systemGreen)
     #endif
 }
 
@@ -22,6 +24,7 @@ public enum PevDashboardColors {
     public static let cardStroke = Color.secondary.opacity(0.35)
     public static let primaryText = PevSystemColors.primaryText
     public static let mutedText = PevSystemColors.mutedText
+    public static let nominal = PevSystemColors.nominal
 }
 
 public func pevDashboardAccessibilityValue(_ parts: [String]) -> String {
