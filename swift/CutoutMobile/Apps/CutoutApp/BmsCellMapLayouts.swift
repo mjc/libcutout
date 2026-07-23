@@ -201,8 +201,7 @@ struct BmsDetailLayout: View {
                             label: localizedAppText("bms.detail.temperature"),
                             metricValue: bmsTemperatureMetricValue(selectedGroup.temperature),
                             unit: "°C",
-                            detail: "",
-                            detailColor: PevColors.primaryText
+                            detail: ""
                         )
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.detail.resistance"),
@@ -211,8 +210,7 @@ struct BmsDetailLayout: View {
                                 return .available(display: value, accessibility: value)
                             } ?? .unavailable,
                             unit: "mΩ",
-                            detail: "",
-                            detailColor: PevColors.primaryText
+                            detail: ""
                         )
                     }
 

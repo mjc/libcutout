@@ -26,8 +26,7 @@ struct BmsUnknownLayout: View {
                     label: localizedAppText("bms.unknown.reported_voltage"),
                     metricValue: bmsVoltageMetricValue(snapshot.voltage),
                     unit: "V",
-                    detail: snapshot.unknownTopologyVoltageDetail,
-                    detailColor: PevColors.primaryText
+                    detail: snapshot.unknownTopologyVoltageDetail
                 )
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.cell_count"),
@@ -36,8 +35,7 @@ struct BmsUnknownLayout: View {
                         accessibility: snapshot.unknownTopologyCellCountValue
                     ),
                     unit: "",
-                    detail: snapshot.unknownTopologyCellCountDetail,
-                    detailColor: PevColors.primaryText
+                    detail: snapshot.unknownTopologyCellCountDetail
                 )
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.temperatures"),
@@ -46,8 +44,7 @@ struct BmsUnknownLayout: View {
                         return .available(display: value, accessibility: value)
                     } ?? .unavailable,
                     unit: localizedAppText("bms.unknown.temperature_sensors"),
-                    detail: snapshot.unknownTopologyTemperatureDetail,
-                    detailColor: PevColors.primaryText
+                    detail: snapshot.unknownTopologyTemperatureDetail
                 )
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.fault_bits"),
@@ -55,8 +52,7 @@ struct BmsUnknownLayout: View {
                         .available(display: $0.code, accessibility: $0.code)
                     } ?? .unavailable,
                     unit: "",
-                    detail: snapshot.faults.first?.label ?? "",
-                    detailColor: PevColors.primaryText
+                    detail: snapshot.faults.first?.label ?? ""
                 )
             }
 

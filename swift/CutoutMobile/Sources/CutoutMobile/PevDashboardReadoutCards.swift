@@ -10,11 +10,6 @@ public struct PevDashboardMetricTile: View {
     let unit: String
     let detail: String
     let accessibilityValue: String?
-    let fill: Color
-    let stroke: Color
-    let labelColor: Color
-    let valueColor: Color
-    let unitColor: Color
     let detailColor: Color
     let cornerRadius: CGFloat
     let minHeight: CGFloat
@@ -27,7 +22,7 @@ public struct PevDashboardMetricTile: View {
         let color = if case .unavailable = metricValue {
             PevDashboardColors.primaryText
         } else {
-            valueColor
+            PevDashboardColors.primaryText
         }
         return resolvedColor(color)
     }
@@ -43,25 +38,36 @@ public struct PevDashboardMetricTile: View {
         unit: String = "",
         detail: String = "",
         accessibilityValue: String? = nil,
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        labelColor: Color = PevDashboardColors.mutedText,
-        valueColor: Color = PevDashboardColors.primaryText,
-        unitColor: Color? = nil,
-        detailColor: Color = PevDashboardColors.primaryText,
         cornerRadius: CGFloat = 20,
         minHeight: CGFloat = 106
+    ) {
+        self.init(
+            label: label,
+            metricValue: metricValue,
+            unit: unit,
+            detail: detail,
+            accessibilityValue: accessibilityValue,
+            detailColor: PevDashboardColors.primaryText,
+            cornerRadius: cornerRadius,
+            minHeight: minHeight
+        )
+    }
+
+    private init(
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        unit: String,
+        detail: String,
+        accessibilityValue: String?,
+        detailColor: Color,
+        cornerRadius: CGFloat,
+        minHeight: CGFloat
     ) {
         self.label = label
         self.metricValue = metricValue
         self.unit = unit
         self.detail = detail
         self.accessibilityValue = accessibilityValue
-        self.fill = fill
-        self.stroke = stroke
-        self.labelColor = labelColor
-        self.valueColor = valueColor
-        self.unitColor = unitColor ?? valueColor
         self.detailColor = detailColor
         self.cornerRadius = cornerRadius
         self.minHeight = minHeight
@@ -77,6 +83,7 @@ public struct PevDashboardMetricTile: View {
             metricValue: tile.metricValue,
             unit: tile.unit,
             detail: tile.detail,
+            accessibilityValue: nil,
             detailColor: PevDashboardColors.mutedText,
             cornerRadius: cornerRadius,
             minHeight: minHeight
@@ -87,7 +94,7 @@ public struct PevDashboardMetricTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(resolvedColor(labelColor))
+                .foregroundStyle(resolvedColor(PevDashboardColors.mutedText))
                 .accessibilityHidden(true)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
@@ -100,7 +107,7 @@ public struct PevDashboardMetricTile: View {
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.subheadline.weight(.black))
-                        .foregroundStyle(resolvedColor(unitColor))
+                        .foregroundStyle(resolvedColor(PevDashboardColors.primaryText))
                         .accessibilityHidden(true)
                 }
             }
@@ -119,8 +126,8 @@ public struct PevDashboardMetricTile: View {
         .background(
             PevDashboardCardBackground(
                 cornerRadius: cornerRadius,
-                fill: fill,
-                stroke: stroke
+                fill: PevDashboardColors.cardFill,
+                stroke: PevDashboardColors.cardStroke
             )
         )
         .accessibilityElement(children: .ignore)

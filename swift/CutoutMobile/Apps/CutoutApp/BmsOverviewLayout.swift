@@ -20,8 +20,7 @@ struct BmsOverviewLayout: View {
                             label: localizedAppText("bms.overview.average_group"),
                             metricValue: bmsVoltageMetricValue(averageGroupVoltage),
                             unit: "V",
-                            detail: "",
-                            detailColor: PevColors.primaryText
+                            detail: ""
                         )
                     }
                     if let lowestGroupVoltage {
@@ -29,8 +28,7 @@ struct BmsOverviewLayout: View {
                             label: localizedAppText("bms.overview.lowest_group"),
                             metricValue: bmsVoltageMetricValue(lowestGroupVoltage),
                             unit: "V",
-                            detail: snapshot.lowestGroupLabel ?? "",
-                            detailColor: PevColors.primaryText
+                            detail: snapshot.lowestGroupLabel ?? ""
                         )
                     }
                 }
@@ -41,8 +39,7 @@ struct BmsOverviewLayout: View {
                     label: localizedAppText("bms.overview.highest_temperature"),
                     metricValue: bmsTemperatureMetricValue(snapshot.highestTemperature),
                     unit: "°C",
-                    detail: snapshot.highestTemperatureLabel ?? "",
-                    detailColor: PevColors.primaryText
+                    detail: snapshot.highestTemperatureLabel ?? ""
                 )
             }
 
