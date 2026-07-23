@@ -30,13 +30,7 @@ struct VescDebugScreenView: View {
             }
             .padding(.top, 8)
 
-            PevDashboardKeyValueRows(
-                rows: rows,
-                fill: PevColors.cardFill,
-                stroke: PevColors.cardStroke,
-                labelColor: PevColors.muted,
-                valueColor: PevColors.primaryText
-            )
+            PevDashboardKeyValueRows(rows: rows)
         }
         .accessibilityElement(children: .contain)
     }

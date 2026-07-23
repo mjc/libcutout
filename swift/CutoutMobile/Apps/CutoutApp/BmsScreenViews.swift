@@ -112,10 +112,6 @@ struct BmsDiagnosticsSection: View {
                     .map { row in
                         PevDashboardKeyValueRow(id: row.id, label: row.label, value: row.value)
                     },
-                fill: PevColors.cardFill,
-                stroke: PevColors.cardStroke,
-                labelColor: PevColors.muted,
-                valueColor: PevColors.primaryText,
                 verticalPadding: 6
             )
             .padding(.top, 8)

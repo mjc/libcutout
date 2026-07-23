@@ -34,28 +34,13 @@ public struct PevDashboardKeyValueRows: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let rows: [PevDashboardKeyValueRow]
-    let fill: Color
-    let stroke: Color
-    let labelColor: Color
-    let valueColor: Color
-    let cornerRadius: CGFloat
     let verticalPadding: CGFloat
 
     public init(
         rows: [PevDashboardKeyValueRow],
-        fill: Color = PevDashboardColors.cardFill,
-        stroke: Color = PevDashboardColors.cardStroke,
-        labelColor: Color = PevDashboardColors.mutedText,
-        valueColor: Color = PevDashboardColors.primaryText,
-        cornerRadius: CGFloat = 22,
         verticalPadding: CGFloat = 12
     ) {
         self.rows = rows
-        self.fill = fill
-        self.stroke = stroke
-        self.labelColor = labelColor
-        self.valueColor = valueColor
-        self.cornerRadius = cornerRadius
         self.verticalPadding = verticalPadding
     }
 
@@ -83,7 +68,7 @@ public struct PevDashboardKeyValueRows: View {
 
                 if row.id != rows.last?.id {
                     Rectangle()
-                        .fill(stroke)
+                        .fill(PevDashboardColors.cardStroke)
                         .frame(height: 1)
                         .accessibilityHidden(true)
                 }
@@ -93,9 +78,7 @@ public struct PevDashboardKeyValueRows: View {
         .padding(.vertical, verticalPadding)
         .background(
             PevDashboardCardBackground(
-                cornerRadius: cornerRadius,
-                fill: fill,
-                stroke: stroke
+                cornerRadius: 22
             )
         )
     }
@@ -103,13 +86,13 @@ public struct PevDashboardKeyValueRows: View {
     private func keyValueLabel(_ row: PevDashboardKeyValueRow) -> some View {
         Text(row.label)
             .font(.subheadline.weight(.bold))
-            .foregroundStyle(labelColor)
+            .foregroundStyle(PevDashboardColors.mutedText)
     }
 
     private func keyValueValue(_ row: PevDashboardKeyValueRow) -> some View {
         Text(row.value)
             .font(.headline.weight(.black))
-            .foregroundStyle(row.valueColor ?? valueColor)
+            .foregroundStyle(row.valueColor ?? PevDashboardColors.primaryText)
             .monospacedDigit()
     }
 }
