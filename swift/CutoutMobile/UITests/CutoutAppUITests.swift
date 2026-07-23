@@ -276,9 +276,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsSurfacesRemainAccessible() throws {
-        guard let bmsScreen = openEucBmsMap() else {
-            return
-        }
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
         XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
@@ -287,19 +285,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsPassAccessibilityAuditAtAccessibilityDynamicType() throws {
-        guard let bmsScreen = openEucBmsMap() else {
-            return
-        }
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
         assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
-    func testEucBmsGroupOpensAccessibleDetailAndReturnsToMap() {
-        guard let bmsScreen = openEucBmsMap() else {
-            return
-        }
+    func testEucBmsGroupOpensAccessibleDetailAndReturnsToMap() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
         let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
