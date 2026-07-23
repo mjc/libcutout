@@ -2212,39 +2212,57 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public var readbackRows: [SessionDebugRow] {
         var rows = [
-            SessionDebugRow(label: "availability", value: availability.displayText),
+            SessionDebugRow(id: "availability", label: "availability", value: availability.displayText),
             SessionDebugRow(
+                id: "page",
                 label: "page",
                 value: bmsPageText(selector: pageSelector, tag: pageTag, kind: pageKind),
                 role: .transportMetadata
             ),
             SessionDebugRow(
+                id: "page-verification",
                 label: "page verification",
                 value: pageVerification?.displayText ?? "unavailable",
                 role: .transportMetadata
             ),
-            SessionDebugRow(label: "charge", value: bmsPercentText(energyPercent)),
-            SessionDebugRow(label: "voltage", value: bmsVoltageText(voltage)),
-            SessionDebugRow(label: "current", value: bmsCurrentText(current)),
+            SessionDebugRow(id: "charge", label: "charge", value: bmsPercentText(energyPercent)),
+            SessionDebugRow(id: "voltage", label: "voltage", value: bmsVoltageText(voltage)),
+            SessionDebugRow(id: "current", label: "current", value: bmsCurrentText(current)),
         ]
         if let bmsPackCurrent0 {
             rows.append(
-                SessionDebugRow(label: "bms current 0", value: bmsCurrentText(bmsPackCurrent0))
+                SessionDebugRow(
+                    id: "bms-current-0",
+                    label: "bms current 0",
+                    value: bmsCurrentText(bmsPackCurrent0)
+                )
             )
         }
         if let bmsPackCurrent1 {
             rows.append(
-                SessionDebugRow(label: "bms current 1", value: bmsCurrentText(bmsPackCurrent1))
+                SessionDebugRow(
+                    id: "bms-current-1",
+                    label: "bms current 1",
+                    value: bmsCurrentText(bmsPackCurrent1)
+                )
             )
         }
         rows += [
-            SessionDebugRow(label: "high group", value: bmsGroupVoltageText(highGroupVoltage)),
-            SessionDebugRow(label: "low group", value: bmsGroupVoltageText(lowGroupVoltage)),
-            SessionDebugRow(label: "delta", value: bmsMillivoltsText(cellDelta)),
-            SessionDebugRow(label: "lowest group", value: lowestGroupIndex.map(String.init) ?? "unavailable"),
-            SessionDebugRow(label: "temperature", value: bmsTemperatureText(highestTemperature)),
-            SessionDebugRow(label: "temperature sensors", value: bmsCountText(temperatureReadings.count)),
-            SessionDebugRow(label: "topology", value: topology.layoutLabel),
+            SessionDebugRow(id: "high-group", label: "high group", value: bmsGroupVoltageText(highGroupVoltage)),
+            SessionDebugRow(id: "low-group", label: "low group", value: bmsGroupVoltageText(lowGroupVoltage)),
+            SessionDebugRow(id: "delta", label: "delta", value: bmsMillivoltsText(cellDelta)),
+            SessionDebugRow(
+                id: "lowest-group",
+                label: "lowest group",
+                value: lowestGroupIndex.map(String.init) ?? "unavailable"
+            ),
+            SessionDebugRow(id: "temperature", label: "temperature", value: bmsTemperatureText(highestTemperature)),
+            SessionDebugRow(
+                id: "temperature-sensors",
+                label: "temperature sensors",
+                value: bmsCountText(temperatureReadings.count)
+            ),
+            SessionDebugRow(id: "topology", label: "topology", value: topology.layoutLabel),
         ]
         return rows
     }
@@ -2596,14 +2614,25 @@ public enum SessionDebugRowRole: Equatable, Hashable, Sendable {
 }
 
 public struct SessionDebugRow: Equatable, Hashable, Sendable {
+    public let id: String
     public let label: String
     public let value: String
     public let role: SessionDebugRowRole
 
-    public init(label: String, value: String, role: SessionDebugRowRole = .data) {
+    public init(
+        id: String,
+        label: String,
+        value: String,
+        role: SessionDebugRowRole = .data
+    ) {
+        self.id = id
         self.label = label
         self.value = value
         self.role = role
+    }
+
+    public init(label: String, value: String, role: SessionDebugRowRole = .data) {
+        self.init(id: label, label: label, value: value, role: role)
     }
 }
 

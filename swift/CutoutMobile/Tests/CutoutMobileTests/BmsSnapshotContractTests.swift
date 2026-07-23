@@ -254,23 +254,31 @@ final class BmsSnapshotContractTests: XCTestCase {
 
         XCTAssertTrue(snapshot.shouldRenderReadback)
         XCTAssertEqual(
+            snapshot.readbackRows.map(\.id),
+            [
+                "availability", "page", "page-verification", "charge", "voltage", "current",
+                "bms-current-0", "bms-current-1", "high-group", "low-group", "delta",
+                "lowest-group", "temperature", "temperature-sensors", "topology",
+            ]
+        )
+        XCTAssertEqual(
             snapshot.readbackRows,
             [
-                SessionDebugRow(label: "availability", value: "available"),
-                SessionDebugRow(label: "page", value: "temperature #3", role: .transportMetadata),
-                SessionDebugRow(label: "page verification", value: "hardware verified", role: .transportMetadata),
-                SessionDebugRow(label: "charge", value: "72%"),
-                SessionDebugRow(label: "voltage", value: "81.6"),
-                SessionDebugRow(label: "current", value: "-12.4"),
-                SessionDebugRow(label: "bms current 0", value: "-8.1"),
-                SessionDebugRow(label: "bms current 1", value: "-4.3"),
-                SessionDebugRow(label: "high group", value: "4.089"),
-                SessionDebugRow(label: "low group", value: "4.071"),
-                SessionDebugRow(label: "delta", value: "18"),
-                SessionDebugRow(label: "lowest group", value: "17"),
-                SessionDebugRow(label: "temperature", value: "37.8"),
-                SessionDebugRow(label: "temperature sensors", value: "2"),
-                SessionDebugRow(label: "topology", value: "20S4P split pack"),
+                SessionDebugRow(id: "availability", label: "availability", value: "available"),
+                SessionDebugRow(id: "page", label: "page", value: "temperature #3", role: .transportMetadata),
+                SessionDebugRow(id: "page-verification", label: "page verification", value: "hardware verified", role: .transportMetadata),
+                SessionDebugRow(id: "charge", label: "charge", value: "72%"),
+                SessionDebugRow(id: "voltage", label: "voltage", value: "81.6"),
+                SessionDebugRow(id: "current", label: "current", value: "-12.4"),
+                SessionDebugRow(id: "bms-current-0", label: "bms current 0", value: "-8.1"),
+                SessionDebugRow(id: "bms-current-1", label: "bms current 1", value: "-4.3"),
+                SessionDebugRow(id: "high-group", label: "high group", value: "4.089"),
+                SessionDebugRow(id: "low-group", label: "low group", value: "4.071"),
+                SessionDebugRow(id: "delta", label: "delta", value: "18"),
+                SessionDebugRow(id: "lowest-group", label: "lowest group", value: "17"),
+                SessionDebugRow(id: "temperature", label: "temperature", value: "37.8"),
+                SessionDebugRow(id: "temperature-sensors", label: "temperature sensors", value: "2"),
+                SessionDebugRow(id: "topology", label: "topology", value: "20S4P split pack"),
             ]
         )
     }
