@@ -74,6 +74,11 @@ struct ContentView: View {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }
+        .onChange(of: model.liveActivityError) { _, error in
+            if let error {
+                AccessibilityNotification.Announcement(error.accessibilityAnnouncement).post()
+            }
+        }
     }
 
     private func pair(_ row: DevicePickerRow) {

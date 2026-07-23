@@ -183,6 +183,19 @@ extension SessionConnectionPhase {
     }
 }
 
+extension LiveActivityRideLifecycleError {
+    var accessibilityAnnouncement: String {
+        switch self {
+        case .authorizationDenied:
+            String(localized: "live_activity.error.authorization_denied", table: "Localizable", bundle: appLocalizationBundle)
+        case .requestFailed:
+            String(localized: "live_activity.error.request_failed", table: "Localizable", bundle: appLocalizationBundle)
+        case .activityUnavailable:
+            String(localized: "live_activity.error.unavailable", table: "Localizable", bundle: appLocalizationBundle)
+        }
+    }
+}
+
 struct ConnectionAccessibilityAnnouncements {
     private var hasAnnouncedFailure = false
     private var hasAnnouncedRetry = false

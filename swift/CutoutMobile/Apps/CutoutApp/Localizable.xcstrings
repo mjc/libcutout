@@ -929,6 +929,24 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection lost. Retrying connection." } }
       }
     },
+    "live_activity.error.authorization_denied" : {
+      "comment" : "VoiceOver announcement when the system denies Live Activity authorization.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Live Activity permission is unavailable." } }
+      }
+    },
+    "live_activity.error.request_failed" : {
+      "comment" : "VoiceOver announcement when the app cannot create a Live Activity.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't start the Live Activity." } }
+      }
+    },
+    "live_activity.error.unavailable" : {
+      "comment" : "VoiceOver announcement when an existing Live Activity cannot be updated or ended.",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The Live Activity is unavailable." } }
+      }
+    },
     "picker.announcement.connection_failed" : {
       "comment" : "VoiceOver announcement after a connection failure. The placeholder is the specific failure detail.",
       "localizations" : {

@@ -343,6 +343,21 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testLiveActivityLifecycleErrorsHaveTypedAnnouncements() {
+        XCTAssertEqual(
+            LiveActivityRideLifecycleError.authorizationDenied.accessibilityAnnouncement,
+            "Live Activity permission is unavailable."
+        )
+        XCTAssertEqual(
+            LiveActivityRideLifecycleError.requestFailed.accessibilityAnnouncement,
+            "Couldn't start the Live Activity."
+        )
+        XCTAssertEqual(
+            LiveActivityRideLifecycleError.activityUnavailable.accessibilityAnnouncement,
+            "The Live Activity is unavailable."
+        )
+    }
+
     func testSafetyAnnouncementsCoverTypedEscalationsWithoutTelemetryChatter() {
         XCTAssertNil(EucRideWarningSeverity.normal.accessibilityAnnouncement)
         XCTAssertEqual(
