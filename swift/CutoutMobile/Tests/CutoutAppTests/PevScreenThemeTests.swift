@@ -451,4 +451,12 @@ final class PevScreenThemeTests: XCTestCase {
             .available(display: "4.036", accessibility: "4.036")
         )
     }
+
+    func testBmsDetailTemperatureKeepsAvailabilityAndFormattingTyped() {
+        XCTAssertEqual(bmsTemperatureMetricValue(nil), .unavailable)
+        XCTAssertEqual(
+            bmsTemperatureMetricValue(Temperature(value: 25_500)),
+            .available(display: "25.5", accessibility: "25.5")
+        )
+    }
 }

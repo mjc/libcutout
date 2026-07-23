@@ -39,9 +39,7 @@ struct BmsOverviewLayout: View {
             if hasTemperatureEvidence {
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.overview.highest_temperature"),
-                    metricValue: snapshot.highestTemperature.map {
-                        .available(display: temperatureText($0), accessibility: temperatureText($0))
-                    } ?? .unavailable,
+                    metricValue: bmsTemperatureMetricValue(snapshot.highestTemperature),
                     unit: "°C",
                     detail: snapshot.highestTemperatureLabel ?? "",
                     detailColor: PevColors.primaryText
