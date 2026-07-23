@@ -269,6 +269,20 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
 
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        let retrying = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@", "Connecting"),
+            object: connectionStatus
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [retrying], timeout: 3), .completed)
+
+        let failedAgain = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Connect failed: deterministic fixture"),
+            object: connectionStatus
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [failedAgain], timeout: 5), .completed)
+        XCTAssertTrue(picker.exists)
+
         let forget = app.buttons["device-picker.forget-saved-device"]
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
         XCTAssertTrue(forget.isHittable)
