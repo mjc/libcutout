@@ -435,6 +435,16 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertEqual(element.isSelected, tab == "ride")
         }
 
+        if name.contains("RightToLeft"), family.tabNames.count > 1 {
+            let firstTab = tabBar.buttons[family.tabNames[0].capitalized]
+            let secondTab = tabBar.buttons[family.tabNames[1].capitalized]
+            XCTAssertGreaterThan(
+                firstTab.frame.midX,
+                secondTab.frame.midX,
+                "The system tab order did not mirror for the Arabic right-to-left launch"
+            )
+        }
+
         for unavailableTab in family.unavailableTabNames {
             XCTAssertFalse(tabBar.buttons[unavailableTab.capitalized].exists)
         }
