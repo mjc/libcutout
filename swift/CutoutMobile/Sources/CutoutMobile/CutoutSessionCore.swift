@@ -61,6 +61,8 @@ final class ConnectionReconnectController {
     func schedule(jitter: Double, operation: @escaping () -> Void) -> ConnectionReconnectSchedule? {
         attempt += 1
         guard let delayMilliseconds = ConnectionReconnectPolicy.delayMilliseconds(attempt: attempt, jitter: jitter) else {
+            pending?.cancel()
+            pending = nil
             return nil
         }
         pending?.cancel()

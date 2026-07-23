@@ -51,6 +51,22 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(reconnects.attempt, 0)
     }
 
+    func testReconnectExhaustionCancelsTheLastPendingRetry() {
+        let scheduler = RecordingReconnectScheduler()
+        let reconnects = ConnectionReconnectController(scheduler: scheduler)
+        var completed = [String]()
+
+        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("first") })
+        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("second") })
+        XCTAssertNotNil(reconnects.schedule(jitter: 0) { completed.append("third") })
+        XCTAssertNil(reconnects.schedule(jitter: 0) { completed.append("exhausted") })
+
+        scheduler.runAll()
+
+        XCTAssertTrue(completed.isEmpty)
+        XCTAssertEqual(reconnects.attempt, ConnectionReconnectPolicy.maximumAttempts + 1)
+    }
+
     func testNordicNotificationUUIDsRemainFullWidthForPevcap() {
         let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         let notify = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
