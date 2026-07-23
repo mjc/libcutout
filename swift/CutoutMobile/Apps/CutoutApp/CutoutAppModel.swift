@@ -98,6 +98,7 @@ enum ConnectionState: Equatable {
     case picker
     case identified(ConnectionSelection)
     case connecting(ConnectionSelection)
+    case retrying(ConnectionSelection, attempt: Int)
     case connected(ConnectionSelection)
     case failed(ConnectionSelection, SessionConnectionFailure)
 
@@ -105,7 +106,7 @@ enum ConnectionState: Equatable {
         switch self {
         case .picker:
             nil
-        case let .identified(selection), let .connecting(selection), let .connected(selection), let .failed(selection, _):
+        case let .identified(selection), let .connecting(selection), let .retrying(selection, _), let .connected(selection), let .failed(selection, _):
             selection
         }
     }
@@ -421,7 +422,9 @@ final class CutoutAppModel {
         self.phase = phase
         switch phase {
         case .connecting, .discoveringServices, .subscribing:
-            if let selection = connectionState.selection {
+            if case let .connected(selection) = connectionState {
+                connectionState = .retrying(selection, attempt: 1)
+            } else if let selection = connectionState.selection {
                 connectionState = .connecting(selection)
             }
         case .live:

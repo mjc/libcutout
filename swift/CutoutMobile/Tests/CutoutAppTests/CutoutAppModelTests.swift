@@ -162,6 +162,38 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testUnexpectedReconnectKeepsTheSelectedRouteInRetryingState() {
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        driver.onPhaseChange?(.live)
+
+        driver.onPhaseChange?(.discoveringServices)
+
+        XCTAssertEqual(
+            model.connectionState,
+            .retrying(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                attempt: 1
+            )
+        )
+    }
+
+    @MainActor
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
