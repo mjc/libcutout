@@ -119,7 +119,6 @@ public struct PevDashboardHeroCard: View {
     let unit: String
     let detail: String
     let progress: Double
-    let accent: Color
     let fill: Color
     let stroke: Color
     let track: Color
@@ -140,7 +139,6 @@ public struct PevDashboardHeroCard: View {
         unit: String,
         detail: String,
         progress: Double,
-        accent: Color,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
         track: Color = PevDashboardColors.cardStroke,
@@ -152,7 +150,6 @@ public struct PevDashboardHeroCard: View {
         self.unit = unit
         self.detail = detail
         self.progress = progress
-        self.accent = accent
         self.fill = fill
         self.stroke = stroke
         self.track = track
@@ -181,7 +178,7 @@ public struct PevDashboardHeroCard: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(track)
                     Capsule()
-                        .fill(accent)
+                        .fill(PevDashboardColors.primaryText)
                         .frame(width: clampedProgress * proxy.size.width)
                 }
             }

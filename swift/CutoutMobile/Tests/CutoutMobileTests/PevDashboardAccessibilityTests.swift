@@ -66,8 +66,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             value: "82",
             unit: "percent",
             detail: "charging",
-            progress: 1.4,
-            accent: .green
+            progress: 1.4
         )
 
         XCTAssertEqual(card.clampedProgress, 1)

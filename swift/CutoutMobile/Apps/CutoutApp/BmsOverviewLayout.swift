@@ -74,8 +74,7 @@ struct BmsOverviewLayout: View {
                 value: percentText(energyPercent),
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
-                progress: energyProgress,
-                accent: PevColors.primaryText
+                progress: energyProgress
             )
         } else {
             PevDashboardWideCard(
