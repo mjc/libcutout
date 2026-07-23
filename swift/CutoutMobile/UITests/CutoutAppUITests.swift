@@ -306,6 +306,14 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testEucBmsGroupOpensAccessibleDetailAndReturnsToMap() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -472,6 +480,9 @@ final class CutoutAppUITests: XCTestCase {
         } else {
             if name.contains("InLightAppearance") {
                 arguments += ["-AppleInterfaceStyle", "Light"]
+            }
+            if name.contains("IncreasedContrast") {
+                arguments += ["-UIAccessibilityDarkerSystemColorsEnabled", "YES"]
             }
             if name.contains("RightToLeft") {
                 arguments += [
