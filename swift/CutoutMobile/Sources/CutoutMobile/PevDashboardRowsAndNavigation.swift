@@ -6,27 +6,23 @@ public struct PevDashboardKeyValueRow: Identifiable {
     public let metricValue: PevDashboardMetricValue
     public var value: String { metricValue.displayText }
     public var accessibilityValueText: String { metricValue.accessibilityText }
-    public let valueColor: Color?
 
-    public init(id: String, label: String, value: String, valueColor: Color? = nil) {
+    public init(id: String, label: String, value: String) {
         self.init(
             id: id,
             label: label,
-            metricValue: .available(display: value, accessibility: value),
-            valueColor: valueColor
+            metricValue: .available(display: value, accessibility: value)
         )
     }
 
     public init(
         id: String,
         label: String,
-        metricValue: PevDashboardMetricValue,
-        valueColor: Color? = nil
+        metricValue: PevDashboardMetricValue
     ) {
         self.id = id
         self.label = label
         self.metricValue = metricValue
-        self.valueColor = valueColor
     }
 }
 
@@ -92,7 +88,7 @@ public struct PevDashboardKeyValueRows: View {
     private func keyValueValue(_ row: PevDashboardKeyValueRow) -> some View {
         Text(row.value)
             .font(.headline.weight(.black))
-            .foregroundStyle(row.valueColor ?? PevDashboardColors.primaryText)
+            .foregroundStyle(PevDashboardColors.primaryText)
             .monospacedDigit()
     }
 }
