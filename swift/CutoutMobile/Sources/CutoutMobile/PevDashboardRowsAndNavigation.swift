@@ -101,24 +101,21 @@ public struct PevDashboardKeyValueRows: View {
 public struct PevDashboardSectionLabel: View {
     let title: String
     let font: Font
-    let color: Color
 
     public init(
         title: String,
-        font: Font = .subheadline.weight(.semibold),
-        color: Color = PevDashboardColors.mutedText
+        font: Font = .subheadline.weight(.semibold)
     ) {
         self.title = title
         self.font = font
-        self.color = color
     }
 
     public var body: some View {
         Text(title)
             .font(font)
-            .foregroundStyle(color)
+            .foregroundStyle(PevDashboardColors.mutedText)
             .fixedSize(horizontal: false, vertical: true)
-            .accessibilityAddTraits(.isHeader)
+            .accessibilityHeading(.h2)
     }
 }
 
