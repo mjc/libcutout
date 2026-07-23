@@ -66,14 +66,7 @@ struct EucRideScreenView: View {
 
     private var gpsSpeedTile: PevDashboardTile {
         let now = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
-        return PevDashboardTile(
-            kind: .gpsSpeed,
-            label: localizedAppText("euc.metric.gps_speed"),
-            value: phoneLocationReadback.speed.displayValue,
-            unit: phoneLocationReadback.speed.millimetersPerSecond == nil ? "" : phoneLocationReadback.speed.displayUnit,
-            detail: phoneLocationReadback.detail(at: now),
-            accent: phoneLocationReadback.freshness(at: now) == .fresh ? .cyan : .yellow
-        )
+        return eucGpsSpeedTile(from: phoneLocationReadback, at: now)
     }
 
     var body: some View {
@@ -128,6 +121,24 @@ struct EucRideScreenView: View {
             }
         }
     }
+}
+
+func eucGpsSpeedTile(
+    from readback: PhoneLocationReadback,
+    at wallClockUnixMilliseconds: UInt64
+) -> PevDashboardTile {
+    let metricValue = readback.speed.millimetersPerSecond.map { speed in
+        let value = RideUnits.speedText(millimetersPerSecond: speed)
+        return PevDashboardMetricValue.available(display: value, accessibility: value)
+    } ?? .unavailable
+    return PevDashboardTile(
+        kind: .gpsSpeed,
+        label: localizedAppText("euc.metric.gps_speed"),
+        metricValue: metricValue,
+        unit: readback.speed.millimetersPerSecond == nil ? "" : RideUnits.speedUnit,
+        detail: readback.detail(at: wallClockUnixMilliseconds),
+        accent: readback.freshness(at: wallClockUnixMilliseconds) == .fresh ? .cyan : .yellow
+    )
 }
 
 private func eucWarningAccent(for severity: EucRideWarningSeverity) -> Color {

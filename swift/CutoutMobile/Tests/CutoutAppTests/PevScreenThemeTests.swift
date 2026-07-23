@@ -1,6 +1,7 @@
 import XCTest
 @testable import CutoutApp
 import CutoutMobile
+import CutoutMobileFFI
 
 @MainActor
 final class PevScreenThemeTests: XCTestCase {
@@ -15,6 +16,30 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("euc.ride.untitled"), "EUC")
         XCTAssertEqual(localizedAppText("euc.metric.gps_speed"), "GPS speed")
         XCTAssertEqual(localizedAppText("euc.speed.caption"), "speed")
+    }
+
+    func testEucGpsTileKeepsUnavailableSeparateFromValidZero() {
+        let unavailable = PhoneLocationReadback(
+            snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
+        )
+        XCTAssertEqual(eucGpsSpeedTile(from: unavailable, at: 0).metricValue, .unavailable)
+        XCTAssertEqual(eucGpsSpeedTile(from: unavailable, at: 0).unit, "")
+
+        let zero = PhoneLocationReadback(
+            snapshot: MobilePhoneLocationSnapshotDto(
+                latestSample: nil,
+                gpsSpeed: SpeedReading(
+                    value: Speed(value: 0),
+                    source: .reported,
+                    quality: .known,
+                    verification: .unverified
+                )
+            )
+        )
+        let tile = eucGpsSpeedTile(from: zero, at: 0)
+        let value = RideUnits.speedText(millimetersPerSecond: 0)
+        XCTAssertEqual(tile.metricValue, .available(display: value, accessibility: value))
+        XCTAssertEqual(tile.unit, RideUnits.speedUnit)
     }
 
     func testVescDebugPresentationUsesTheAppCatalog() {

@@ -32,7 +32,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CutoutAppTests",
-            dependencies: ["CutoutApp"],
+            dependencies: [
+                "CutoutApp",
+                .product(name: "CutoutMobileFFI", package: "CutoutMobileFFI"),
+            ],
             path: "Tests/CutoutAppTests"
         ),
         .executableTarget(
