@@ -93,10 +93,10 @@ struct ContentView: View {
 
     private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
         guard !model.isRecordOnlyCapture else { return }
-        guard model.selectedRideTitle != nil else { return }
+        guard let selection = model.connectionState.selection else { return }
         guard phase.opensRideScreen else { return }
         guard route == .devicePicker else { return }
-        navigate(to: CutoutAppRoute.route(for: model.selectedConnectionRoute))
+        navigate(to: CutoutAppRoute.route(for: selection.route))
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {

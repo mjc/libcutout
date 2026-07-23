@@ -88,6 +88,29 @@ enum CaptureStatus: Equatable {
     }
 }
 
+struct ConnectionSelection: Equatable {
+    let platformIdentifier: String
+    let title: String
+    let route: DevicePickerConnectionRoute
+}
+
+enum ConnectionState: Equatable {
+    case picker
+    case identified(ConnectionSelection)
+    case connecting(ConnectionSelection)
+    case connected(ConnectionSelection)
+    case failed(ConnectionSelection, SessionConnectionFailure)
+
+    var selection: ConnectionSelection? {
+        switch self {
+        case .picker:
+            nil
+        case let .identified(selection), let .connecting(selection), let .connected(selection), let .failed(selection, _):
+            selection
+        }
+    }
+}
+
 @MainActor
 protocol CutoutSessionDriving: AnyObject {
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
@@ -120,8 +143,7 @@ final class CutoutAppModel {
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
-    private(set) var selectedRideTitle: String?
-    private(set) var selectedConnectionRoute: DevicePickerConnectionRoute?
+    private(set) var connectionState = ConnectionState.picker
     private(set) var settingsReadback: SettingsReadback?
     private(set) var faultHistoryReadback: FaultHistoryReadback?
     private(set) var bmsSnapshot: BmsSnapshot?
@@ -133,6 +155,14 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
+
+    var selectedRideTitle: String? {
+        connectionState.selection?.title
+    }
+
+    var selectedConnectionRoute: DevicePickerConnectionRoute? {
+        connectionState.selection?.route
+    }
 
     var speed: SpeedReadout {
         displayState.speed
@@ -230,10 +260,14 @@ final class CutoutAppModel {
             )
             return false
         }
-        guard selectedRow.isSupported else { return false }
+        guard selectedRow.isSupported, let route = selectedRow.connectionRoute else { return false }
 
-        selectedRideTitle = selectedRow.title
-        selectedConnectionRoute = selectedRow.connectionRoute
+        let selection = ConnectionSelection(
+            platformIdentifier: selectedRow.id,
+            title: selectedRow.title,
+            route: route
+        )
+        connectionState = .connecting(selection)
         permitsStoredDeviceAutoPairing = true
         phase = .discoveringServices
         let didPair = core.pair(platformIdentifier: platformIdentifier)
@@ -257,8 +291,7 @@ final class CutoutAppModel {
     }
 
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
-        selectedRideTitle = nil
-        selectedConnectionRoute = nil
+        connectionState = .picker
         captureLabel = nil
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else { return false }
@@ -328,8 +361,7 @@ final class CutoutAppModel {
         activeCaptureLabels.removeAll()
         captureLabel = nil
         recordOnlyDeviceKind = nil
-        selectedRideTitle = nil
-        selectedConnectionRoute = nil
+        connectionState = .picker
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
@@ -361,13 +393,15 @@ final class CutoutAppModel {
             liveActivityIdentity = .model(model)
             liveActivityGlyph = .electricUnicycle
         }
-        guard candidate?.support.isSupported == true else {
+        guard let selection = selection(from: candidate) else {
             syncLiveActivity()
             return
         }
-        maybeSetSelectedRideTitle(from: candidate)
-        if candidate?.support.connectionRoute == .vescOnewheel {
-            liveActivityIdentity = vescRideIdentity(using: candidate?.detail)
+        if connectionState.selection == nil {
+            connectionState = .identified(selection)
+        }
+        if selection.route == .vescOnewheel {
+            liveActivityIdentity = vescRideIdentity(using: selection.title)
             liveActivityGlyph = .floatwheelAtom
         }
         syncLiveActivity()
@@ -385,16 +419,25 @@ final class CutoutAppModel {
     private func handlePhaseChange(_ phase: SessionConnectionPhase) {
         guard phase != .live || selectedConnectionRoute != nil || permitsStoredDeviceAutoPairing else { return }
         self.phase = phase
-        if phase == .live,
-           selectedConnectionRoute == nil,
-           let candidate = core.protocolIdentityCandidate,
-           candidate.support.isSupported {
-            maybeSetSelectedRideTitle(from: candidate)
-            selectedConnectionRoute = candidate.support.connectionRoute
+        switch phase {
+        case .connecting, .discoveringServices, .subscribing:
+            if let selection = connectionState.selection {
+                connectionState = .connecting(selection)
+            }
+        case .live:
+            if let selection = connectionState.selection {
+                connectionState = .connected(selection)
+            } else if let selection = selection(from: core.protocolIdentityCandidate) {
+                connectionState = .connected(selection)
+            }
+        case let .failed(failure):
+            guard let selection = connectionState.selection else { return }
+            connectionState = .failed(selection, failure)
+            let rows = devicePickerScanState?.rows ?? []
+            devicePickerScanState = .failed(phase.displayText, rows: rows)
+        case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning:
+            break
         }
-        guard case .failed = phase else { return }
-        let rows = devicePickerScanState?.rows ?? []
-        devicePickerScanState = .failed(phase.displayText, rows: rows)
     }
 
     private static func makeSessionDriver() -> any CutoutSessionDriving {
@@ -441,9 +484,15 @@ final class CutoutAppModel {
         }
     }
 
-    private func maybeSetSelectedRideTitle(from candidate: DevicePickerDiscoveryCandidate?) {
-        guard selectedRideTitle == nil else { return }
-        selectedRideTitle = candidate?.detail
+    private func selection(from candidate: DevicePickerDiscoveryCandidate?) -> ConnectionSelection? {
+        guard let candidate, candidate.support.isSupported, let route = candidate.support.connectionRoute else {
+            return nil
+        }
+        return ConnectionSelection(
+            platformIdentifier: candidate.platformIdentifier,
+            title: candidate.detail,
+            route: route
+        )
     }
 
     private func vescRideIdentity(using title: String?) -> LiveActivityRideIdentity {

@@ -148,6 +148,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(store.platformIdentifier, row.id)
         XCTAssertTrue(model.hasSavedDevice)
         XCTAssertEqual(model.phase, .failed(.connectFailed("timed out")))
+        XCTAssertEqual(
+            model.connectionState,
+            .failed(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                .connectFailed("timed out")
+            )
+        )
     }
 
     @MainActor
