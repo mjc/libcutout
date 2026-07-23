@@ -77,7 +77,16 @@ struct PevAppShell<Content: View>: View {
             PevDashboardHeader(
                 sectionTitle: sectionTitle
             ) {
-                PevRideDisconnectButton(action: disconnect)
+                Button(action: disconnect) {
+                    Text(localizedAppText("ride.action.disconnect"))
+                }
+                .font(.callout.weight(.bold))
+                .foregroundStyle(PevDashboardColors.primaryText)
+                .padding(.horizontal, 12)
+                .frame(minWidth: 44, minHeight: 44)
+                .background(PevDashboardCardBackground(cornerRadius: 8))
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("dashboard.disconnect")
             }
             .padding(.horizontal, 24)
 
