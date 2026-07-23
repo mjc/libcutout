@@ -226,9 +226,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func disconnectAndScanOnBleQueue() {
         suppressReconnect = true
-        pendingReconnect?.cancel()
-        pendingReconnect = nil
-        reconnectAttempt = 0
+        cancelPendingReconnect()
         isRecordOnly = false
         selectedModel = nil
         selectedRoute = nil
@@ -278,9 +276,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
-        pendingReconnect?.cancel()
-        pendingReconnect = nil
-        reconnectAttempt = 0
+        cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
@@ -433,6 +429,7 @@ public final class CutoutSessionCore: NSObject {
         using advertisement: CoreBluetoothAdvertisement,
         model: ElectricUnicycleModel
     ) {
+        cancelPendingReconnect()
         suppressReconnect = false
         isRecordOnly = false
         self.peripheral = peripheral
@@ -453,6 +450,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func connectRecordOnly(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement, note: String?, annotations: [String]) {
+        cancelPendingReconnect()
         suppressReconnect = false
         isRecordOnly = true
         self.peripheral = peripheral
@@ -479,6 +477,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func connectVescOnewheel(to peripheral: CBPeripheral, using advertisement: CoreBluetoothAdvertisement) {
+        cancelPendingReconnect()
         suppressReconnect = false
         isRecordOnly = false
         self.peripheral = peripheral
@@ -656,6 +655,12 @@ public final class CutoutSessionCore: NSObject {
         pendingReconnect?.cancel()
         pendingReconnect = reconnect
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(delay)), execute: reconnect)
+    }
+
+    private func cancelPendingReconnect() {
+        pendingReconnect?.cancel()
+        pendingReconnect = nil
+        reconnectAttempt = 0
     }
 
     private func record(_ message: String) {
