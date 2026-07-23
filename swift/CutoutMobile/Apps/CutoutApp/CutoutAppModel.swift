@@ -112,6 +112,12 @@ enum ConnectionState: Equatable {
     }
 }
 
+enum PhaseNavigationIntent: Equatable {
+    case stay
+    case openRide(DevicePickerConnectionRoute)
+    case returnToPicker
+}
+
 @MainActor
 protocol CutoutSessionDriving: AnyObject {
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
@@ -191,6 +197,20 @@ final class CutoutAppModel {
             return localizedAppText("picker.status.retrying")
         }
         return phase.displayText
+    }
+
+    var phaseNavigationIntent: PhaseNavigationIntent {
+        if case .failed = phase {
+            return .returnToPicker
+        }
+
+        guard !isRecordOnlyCapture,
+              phase.opensRideScreen,
+              let route = connectionState.selection?.route else {
+            return .stay
+        }
+
+        return .openRide(route)
     }
 
     private let core: any CutoutSessionDriving

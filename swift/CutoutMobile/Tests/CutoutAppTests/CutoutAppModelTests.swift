@@ -200,6 +200,13 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertEqual(model.connectionStatusText, "Retrying connection…")
+        XCTAssertEqual(model.phaseNavigationIntent, .stay)
+
+        driver.onPhaseChange?(.live)
+        XCTAssertEqual(model.phaseNavigationIntent, .openRide(.vescOnewheel))
+
+        driver.onPhaseChange?(.failed(.connectFailed("timed out")))
+        XCTAssertEqual(model.phaseNavigationIntent, .returnToPicker)
     }
 
     @MainActor

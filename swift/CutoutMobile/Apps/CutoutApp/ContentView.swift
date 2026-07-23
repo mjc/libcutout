@@ -51,11 +51,14 @@ struct ContentView: View {
             if let announcement = connectionAnnouncements.next(for: phase) {
                 AccessibilityNotification.Announcement(announcement).post()
             }
-            if case .failed = phase {
+            switch model.phaseNavigationIntent {
+            case .returnToPicker:
                 navigate(to: .devicePicker)
-                return
+            case let .openRide(connectionRoute) where route == .devicePicker:
+                navigate(to: CutoutAppRoute.route(for: connectionRoute))
+            case .stay, .openRide:
+                break
             }
-            openRideScreen(ifNeededFor: phase)
         }
         .onChange(of: model.connectionState) { _, state in
             if let announcement = connectionAnnouncements.next(for: state) {
@@ -86,14 +89,6 @@ struct ContentView: View {
 
         connectionAnnouncements.beginUserInitiatedAttempt()
         guard model.pair(platformIdentifier: row.id) else { return }
-    }
-
-    private func openRideScreen(ifNeededFor phase: SessionConnectionPhase) {
-        guard !model.isRecordOnlyCapture else { return }
-        guard let selection = model.connectionState.selection else { return }
-        guard phase.opensRideScreen else { return }
-        guard route == .devicePicker else { return }
-        navigate(to: CutoutAppRoute.route(for: selection.route))
     }
 
     private func selectTarget(_ target: PevNavigationTarget) {
