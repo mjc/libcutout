@@ -36,6 +36,68 @@ struct ConnectionReconnectPolicy {
     }
 }
 
+struct ConnectionReconnectSchedule: Equatable {
+    let attempt: Int
+    let delayMilliseconds: UInt64
+}
+
+protocol ConnectionReconnectCancellable: AnyObject {
+    func cancel()
+}
+
+protocol ConnectionReconnectScheduling: AnyObject {
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable
+}
+
+final class ConnectionReconnectController {
+    private let scheduler: any ConnectionReconnectScheduling
+    private var pending: (any ConnectionReconnectCancellable)?
+    private(set) var attempt = 0
+
+    init(scheduler: any ConnectionReconnectScheduling) {
+        self.scheduler = scheduler
+    }
+
+    func schedule(jitter: Double, operation: @escaping () -> Void) -> ConnectionReconnectSchedule? {
+        attempt += 1
+        guard let delayMilliseconds = ConnectionReconnectPolicy.delayMilliseconds(attempt: attempt, jitter: jitter) else {
+            return nil
+        }
+        pending?.cancel()
+        pending = scheduler.schedule(after: delayMilliseconds, operation: operation)
+        return ConnectionReconnectSchedule(attempt: attempt, delayMilliseconds: delayMilliseconds)
+    }
+
+    func cancel() {
+        pending?.cancel()
+        pending = nil
+        attempt = 0
+    }
+}
+
+private final class DispatchReconnectCancellation: ConnectionReconnectCancellable {
+    private let workItem: DispatchWorkItem
+
+    init(workItem: DispatchWorkItem) {
+        self.workItem = workItem
+    }
+
+    func cancel() {
+        workItem.cancel()
+    }
+}
+
+private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
+        let workItem = DispatchWorkItem(block: operation)
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(delayMilliseconds)),
+            execute: workItem
+        )
+        return DispatchReconnectCancellation(workItem: workItem)
+    }
+}
+
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
@@ -76,8 +138,7 @@ public final class CutoutSessionCore: NSObject {
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
-    private var reconnectAttempt = 0
-    private var pendingReconnect: DispatchWorkItem?
+    private let reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureBuilder: MobilePevcapCaptureBuilder?
     private var captureFileURL: URL?
@@ -617,10 +678,16 @@ public final class CutoutSessionCore: NSObject {
         route: DevicePickerConnectionRoute?,
         error: Error?
     ) {
-        reconnectAttempt += 1
-        guard let delay = ConnectionReconnectPolicy.delayMilliseconds(
-            attempt: reconnectAttempt,
-            jitter: Double.random(in: 0...1)
+        guard let schedule = reconnectController.schedule(
+            jitter: Double.random(in: 0...1),
+            operation: { [weak self, weak peripheral] in
+                guard let self, let peripheral else { return }
+                self.onBleQueue {
+                    guard !self.suppressReconnect else { return }
+                    self.startCapture(reason: "reconnect", annotations: ["route=\(route?.rawValue ?? "unknown")"])
+                    self.central?.connect(peripheral)
+                }
+            }
         ) else {
             setPhase(.failed(.connectFailed(error.sessionMessage)))
             central?.scanForPeripherals(withServices: nil)
@@ -643,24 +710,11 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        record("reconnect_attempt=\(reconnectAttempt) delay_ms=\(delay)")
-        let reconnect = DispatchWorkItem { [weak self, weak peripheral] in
-            guard let self, let peripheral else { return }
-            self.onBleQueue {
-                guard !self.suppressReconnect else { return }
-                self.startCapture(reason: "reconnect", annotations: ["route=\(route?.rawValue ?? "unknown")"])
-                self.central?.connect(peripheral)
-            }
-        }
-        pendingReconnect?.cancel()
-        pendingReconnect = reconnect
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(delay)), execute: reconnect)
+        record("reconnect_attempt=\(schedule.attempt) delay_ms=\(schedule.delayMilliseconds)")
     }
 
     private func cancelPendingReconnect() {
-        pendingReconnect?.cancel()
-        pendingReconnect = nil
-        reconnectAttempt = 0
+        reconnectController.cancel()
     }
 
     private func record(_ message: String) {

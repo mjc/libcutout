@@ -23,6 +23,34 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(ConnectionReconnectPolicy.delayMilliseconds(attempt: 4, jitter: 0.5))
     }
 
+    func testReconnectSchedulerCancelsSupersededAndExplicitRetries() {
+        let scheduler = RecordingReconnectScheduler()
+        let reconnects = ConnectionReconnectController(scheduler: scheduler)
+        var completed = [String]()
+
+        XCTAssertEqual(
+            reconnects.schedule(jitter: 0) { completed.append("first") },
+            ConnectionReconnectSchedule(attempt: 1, delayMilliseconds: 200)
+        )
+        XCTAssertEqual(
+            reconnects.schedule(jitter: 0.5) { completed.append("second") },
+            ConnectionReconnectSchedule(attempt: 2, delayMilliseconds: 500)
+        )
+
+        scheduler.runAll()
+        XCTAssertEqual(completed, ["second"])
+
+        XCTAssertEqual(
+            reconnects.schedule(jitter: 1) { completed.append("cancelled") },
+            ConnectionReconnectSchedule(attempt: 3, delayMilliseconds: 1_200)
+        )
+        reconnects.cancel()
+        scheduler.runAll()
+
+        XCTAssertEqual(completed, ["second"])
+        XCTAssertEqual(reconnects.attempt, 0)
+    }
+
     func testNordicNotificationUUIDsRemainFullWidthForPevcap() {
         let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E")
         let notify = CBUUID(string: "6E400003-B5A3-F393-E0A9-E50E24DCCA9E")
@@ -2135,5 +2163,31 @@ private func dutyCycle(_ permille: Int16) -> DutyCycle {
 private extension [EucRideVisibleFieldCoverage] {
     func source(for field: EucRideVisibleField) -> EucRideVisibleFieldSource? {
         first { $0.field == field }?.source
+    }
+}
+
+private final class RecordingReconnectScheduler: ConnectionReconnectScheduling {
+    private final class Token: ConnectionReconnectCancellable {
+        var isCancelled = false
+
+        func cancel() {
+            isCancelled = true
+        }
+    }
+
+    private var scheduled: [(token: Token, operation: () -> Void)] = []
+
+    func schedule(after _: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
+        let token = Token()
+        scheduled.append((token, operation))
+        return token
+    }
+
+    func runAll() {
+        let scheduled = scheduled
+        self.scheduled.removeAll()
+        for entry in scheduled where !entry.token.isCancelled {
+            entry.operation()
+        }
     }
 }
