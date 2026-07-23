@@ -206,9 +206,6 @@ public struct PevLiveActivityMetricGrid: View {
         PevLiveActivityValueCell(
             value: value,
             tint: tint,
-            textColor: PevLiveActivityPalette.primaryText,
-            secondaryTextColor: PevLiveActivityPalette.secondaryText,
-            background: PevLiveActivityPalette.cellBackground,
             compact: compact,
             showProgress: showProgress
         )
