@@ -43,7 +43,7 @@ struct DevicePickerView: View {
                 .accessibilityIdentifier("device-picker.connection-status")
 
             if hasSavedDevice {
-                Button(String(localized: "picker.saved_device.forget"), role: .destructive, action: forgetSavedDevice)
+                Button("picker.saved_device.forget", role: .destructive, action: forgetSavedDevice)
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("device-picker.forget-saved-device")
             }
