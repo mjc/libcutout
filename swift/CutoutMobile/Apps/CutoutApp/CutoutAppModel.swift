@@ -194,7 +194,7 @@ final class CutoutAppModel {
 
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: LiveActivityRideActivityKitManager())
-    private let selectedDeviceStore = DevicePickerSelectionStore()
+    private let selectedDeviceStore: DevicePickerSelectionStore
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
@@ -208,20 +208,30 @@ final class CutoutAppModel {
     convenience init() {
         self.init(
             core: Self.makeSessionDriver(),
-            permitsStoredDeviceAutoPairing: Self.uiTestFixture == nil
+            permitsStoredDeviceAutoPairing: Self.uiTestFixture == nil,
+            selectedDeviceStore: DevicePickerSelectionStore()
         )
     }
 
-    convenience init(core: any CutoutSessionDriving) {
-        self.init(core: core, permitsStoredDeviceAutoPairing: true)
+    convenience init(
+        core: any CutoutSessionDriving,
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+    ) {
+        self.init(
+            core: core,
+            permitsStoredDeviceAutoPairing: true,
+            selectedDeviceStore: selectedDeviceStore
+        )
     }
 
     private init(
         core: any CutoutSessionDriving,
-        permitsStoredDeviceAutoPairing: Bool
+        permitsStoredDeviceAutoPairing: Bool,
+        selectedDeviceStore: DevicePickerSelectionStore
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        self.selectedDeviceStore = selectedDeviceStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
@@ -289,6 +299,8 @@ final class CutoutAppModel {
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
             syncLiveActivity()
         } else {
+            connectionState = .picker
+            permitsStoredDeviceAutoPairing = false
             phase = .scanning
             devicePickerScanState = .failed(
                 localizedAppText("picker.error.device_no_longer_available"),
