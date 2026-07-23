@@ -40,20 +40,11 @@ struct BmsInlineLayout: View {
                 detail: snapshot.cellMapFocusSummary
             )
 
-            VStack(alignment: .leading, spacing: 14) {
-                Text("bms.display_modes")
-                    .font(.headline)
-                    .foregroundStyle(PevColors.muted)
-                    .accessibilityAddTraits(.isHeader)
-                BmsModeGrid(modes: content.modes)
+            BmsDisplayModesCard(modes: content.modes) {
                 Text(snapshot.cellMapInteractionHint)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevDashboardCardBackground(cornerRadius: 24))
         }
     }
 }
@@ -99,12 +90,7 @@ struct BmsScrollableLayout: View {
                 stroke: PevColors.orange
             )
 
-            VStack(alignment: .leading, spacing: 10) {
-                Text("bms.display_modes")
-                    .font(.headline)
-                    .foregroundStyle(PevColors.muted)
-                    .accessibilityAddTraits(.isHeader)
-                BmsModeGrid(modes: content.modes)
+            BmsDisplayModesCard(modes: content.modes, spacing: 10) {
                 Text(snapshot.scrollableCellMapRule)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
@@ -112,11 +98,38 @@ struct BmsScrollableLayout: View {
                     .font(.subheadline.weight(.black))
                     .foregroundStyle(PevColors.primaryText)
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevDashboardCardBackground(cornerRadius: 24))
         }
+    }
+}
+
+private struct BmsDisplayModesCard<Details: View>: View {
+    let modes: [PevBmsMode]
+    let spacing: CGFloat
+    @ViewBuilder let details: () -> Details
+
+    init(
+        modes: [PevBmsMode],
+        spacing: CGFloat = 14,
+        @ViewBuilder details: @escaping () -> Details
+    ) {
+        self.modes = modes
+        self.spacing = spacing
+        self.details = details
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            Text("bms.display_modes")
+                .font(.headline)
+                .foregroundStyle(PevColors.muted)
+                .accessibilityAddTraits(.isHeader)
+            BmsModeGrid(modes: modes)
+            details()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PevDashboardCardBackground(cornerRadius: 24))
     }
 }
 
