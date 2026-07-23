@@ -444,4 +444,11 @@ final class PevScreenThemeTests: XCTestCase {
         let voltage: Voltage? = nil
         XCTAssertEqual(bmsGroupVoltageMetricValue(voltage), .unavailable)
     }
+
+    func testBmsGroupVoltagePreservesAvailableValueForVisualAndSpokenPresentation() {
+        XCTAssertEqual(
+            bmsGroupVoltageMetricValue(Voltage(value: 4_036)),
+            .available(display: "4.036", accessibility: "4.036")
+        )
+    }
 }
