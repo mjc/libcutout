@@ -25,6 +25,17 @@ public enum CaptureEvent: Equatable, Sendable {
     case failed
 }
 
+struct ConnectionReconnectPolicy {
+    static let maximumAttempts = 3
+
+    static func delayMilliseconds(attempt: Int, jitter: Double) -> UInt64? {
+        guard (1...maximumAttempts).contains(attempt) else { return nil }
+        let base = 250.0 * pow(2, Double(attempt - 1))
+        let boundedJitter = min(max(jitter, 0), 1)
+        return UInt64((base * (0.8 + (0.4 * boundedJitter))).rounded())
+    }
+}
+
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
@@ -65,6 +76,8 @@ public final class CutoutSessionCore: NSObject {
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
+    private var reconnectAttempt = 0
+    private var pendingReconnect: DispatchWorkItem?
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureBuilder: MobilePevcapCaptureBuilder?
     private var captureFileURL: URL?
@@ -213,6 +226,9 @@ public final class CutoutSessionCore: NSObject {
 
     private func disconnectAndScanOnBleQueue() {
         suppressReconnect = true
+        pendingReconnect?.cancel()
+        pendingReconnect = nil
+        reconnectAttempt = 0
         isRecordOnly = false
         selectedModel = nil
         selectedRoute = nil
@@ -262,6 +278,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
+        pendingReconnect?.cancel()
+        pendingReconnect = nil
+        reconnectAttempt = 0
         step.actions.forEach(applySessionAction)
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
@@ -591,23 +610,52 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        switch reconnectRoute {
+        scheduleReconnect(to: peripheral, route: reconnectRoute, error: error)
+    }
+
+    private func scheduleReconnect(
+        to peripheral: CBPeripheral,
+        route: DevicePickerConnectionRoute?,
+        error: Error?
+    ) {
+        reconnectAttempt += 1
+        guard let delay = ConnectionReconnectPolicy.delayMilliseconds(
+            attempt: reconnectAttempt,
+            jitter: Double.random(in: 0...1)
+        ) else {
+            setPhase(.failed(.connectFailed(error.sessionMessage)))
+            central?.scanForPeripherals(withServices: nil)
+            return
+        }
+
+        switch route {
         case .vescOnewheel:
             selectedRoute = .vescOnewheel
             setPhase(.discoveringServices)
-            startCapture(reason: "reconnect", annotations: ["route=vesc_onewheel"])
-            central?.connect(peripheral)
-        case .electricUnicycle, nil:
+        case .electricUnicycle:
             guard let selectedModel else {
                 setPhase(.failed(.connectFailed(error.sessionMessage)))
                 return
             }
-
             selectedRoute = .electricUnicycle
             setPhase(.connecting(model: selectedModel))
-            startCapture(reason: "reconnect", annotations: ["route=electric_unicycle"])
-            central?.connect(peripheral)
+        case nil:
+            setPhase(.failed(.connectFailed(error.sessionMessage)))
+            return
         }
+
+        record("reconnect_attempt=\(reconnectAttempt) delay_ms=\(delay)")
+        let reconnect = DispatchWorkItem { [weak self, weak peripheral] in
+            guard let self, let peripheral else { return }
+            self.onBleQueue {
+                guard !self.suppressReconnect else { return }
+                self.startCapture(reason: "reconnect", annotations: ["route=\(route?.rawValue ?? "unknown")"])
+                self.central?.connect(peripheral)
+            }
+        }
+        pendingReconnect?.cancel()
+        pendingReconnect = reconnect
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(delay)), execute: reconnect)
     }
 
     private func record(_ message: String) {
