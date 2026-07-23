@@ -31,6 +31,18 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "unavailable")
     }
 
+    func testStatusMetricKeepsItsStateAndDetailForAccessibility() {
+        let tile = PevDashboardMetricTile(
+            label: "Charge",
+            metricValue: .status(display: "stale", accessibility: "stale"),
+            unit: "",
+            detail: "waiting for fresh telemetry"
+        )
+
+        XCTAssertEqual(tile.metricValue.displayText, "stale")
+        XCTAssertEqual(tile.accessibilityValueText, "stale and waiting for fresh telemetry")
+    }
+
     func testKeyValueRowSpeaksTypedUnavailableValue() {
         let row = PevDashboardKeyValueRow(
             id: "pack-voltage",

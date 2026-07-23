@@ -278,6 +278,26 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(percentageString(fromPermille: 625), "62%")
     }
 
+    func testChargeEstimateMetricValueKeepsEveryTypedStateExplicit() {
+        let display = "state value"
+
+        XCTAssertEqual(
+            chargeEstimateMetricValue(kind: .available, display: display),
+            .available(display: display, accessibility: display)
+        )
+        for kind in [
+            ChargeEstimateStateKind.collectingSamples,
+            .stale,
+            .unavailable,
+            .failed,
+        ] {
+            XCTAssertEqual(
+                chargeEstimateMetricValue(kind: kind, display: display),
+                .status(display: display, accessibility: display)
+            )
+        }
+    }
+
     func testHighlightedBmsGroupAccessibilityUsesTheAppCatalog() {
         XCTAssertEqual(
             bmsGroupAccessibilityValue("Group 4, 3.8 volts", isHighlighted: true),

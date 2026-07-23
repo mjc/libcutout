@@ -86,25 +86,30 @@ public enum PevDashboardTileKind: Equatable, Hashable, Sendable {
 
 public enum PevDashboardMetricValue: Equatable, Hashable, Sendable {
     case available(display: String, accessibility: String)
+    case status(display: String, accessibility: String)
     case unavailable
 
     public var displayText: String {
         switch self {
-        case .available(let display, _): display
+        case .available(let display, _), .status(let display, _): display
         case .unavailable: "--"
         }
     }
 
     public var accessibilityText: String {
         switch self {
-        case .available(_, let accessibility): accessibility
+        case .available(_, let accessibility), .status(_, let accessibility): accessibility
         case .unavailable: pevLocalizedText("metric.availability.unavailable")
         }
     }
 
     public func accessibilityValue(unit: String, detail: String) -> String {
-        guard case .available = self else { return accessibilityText }
-        return pevDashboardAccessibilityValue([accessibilityText, unit, detail])
+        switch self {
+        case .available, .status:
+            pevDashboardAccessibilityValue([accessibilityText, unit, detail])
+        case .unavailable:
+            accessibilityText
+        }
     }
 }
 
