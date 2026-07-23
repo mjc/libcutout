@@ -92,9 +92,8 @@ private func pickerScanStatusTitle(_ scanState: DevicePickerScanState?) -> Strin
     }
 }
 
-func percentText(_ value: BatteryLevel?) -> String {
-    guard let value else { return "--" }
-    return "\(value.value)%"
+func percentText(_ value: BatteryLevel) -> String {
+    RideUnits.percentText(value.value)
 }
 
 func voltageText(_ value: Voltage) -> String {
