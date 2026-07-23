@@ -36,10 +36,7 @@ struct CaptureRecordingScreen: View {
                     table: "Localizable",
                     bundle: appLocalizationBundle
                 ),
-                indicatorColor: PevColors.green,
-                background: PevColors.cardFill,
-                foreground: PevColors.primaryText,
-                cornerRadius: 18
+                indicatorColor: PevColors.green
             )
 
             ScrollView(.vertical, showsIndicators: false) {
