@@ -452,6 +452,24 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testBmsNoDataTelemetryMetricValuesKeepZeroDistinctFromUnavailable() {
+        XCTAssertEqual(bmsPackVoltageMetricValue(nil), .unavailable)
+        XCTAssertEqual(
+            bmsPackVoltageMetricValue(Voltage(value: 0)),
+            .available(display: "0.0", accessibility: "0.0")
+        )
+        XCTAssertEqual(bmsVoltageSagMetricValue(nil), .unavailable)
+        XCTAssertEqual(
+            bmsVoltageSagMetricValue(VoltageDelta(value: 0)),
+            .available(display: "0.0", accessibility: "0.0")
+        )
+        XCTAssertEqual(bmsBatteryCurrentMetricValue(nil), .unavailable)
+        XCTAssertEqual(
+            bmsBatteryCurrentMetricValue(BatteryCurrent(value: 0)),
+            .available(display: "0", accessibility: "0")
+        )
+    }
+
     func testBmsDetailTemperatureKeepsAvailabilityAndFormattingTyped() {
         XCTAssertEqual(bmsTemperatureMetricValue(nil), .unavailable)
         XCTAssertEqual(

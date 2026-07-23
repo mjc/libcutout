@@ -54,22 +54,13 @@ struct BmsNoDataLayout: View {
         rideState?.telemetry?.batteryCurrent ?? snapshot.current
     }
     private var packVoltageMetricValue: PevDashboardMetricValue {
-        packVoltage.map { voltage in
-            let value = RideUnits.voltageText(millivolts: voltage.value)
-            return .available(display: value, accessibility: value)
-        } ?? .unavailable
+        bmsPackVoltageMetricValue(packVoltage)
     }
     private var rideSagMetricValue: PevDashboardMetricValue {
-        rideState?.voltageSag.map { voltageSag in
-            let value = RideUnits.decimalString(abs(Double(voltageSag.value)) / 1_000.0, fractionDigits: 1)
-            return .available(display: value, accessibility: value)
-        } ?? .unavailable
+        bmsVoltageSagMetricValue(rideState?.voltageSag)
     }
     private var loadMetricValue: PevDashboardMetricValue {
-        packCurrent.map { current in
-            let value = RideUnits.decimalString(Double(current.value) / 1_000.0, fractionDigits: 0)
-            return .available(display: value, accessibility: value)
-        } ?? .unavailable
+        bmsBatteryCurrentMetricValue(packCurrent)
     }
     private var fallbackEstimateDetail: ControllerOnlyEstimateDetail {
         if snapshot.voltage != nil, snapshot.current != nil {
