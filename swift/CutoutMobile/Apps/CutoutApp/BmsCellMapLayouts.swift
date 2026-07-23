@@ -105,16 +105,16 @@ struct BmsScrollableLayout: View {
 private struct BmsDisplayModesCard<Details: View>: View {
     let modes: [PevBmsMode]
     let spacing: CGFloat
-    @ViewBuilder let details: () -> Details
+    let details: Details
 
     init(
         modes: [PevBmsMode],
         spacing: CGFloat = 14,
-        @ViewBuilder details: @escaping () -> Details
+        @ViewBuilder details: () -> Details
     ) {
         self.modes = modes
         self.spacing = spacing
-        self.details = details
+        self.details = details()
     }
 
     var body: some View {
@@ -122,9 +122,9 @@ private struct BmsDisplayModesCard<Details: View>: View {
             Text("bms.display_modes")
                 .font(.headline)
                 .foregroundStyle(PevColors.muted)
-                .accessibilityAddTraits(.isHeader)
+                .accessibilityHeading(.h2)
             BmsModeGrid(modes: modes)
-            details()
+            details
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 18)
