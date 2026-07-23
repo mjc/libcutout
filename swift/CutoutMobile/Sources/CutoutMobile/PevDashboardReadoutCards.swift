@@ -9,13 +9,12 @@ public struct PevDashboardMetricTile: View {
     var value: String { metricValue.displayText }
     let unit: String
     let detail: String
-    let accessibilityValue: String?
     let detailColor: Color
     let cornerRadius: CGFloat
     let minHeight: CGFloat
 
     var accessibilityValueText: String {
-        accessibilityValue ?? metricValue.accessibilityValue(unit: unit, detail: detail)
+        metricValue.accessibilityValue(unit: unit, detail: detail)
     }
 
     private var resolvedValueColor: Color {
@@ -37,7 +36,6 @@ public struct PevDashboardMetricTile: View {
         metricValue: PevDashboardMetricValue,
         unit: String = "",
         detail: String = "",
-        accessibilityValue: String? = nil,
         cornerRadius: CGFloat = 20,
         minHeight: CGFloat = 106
     ) {
@@ -46,7 +44,6 @@ public struct PevDashboardMetricTile: View {
             metricValue: metricValue,
             unit: unit,
             detail: detail,
-            accessibilityValue: accessibilityValue,
             detailColor: PevDashboardColors.primaryText,
             cornerRadius: cornerRadius,
             minHeight: minHeight
@@ -58,7 +55,6 @@ public struct PevDashboardMetricTile: View {
         metricValue: PevDashboardMetricValue,
         unit: String,
         detail: String,
-        accessibilityValue: String?,
         detailColor: Color,
         cornerRadius: CGFloat,
         minHeight: CGFloat
@@ -67,7 +63,6 @@ public struct PevDashboardMetricTile: View {
         self.metricValue = metricValue
         self.unit = unit
         self.detail = detail
-        self.accessibilityValue = accessibilityValue
         self.detailColor = detailColor
         self.cornerRadius = cornerRadius
         self.minHeight = minHeight
@@ -83,7 +78,6 @@ public struct PevDashboardMetricTile: View {
             metricValue: tile.metricValue,
             unit: tile.unit,
             detail: tile.detail,
-            accessibilityValue: nil,
             detailColor: PevDashboardColors.mutedText,
             cornerRadius: cornerRadius,
             minHeight: minHeight
