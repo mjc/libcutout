@@ -42,6 +42,18 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(snapshot), .end(.sessionEnded)])
     }
 
+    func testFailedEndIsRetainedAsTypedLifecycleError() async {
+        let manager = RecordingLiveActivityRideLifecycleManager(endError: .activityUnavailable)
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(reason: .sessionEnded)
+
+        let error = await coordinator.lastError
+        XCTAssertEqual(error, .activityUnavailable)
+    }
+
     func testEndDoesNothingWithoutPriorStart() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
@@ -154,6 +166,7 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     private var events: [Event] = []
     private let startError: LiveActivityRideLifecycleError?
     private let updateError: LiveActivityRideLifecycleError?
+    private let endError: LiveActivityRideLifecycleError?
     private let blockFirstStart: Bool
     private var firstStartBlocked = false
     private var firstStartWaiter: CheckedContinuation<Void, Never>?
@@ -162,10 +175,12 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     init(
         startError: LiveActivityRideLifecycleError? = nil,
         updateError: LiveActivityRideLifecycleError? = nil,
+        endError: LiveActivityRideLifecycleError? = nil,
         blockFirstStart: Bool = false
     ) {
         self.startError = startError
         self.updateError = updateError
+        self.endError = endError
         self.blockFirstStart = blockFirstStart
     }
 
@@ -185,8 +200,9 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
         if let updateError { throw updateError }
     }
 
-    func end(reason: LiveActivityRideLifecycleEndReason) {
+    func end(reason: LiveActivityRideLifecycleEndReason) throws {
         events.append(.end(reason))
+        if let endError { throw endError }
     }
 
     func recordedEvents() -> [Event] { events }

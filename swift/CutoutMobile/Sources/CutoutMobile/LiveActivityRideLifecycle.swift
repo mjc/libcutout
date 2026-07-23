@@ -125,7 +125,12 @@ public actor LiveActivityRideLifecycleCoordinator {
             return
         }
 
-        try? await manager.end(reason: reason)
+        do {
+            try await manager.end(reason: reason)
+            lastError = nil
+        } catch {
+            lastError = Self.lifecycleError(from: error)
+        }
         isActive = false
         lastSnapshot = nil
     }
