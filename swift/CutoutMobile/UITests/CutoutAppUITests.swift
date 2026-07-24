@@ -362,6 +362,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface(auditExclusions: [])
     }
 
+    func testEucNoBmsSurfacePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        try assertEucNoBmsSurface()
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
