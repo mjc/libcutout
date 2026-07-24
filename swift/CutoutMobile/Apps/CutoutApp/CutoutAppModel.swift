@@ -839,7 +839,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
         connectionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                try await Task.sleep(for: .milliseconds(self.fixture.failsConnection ? 3_000 : 250))
+                try await Task.sleep(for: .milliseconds(self.fixture.failsConnection ? 3_000 : 1_000))
             } catch {
                 return
             }

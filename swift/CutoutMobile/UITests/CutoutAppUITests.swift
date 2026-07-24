@@ -915,7 +915,7 @@ final class CutoutAppUITests: XCTestCase {
             disconnectIfConnected()
         }
 
-        let useButtons = app.buttons.matching(
+        let useButtons = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.use.")
         )
         guard useButtons.firstMatch.waitForExistence(timeout: 8) else { return false }
@@ -924,6 +924,8 @@ final class CutoutAppUITests: XCTestCase {
         guard let button = buttons.first(where: { family.matches(label: $0.label) }) else {
             return false
         }
+
+        XCTAssertEqual(button.elementType, .button)
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         for _ in 0..<6 where !button.isHittable {
