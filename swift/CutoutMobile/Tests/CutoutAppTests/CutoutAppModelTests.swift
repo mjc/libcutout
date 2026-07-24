@@ -268,6 +268,33 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    func testConnectionStateOwnsSelectedDeviceStatusText() {
+        let selection = ConnectionSelection(
+            platformIdentifier: "vesc-1234",
+            title: "VESC",
+            route: .vescOnewheel
+        )
+        let failure = SessionConnectionFailure.connectFailed("timed out")
+
+        XCTAssertEqual(
+            ConnectionState.connecting(selection, phase: .discoveringServices).statusText,
+            SessionConnectionPhase.discoveringServices.displayText
+        )
+        XCTAssertEqual(
+            ConnectionState.retrying(selection, attempt: 1).statusText,
+            localizedAppText("picker.status.retrying")
+        )
+        XCTAssertEqual(
+            ConnectionState.connected(selection).statusText,
+            SessionConnectionPhase.live.displayText
+        )
+        XCTAssertEqual(
+            ConnectionState.failed(selection, failure).statusText,
+            SessionConnectionPhase.failed(failure).displayText
+        )
+        XCTAssertNil(ConnectionState.picker.statusText)
+    }
+
     @MainActor
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()

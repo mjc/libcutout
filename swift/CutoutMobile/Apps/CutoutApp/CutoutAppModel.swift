@@ -97,7 +97,7 @@ struct ConnectionSelection: Equatable {
 enum ConnectionState: Equatable {
     case picker
     case identified(ConnectionSelection)
-    case connecting(ConnectionSelection)
+    case connecting(ConnectionSelection, phase: SessionConnectionPhase)
     case retrying(ConnectionSelection, attempt: Int)
     case connected(ConnectionSelection)
     case failed(ConnectionSelection, SessionConnectionFailure)
@@ -106,8 +106,23 @@ enum ConnectionState: Equatable {
         switch self {
         case .picker:
             nil
-        case let .identified(selection), let .connecting(selection), let .retrying(selection, _), let .connected(selection), let .failed(selection, _):
+        case let .identified(selection), let .connecting(selection, _), let .retrying(selection, _), let .connected(selection), let .failed(selection, _):
             selection
+        }
+    }
+
+    var statusText: String? {
+        switch self {
+        case .picker, .identified:
+            nil
+        case let .connecting(_, phase):
+            phase.displayText
+        case .retrying:
+            localizedAppText("picker.status.retrying")
+        case .connected:
+            SessionConnectionPhase.live.displayText
+        case let .failed(_, failure):
+            failure.displayText
         }
     }
 
@@ -206,10 +221,7 @@ final class CutoutAppModel {
     }
 
     var connectionStatusText: String {
-        if case .retrying = connectionState {
-            return localizedAppText("picker.status.retrying")
-        }
-        return phase.displayText
+        connectionState.statusText ?? phase.displayText
     }
 
     var phaseNavigationIntent: PhaseNavigationIntent {
@@ -314,7 +326,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
-        connectionState = .connecting(selection)
+        connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
         phase = .discoveringServices
         let didPair = core.pair(platformIdentifier: platformIdentifier)
@@ -474,7 +486,7 @@ final class CutoutAppModel {
             if case let .connected(selection) = connectionState {
                 connectionState = .retrying(selection, attempt: 1)
             } else if let selection = connectionState.selection {
-                connectionState = .connecting(selection)
+                connectionState = .connecting(selection, phase: phase)
             }
         case .live:
             if let selection = connectionState.selection {
