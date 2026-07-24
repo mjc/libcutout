@@ -177,7 +177,6 @@ public struct PevDashboardScanningPill: View {
     let title: String
     let isScanning: Bool
     let symbolName: String?
-    @State private var phase = 0
 
     public init(title: String, isScanning: Bool, symbolName: String? = nil) {
         self.title = title
@@ -206,15 +205,15 @@ public struct PevDashboardScanningPill: View {
                     .foregroundStyle(.yellow)
                     .accessibilityHidden(true)
             } else if Self.showsIndicators(isScanning: isScanning) {
-                HStack(spacing: 9) {
-                    ForEach(0..<3, id: \.self) { index in
-                        Circle()
-                            .frame(width: 13, height: 13)
-                            .opacity(index == phase ? 1 : 0.32)
+                if Self.shouldAnimate(isScanning: isScanning, reduceMotion: reduceMotion) {
+                    PhaseAnimator([0, 1, 2]) { phase in
+                        scanningIndicators(phase: phase)
+                    } animation: { _ in
+                        .easeInOut(duration: 0.26)
                     }
+                } else {
+                    scanningIndicators(phase: 0)
                 }
-                .foregroundStyle(.yellow)
-                .accessibilityHidden(true)
             }
         }
         .foregroundStyle(PevDashboardColors.primaryText)
@@ -225,18 +224,17 @@ public struct PevDashboardScanningPill: View {
         .background(PevDashboardCardBackground(cornerRadius: 28))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
-        .task(id: Self.shouldAnimate(isScanning: isScanning, reduceMotion: reduceMotion)) {
-            guard Self.shouldAnimate(isScanning: isScanning, reduceMotion: reduceMotion) else {
-                return
-            }
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(for: .milliseconds(260))
-                } catch {
-                    return
-                }
-                phase = (phase + 1) % 3
+    }
+
+    private func scanningIndicators(phase: Int) -> some View {
+        HStack(spacing: 9) {
+            ForEach(0..<3, id: \.self) { index in
+                Circle()
+                    .frame(width: 13, height: 13)
+                    .opacity(index == phase ? 1 : 0.32)
             }
         }
+        .foregroundStyle(.yellow)
+        .accessibilityHidden(true)
     }
 }
