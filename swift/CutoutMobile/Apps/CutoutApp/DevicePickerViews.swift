@@ -10,8 +10,7 @@ struct DevicePickerView: View {
     let pair: (DevicePickerRow) -> Void
     let forgetSavedDevice: () -> Void
     let recordOnly: (DevicePickerRow, String) -> Void
-    @State private var recordOnlyDeviceKind = ""
-    @FocusState private var isCaptureKindFocused: Bool
+    @State private var isAdvancedCapturePresented = false
 
     private var renderedScanState: DevicePickerScanState {
         scanState ?? DevicePickerScanState(status: .idle, rows: [])
@@ -52,49 +51,28 @@ struct DevicePickerView: View {
                 PevStatusStrip(text: captureStatusText)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                PevDashboardSectionLabel(title: localizedAppText("picker.capture_kind.label"))
-                TextField(localizedAppText("picker.capture_kind.placeholder"), text: $recordOnlyDeviceKind)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(PevColors.primaryText)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 46)
-                    .background(PevDashboardCardBackground(cornerRadius: 8))
-                    .focused($isCaptureKindFocused)
-                    .submitLabel(.done)
-                    .onSubmit { isCaptureKindFocused = false }
-                    .accessibilityLabel(localizedAppText("picker.capture_kind.label"))
-                    .accessibilityHint(localizedAppText("picker.capture_kind.hint"))
-                    .accessibilityIdentifier("device-picker.capture-kind")
-            }
-
             VStack(alignment: .leading, spacing: 18) {
                 deviceSection(
                     title: localizedAppText("picker.section.supported_now"),
                     rows: sections.supported,
                     allowsPairing: true
                 )
-                deviceSection(
-                    title: localizedAppText("picker.section.probe_first"),
-                    rows: sections.probeRecommended,
-                    allowsPairing: false
-                )
-                deviceSection(
-                    title: localizedAppText("picker.section.record_only"),
-                    rows: sections.unsupported,
-                    allowsPairing: false
-                )
 
-                if let manualRow = sections.manual {
-                    ManualPickerRow(row: manualRow)
-                        .padding(.top, 32)
-                }
+                Button("picker.advanced_capture") { isAdvancedCapturePresented = true }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier("device-picker.open-advanced-capture")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("device-picker.screen")
+        .sheet(isPresented: $isAdvancedCapturePresented) {
+            CaptureUnknownDeviceSheet(
+                sections: sections,
+                recordOnly: recordOnly
+            )
+        }
     }
 
     @ViewBuilder
@@ -114,6 +92,78 @@ struct DevicePickerView: View {
                         } else {
                             PickerDeviceRow(row: row)
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    private var connectionPresentation: DevicePickerConnectionPresentation {
+        DevicePickerConnectionPresentation(scanState: scanState, phase: connectionPhase)
+    }
+
+}
+
+private struct CaptureUnknownDeviceSheet: View {
+    let sections: DevicePickerSections
+    let recordOnly: (DevicePickerRow, String) -> Void
+    @State private var deviceKind = ""
+    @FocusState private var isDeviceKindFocused: Bool
+
+    var body: some View {
+        NavigationStack {
+            PevDashboardScaffold(
+                sectionTitle: localizedAppText("picker.advanced_capture"),
+                bottomPadding: 24,
+                allowsVerticalScroll: true,
+                contentSpacing: 18,
+                horizontalPadding: 24
+            ) {
+                PevScreenTitleBlock(
+                    title: localizedAppText("picker.advanced_capture"),
+                    subtitle: localizedAppText("picker.capture_kind.hint")
+                )
+
+                VStack(alignment: .leading, spacing: 8) {
+                    PevDashboardSectionLabel(title: localizedAppText("picker.capture_kind.label"))
+                    TextField(localizedAppText("picker.capture_kind.placeholder"), text: $deviceKind)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(PevColors.primaryText)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 46)
+                        .background(PevDashboardCardBackground(cornerRadius: 8))
+                        .focused($isDeviceKindFocused)
+                        .submitLabel(.done)
+                        .onSubmit { isDeviceKindFocused = false }
+                        .accessibilityLabel(localizedAppText("picker.capture_kind.label"))
+                        .accessibilityHint(localizedAppText("picker.capture_kind.hint"))
+                        .accessibilityIdentifier("device-picker.capture-kind")
+                }
+
+                captureSection(localizedAppText("picker.section.probe_first"), rows: sections.probeRecommended)
+                captureSection(localizedAppText("picker.section.record_only"), rows: sections.unsupported)
+
+                if let manualRow = sections.manual {
+                    ManualPickerRow(row: manualRow)
+                }
+            }
+            .accessibilityIdentifier("device-picker.advanced-capture")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { isDeviceKindFocused = false }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func captureSection(_ title: String, rows: [DevicePickerRow]) -> some View {
+        if !rows.isEmpty {
+            PevDashboardSectionLabel(title: title)
+            VStack(spacing: 12) {
+                ForEach(rows) { row in
+                    VStack(spacing: 8) {
+                        PickerDeviceRow(row: row)
                         captureButton(for: row)
                     }
                 }
@@ -123,39 +173,33 @@ struct DevicePickerView: View {
 
     private func captureButton(for row: DevicePickerRow) -> some View {
         Button {
-            if hasRecordOnlyDeviceKind {
-                recordOnly(row, trimmedRecordOnlyDeviceKind)
-            } else {
-                isCaptureKindFocused = true
+            guard !trimmedDeviceKind.isEmpty else {
+                isDeviceKindFocused = true
+                return
             }
+            recordOnly(row, trimmedDeviceKind)
         } label: {
             Label(row.captureActionTitle, systemImage: "record.circle")
                 .font(.callout.weight(.bold))
-                .foregroundStyle(hasRecordOnlyDeviceKind ? PevColors.yellow : PevColors.brand)
+                .foregroundStyle(hasDeviceKind ? PevColors.yellow : PevColors.brand)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(
                     PevDashboardCardBackground(
                         cornerRadius: 8,
-                        fill: hasRecordOnlyDeviceKind ? PevColors.warningFill : PevColors.disabledFill,
-                        stroke: hasRecordOnlyDeviceKind ? PevColors.warningStroke : PevColors.cardStroke
+                        fill: hasDeviceKind ? PevColors.warningFill : PevColors.disabledFill,
+                        stroke: hasDeviceKind ? PevColors.warningStroke : PevColors.cardStroke
                     )
                 )
         }
         .buttonStyle(.plain)
         .accessibilityLabel(row.captureActionAccessibilityLabel)
-        .accessibilityHint(hasRecordOnlyDeviceKind ? "" : localizedAppText("picker.capture_kind_required_hint"))
+        .accessibilityHint(hasDeviceKind ? "" : localizedAppText("picker.capture_kind_required_hint"))
         .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
 
-    private var connectionPresentation: DevicePickerConnectionPresentation {
-        DevicePickerConnectionPresentation(scanState: scanState, phase: connectionPhase)
-    }
+    private var hasDeviceKind: Bool { !trimmedDeviceKind.isEmpty }
 
-    private var hasRecordOnlyDeviceKind: Bool {
-        !trimmedRecordOnlyDeviceKind.isEmpty
-    }
-
-    private var trimmedRecordOnlyDeviceKind: String {
-        recordOnlyDeviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
+    private var trimmedDeviceKind: String {
+        deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
