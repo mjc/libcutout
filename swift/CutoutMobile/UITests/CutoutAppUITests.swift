@@ -426,6 +426,21 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucBmsDetailPassesAccessibilityAuditInRightToLeftLayout() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
+        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        XCTAssertTrue(group.isHittable)
+        group.tap()
+
+        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: detailScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
