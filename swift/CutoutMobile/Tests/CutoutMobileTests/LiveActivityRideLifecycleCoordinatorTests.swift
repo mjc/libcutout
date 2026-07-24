@@ -42,7 +42,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(snapshot), .end(.sessionEnded)])
     }
 
-    func testFailedEndIsRetainedAsTypedLifecycleError() async {
+    func testFailedEndKeepsActivityActiveForRetry() async {
         let manager = RecordingLiveActivityRideLifecycleManager(endError: .activityUnavailable)
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
@@ -52,6 +52,17 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
 
         let error = await coordinator.lastError
         XCTAssertEqual(error, .activityUnavailable)
+
+        await manager.setEndError(nil)
+        await coordinator.end(reason: .sessionEnded)
+
+        let recoveredError = await coordinator.lastError
+        let events = await manager.recordedEvents()
+        XCTAssertNil(recoveredError)
+        XCTAssertEqual(
+            events,
+            [.start(snapshot), .end(.sessionEnded), .end(.sessionEnded)]
+        )
     }
 
     func testEndDoesNothingWithoutPriorStart() async {
@@ -166,7 +177,7 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     private var events: [Event] = []
     private let startError: LiveActivityRideLifecycleError?
     private let updateError: LiveActivityRideLifecycleError?
-    private let endError: LiveActivityRideLifecycleError?
+    private var endError: LiveActivityRideLifecycleError?
     private let blockFirstStart: Bool
     private var firstStartBlocked = false
     private var firstStartWaiter: CheckedContinuation<Void, Never>?
@@ -206,6 +217,10 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     }
 
     func recordedEvents() -> [Event] { events }
+
+    func setEndError(_ error: LiveActivityRideLifecycleError?) {
+        endError = error
+    }
 
     func waitUntilFirstStartIsBlocked() async {
         guard firstStartBlocked == false else { return }
