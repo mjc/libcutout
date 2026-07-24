@@ -56,12 +56,12 @@ struct BmsNoDataWarningCard: View {
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(PevColors.warningFill)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .stroke(PevColors.warningStroke, lineWidth: 1.2)
-                )
+            PevDashboardCardBackground(
+                cornerRadius: 22,
+                fill: PevColors.warningFill,
+                stroke: PevColors.warningStroke,
+                lineWidth: 1.2
+            )
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(snapshot.noDataWarningTitle)
