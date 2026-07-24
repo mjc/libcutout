@@ -278,6 +278,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() throws {
+        try assertFailedVescConnectionAccessibility()
+    }
+
+    func testFailedVescConnectionPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        try assertFailedVescConnectionAccessibility()
+    }
+
+    private func assertFailedVescConnectionAccessibility() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
