@@ -381,6 +381,16 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucNoBmsSurfacePassesAccessibilityAuditInRightToLeftLayout() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
+        defer { disconnectIfConnected() }
+
+        let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertFalse(warning.label.isEmpty)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
