@@ -467,6 +467,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescDebugSurface()
     }
 
+    func testVescDebugPassesAccessibilityAuditInRightToLeftLayout() throws {
+        try assertVescDebugSurface()
+    }
+
     private func assertConnectedSurface(
         for family: ConnectedDeviceFamily,
         requiredMetricLabel: String? = nil,
