@@ -80,6 +80,27 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(action.label, "Start Ride")
     }
 
+    func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {
+        enterCapture()
+
+        let screen = app.descendants(matching: .any)["capture.screen"]
+        let hardPedals = app.buttons["capture.label.pedals_hard.action"]
+        let softPedals = app.buttons["capture.label.pedals_soft.action"]
+
+        for _ in 0..<6 where !hardPedals.isHittable {
+            screen.swipeUp()
+        }
+        XCTAssertTrue(hardPedals.isHittable)
+        XCTAssertTrue(softPedals.isHittable)
+
+        hardPedals.tap()
+        XCTAssertEqual(hardPedals.label, "Stop Pedals hard")
+
+        softPedals.tap()
+        XCTAssertEqual(hardPedals.label, "Start Pedals hard")
+        XCTAssertEqual(softPedals.label, "Stop Pedals soft")
+    }
+
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
