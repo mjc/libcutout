@@ -391,40 +391,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescDebugPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
-            XCTFail("The deterministic VESC fixture did not open its Ride screen")
-            return
-        }
-        defer { disconnectIfConnected() }
-
-        let debugTab = app.tabBars.buttons["Debug"]
-        XCTAssertTrue(debugTab.waitForExistence(timeout: 5))
-        XCTAssertTrue(debugTab.isHittable)
-        debugTab.tap()
-
-        let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
-        XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
-        XCTAssertTrue(debugTab.isSelected)
-        assertMetricIsReachable("duty", in: debugScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try assertVescDebugSurface()
     }
 
     func testVescDebugPassesAccessibilityAuditWithIncreasedContrast() throws {
-        guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
-            XCTFail("The deterministic VESC fixture did not open its Ride screen")
-            return
-        }
-        defer { disconnectIfConnected() }
+        try assertVescDebugSurface(auditExclusions: [])
+    }
 
-        let debugTab = app.tabBars.buttons["Debug"]
-        XCTAssertTrue(debugTab.waitForExistence(timeout: 5))
-        XCTAssertTrue(debugTab.isHittable)
-        debugTab.tap()
-
-        let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
-        XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
-        assertMetricIsReachable("duty", in: debugScreen)
-        try performVisibleLayoutAccessibilityAudit()
+    func testVescDebugPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        try assertVescDebugSurface()
     }
 
     private func assertConnectedSurface(
@@ -518,6 +493,27 @@ final class CutoutAppUITests: XCTestCase {
             assertMetricIsReachable(requiredMetricLabel, in: screen)
         }
 
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+    }
+
+    private func assertVescDebugSurface(
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
+    ) throws {
+        guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let debugTab = app.tabBars.buttons["Debug"]
+        XCTAssertTrue(debugTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(debugTab.isHittable)
+        debugTab.tap()
+
+        let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
+        XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
+        XCTAssertTrue(debugTab.isSelected)
+        assertMetricIsReachable("duty", in: debugScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
