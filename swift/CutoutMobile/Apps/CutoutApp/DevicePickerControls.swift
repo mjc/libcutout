@@ -54,7 +54,7 @@ struct PickerDeviceRow: View {
     private var actionView: some View {
         if let action, row.state.isSupported {
             Button(action: action) {
-                statusPill
+                PickerRowStatusPill(state: row.state)
             }
             .buttonStyle(.plain)
             .frame(minWidth: 44, minHeight: 44)
@@ -62,12 +62,8 @@ struct PickerDeviceRow: View {
             .accessibilityLabel(row.useActionAccessibilityLabel)
             .accessibilityHint(localizedAppText("picker.use_action.hint"))
         } else {
-            statusPill
+            PickerRowStatusPill(state: row.state)
         }
-    }
-
-    private var statusPill: some View {
-        PickerRowStatusPill(state: row.state)
     }
 }
 
@@ -81,13 +77,13 @@ struct ManualPickerRow: View {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 10) {
                     title
-                    statusPill
+                    PickerRowStatusPill(state: row.state)
                 }
             } else {
                 HStack {
                     title
                     Spacer()
-                    statusPill
+                    PickerRowStatusPill(state: row.state)
                 }
             }
         }
@@ -103,10 +99,6 @@ struct ManualPickerRow: View {
         Text(row.title)
             .font(.body.weight(.semibold))
             .foregroundStyle(PevColors.muted)
-    }
-
-    private var statusPill: some View {
-        PickerRowStatusPill(state: row.state)
     }
 }
 
