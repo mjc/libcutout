@@ -112,6 +112,12 @@ enum CutoutAppRoute: Hashable {
         navigationTabs.filter { $0.isEnabled && $0.destinationTarget != nil }
     }
 
+    func destination(for tab: PevScreenTab) -> CutoutAppRoute? {
+        guard let target = tab.destinationTarget else { return nil }
+        if tab.id == .pack, case .eucPack = self { return self }
+        return Self.route(forNavigationTarget: target)
+    }
+
     var selectedBmsGroupIndex: Int? {
         guard case let .eucPack(.bmsCellDetail(groupIndex)) = self else { return nil }
         return groupIndex

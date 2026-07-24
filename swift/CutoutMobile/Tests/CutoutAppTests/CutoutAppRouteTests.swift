@@ -170,6 +170,15 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs.isEmpty)
     }
 
+    func testNestedPackRouteSurvivesSharedTabRendering() {
+        let nestedPackRoute = CutoutAppRoute.eucPack(.bmsCellDetail(7))
+        let tabs = nestedPackRoute.availableNavigationTabs
+
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[0]), .eucRide)
+        XCTAssertEqual(nestedPackRoute.destination(for: tabs[1]), nestedPackRoute)
+        XCTAssertEqual(CutoutAppRoute.vescDebug.destination(for: CutoutAppRoute.vescDebug.availableNavigationTabs[1]), .vescDebug)
+    }
+
     func testOnlyLivePhaseOpensTheRideSurface() {
         XCTAssertFalse(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.discoveringServices.opensRideScreen)

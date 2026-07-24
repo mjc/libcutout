@@ -116,8 +116,7 @@ struct ContentView: View {
         } else {
             TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
-                    if let target = tab.destinationTarget {
-                        let tabRoute = contentRoute(for: tab, destination: destination, target: target)
+                    if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
                             connectedDestination(for: tabRoute)
                         } label: {
@@ -146,17 +145,6 @@ struct ContentView: View {
             .accessibilityLabel(appSectionTitle(for: destination))
             .accessibilityFocused($focusedRoute, equals: destination)
         }
-    }
-
-    private func contentRoute(
-        for tab: PevScreenTab,
-        destination: CutoutAppRoute,
-        target: PevNavigationTarget
-    ) -> CutoutAppRoute {
-        if tab.id == .pack, case .eucPack = destination {
-            return destination
-        }
-        return CutoutAppRoute.route(forNavigationTarget: target)
     }
 
     @ViewBuilder
