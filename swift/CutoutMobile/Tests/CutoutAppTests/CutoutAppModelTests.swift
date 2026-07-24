@@ -243,6 +243,31 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.phaseNavigationIntent, .returnToPicker)
     }
 
+    func testConnectionStateOwnsNavigationIntent() {
+        let selection = ConnectionSelection(
+            platformIdentifier: "vesc-1234",
+            title: "VESC",
+            route: .vescOnewheel
+        )
+
+        XCTAssertEqual(
+            ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: false),
+            .openRide(.vescOnewheel)
+        )
+        XCTAssertEqual(
+            ConnectionState.retrying(selection, attempt: 1).navigationIntent(isRecordOnlyCapture: false),
+            .stay
+        )
+        XCTAssertEqual(
+            ConnectionState.failed(selection, .connectFailed("timed out")).navigationIntent(isRecordOnlyCapture: false),
+            .returnToPicker
+        )
+        XCTAssertEqual(
+            ConnectionState.connected(selection).navigationIntent(isRecordOnlyCapture: true),
+            .stay
+        )
+    }
+
     @MainActor
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()

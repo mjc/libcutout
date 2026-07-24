@@ -110,6 +110,19 @@ enum ConnectionState: Equatable {
             selection
         }
     }
+
+    func navigationIntent(isRecordOnlyCapture: Bool) -> PhaseNavigationIntent {
+        guard !isRecordOnlyCapture else { return .stay }
+
+        switch self {
+        case let .connected(selection):
+            return .openRide(selection.route)
+        case .failed:
+            return .returnToPicker
+        case .picker, .identified, .connecting, .retrying:
+            return .stay
+        }
+    }
 }
 
 enum PhaseNavigationIntent: Equatable {
@@ -200,17 +213,7 @@ final class CutoutAppModel {
     }
 
     var phaseNavigationIntent: PhaseNavigationIntent {
-        if case .failed = phase {
-            return .returnToPicker
-        }
-
-        guard !isRecordOnlyCapture,
-              phase.opensRideScreen,
-              let route = connectionState.selection?.route else {
-            return .stay
-        }
-
-        return .openRide(route)
+        connectionState.navigationIntent(isRecordOnlyCapture: isRecordOnlyCapture)
     }
 
     private let core: any CutoutSessionDriving
