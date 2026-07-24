@@ -9,12 +9,6 @@ enum PevRideHeroStyle {
     static let vescOnewheelSpeedPointSize: CGFloat = 124
     static let unitPointSize: CGFloat = 24
 
-    var speedPointSize: CGFloat {
-        switch self {
-        case .electricUnicycle: Self.electricUnicycleSpeedPointSize
-        case .vescOnewheel: Self.vescOnewheelSpeedPointSize
-        }
-    }
 }
 
 enum PevRideMetricProvenance: Equatable {
