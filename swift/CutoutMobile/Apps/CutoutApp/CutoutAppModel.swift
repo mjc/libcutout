@@ -389,7 +389,16 @@ final class CutoutAppModel {
     }
 
     func startCaptureLabel(_ label: CaptureQuickLabel) {
-        guard activeCaptureLabels.insert(label).inserted else { return }
+        guard !activeCaptureLabels.contains(label) else { return }
+
+        if let exclusiveGroup = label.exclusiveGroup,
+           let activeLabel = activeCaptureLabels.first(where: { $0.exclusiveGroup == exclusiveGroup })
+        {
+            activeCaptureLabels.remove(activeLabel)
+            core.annotateCapture(label: "\(activeLabel.annotationValue)_stop")
+        }
+
+        activeCaptureLabels.insert(label)
         captureLabel = label.title
         core.annotateCapture(label: "\(label.annotationValue)_start")
         captureStatus = .labelStarted(
@@ -668,6 +677,13 @@ private extension SessionConnectionPhase {
     }
 }
 
+private enum CaptureLabelExclusiveGroup {
+    case lowBeam
+    case highBeam
+    case pedalMode
+    case softwareLock
+}
+
 enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
     case ride
     case charge
@@ -739,6 +755,21 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
             "ride_mode"
         case .pwmPercent:
             "pwm_percent"
+        }
+    }
+
+    fileprivate var exclusiveGroup: CaptureLabelExclusiveGroup? {
+        switch self {
+        case .lowBeamOn, .lowBeamOff:
+            .lowBeam
+        case .highBeamOn, .highBeamOff:
+            .highBeam
+        case .pedalsHard, .pedalsMedium, .pedalsSoft:
+            .pedalMode
+        case .softwareLock, .softwareUnlock:
+            .softwareLock
+        default:
+            nil
         }
     }
 }

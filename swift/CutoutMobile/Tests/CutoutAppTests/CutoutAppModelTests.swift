@@ -459,6 +459,35 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureLabelActionsReplaceAnActiveExclusiveMode() {
+        let transitions: [(active: CaptureQuickLabel, replacement: CaptureQuickLabel)] = [
+            (CaptureQuickLabel.lowBeamOn, .lowBeamOff),
+            (.highBeamOn, .highBeamOff),
+            (.pedalsHard, .pedalsSoft),
+            (.softwareLock, .softwareUnlock),
+        ]
+
+        for (active, replacement) in transitions {
+            let driver = SessionDriverSpy(rows: [])
+            let model = CutoutAppModel(core: driver)
+
+            model.startCaptureLabel(active)
+            model.startCaptureLabel(replacement)
+
+            XCTAssertEqual(model.activeCaptureLabels, [replacement])
+            XCTAssertEqual(model.captureStatusText, "\(replacement.title) started")
+            XCTAssertEqual(
+                driver.captureAnnotations,
+                [
+                    "\(active.annotationValue)_start",
+                    "\(active.annotationValue)_stop",
+                    "\(replacement.annotationValue)_start",
+                ]
+            )
+        }
+    }
+
+    @MainActor
     func testProtocolIdentityCandidateDoesNotOverwriteSelectedRideTitle() {
         let model = CutoutAppModel()
         let supported = DevicePickerCandidateSupport.supported(
@@ -581,6 +610,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool
     private(set) var pairedPlatformIdentifiers = [String]()
+    private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
 
@@ -604,7 +634,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     func recordOnly(platformIdentifier _: String, note _: String?, annotations _: [String]) -> Bool { true }
-    func annotateCapture(label _: String) {}
+    func annotateCapture(label: String) {
+        captureAnnotations.append(label)
+    }
     func annotateCapture(key _: String, value _: String) {}
     func flushCapture() -> Bool {
         flushCaptureCount += 1
