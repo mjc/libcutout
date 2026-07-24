@@ -142,36 +142,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCapturePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        enterCapture()
+        try assertCaptureAccessibility()
+    }
 
-        let screen = app.descendants(matching: .any)["capture.screen"]
-        let stopCapture = app.buttons["capture.stop"]
-        let firstAnnotation = app.buttons["capture.label.ride.action"]
-        let lastAnnotation = app.buttons["capture.label.pwm_percent.action"]
-        XCTAssertTrue(screen.exists)
-
-        for _ in 0..<6 where !stopCapture.isHittable {
-            screen.swipeUp()
-        }
-
-        XCTAssertTrue(stopCapture.exists)
-        XCTAssertTrue(stopCapture.isHittable)
-        XCTAssertTrue(firstAnnotation.isHittable)
-        XCTAssertEqual(firstAnnotation.label, "Start Ride")
-        firstAnnotation.tap()
-        XCTAssertEqual(firstAnnotation.label, "Stop Ride")
-
-        let annotationScrollView = screen.scrollViews.firstMatch
-        for _ in 0..<8 where !lastAnnotation.isHittable {
-            annotationScrollView.swipeUp()
-        }
-
-        XCTAssertTrue(lastAnnotation.exists)
-        XCTAssertTrue(lastAnnotation.isHittable)
-        XCTAssertEqual(lastAnnotation.label, "Start PWM percent")
-        lastAnnotation.tap()
-        XCTAssertEqual(lastAnnotation.label, "Stop PWM percent")
-        try performVisibleLayoutAccessibilityAudit()
+    func testCapturePassesAccessibilityAuditInRightToLeftLayout() throws {
+        try assertCaptureAccessibility(excluding: .contrast)
     }
 
     func testProductionPickerPassesAccessibilityAudit() throws {
@@ -713,6 +688,41 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
         recordButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
+    }
+
+    private func assertCaptureAccessibility(
+        excluding excluded: XCUIAccessibilityAuditType = []
+    ) throws {
+        enterCapture()
+
+        let screen = app.descendants(matching: .any)["capture.screen"]
+        let stopCapture = app.buttons["capture.stop"]
+        let firstAnnotation = app.buttons["capture.label.ride.action"]
+        let lastAnnotation = app.buttons["capture.label.pwm_percent.action"]
+        XCTAssertTrue(screen.exists)
+
+        for _ in 0..<6 where !stopCapture.isHittable {
+            screen.swipeUp()
+        }
+
+        XCTAssertTrue(stopCapture.exists)
+        XCTAssertTrue(stopCapture.isHittable)
+        XCTAssertTrue(firstAnnotation.isHittable)
+        XCTAssertEqual(firstAnnotation.label, "Start Ride")
+        firstAnnotation.tap()
+        XCTAssertEqual(firstAnnotation.label, "Stop Ride")
+
+        let annotationScrollView = screen.scrollViews.firstMatch
+        for _ in 0..<8 where !lastAnnotation.isHittable {
+            annotationScrollView.swipeUp()
+        }
+
+        XCTAssertTrue(lastAnnotation.exists)
+        XCTAssertTrue(lastAnnotation.isHittable)
+        XCTAssertEqual(lastAnnotation.label, "Start PWM percent")
+        lastAnnotation.tap()
+        XCTAssertEqual(lastAnnotation.label, "Stop PWM percent")
+        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
     private func openAdvancedCapture() -> XCUIElement {
