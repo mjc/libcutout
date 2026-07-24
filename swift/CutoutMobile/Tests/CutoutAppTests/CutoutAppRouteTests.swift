@@ -315,6 +315,7 @@ final class CutoutAppRouteTests: XCTestCase {
             route: .vescOnewheel
         )
         let retry = SessionConnectionRetry(
+            platformIdentifier: selection.platformIdentifier,
             attempt: 1,
             deadline: MonotonicMilliseconds(0),
             failure: .connectFailed("timed out")
@@ -335,6 +336,7 @@ final class CutoutAppRouteTests: XCTestCase {
             route: .vescOnewheel
         )
         let retry = SessionConnectionRetry(
+            platformIdentifier: selection.platformIdentifier,
             attempt: 1,
             deadline: MonotonicMilliseconds(0),
             failure: .connectFailed("timed out")

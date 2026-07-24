@@ -3234,11 +3234,18 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
 }
 
 public struct SessionConnectionRetry: Equatable, Hashable, Sendable {
+    public let platformIdentifier: String
     public let attempt: Int
     public let deadline: MonotonicMilliseconds
     public let failure: SessionConnectionFailure
 
-    public init(attempt: Int, deadline: MonotonicMilliseconds, failure: SessionConnectionFailure) {
+    public init(
+        platformIdentifier: String,
+        attempt: Int,
+        deadline: MonotonicMilliseconds,
+        failure: SessionConnectionFailure
+    ) {
+        self.platformIdentifier = platformIdentifier
         self.attempt = attempt
         self.deadline = deadline
         self.failure = failure

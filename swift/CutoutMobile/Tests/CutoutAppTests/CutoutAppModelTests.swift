@@ -237,6 +237,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .stay)
 
         let retry = SessionConnectionRetry(
+            platformIdentifier: row.id,
             attempt: 2,
             deadline: MonotonicMilliseconds(800),
             failure: .connectFailed("timed out")
@@ -263,6 +264,54 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .returnToPicker)
     }
 
+    @MainActor
+    func testLateRetryCannotOverwriteADifferentSelectedDevice() {
+        let vesc = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let euc = DevicePickerRow(
+            id: "euc-5678",
+            title: "EUC",
+            subtitle: "Electric unicycle",
+            detail: "Device 5678",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .electricUnicycle
+        )
+        let driver = SessionDriverSpy(rows: [vesc, euc])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: vesc.id))
+        XCTAssertTrue(model.pair(platformIdentifier: euc.id))
+
+        driver.onReconnectScheduled?(
+            SessionConnectionRetry(
+                platformIdentifier: vesc.id,
+                attempt: 1,
+                deadline: MonotonicMilliseconds(0),
+                failure: .connectFailed("timed out")
+            )
+        )
+
+        XCTAssertEqual(
+            model.connectionState,
+            .connecting(
+                ConnectionSelection(
+                    platformIdentifier: euc.id,
+                    title: euc.title,
+                    route: .electricUnicycle
+                ),
+                phase: .discoveringServices
+            )
+        )
+    }
+
     func testConnectionStateOwnsNavigationIntent() {
         let selection = ConnectionSelection(
             platformIdentifier: "vesc-1234",
@@ -278,6 +327,7 @@ final class CutoutAppModelTests: XCTestCase {
             ConnectionState.retrying(
                 selection,
                 retry: SessionConnectionRetry(
+                    platformIdentifier: selection.platformIdentifier,
                     attempt: 1,
                     deadline: MonotonicMilliseconds(0),
                     failure: .connectFailed("timed out")
@@ -311,6 +361,7 @@ final class CutoutAppModelTests: XCTestCase {
             ConnectionState.retrying(
                 selection,
                 retry: SessionConnectionRetry(
+                    platformIdentifier: selection.platformIdentifier,
                     attempt: 1,
                     deadline: MonotonicMilliseconds(0),
                     failure: failure

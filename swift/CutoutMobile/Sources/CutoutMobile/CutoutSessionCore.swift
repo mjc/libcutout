@@ -717,6 +717,7 @@ public final class CutoutSessionCore: NSObject {
         let delay = schedule.delayMilliseconds
         let deadline = MonotonicMilliseconds(now > UInt64.max - delay ? UInt64.max : now + delay)
         let retry = SessionConnectionRetry(
+            platformIdentifier: peripheral.identifier.uuidString,
             attempt: schedule.attempt,
             deadline: deadline,
             failure: .connectFailed(error.sessionMessage)
