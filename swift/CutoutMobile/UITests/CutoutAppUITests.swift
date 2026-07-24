@@ -363,6 +363,14 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucBmsPassesAccessibilityAuditInRightToLeftLayout() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
