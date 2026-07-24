@@ -134,15 +134,7 @@ struct BmsNoDataPackEstimateCard: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(PevColors.cardFill)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
-                        .foregroundStyle(PevColors.cardStroke)
-                )
-        )
+        .background(PevDashboardCardBackground(cornerRadius: 18, lineWidth: 1.2, dashPattern: [5, 5]))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(localizedAppText("bms.no_data.confidence_accessibility"))
         .accessibilityValue(
@@ -187,15 +179,7 @@ struct BmsNoDataUnknownsCard: View {
                     .foregroundStyle(PevColors.primaryText.opacity(0.92))
                     .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(PevColors.cardFill)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(style: StrokeStyle(lineWidth: 1.2, dash: [5, 5]))
-                                    .foregroundStyle(PevColors.cardStroke)
-                            )
-                    )
+                    .background(PevDashboardCardBackground(cornerRadius: 10, lineWidth: 1.2, dashPattern: [5, 5]))
             }
         }
         .padding(.horizontal, 20)

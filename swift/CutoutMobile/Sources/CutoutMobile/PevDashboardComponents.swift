@@ -49,17 +49,20 @@ public struct PevDashboardCardBackground: View {
     let fill: Color
     let stroke: Color
     let lineWidth: CGFloat
+    let dashPattern: [CGFloat]
 
     public init(
         cornerRadius: CGFloat,
         fill: Color = PevDashboardColors.cardFill,
         stroke: Color = PevDashboardColors.cardStroke,
-        lineWidth: CGFloat = 1
+        lineWidth: CGFloat = 1,
+        dashPattern: [CGFloat] = []
     ) {
         self.cornerRadius = cornerRadius
         self.fill = fill
         self.stroke = stroke
         self.lineWidth = lineWidth
+        self.dashPattern = dashPattern
     }
 
     public var body: some View {
@@ -67,10 +70,16 @@ public struct PevDashboardCardBackground: View {
             .fill(fill)
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(stroke, lineWidth: Self.resolvedLineWidth(
-                        base: lineWidth,
-                        contrast: colorSchemeContrast
-                    ))
+                    .stroke(
+                        stroke,
+                        style: StrokeStyle(
+                            lineWidth: Self.resolvedLineWidth(
+                                base: lineWidth,
+                                contrast: colorSchemeContrast
+                            ),
+                            dash: dashPattern
+                        )
+                    )
             )
     }
 

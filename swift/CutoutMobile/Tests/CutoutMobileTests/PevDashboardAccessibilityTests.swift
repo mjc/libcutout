@@ -170,6 +170,20 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
     }
 
+    func testDashedCardBackgroundKeepsItsSharedDashPattern() {
+        let background = PevDashboardCardBackground(
+            cornerRadius: 18,
+            lineWidth: 1.2,
+            dashPattern: [5, 5]
+        )
+
+        XCTAssertEqual(background.dashPattern, [5, 5])
+        XCTAssertEqual(
+            PevDashboardCardBackground.resolvedLineWidth(base: background.lineWidth, contrast: .increased),
+            2
+        )
+    }
+
     func testFootpadReadoutBuildsACompleteDefaultAccessibilityValue() {
         let readout = makeFootpadReadout()
 
