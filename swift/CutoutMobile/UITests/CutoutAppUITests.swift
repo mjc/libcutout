@@ -338,19 +338,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsPassAccessibilityAuditAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try assertEucBmsAccessibility()
     }
 
     func testEucBmsPassesAccessibilityAuditInRightToLeftLayout() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
+        try assertEucBmsAccessibility()
+    }
 
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    func testEucBmsPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        try assertEucBmsAccessibility()
     }
 
     func testEucNoBmsSurfacePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
@@ -370,11 +366,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
-        try performVisibleLayoutAccessibilityAudit()
+        try assertEucBmsAccessibility(excluding: [])
     }
 
     func testEucBmsGroupOpensAccessibleDetailAndReturnsToMap() throws {
@@ -891,6 +883,16 @@ final class CutoutAppUITests: XCTestCase {
             return nil
         }
         return bmsScreen
+    }
+
+    private func assertEucBmsAccessibility(
+        excluding excluded: XCUIAccessibilityAuditType = [.contrast]
+    ) throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
     private func assertEucNoBmsSurface(
