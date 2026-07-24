@@ -73,13 +73,13 @@ enum PevColors {
     static let pageBackground = PevSystemColors.pageBackground
     static let cardFill = PevDashboardColors.cardFill
     static let cardStroke = PevDashboardColors.cardStroke
-    static let disabledFill = PevSystemColors.disabledFill
+    static let disabledFill = PevDashboardColors.disabledFill
     static let primaryText = PevDashboardColors.primaryText
     static let disabledText = Color.primary.opacity(0.58)
     static let disabledSecondaryText = Color.primary.opacity(0.48)
     static let muted = PevDashboardColors.mutedText
     static let brand = PevSystemColors.brand
-    static let yellow = PevSystemColors.yellow
+    static let yellow = PevDashboardColors.yellow
     static let cyan = PevSystemColors.cyan
     static let green = PevSystemColors.green
     static let orange = PevSystemColors.orange

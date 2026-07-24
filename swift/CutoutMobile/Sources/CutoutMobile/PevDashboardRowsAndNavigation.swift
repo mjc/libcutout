@@ -147,6 +147,19 @@ public struct PevDashboardStatusPill: View {
         self.fixedHorizontal = fixedHorizontal
     }
 
+    public init(devicePickerState state: DevicePickerRowState) {
+        self.init(
+            title: state.actionTitle,
+            fill: state.isSupported ? PevDashboardColors.yellow : PevDashboardColors.disabledFill,
+            foreground: state.isSupported ? .black : PevDashboardColors.mutedText,
+            stroke: state.isSupported ? nil : PevDashboardColors.cardStroke,
+            width: state.isSupported ? 76 : 64,
+            horizontalPadding: state.isSupported ? 10 : 8,
+            height: state.isSupported ? 38 : 30,
+            fixedHorizontal: true
+        )
+    }
+
     public var body: some View {
         Text(title)
             .font(.system(.callout, design: .default, weight: .black))

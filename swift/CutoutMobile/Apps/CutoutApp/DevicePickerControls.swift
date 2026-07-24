@@ -54,7 +54,7 @@ struct PickerDeviceRow: View {
     private var actionView: some View {
         if let action, row.state.isSupported {
             Button(action: action) {
-                PickerRowStatusPill(state: row.state)
+                PevDashboardStatusPill(devicePickerState: row.state)
             }
             .buttonStyle(.plain)
             .frame(minWidth: 44, minHeight: 44)
@@ -62,7 +62,7 @@ struct PickerDeviceRow: View {
             .accessibilityLabel(row.useActionAccessibilityLabel)
             .accessibilityHint(localizedAppText("picker.use_action.hint"))
         } else {
-            PickerRowStatusPill(state: row.state)
+            PevDashboardStatusPill(devicePickerState: row.state)
         }
     }
 }
@@ -77,13 +77,13 @@ struct ManualPickerRow: View {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 10) {
                     title
-                    PickerRowStatusPill(state: row.state)
+                    PevDashboardStatusPill(devicePickerState: row.state)
                 }
             } else {
                 HStack {
                     title
                     Spacer()
-                    PickerRowStatusPill(state: row.state)
+                    PevDashboardStatusPill(devicePickerState: row.state)
                 }
             }
         }
@@ -99,22 +99,5 @@ struct ManualPickerRow: View {
         Text(row.title)
             .font(.body.weight(.semibold))
             .foregroundStyle(PevColors.muted)
-    }
-}
-
-private struct PickerRowStatusPill: View {
-    let state: DevicePickerRowState
-
-    var body: some View {
-        PevDashboardStatusPill(
-            title: state.actionTitle,
-            fill: state.isSupported ? PevColors.yellow : PevColors.disabledFill,
-            foreground: state.isSupported ? .black : PevColors.muted,
-            stroke: state.isSupported ? nil : PevColors.cardStroke,
-            width: state.isSupported ? 76 : 64,
-            horizontalPadding: state.isSupported ? 10 : 8,
-            height: state.isSupported ? 38 : 30,
-            fixedHorizontal: true
-        )
     }
 }

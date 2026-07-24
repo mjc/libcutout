@@ -152,6 +152,22 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(strip.accessibilityLabelText, "Saved capture")
     }
 
+    func testPickerStateBuildsItsSharedStatusPill() {
+        let supported = PevDashboardStatusPill(
+            devicePickerState: .supported(action: "Use")
+        )
+        let unsupported = PevDashboardStatusPill(
+            devicePickerState: .unsupported(action: "Unavailable")
+        )
+
+        XCTAssertEqual(supported.title, "Use")
+        XCTAssertEqual(supported.width, 76)
+        XCTAssertEqual(supported.height, 38)
+        XCTAssertEqual(unsupported.title, "Unavailable")
+        XCTAssertEqual(unsupported.width, 64)
+        XCTAssertEqual(unsupported.height, 30)
+    }
+
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
         XCTAssertTrue(PevDashboardScanningPill.showsIndicators(isScanning: true))
         XCTAssertFalse(PevDashboardScanningPill.showsIndicators(isScanning: false))
