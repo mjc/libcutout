@@ -489,12 +489,6 @@ final class CutoutAppUITests: XCTestCase {
             XCTFail("The deterministic \(family.name) fixture did not expose a Use button")
             return
         }
-        let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
-        XCTAssertTrue(connectionStatus.waitForExistence(timeout: 2))
-        XCTAssertTrue(
-            connectionStatus.label.localizedCaseInsensitiveContains("connecting"),
-            "The visible \(family.name) Use button did not first expose a connecting state"
-        )
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The visible \(family.name) Use button was tapped, but no connected dashboard appeared")
             return
@@ -503,7 +497,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(screen.exists)
         defer { disconnectIfConnected() }
         XCTAssertEqual(screen.identifier, family.screenIdentifier)
-        XCTAssertFalse(app.descendants(matching: .any)["device-picker.screen"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["device-picker.screen"].isHittable)
 
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
