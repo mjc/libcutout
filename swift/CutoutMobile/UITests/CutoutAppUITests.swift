@@ -149,6 +149,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertCaptureAccessibility(excluding: .contrast)
     }
 
+    func testCapturePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        try assertCaptureAccessibility(excluding: .contrast)
+    }
+
     func testProductionPickerPassesAccessibilityAudit() throws {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
 
