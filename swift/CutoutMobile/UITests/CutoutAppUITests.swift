@@ -232,22 +232,12 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType() throws {
-        let screen = app.descendants(matching: .any)["device-picker.screen"]
-        let openAdvancedCapture = app.buttons["device-picker.open-advanced-capture"]
-        let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
+        let advancedCapture = openAdvancedCapture()
         let captureKind = app.textFields["device-picker.capture-kind"]
         let recordButton = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
         ).firstMatch
 
-        XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        for _ in 0..<4 where !openAdvancedCapture.isHittable {
-            screen.swipeUp()
-        }
-        XCTAssertTrue(openAdvancedCapture.isHittable)
-
-        openAdvancedCapture.tap()
-        XCTAssertTrue(advancedCapture.waitForExistence(timeout: 5))
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
         XCTAssertTrue(captureKind.isHittable)
 
@@ -643,17 +633,12 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func enterCapture() {
-        let screen = app.descendants(matching: .any)["device-picker.screen"]
-        let openAdvancedCapture = app.buttons["device-picker.open-advanced-capture"]
-        let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
+        let advancedCapture = openAdvancedCapture()
         let captureKind = app.textFields["device-picker.capture-kind"]
         let recordButton = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
         ).firstMatch
 
-        XCTAssertTrue(openAdvancedCapture.waitForExistence(timeout: 5))
-        openAdvancedCapture.tap()
-        XCTAssertTrue(advancedCapture.waitForExistence(timeout: 5))
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
         captureKind.tap()
         captureKind.typeText("custom vesc\n")
@@ -665,6 +650,22 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
         recordButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
+    }
+
+    private func openAdvancedCapture() -> XCUIElement {
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+        let openAdvancedCapture = app.buttons["device-picker.open-advanced-capture"]
+        let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
+
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !openAdvancedCapture.isHittable {
+            screen.swipeUp()
+        }
+        XCTAssertTrue(openAdvancedCapture.isHittable)
+
+        openAdvancedCapture.tap()
+        XCTAssertTrue(advancedCapture.waitForExistence(timeout: 5))
+        return advancedCapture
     }
 
     private func assertMetricIsReachable(_ label: String, in screen: XCUIElement) {
