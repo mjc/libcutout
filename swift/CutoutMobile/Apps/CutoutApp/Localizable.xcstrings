@@ -585,6 +585,10 @@
       "comment" : "VoiceOver hint explaining what to enter in the capture device-kind field.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Enter the device family and model, for example EUC NOSFET Aeon" } } }
     },
+    "picker.capture_kind.done" : {
+      "comment" : "Toolbar action that finishes editing the capture device-kind field.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
+    },
     "picker.capture_kind.label" : {
       "comment" : "Label and VoiceOver name for the capture device-kind field.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device kind for capture" } } }

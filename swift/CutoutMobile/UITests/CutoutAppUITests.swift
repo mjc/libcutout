@@ -61,6 +61,7 @@ final class CutoutAppUITests: XCTestCase {
         let openAdvancedCapture = app.buttons["device-picker.open-advanced-capture"]
         let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
         let captureKind = app.textFields["device-picker.capture-kind"]
+        let finishEditing = app.buttons["device-picker.capture-kind.done"]
         let recordButton = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
         ).firstMatch
@@ -75,6 +76,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
         XCTAssertEqual(captureKind.label, "Device kind for capture")
         XCTAssertTrue(captureKind.isHittable)
+        XCTAssertTrue(finishEditing.exists)
+        XCTAssertEqual(finishEditing.label, "Done")
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
         XCTAssertTrue(recordButton.label.contains("Refloat VESC"))
 

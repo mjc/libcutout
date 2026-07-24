@@ -150,7 +150,8 @@ private struct CaptureUnknownDeviceSheet: View {
             .accessibilityIdentifier("device-picker.advanced-capture")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { isDeviceKindFocused = false }
+                    Button("picker.capture_kind.done") { isDeviceKindFocused = false }
+                        .accessibilityIdentifier("device-picker.capture-kind.done")
                 }
             }
         }
