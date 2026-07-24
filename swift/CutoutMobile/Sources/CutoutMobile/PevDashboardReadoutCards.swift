@@ -18,12 +18,7 @@ public struct PevDashboardMetricTile: View {
     }
 
     private var resolvedValueColor: Color {
-        let color = if case .unavailable = metricValue {
-            PevDashboardColors.primaryText
-        } else {
-            PevDashboardColors.primaryText
-        }
-        return resolvedColor(color)
+        resolvedColor(PevDashboardColors.primaryText)
     }
 
     private func resolvedColor(_ color: Color) -> Color {
