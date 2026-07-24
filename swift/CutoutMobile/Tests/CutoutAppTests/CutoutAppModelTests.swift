@@ -465,7 +465,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testLiveActivityStartFailureIsObservableInAppState() async {
+    func testLiveActivityStartFailureIsObservableAndRetryable() async {
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -476,9 +476,10 @@ final class CutoutAppModelTests: XCTestCase {
             connectionRoute: .vescOnewheel
         )
         let driver = SessionDriverSpy(rows: [row])
+        let manager = FailingLiveActivityManager(error: .authorizationDenied)
         let model = CutoutAppModel(
             core: driver,
-            liveActivityManager: FailingLiveActivityManager(error: .authorizationDenied)
+            liveActivityManager: manager
         )
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
@@ -489,23 +490,41 @@ final class CutoutAppModelTests: XCTestCase {
         }
 
         XCTAssertEqual(model.liveActivityError, .authorizationDenied)
+
+        await manager.setError(nil)
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+
+        for _ in 0 ..< 10 {
+            if await manager.startCount == 2 { break }
+            await Task.yield()
+        }
+
+        let startCount = await manager.startCount
+        XCTAssertEqual(startCount, 2)
+        XCTAssertNil(model.liveActivityError)
     }
 }
 
 private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
-    let error: LiveActivityRideLifecycleError
+    private var error: LiveActivityRideLifecycleError?
+    private(set) var startCount = 0
 
     init(error: LiveActivityRideLifecycleError) {
         self.error = error
     }
 
     func start(snapshot _: LiveActivityRideSnapshot) async throws {
-        throw error
+        startCount += 1
+        if let error { throw error }
     }
 
     func update(snapshot _: LiveActivityRideSnapshot) async throws {}
 
     func end(reason _: LiveActivityRideLifecycleEndReason) async throws {}
+
+    func setError(_ error: LiveActivityRideLifecycleError?) {
+        self.error = error
+    }
 }
 
 @MainActor

@@ -545,7 +545,12 @@ final class CutoutAppModel {
                 shouldBeActive: shouldBeActive,
                 endReason: endReason
             )
-            self?.liveActivityError = await liveActivityCoordinator.lastError
+            let error = await liveActivityCoordinator.lastError
+            self?.liveActivityError = error
+            if error != nil {
+                self?.lastLiveActivitySnapshot = nil
+                self?.lastLiveActivityUpdate = nil
+            }
         }
     }
 
