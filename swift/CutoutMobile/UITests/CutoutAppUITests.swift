@@ -13,7 +13,6 @@ final class CutoutAppUITests: XCTestCase {
         app.launchArguments = launchArguments
         app.launchEnvironment["CUTOUT_UI_TEST_FIXTURE"] = fixtureEnvironmentValue
         app.launch()
-        allowDeviceAuthorizationAlerts()
     }
 
     override func tearDown() async throws {
@@ -21,39 +20,6 @@ final class CutoutAppUITests: XCTestCase {
         app = nil
         XCUIDevice.shared.orientation = .portrait
         try await super.tearDown()
-    }
-
-    private func allowDeviceAuthorizationAlerts() {
-        var didDismissAlert = false
-        defer {
-            if didDismissAlert {
-                app.activate()
-            }
-        }
-
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let allowLabels = [
-            "allow while using app",
-            "allow bluetooth",
-            "always allow",
-            "change to always allow",
-            "allow",
-            "allow once",
-            "ok",
-        ]
-
-        for _ in 0..<3 {
-            let alert = springboard.alerts.firstMatch
-            guard alert.waitForExistence(timeout: 1) else { break }
-
-            let buttons = alert.buttons.allElementsBoundByIndex
-            guard let button = allowLabels.lazy.compactMap({ label in
-                buttons.first { $0.label.lowercased() == label }
-            }).first else { break }
-            button.tap()
-            didDismissAlert = true
-            _ = alert.waitForNonExistence(timeout: 2)
-        }
     }
 
     func testPickerExposesAccessibleCaptureControls() {
