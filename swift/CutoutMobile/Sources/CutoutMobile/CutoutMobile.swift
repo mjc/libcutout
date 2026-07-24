@@ -3233,6 +3233,18 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     }
 }
 
+public struct SessionConnectionRetry: Equatable, Hashable, Sendable {
+    public let attempt: Int
+    public let deadline: MonotonicMilliseconds
+    public let failure: SessionConnectionFailure
+
+    public init(attempt: Int, deadline: MonotonicMilliseconds, failure: SessionConnectionFailure) {
+        self.attempt = attempt
+        self.deadline = deadline
+        self.failure = failure
+    }
+}
+
 public enum SessionConnectionPhase: Equatable, Hashable, Sendable {
     case starting
     case bluetoothPermissionDenied

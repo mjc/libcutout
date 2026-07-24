@@ -204,7 +204,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testUnexpectedReconnectKeepsTheSelectedRouteInRetryingState() {
+    func testGenericConnectionProgressDoesNotInventARetryAttempt() {
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -224,17 +224,37 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(
             model.connectionState,
+            .connecting(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                phase: .discoveringServices
+            )
+        )
+        XCTAssertEqual(model.connectionStatusText, SessionConnectionPhase.discoveringServices.displayText)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .stay)
+
+        let retry = SessionConnectionRetry(
+            attempt: 2,
+            deadline: MonotonicMilliseconds(800),
+            failure: .connectFailed("timed out")
+        )
+        driver.onReconnectScheduled?(retry)
+
+        XCTAssertEqual(
+            model.connectionState,
             .retrying(
                 ConnectionSelection(
                     platformIdentifier: row.id,
                     title: row.title,
                     route: .vescOnewheel
                 ),
-                attempt: 1
+                retry: retry
             )
         )
         XCTAssertEqual(model.connectionStatusText, "Retrying connection…")
-        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .stay)
 
         driver.onPhaseChange?(.live)
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
@@ -255,7 +275,14 @@ final class CutoutAppModelTests: XCTestCase {
             .openRide(.vescOnewheel)
         )
         XCTAssertEqual(
-            ConnectionState.retrying(selection, attempt: 1).navigationIntent(isRecordOnlyCapture: false),
+            ConnectionState.retrying(
+                selection,
+                retry: SessionConnectionRetry(
+                    attempt: 1,
+                    deadline: MonotonicMilliseconds(0),
+                    failure: .connectFailed("timed out")
+                )
+            ).navigationIntent(isRecordOnlyCapture: false),
             .stay
         )
         XCTAssertEqual(
@@ -281,7 +308,14 @@ final class CutoutAppModelTests: XCTestCase {
             SessionConnectionPhase.discoveringServices.displayText
         )
         XCTAssertEqual(
-            ConnectionState.retrying(selection, attempt: 1).statusText,
+            ConnectionState.retrying(
+                selection,
+                retry: SessionConnectionRetry(
+                    attempt: 1,
+                    deadline: MonotonicMilliseconds(0),
+                    failure: failure
+                )
+            ).statusText,
             localizedAppText("picker.status.retrying")
         )
         XCTAssertEqual(
@@ -598,6 +632,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 private final class SessionDriverSpy: CutoutSessionDriving {
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?

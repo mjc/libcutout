@@ -98,7 +98,7 @@ enum ConnectionState: Equatable {
     case picker
     case identified(ConnectionSelection)
     case connecting(ConnectionSelection, phase: SessionConnectionPhase)
-    case retrying(ConnectionSelection, attempt: Int)
+    case retrying(ConnectionSelection, retry: SessionConnectionRetry)
     case connected(ConnectionSelection)
     case failed(ConnectionSelection, SessionConnectionFailure)
 
@@ -150,6 +150,7 @@ enum PhaseNavigationIntent: Equatable {
 protocol CutoutSessionDriving: AnyObject {
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
     var onCaptureEvent: ((CaptureEvent) -> Void)? { get set }
     var onScanStateChange: ((DevicePickerScanState) -> Void)? { get set }
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)? { get set }
@@ -278,6 +279,9 @@ final class CutoutAppModel {
         self.core.onPhaseChange = { [weak self] phase in
             self?.handlePhaseChange(phase)
             self?.syncLiveActivity()
+        }
+        self.core.onReconnectScheduled = { [weak self] retry in
+            self?.handleReconnectScheduled(retry)
         }
         self.core.onScanStateChange = { [weak self] scanState in
             self?.handleScanStateChange(scanState)
@@ -506,9 +510,7 @@ final class CutoutAppModel {
         self.phase = phase
         switch phase {
         case .connecting, .discoveringServices, .subscribing:
-            if case let .connected(selection) = connectionState {
-                connectionState = .retrying(selection, attempt: 1)
-            } else if let selection = connectionState.selection {
+            if let selection = connectionState.selection {
                 connectionState = .connecting(selection, phase: phase)
             }
         case .live:
@@ -525,6 +527,11 @@ final class CutoutAppModel {
         case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning:
             break
         }
+    }
+
+    private func handleReconnectScheduled(_ retry: SessionConnectionRetry) {
+        guard let selection = connectionState.selection else { return }
+        connectionState = .retrying(selection, retry: retry)
     }
 
     private static func makeSessionDriver() -> any CutoutSessionDriving {
@@ -874,6 +881,7 @@ enum CutoutUITestSessionFixture {
 private final class CutoutUITestSessionDriver: CutoutSessionDriving {
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     var onCaptureEvent: ((CaptureEvent) -> Void)?
     var onScanStateChange: ((DevicePickerScanState) -> Void)?
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?

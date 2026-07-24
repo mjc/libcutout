@@ -114,6 +114,7 @@ public final class CutoutSessionCore: NSObject {
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
+    public var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
     public var onRecord: ((String) -> Void)?
     public var onCaptureEvent: ((CaptureEvent) -> Void)?
     public var onScanStateChange: ((DevicePickerScanState) -> Void)?
@@ -711,6 +712,16 @@ public final class CutoutSessionCore: NSObject {
             setPhase(.failed(.connectFailed(error.sessionMessage)))
             return
         }
+
+        let now = clock.now().rawValue
+        let delay = schedule.delayMilliseconds
+        let deadline = MonotonicMilliseconds(now > UInt64.max - delay ? UInt64.max : now + delay)
+        let retry = SessionConnectionRetry(
+            attempt: schedule.attempt,
+            deadline: deadline,
+            failure: .connectFailed(error.sessionMessage)
+        )
+        publishOnMain { self.onReconnectScheduled?(retry) }
 
         record("reconnect_attempt=\(schedule.attempt) delay_ms=\(schedule.delayMilliseconds)")
     }

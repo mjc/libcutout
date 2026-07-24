@@ -314,13 +314,18 @@ final class CutoutAppRouteTests: XCTestCase {
             title: "VESC",
             route: .vescOnewheel
         )
+        let retry = SessionConnectionRetry(
+            attempt: 1,
+            deadline: MonotonicMilliseconds(0),
+            failure: .connectFailed("timed out")
+        )
         var announcements = ConnectionAccessibilityAnnouncements()
 
         XCTAssertEqual(
-            announcements.next(for: .retrying(selection, attempt: 1)),
+            announcements.next(for: .retrying(selection, retry: retry)),
             "Connection lost. Retrying connection."
         )
-        XCTAssertNil(announcements.next(for: .retrying(selection, attempt: 1)))
+        XCTAssertNil(announcements.next(for: .retrying(selection, retry: retry)))
     }
 
     func testReconnectStateAnnouncesAgainAfterConnectionRestores() {
@@ -329,15 +334,20 @@ final class CutoutAppRouteTests: XCTestCase {
             title: "VESC",
             route: .vescOnewheel
         )
+        let retry = SessionConnectionRetry(
+            attempt: 1,
+            deadline: MonotonicMilliseconds(0),
+            failure: .connectFailed("timed out")
+        )
         var announcements = ConnectionAccessibilityAnnouncements()
 
         XCTAssertEqual(
-            announcements.next(for: .retrying(selection, attempt: 1)),
+            announcements.next(for: .retrying(selection, retry: retry)),
             "Connection lost. Retrying connection."
         )
         XCTAssertNil(announcements.next(for: .connected(selection)))
         XCTAssertEqual(
-            announcements.next(for: .retrying(selection, attempt: 1)),
+            announcements.next(for: .retrying(selection, retry: retry)),
             "Connection lost. Retrying connection."
         )
     }
