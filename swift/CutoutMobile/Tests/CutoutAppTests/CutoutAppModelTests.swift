@@ -421,7 +421,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testDisconnectIgnoresALateLiveCallback() {
+    func testDisconnectIgnoresLateConnectionCallbacks() {
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -448,6 +448,14 @@ final class CutoutAppModelTests: XCTestCase {
         model.disconnectTransport()
         driver.onPhaseChange?(.scanning)
         driver.onPhaseChange?(.discoveringServices)
+        driver.onReconnectScheduled?(
+            SessionConnectionRetry(
+                platformIdentifier: row.id,
+                attempt: 1,
+                deadline: MonotonicMilliseconds(0),
+                failure: .connectFailed("timed out")
+            )
+        )
         driver.onPhaseChange?(.live)
 
         XCTAssertEqual(model.phase, .scanning)
