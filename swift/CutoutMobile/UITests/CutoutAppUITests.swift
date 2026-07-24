@@ -119,6 +119,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let disconnect = app.buttons["dashboard.disconnect"]
         XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
+        XCTAssertEqual(disconnect.label, "Disconnect")
         disconnect.tap()
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
