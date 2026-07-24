@@ -8,8 +8,12 @@ let appLocalizationBundle = Bundle.main
 #endif
 
 func localizedAppText(_ key: String, _ arguments: CVarArg...) -> String {
-    String(
-        format: appLocalizationBundle.localizedString(forKey: key, value: nil, table: "Localizable"),
+    let format = appLocalizationBundle.localizedString(forKey: key, value: nil, table: "Localizable")
+    if format == key {
+        return pevLocalizedText(key, arguments: arguments)
+    }
+    return String(
+        format: format,
         locale: .current,
         arguments: arguments
     )
