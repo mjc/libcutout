@@ -154,16 +154,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testProductionPickerPassesAccessibilityAudit() throws {
-        let screen = app.descendants(matching: .any)["device-picker.screen"]
-
-        XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        try performVisibleLayoutAccessibilityAudit()
+        try assertProductionPickerAccessibility()
     }
 
     func testProductionPickerPassesAccessibilityAuditInLightAppearance() throws {
-        let screen = app.descendants(matching: .any)["device-picker.screen"]
-        XCTAssertTrue(screen.waitForExistence(timeout: 5))
-        try performVisibleLayoutAccessibilityAudit()
+        try assertProductionPickerAccessibility()
+    }
+
+    func testProductionPickerPassesAccessibilityAuditInRightToLeftLayout() throws {
+        try assertProductionPickerAccessibility(excluding: .contrast)
     }
 
     func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
@@ -711,6 +710,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
         recordButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
+    }
+
+    private func assertProductionPickerAccessibility(
+        excluding excluded: XCUIAccessibilityAuditType = []
+    ) throws {
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
     private func assertCaptureAccessibility(
