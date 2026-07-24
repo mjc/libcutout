@@ -126,7 +126,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(snapshot)])
     }
 
-    func testFailedUpdateIsRetainedAsTypedLifecycleError() async {
+    func testFailedUpdateKeepsActivityActiveForRetry() async {
         let manager = RecordingLiveActivityRideLifecycleManager(updateError: .activityUnavailable)
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
@@ -137,6 +137,17 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
 
         let error = await coordinator.lastError
         XCTAssertEqual(error, .activityUnavailable)
+
+        await manager.setUpdateError(nil)
+        await coordinator.reconcile(snapshot: updated, shouldBeActive: true)
+
+        let recoveredError = await coordinator.lastError
+        let events = await manager.recordedEvents()
+        XCTAssertNil(recoveredError)
+        XCTAssertEqual(
+            events,
+            [.start(snapshot), .update(updated), .update(updated)]
+        )
     }
 
     func testConcurrentReconciliationsDoNotOverlapLifecycleOperations() async {
@@ -176,7 +187,7 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
 
     private var events: [Event] = []
     private let startError: LiveActivityRideLifecycleError?
-    private let updateError: LiveActivityRideLifecycleError?
+    private var updateError: LiveActivityRideLifecycleError?
     private var endError: LiveActivityRideLifecycleError?
     private let blockFirstStart: Bool
     private var firstStartBlocked = false
@@ -220,6 +231,10 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
 
     func setEndError(_ error: LiveActivityRideLifecycleError?) {
         endError = error
+    }
+
+    func setUpdateError(_ error: LiveActivityRideLifecycleError?) {
+        updateError = error
     }
 
     func waitUntilFirstStartIsBlocked() async {

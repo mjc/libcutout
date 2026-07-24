@@ -70,8 +70,6 @@ public actor LiveActivityRideLifecycleCoordinator {
             lastSnapshot = snapshot
             lastError = nil
         } catch {
-            isActive = false
-            lastSnapshot = nil
             lastError = Self.lifecycleError(from: error)
         }
     }
