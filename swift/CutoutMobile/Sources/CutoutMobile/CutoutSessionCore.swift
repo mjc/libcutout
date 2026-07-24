@@ -1162,9 +1162,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         assertOnBleQueue()
         record("connect_failed=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
-        isRecordOnly = false
-        selectedRoute = nil
-        setPhase(.failed(.connectFailed(error.sessionMessage)))
+        handleDisconnect(from: peripheral, error: error)
     }
 
     public func centralManager(
