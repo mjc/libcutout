@@ -216,8 +216,6 @@ public struct PevLiveActivityMetricGrid: View {
 public struct PevLiveActivitySafetyFooter: View {
     @ScaledMetric(relativeTo: .caption2) private var compactFontSize: CGFloat = 9
     @ScaledMetric(relativeTo: .caption2) private var expandedFontSize: CGFloat = 10
-    @ScaledMetric(relativeTo: .caption2) private var compactHeight: CGFloat = 14
-    @ScaledMetric(relativeTo: .caption2) private var expandedHeight: CGFloat = 16
 
     let snapshot: LiveActivityRideSnapshot
     let compact: Bool
@@ -258,7 +256,6 @@ public struct PevLiveActivitySafetyFooter: View {
             PevLiveActivityFooterChip(systemName: "thermometer.medium", value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
         }
         .font(.system(size: compact ? compactFontSize : expandedFontSize, weight: .medium))
-        .frame(height: compact ? compactHeight : expandedHeight)
     }
 }
 
