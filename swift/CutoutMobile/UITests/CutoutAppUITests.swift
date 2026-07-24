@@ -267,6 +267,22 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testAdvancedCaptureControlsRemainReachableInLandscapeAtAccessibilityDynamicType() throws {
+        let advancedCapture = openAdvancedCapture()
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
+
+        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        XCTAssertTrue(captureKind.isHittable)
+        for _ in 0..<6 where !recordButton.isHittable {
+            advancedCapture.swipeUp()
+        }
+        XCTAssertTrue(recordButton.isHittable)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testVescUseOpensAnAccessibleLiveRide() throws {
         try assertConnectedSurface(for: .vesc)
     }
