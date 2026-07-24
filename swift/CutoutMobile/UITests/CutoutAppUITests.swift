@@ -372,23 +372,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucNoBmsSurfacePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
-        defer { disconnectIfConnected() }
-
-        let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertFalse(warning.label.isEmpty)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try assertEucNoBmsSurface()
     }
 
     func testEucNoBmsSurfacePassesAccessibilityAuditInRightToLeftLayout() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
-        defer { disconnectIfConnected() }
+        try assertEucNoBmsSurface()
+    }
 
-        let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
-        XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertFalse(warning.label.isEmpty)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    func testEucNoBmsSurfacePassesAccessibilityAuditWithIncreasedContrast() throws {
+        try assertEucNoBmsSurface(auditExclusions: [])
     }
 
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
@@ -855,6 +847,18 @@ final class CutoutAppUITests: XCTestCase {
             return nil
         }
         return bmsScreen
+    }
+
+    private func assertEucNoBmsSurface(
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
+    ) throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
+        defer { disconnectIfConnected() }
+
+        let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertFalse(warning.label.isEmpty)
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
     @discardableResult
