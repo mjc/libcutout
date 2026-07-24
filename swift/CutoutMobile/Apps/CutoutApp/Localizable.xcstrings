@@ -974,7 +974,7 @@
     },
     "capture.stop" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop capture" } }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Finish capture" } }
       }
     },
     "picker.saved_device.forget" : {

@@ -247,9 +247,9 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    public func flushCapture() {
+    public func flushCapture() -> Bool {
         onBleQueue {
-            _ = captureBuilder?.flushWriter()
+            captureBuilder?.flushWriter() ?? false
         }
     }
 

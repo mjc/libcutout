@@ -5,7 +5,8 @@ struct CaptureRecordingScreen: View {
     let deviceKind: String?
     let captureStatusText: String?
     let activeLabels: Set<CaptureQuickLabel>
-    let disconnect: () -> Void
+    let isFinishing: Bool
+    let finishCapture: () -> Void
     let startCaptureLabel: (CaptureQuickLabel) -> Void
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
 
@@ -13,22 +14,12 @@ struct CaptureRecordingScreen: View {
         PevDashboardScaffold(
             sectionTitle: String(localized: "capture.section.record", table: "Localizable", bundle: appLocalizationBundle),
             bottomPadding: 24,
-            allowsVerticalScroll: false,
+            allowsVerticalScroll: true,
             contentSpacing: 16,
             horizontalPadding: 18,
             showsHeader: false
         ) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top) {
-                    titleBlock
-                    Spacer(minLength: 12)
-                    stopCaptureButton
-                }
-                VStack(alignment: .leading, spacing: 12) {
-                    titleBlock
-                    stopCaptureButton
-                }
-            }
+            titleBlock
 
             PevStatusStrip(
                 text: captureStatusText ?? String(
@@ -38,14 +29,17 @@ struct CaptureRecordingScreen: View {
                 )
             )
 
-            ScrollView(.vertical, showsIndicators: false) {
-                CaptureLabelControls(
-                    activeLabels: activeLabels,
-                    startCaptureLabel: startCaptureLabel,
-                    stopCaptureLabel: stopCaptureLabel
-                )
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            CaptureLabelControls(
+                activeLabels: activeLabels,
+                startCaptureLabel: startCaptureLabel,
+                stopCaptureLabel: stopCaptureLabel
+            )
+        }
+        .safeAreaInset(edge: .bottom) {
+            stopCaptureButton
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 12)
         }
         .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
@@ -60,8 +54,9 @@ struct CaptureRecordingScreen: View {
     }
 
     private var stopCaptureButton: some View {
-        Button("capture.stop", action: disconnect)
+        Button("capture.stop", role: .destructive, action: finishCapture)
             .buttonStyle(CaptureActionButtonStyle(fill: PevColors.yellow))
+            .disabled(isFinishing)
             .accessibilityIdentifier("capture.stop")
     }
 }

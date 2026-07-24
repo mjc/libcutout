@@ -9,7 +9,7 @@ struct DevicePickerView: View {
     let hasSavedDevice: Bool
     let pair: (DevicePickerRow) -> Void
     let forgetSavedDevice: () -> Void
-    let recordOnly: (DevicePickerRow, String) -> Void
+    let recordOnly: (DevicePickerRow, String) -> Bool
     @State private var isAdvancedCapturePresented = false
 
     private var renderedScanState: DevicePickerScanState {
@@ -98,7 +98,8 @@ struct DevicePickerView: View {
 
 private struct CaptureUnknownDeviceSheet: View {
     let sections: DevicePickerSections
-    let recordOnly: (DevicePickerRow, String) -> Void
+    let recordOnly: (DevicePickerRow, String) -> Bool
+    @Environment(\.dismiss) private var dismiss
     @State private var deviceKind = ""
     @FocusState private var isDeviceKindFocused: Bool
 
@@ -166,7 +167,9 @@ private struct CaptureUnknownDeviceSheet: View {
 
     private func captureButton(for row: DevicePickerRow) -> some View {
         Button {
-            recordOnly(row, trimmedDeviceKind)
+            if recordOnly(row, trimmedDeviceKind) {
+                dismiss()
+            }
         } label: {
             Label(row.captureActionTitle, systemImage: "record.circle")
                 .font(.callout.weight(.bold))

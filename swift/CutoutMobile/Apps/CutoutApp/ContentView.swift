@@ -104,6 +104,11 @@ struct ContentView: View {
         navigate(to: .devicePicker)
     }
 
+    private func finishCaptureAndReturnToPicker() {
+        guard model.finishCapture() else { return }
+        navigate(to: .devicePicker)
+    }
+
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
         if destination == .capture {
@@ -164,7 +169,7 @@ struct ContentView: View {
         case .vescDebug:
             VescDebugRouteView(model: model)
         case .capture:
-            CaptureRouteView(model: model, disconnect: disconnectAndReturnToPicker)
+            CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .devicePicker:
             EmptyView()
         }
@@ -241,8 +246,9 @@ private struct DevicePickerRouteView: View {
             pair: pair,
             forgetSavedDevice: model.forgetSavedDevice,
             recordOnly: { row, deviceKind in
-                guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return }
+                guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
                 navigate(model.isRecordOnlyCapture ? .capture : .eucRide)
+                return true
             }
         )
     }
@@ -270,14 +276,15 @@ private struct EucRideRouteView: View {
 
 private struct CaptureRouteView: View {
     let model: CutoutAppModel
-    let disconnect: () -> Void
+    let finishCapture: () -> Void
 
     var body: some View {
         CaptureRecordingScreen(
             deviceKind: model.recordOnlyDeviceKind,
             captureStatusText: model.captureStatusText,
             activeLabels: model.activeCaptureLabels,
-            disconnect: disconnect,
+            isFinishing: model.isFinishingCapture,
+            finishCapture: finishCapture,
             startCaptureLabel: model.startCaptureLabel,
             stopCaptureLabel: model.stopCaptureLabel
         )

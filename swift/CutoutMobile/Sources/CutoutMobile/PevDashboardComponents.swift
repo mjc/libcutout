@@ -10,7 +10,11 @@ private enum PevSystemColors {
     static let cardFill = Color(uiColor: .secondarySystemBackground)
     static let primaryText = Color(uiColor: .label)
     static let mutedText = Color(uiColor: .label)
-    static let nominal = Color(uiColor: .systemGreen)
+    static let nominal = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? .systemGreen
+            : UIColor(red: 0.0, green: 0.38, blue: 0.16, alpha: 1)
+    })
     #elseif os(macOS)
     static let cardFill = Color(nsColor: .underPageBackgroundColor)
     static let primaryText = Color(nsColor: .labelColor)

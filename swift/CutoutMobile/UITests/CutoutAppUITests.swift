@@ -62,7 +62,7 @@ final class CutoutAppUITests: XCTestCase {
         let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
         let captureKind = app.textFields["device-picker.capture-kind"]
         let finishEditing = app.buttons["device-picker.capture-kind.done"]
-        let recordButton = app.buttons.matching(
+        let recordButton = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
         ).firstMatch
 
@@ -79,7 +79,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(finishEditing.exists)
         XCTAssertEqual(finishEditing.label, "Done")
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
-        XCTAssertTrue(recordButton.label.contains("Refloat VESC"))
+        XCTAssertTrue(recordButton.label.contains("Unknown BLE device"))
         XCTAssertFalse(recordButton.isEnabled)
 
         captureKind.tap()
@@ -638,6 +638,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private var fixture: Fixture {
+        if name.contains("Capture") || name.contains("Advanced") { return .unknownDevice }
         if name.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
         if name.contains("LiveActivityFixture") { return .vescLiveActivity }
         if name.contains("FailedVescConnection") { return .vescFailure }
@@ -647,6 +648,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private enum Fixture {
+        case unknownDevice
         case euc
         case eucNoBms
         case vesc
@@ -656,6 +658,7 @@ final class CutoutAppUITests: XCTestCase {
 
         var environmentValue: String {
             switch self {
+            case .unknownDevice: "unknown-device"
             case .euc: "euc"
             case .eucNoBms: "euc-no-bms"
             case .vesc: "vesc"
@@ -667,6 +670,7 @@ final class CutoutAppUITests: XCTestCase {
 
         var launchArguments: [String] {
             switch self {
+            case .unknownDevice: ["--ui-test-unknown-device"]
             case .euc: ["--ui-test-euc"]
             case .eucNoBms: ["--ui-test-euc-no-bms"]
             case .vesc: ["--ui-test-vesc"]
@@ -693,7 +697,15 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
         captureKind.tap()
-        captureKind.typeText("custom vesc\n")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+        captureKind.typeText("custom vesc")
+
+        let done = app.keyboards.buttons["Done"]
+        if done.waitForExistence(timeout: 1) {
+            done.tap()
+        }
+
+        XCTAssertEqual(recordButton.elementType, .button)
 
         for _ in 0..<6 where !recordButton.isHittable {
             advancedCapture.swipeUp()
@@ -728,7 +740,8 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         XCTAssertTrue(stopCapture.exists)
-        XCTAssertTrue(stopCapture.isHittable)
+        XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
+        XCTAssertEqual(stopCapture.label, "Finish capture")
         XCTAssertTrue(firstAnnotation.isHittable)
         XCTAssertEqual(firstAnnotation.label, "Start Ride")
         firstAnnotation.tap()

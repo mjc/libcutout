@@ -165,7 +165,7 @@ protocol CutoutSessionDriving: AnyObject {
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
     func annotateCapture(label: String)
     func annotateCapture(key: String, value: String)
-    func flushCapture()
+    func flushCapture() -> Bool
     func disconnectAndScan()
     func now() -> MonotonicMilliseconds
 }
@@ -188,6 +188,7 @@ final class CutoutAppModel {
     private(set) var captureStatus: CaptureStatus?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var isRecordOnlyCapture = false
+    private(set) var isFinishingCapture = false
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
@@ -350,6 +351,7 @@ final class CutoutAppModel {
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
         connectionState = .picker
         captureLabel = nil
+        isFinishingCapture = false
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else { return false }
         let annotationKind = trimmedKind
@@ -397,8 +399,24 @@ final class CutoutAppModel {
         )
     }
 
-    func flushCapture() {
+    @discardableResult
+    func flushCapture() -> Bool {
         core.flushCapture()
+    }
+
+    @discardableResult
+    func finishCapture() -> Bool {
+        guard !isFinishingCapture else { return false }
+        isFinishingCapture = true
+
+        guard flushCapture() else {
+            captureStatus = .failed
+            isFinishingCapture = false
+            return false
+        }
+
+        disconnectTransport()
+        return true
     }
 
     func stopCaptureLabel(_ label: CaptureQuickLabel) {
@@ -727,6 +745,7 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 
 #if DEBUG
 enum CutoutUITestSessionFixture {
+    case unknownDevice
     case vesc
     case failedVesc
     case euc
@@ -736,6 +755,7 @@ enum CutoutUITestSessionFixture {
 
     init?(value: String?) {
         switch value {
+        case "unknown-device": self = .unknownDevice
         case "vesc": self = .vesc
         case "vesc-failure": self = .failedVesc
         case "euc": self = .euc
@@ -749,6 +769,8 @@ enum CutoutUITestSessionFixture {
     init?(arguments: [String]) {
         if arguments.contains("--ui-test-live-activity-auto") {
             self = .autoVescLiveActivity
+        } else if arguments.contains("--ui-test-unknown-device") {
+            self = .unknownDevice
         } else if arguments.contains("--ui-test-vesc-failure") {
             self = .failedVesc
         } else if arguments.contains("--ui-test-euc-no-bms") {
@@ -776,6 +798,16 @@ enum CutoutUITestSessionFixture {
 
     var candidate: DevicePickerDiscoveryCandidate {
         switch self {
+        case .unknownDevice:
+            DevicePickerDiscoveryCandidate(
+                platformIdentifier: "ui-test-unknown-device",
+                displayName: "Unknown BLE device",
+                productCategory: "Unknown personal electric vehicle",
+                evidence: "UI test fixture",
+                detail: "Deterministic record-only capture device",
+                support: .unknownRecordable(disabledReason: "Unknown device fixture"),
+                symbolName: "questionmark.circle"
+            )
         case .euc, .eucNoBms:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
@@ -875,7 +907,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
 
     func annotateCapture(key: String, value: String) {}
 
-    func flushCapture() {}
+    func flushCapture() -> Bool { true }
 
     func disconnectAndScan() {
         connectionTask?.cancel()

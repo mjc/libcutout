@@ -310,6 +310,32 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testFinishCaptureFlushesOnceBeforeDisconnecting() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
+        XCTAssertTrue(model.finishCapture())
+        XCTAssertFalse(model.finishCapture())
+
+        XCTAssertEqual(driver.flushCaptureCount, 1)
+        XCTAssertEqual(driver.disconnectCount, 1)
+    }
+
+    @MainActor
+    func testFinishCaptureKeepsTheCaptureRouteWhenWriterFlushFails() {
+        let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
+        XCTAssertFalse(model.finishCapture())
+
+        XCTAssertEqual(driver.flushCaptureCount, 1)
+        XCTAssertEqual(driver.disconnectCount, 0)
+        XCTAssertEqual(model.captureStatus, .failed)
+    }
+
+    @MainActor
     func testDisconnectIgnoresALateLiveCallback() {
         let row = DevicePickerRow(
             id: "vesc-1234",
@@ -553,11 +579,15 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
+    private let flushSucceeds: Bool
     private(set) var pairedPlatformIdentifiers = [String]()
+    private(set) var flushCaptureCount = 0
+    private(set) var disconnectCount = 0
 
-    init(rows: [DevicePickerRow], pairingSucceeds: Bool = true) {
+    init(rows: [DevicePickerRow], pairingSucceeds: Bool = true, flushSucceeds: Bool = true) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
+        self.flushSucceeds = flushSucceeds
     }
 
     func start() {
@@ -576,8 +606,14 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func recordOnly(platformIdentifier _: String, note _: String?, annotations _: [String]) -> Bool { true }
     func annotateCapture(label _: String) {}
     func annotateCapture(key _: String, value _: String) {}
-    func flushCapture() {}
-    func disconnectAndScan() {}
+    func flushCapture() -> Bool {
+        flushCaptureCount += 1
+        return flushSucceeds
+    }
+
+    func disconnectAndScan() {
+        disconnectCount += 1
+    }
 
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(0)
