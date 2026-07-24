@@ -166,10 +166,6 @@ private struct CaptureUnknownDeviceSheet: View {
 
     private func captureButton(for row: DevicePickerRow) -> some View {
         Button {
-            guard !trimmedDeviceKind.isEmpty else {
-                isDeviceKindFocused = true
-                return
-            }
             recordOnly(row, trimmedDeviceKind)
         } label: {
             Label(row.captureActionTitle, systemImage: "record.circle")
@@ -185,6 +181,7 @@ private struct CaptureUnknownDeviceSheet: View {
                 )
         }
         .buttonStyle(.plain)
+        .disabled(!hasDeviceKind)
         .accessibilityLabel(row.captureActionAccessibilityLabel)
         .accessibilityHint(hasDeviceKind ? "" : localizedAppText("picker.capture_kind_required_hint"))
         .accessibilityIdentifier("device-picker.record.\(row.id)")

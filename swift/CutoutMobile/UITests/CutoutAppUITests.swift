@@ -80,8 +80,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(finishEditing.label, "Done")
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
         XCTAssertTrue(recordButton.label.contains("Refloat VESC"))
+        XCTAssertFalse(recordButton.isEnabled)
 
-        recordButton.tap()
+        captureKind.tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
 
         captureKind.typeText("vesc floatwheel")
