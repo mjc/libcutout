@@ -165,6 +165,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertProductionPickerAccessibility(excluding: .contrast)
     }
 
+    func testProductionPickerPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
+        try assertProductionPickerAccessibility(excluding: .contrast)
+    }
+
     func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
