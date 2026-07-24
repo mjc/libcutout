@@ -179,6 +179,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.vescDebug.destination(for: CutoutAppRoute.vescDebug.availableNavigationTabs[1]), .vescDebug)
     }
 
+    func testUnavailableTabHasNoDestination() {
+        let unavailableMapTab = CutoutAppRoute.eucRide.navigationTabs[2]
+
+        XCTAssertNil(CutoutAppRoute.eucRide.destination(for: unavailableMapTab))
+    }
+
     func testOnlyLivePhaseOpensTheRideSurface() {
         XCTAssertFalse(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.discoveringServices.opensRideScreen)
