@@ -231,6 +231,33 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType() throws {
+        let screen = app.descendants(matching: .any)["device-picker.screen"]
+        let openAdvancedCapture = app.buttons["device-picker.open-advanced-capture"]
+        let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
+
+        XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !openAdvancedCapture.isHittable {
+            screen.swipeUp()
+        }
+        XCTAssertTrue(openAdvancedCapture.isHittable)
+
+        openAdvancedCapture.tap()
+        XCTAssertTrue(advancedCapture.waitForExistence(timeout: 5))
+        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        XCTAssertTrue(captureKind.isHittable)
+
+        for _ in 0..<6 where !recordButton.isHittable {
+            advancedCapture.swipeUp()
+        }
+        XCTAssertTrue(recordButton.isHittable)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testVescUseOpensAnAccessibleLiveRide() throws {
         try assertConnectedSurface(for: .vesc)
     }
