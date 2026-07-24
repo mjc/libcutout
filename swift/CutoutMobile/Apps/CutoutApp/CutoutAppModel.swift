@@ -479,7 +479,7 @@ final class CutoutAppModel {
     }
 
     private func handlePhaseChange(_ phase: SessionConnectionPhase) {
-        guard phase != .live || selectedConnectionRoute != nil || permitsStoredDeviceAutoPairing else { return }
+        guard !phase.supportsLiveActivity || connectionState.selection != nil || permitsStoredDeviceAutoPairing else { return }
         self.phase = phase
         switch phase {
         case .connecting, .discoveringServices, .subscribing:

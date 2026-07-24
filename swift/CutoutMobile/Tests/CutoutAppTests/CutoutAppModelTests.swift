@@ -336,6 +336,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         model.disconnectTransport()
         driver.onPhaseChange?(.scanning)
+        driver.onPhaseChange?(.discoveringServices)
         driver.onPhaseChange?(.live)
 
         XCTAssertEqual(model.phase, .scanning)
