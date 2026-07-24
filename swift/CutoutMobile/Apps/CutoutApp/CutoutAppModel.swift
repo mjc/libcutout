@@ -511,11 +511,11 @@ final class CutoutAppModel {
 
     private static var uiTestFixture: CutoutUITestSessionFixture? {
         #if DEBUG
-        CutoutUITestSessionFixture(
-            value: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE")
-        ) ?? CutoutUITestSessionFixture(
-            value: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"]
-        ) ?? CutoutUITestSessionFixture(arguments: CommandLine.arguments)
+        CutoutUITestSessionFixture.resolve(
+            persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
+            environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
+            arguments: CommandLine.arguments
+        )
         #else
         nil
         #endif
@@ -726,7 +726,7 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 }
 
 #if DEBUG
-private enum CutoutUITestSessionFixture {
+enum CutoutUITestSessionFixture {
     case vesc
     case failedVesc
     case euc
@@ -762,6 +762,16 @@ private enum CutoutUITestSessionFixture {
         } else {
             return nil
         }
+    }
+
+    static func resolve(
+        persistedValue: String?,
+        environmentValue: String?,
+        arguments: [String]
+    ) -> Self? {
+        Self(value: environmentValue)
+            ?? Self(value: persistedValue)
+            ?? Self(arguments: arguments)
     }
 
     var candidate: DevicePickerDiscoveryCandidate {

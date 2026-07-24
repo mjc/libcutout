@@ -504,6 +504,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(startCount, 2)
         XCTAssertNil(model.liveActivityError)
     }
+
+    func testExplicitUIFixtureOverridesPersistentFixture() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: "vesc-live-activity-auto",
+            environmentValue: "vesc",
+            arguments: ["--ui-test-euc"]
+        )
+
+        XCTAssertFalse(fixture?.startsLive ?? true)
+        XCTAssertFalse(fixture?.isEuc ?? true)
+    }
 }
 
 private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
