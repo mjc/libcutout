@@ -277,7 +277,7 @@ final class CutoutAppUITests: XCTestCase {
         // Leave the activity running for the caller to inspect on the device.
     }
 
-    func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() {
+    func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
@@ -286,6 +286,7 @@ final class CutoutAppUITests: XCTestCase {
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
+        try performVisibleLayoutAccessibilityAudit()
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         let failed = XCTNSPredicateExpectation(
@@ -296,6 +297,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
+        try performVisibleLayoutAccessibilityAudit()
 
         XCTAssertTrue(pairAvailableDevice(.vesc))
         let retrying = XCTNSPredicateExpectation(
