@@ -371,6 +371,16 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucNoBmsSurfacePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
+        defer { disconnectIfConnected() }
+
+        let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertFalse(warning.label.isEmpty)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -640,12 +650,14 @@ final class CutoutAppUITests: XCTestCase {
         if name.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
         if name.contains("LiveActivityFixture") { return .vescLiveActivity }
         if name.contains("FailedVescConnection") { return .vescFailure }
+        if name.contains("EucNoBms") { return .eucNoBms }
         if name.contains("Euc") { return .euc }
         return .vesc
     }
 
     private enum Fixture {
         case euc
+        case eucNoBms
         case vesc
         case vescFailure
         case vescLiveActivity
@@ -654,6 +666,7 @@ final class CutoutAppUITests: XCTestCase {
         var environmentValue: String {
             switch self {
             case .euc: "euc"
+            case .eucNoBms: "euc-no-bms"
             case .vesc: "vesc"
             case .vescFailure: "vesc-failure"
             case .vescLiveActivity: "vesc-live-activity"
@@ -664,6 +677,7 @@ final class CutoutAppUITests: XCTestCase {
         var launchArguments: [String] {
             switch self {
             case .euc: ["--ui-test-euc"]
+            case .eucNoBms: ["--ui-test-euc-no-bms"]
             case .vesc: ["--ui-test-vesc"]
             case .vescFailure: ["--ui-test-vesc-failure"]
             case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
@@ -804,6 +818,10 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func openEucBmsMap() -> XCUIElement? {
+        openEucBmsScreen(identifier: "dashboard.screen.bmsCellMap6S")
+    }
+
+    private func openEucBmsScreen(identifier: String) -> XCUIElement? {
         guard pairAvailableDevice(.euc) else { return nil }
         guard let rideScreen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic EUC fixture did not open its Ride screen")
@@ -821,9 +839,9 @@ final class CutoutAppUITests: XCTestCase {
         }
         packTab.tap()
 
-        let bmsScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellMap6S"]
+        let bmsScreen = app.descendants(matching: .any)[identifier]
         guard bmsScreen.waitForExistence(timeout: 5) else {
-            XCTFail("The Pack tab did not open the live BMS cell map")
+            XCTFail("The Pack tab did not open \(identifier)")
             return nil
         }
         return bmsScreen

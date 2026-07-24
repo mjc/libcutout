@@ -729,6 +729,7 @@ private enum CutoutUITestSessionFixture {
     case vesc
     case failedVesc
     case euc
+    case eucNoBms
     case vescLiveActivity
     case autoVescLiveActivity
 
@@ -737,6 +738,7 @@ private enum CutoutUITestSessionFixture {
         case "vesc": self = .vesc
         case "vesc-failure": self = .failedVesc
         case "euc": self = .euc
+        case "euc-no-bms": self = .eucNoBms
         case "vesc-live-activity": self = .vescLiveActivity
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
         default: return nil
@@ -748,6 +750,8 @@ private enum CutoutUITestSessionFixture {
             self = .autoVescLiveActivity
         } else if arguments.contains("--ui-test-vesc-failure") {
             self = .failedVesc
+        } else if arguments.contains("--ui-test-euc-no-bms") {
+            self = .eucNoBms
         } else if arguments.contains("--ui-test-euc") {
             self = .euc
         } else if arguments.contains("--ui-test-live-activity") {
@@ -761,7 +765,7 @@ private enum CutoutUITestSessionFixture {
 
     var candidate: DevicePickerDiscoveryCandidate {
         switch self {
-        case .euc:
+        case .euc, .eucNoBms:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -789,6 +793,7 @@ private enum CutoutUITestSessionFixture {
 
     var startsLive: Bool { self == .autoVescLiveActivity }
     var failsConnection: Bool { self == .failedVesc }
+    var isEuc: Bool { self == .euc || self == .eucNoBms }
 }
 
 @MainActor
@@ -881,7 +886,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
             onProtocolIdentityCandidateChange?(fixture.candidate)
         }
 
-        if fixture == .euc {
+        if fixture.isEuc {
             let telemetry = TelemetrySnapshot(
                 at: now,
                 speed: Speed(value: 12_000),
@@ -899,7 +904,9 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
                 notificationCount: 1,
                 lastUpdate: now
             ))
-            onBmsSnapshotChange?(eucBmsSnapshot)
+            if fixture == .euc {
+                onBmsSnapshotChange?(eucBmsSnapshot)
+            }
         } else {
             let telemetry = TelemetrySnapshot(
                 at: now,
