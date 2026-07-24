@@ -19,6 +19,30 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(tile.accessibilityValueText, "84, volts, and stale")
     }
 
+    func testMetricTileProminenceOwnsDashboardGeometry() {
+        let compact = PevDashboardMetricTile(
+            label: "Speed",
+            metricValue: .available(display: "12", accessibility: "12"),
+            prominence: .compactDashboard
+        )
+        let dashboard = PevDashboardMetricTile(
+            label: "Speed",
+            metricValue: .available(display: "12", accessibility: "12"),
+            prominence: .dashboard
+        )
+        let standard = PevDashboardMetricTile(
+            label: "Speed",
+            metricValue: .available(display: "12", accessibility: "12")
+        )
+
+        XCTAssertEqual(compact.cornerRadius, 16)
+        XCTAssertEqual(compact.minHeight, 96)
+        XCTAssertEqual(dashboard.cornerRadius, 16)
+        XCTAssertEqual(dashboard.minHeight, 104)
+        XCTAssertEqual(standard.cornerRadius, 20)
+        XCTAssertEqual(standard.minHeight, 106)
+    }
+
     func testTypedDashboardTileKeepsItsAccessibilityValue() {
         let tile = PevDashboardMetricTile(
             PevDashboardTile(

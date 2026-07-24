@@ -1,5 +1,26 @@
 import SwiftUI
 
+public enum PevDashboardMetricTileProminence: Sendable, Equatable {
+    case standard
+    case dashboard
+    case compactDashboard
+
+    var cornerRadius: CGFloat {
+        switch self {
+        case .standard: 20
+        case .dashboard, .compactDashboard: 16
+        }
+    }
+
+    var minimumHeight: CGFloat {
+        switch self {
+        case .standard: 106
+        case .dashboard: 104
+        case .compactDashboard: 96
+        }
+    }
+}
+
 public struct PevDashboardMetricTile: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
@@ -10,8 +31,10 @@ public struct PevDashboardMetricTile: View {
     let unit: String
     let detail: String
     let detailColor: Color
-    let cornerRadius: CGFloat
-    let minHeight: CGFloat
+    let prominence: PevDashboardMetricTileProminence
+
+    var cornerRadius: CGFloat { prominence.cornerRadius }
+    var minHeight: CGFloat { prominence.minimumHeight }
 
     var accessibilityValueText: String {
         metricValue.accessibilityValue(unit: unit, detail: detail)
@@ -31,8 +54,7 @@ public struct PevDashboardMetricTile: View {
         metricValue: PevDashboardMetricValue,
         unit: String = "",
         detail: String = "",
-        cornerRadius: CGFloat = 20,
-        minHeight: CGFloat = 106
+        prominence: PevDashboardMetricTileProminence = .standard
     ) {
         self.init(
             label: label,
@@ -40,8 +62,7 @@ public struct PevDashboardMetricTile: View {
             unit: unit,
             detail: detail,
             detailColor: PevDashboardColors.primaryText,
-            cornerRadius: cornerRadius,
-            minHeight: minHeight
+            prominence: prominence
         )
     }
 
@@ -51,22 +72,19 @@ public struct PevDashboardMetricTile: View {
         unit: String,
         detail: String,
         detailColor: Color,
-        cornerRadius: CGFloat,
-        minHeight: CGFloat
+        prominence: PevDashboardMetricTileProminence
     ) {
         self.label = label
         self.metricValue = metricValue
         self.unit = unit
         self.detail = detail
         self.detailColor = detailColor
-        self.cornerRadius = cornerRadius
-        self.minHeight = minHeight
+        self.prominence = prominence
     }
 
     public init(
         _ tile: PevDashboardTile,
-        cornerRadius: CGFloat = 20,
-        minHeight: CGFloat = 106
+        prominence: PevDashboardMetricTileProminence = .standard
     ) {
         self.init(
             label: tile.label,
@@ -74,8 +92,7 @@ public struct PevDashboardMetricTile: View {
             unit: tile.unit,
             detail: tile.detail,
             detailColor: PevDashboardColors.mutedText,
-            cornerRadius: cornerRadius,
-            minHeight: minHeight
+            prominence: prominence
         )
     }
 

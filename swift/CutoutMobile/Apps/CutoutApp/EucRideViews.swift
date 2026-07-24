@@ -104,9 +104,9 @@ struct EucRideScreenView: View {
 
             PevDashboardGrid(columnSpacing: 12, spacing: 12) {
                 ForEach(dashboardTiles) { tile in
-                    PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 104)
+                    PevDashboardMetricTile(tile, prominence: .dashboard)
                 }
-                PevDashboardMetricTile(gpsSpeedTile, cornerRadius: 16, minHeight: 104)
+                PevDashboardMetricTile(gpsSpeedTile, prominence: .dashboard)
             }
             .padding(.top, 12)
         }

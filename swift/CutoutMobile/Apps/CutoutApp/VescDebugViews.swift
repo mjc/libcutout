@@ -25,7 +25,7 @@ struct VescDebugScreenView: View {
 
             PevDashboardGrid(spacing: 20) {
                 ForEach(tiles) { tile in
-                    PevDashboardMetricTile(tile, cornerRadius: 16, minHeight: 104)
+                    PevDashboardMetricTile(tile, prominence: .dashboard)
                 }
             }
             .padding(.top, 8)
