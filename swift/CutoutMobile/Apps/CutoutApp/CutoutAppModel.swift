@@ -224,10 +224,6 @@ final class CutoutAppModel {
         connectionState.statusText ?? phase.displayText
     }
 
-    var phaseNavigationIntent: PhaseNavigationIntent {
-        connectionState.navigationIntent(isRecordOnlyCapture: isRecordOnlyCapture)
-    }
-
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore

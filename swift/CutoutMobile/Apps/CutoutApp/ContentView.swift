@@ -51,18 +51,18 @@ struct ContentView: View {
             if let announcement = connectionAnnouncements.next(for: phase) {
                 AccessibilityNotification.Announcement(announcement).post()
             }
-            switch model.phaseNavigationIntent {
+        }
+        .onChange(of: model.connectionState) { _, state in
+            if let announcement = connectionAnnouncements.next(for: state) {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+            switch state.navigationIntent(isRecordOnlyCapture: model.isRecordOnlyCapture) {
             case .returnToPicker:
                 navigate(to: .devicePicker)
             case let .openRide(connectionRoute) where route == .devicePicker:
                 navigate(to: CutoutAppRoute.route(for: connectionRoute))
             case .stay, .openRide:
                 break
-            }
-        }
-        .onChange(of: model.connectionState) { _, state in
-            if let announcement = connectionAnnouncements.next(for: state) {
-                AccessibilityNotification.Announcement(announcement).post()
             }
         }
         .onChange(of: model.devicePickerScanState?.status) { _, _ in

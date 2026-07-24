@@ -234,13 +234,13 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertEqual(model.connectionStatusText, "Retrying connection…")
-        XCTAssertEqual(model.phaseNavigationIntent, .stay)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .stay)
 
         driver.onPhaseChange?(.live)
-        XCTAssertEqual(model.phaseNavigationIntent, .openRide(.vescOnewheel))
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
 
         driver.onPhaseChange?(.failed(.connectFailed("timed out")))
-        XCTAssertEqual(model.phaseNavigationIntent, .returnToPicker)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .returnToPicker)
     }
 
     func testConnectionStateOwnsNavigationIntent() {
@@ -306,7 +306,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(store.platformIdentifier, "saved-device")
         XCTAssertTrue(model.hasSavedDevice)
-        XCTAssertEqual(model.phaseNavigationIntent, .stay)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: true), .stay)
     }
 
     @MainActor
