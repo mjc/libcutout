@@ -545,6 +545,53 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureProgressPreservesWriterHealthAndFileMetadata() {
+        let model = CutoutAppModel()
+        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
+        let progress = CaptureProgress(
+            elapsedMilliseconds: 63_000,
+            notificationCount: 42,
+            fileSizeBytes: 12_288,
+            queuedMessageCount: 2,
+            writerError: nil
+        )
+
+        model.applyCaptureEvent(.started(fileURL: fileURL))
+        model.applyCaptureEvent(.progress(progress))
+
+        XCTAssertEqual(model.captureProgress, progress)
+        XCTAssertEqual(
+            model.captureStatus,
+            .recording(label: nil, notificationCount: 42, fileName: "ride.cutout")
+        )
+    }
+
+    func testCaptureSessionDetailsExposeTypedWriterHealth() {
+        let healthyRows = captureSessionDetailRows(progress: CaptureProgress(
+            elapsedMilliseconds: 63_000,
+            notificationCount: 42,
+            fileSizeBytes: 12_288,
+            queuedMessageCount: 0,
+            writerError: nil
+        ))
+        let failedRows = captureSessionDetailRows(progress: CaptureProgress(
+            elapsedMilliseconds: 63_000,
+            notificationCount: 42,
+            fileSizeBytes: 12_288,
+            queuedMessageCount: 0,
+            writerError: "queue overrun"
+        ))
+
+        XCTAssertEqual(
+            healthyRows.map(\.id),
+            ["capture-elapsed", "capture-packets", "capture-file-size", "capture-writer-health"]
+        )
+        XCTAssertEqual(healthyRows.last?.label, "Writer")
+        XCTAssertEqual(healthyRows.last?.accessibilityValueText, "Healthy")
+        XCTAssertEqual(failedRows.last?.accessibilityValueText, "Failed")
+    }
+
+    @MainActor
     func testNewRecordOnlyCaptureClearsPriorSessionStatusBeforeCoreEvents() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")

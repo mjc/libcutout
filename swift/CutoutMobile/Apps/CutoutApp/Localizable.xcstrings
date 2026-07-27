@@ -485,6 +485,30 @@
       "comment" : "Quick capture label title for a tiltback speed adjustment.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tiltback speed" } } }
     },
+    "capture.detail.elapsed" : {
+      "comment" : "Capture session detail label for monotonic elapsed duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Elapsed" } } }
+    },
+    "capture.detail.file_size" : {
+      "comment" : "Capture session detail label for the on-disk capture file size.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "File size" } } }
+    },
+    "capture.detail.packets" : {
+      "comment" : "Capture session detail label for recorded Bluetooth notification packets.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Packets" } } }
+    },
+    "capture.detail.writer" : {
+      "comment" : "Capture session detail label for the writer health state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writer" } } }
+    },
+    "capture.detail.writer.failed" : {
+      "comment" : "Capture session writer health state when the underlying writer reports an error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
+    },
+    "capture.detail.writer.healthy" : {
+      "comment" : "Capture session writer health state when the underlying writer has no error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Healthy" } } }
+    },
     "capture.section.record" : {
       "comment" : "Capture screen section title.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Record" } } }

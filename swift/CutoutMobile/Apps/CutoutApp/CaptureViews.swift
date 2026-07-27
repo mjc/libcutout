@@ -1,9 +1,45 @@
 import CutoutMobile
+import Foundation
 import SwiftUI
+
+func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValueRow] {
+    let elapsed = Duration.seconds(Double(progress.elapsedMilliseconds) / 1_000)
+        .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+    let fileSize = ByteCountFormatter.string(
+        fromByteCount: Int64(clamping: progress.fileSizeBytes),
+        countStyle: .file
+    )
+    let writerHealth = progress.writerError == nil
+        ? localizedAppText("capture.detail.writer.healthy")
+        : localizedAppText("capture.detail.writer.failed")
+    return [
+        PevDashboardKeyValueRow(
+            id: "capture-elapsed",
+            label: localizedAppText("capture.detail.elapsed"),
+            value: elapsed
+        ),
+        PevDashboardKeyValueRow(
+            id: "capture-packets",
+            label: localizedAppText("capture.detail.packets"),
+            value: progress.notificationCount.formatted()
+        ),
+        PevDashboardKeyValueRow(
+            id: "capture-file-size",
+            label: localizedAppText("capture.detail.file_size"),
+            value: fileSize
+        ),
+        PevDashboardKeyValueRow(
+            id: "capture-writer-health",
+            label: localizedAppText("capture.detail.writer"),
+            value: writerHealth
+        ),
+    ]
+}
 
 struct CaptureRecordingScreen: View {
     let deviceKind: String?
     let captureStatusText: String?
+    let captureProgress: CaptureProgress?
     let activeLabels: Set<CaptureQuickLabel>
     let isFinishing: Bool
     let finishCapture: () -> Void
@@ -39,6 +75,11 @@ struct CaptureRecordingScreen: View {
                     bundle: appLocalizationBundle
                 )
             )
+
+            if let captureProgress {
+                PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))
+                    .accessibilityIdentifier("capture.session-details")
+            }
 
             CaptureLabelControls(
                 activeLabels: activeLabels,

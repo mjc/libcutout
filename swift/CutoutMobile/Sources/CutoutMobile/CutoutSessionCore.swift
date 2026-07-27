@@ -18,9 +18,32 @@ func protocolIdentityFallbackDisplayName(
     }
 }
 
+public struct CaptureProgress: Equatable, Sendable {
+    public let elapsedMilliseconds: UInt64
+    public let notificationCount: UInt64
+    public let fileSizeBytes: UInt64
+    public let queuedMessageCount: UInt64
+    public let writerError: String?
+
+    public init(
+        elapsedMilliseconds: UInt64,
+        notificationCount: UInt64,
+        fileSizeBytes: UInt64,
+        queuedMessageCount: UInt64,
+        writerError: String?
+    ) {
+        self.elapsedMilliseconds = elapsedMilliseconds
+        self.notificationCount = notificationCount
+        self.fileSizeBytes = fileSizeBytes
+        self.queuedMessageCount = queuedMessageCount
+        self.writerError = writerError
+    }
+}
+
 public enum CaptureEvent: Equatable, Sendable {
     case started(fileURL: URL)
     case notificationRecorded
+    case progress(CaptureProgress)
     case finished(fileURL: URL)
     case failed
 }
@@ -143,6 +166,7 @@ public final class CutoutSessionCore: NSObject {
     private var suppressReconnect = false
     private let reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
     private var captureStartedAt: MonotonicMilliseconds?
+    private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
@@ -879,6 +903,7 @@ public final class CutoutSessionCore: NSObject {
 
     private func startCapture(reason: String, annotations extraAnnotations: [String] = []) {
         captureStartedAt = clock.now()
+        captureNotificationCount = 0
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let url = directory.appendingPathComponent("cutout-btle-capture-\(Int(Date().timeIntervalSince1970)).jsonl")
@@ -937,6 +962,21 @@ public final class CutoutSessionCore: NSObject {
             return 0
         }
         return clock.now().rawValue.saturatingSubtracting(captureStartedAt.rawValue)
+    }
+
+    private func captureProgress() -> CaptureProgress {
+        let status = captureBuilder?.writerStatus()
+        let attributes = captureFileURL.flatMap { fileURL in
+            try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        }
+        let fileSizeBytes = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+        return CaptureProgress(
+            elapsedMilliseconds: captureElapsedMilliseconds(),
+            notificationCount: captureNotificationCount,
+            fileSizeBytes: fileSizeBytes,
+            queuedMessageCount: status?.queuedMessages ?? 0,
+            writerError: status?.lastError
+        )
     }
 
     private func updateCaptureIdentity() {
@@ -1244,7 +1284,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 bytes: value
             )
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
-            publishCaptureEvent(.notificationRecorded)
+            captureNotificationCount += 1
+            publishCaptureEvent(.progress(captureProgress()))
             return
         }
         guard let liveOwner else {
@@ -1270,7 +1311,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
             )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
-            publishCaptureEvent(.notificationRecorded)
+            captureNotificationCount += 1
+            publishCaptureEvent(.progress(captureProgress()))
             record("speed=\(step.snapshot?.speed.map { String($0.value) } ?? "nil")")
             record("voltage=\(step.snapshot?.voltage.map { String($0.value) } ?? "nil")")
             record("battery_estimated=\(step.snapshot?.batteryLevelEstimated.map { String($0.value) } ?? "nil")")

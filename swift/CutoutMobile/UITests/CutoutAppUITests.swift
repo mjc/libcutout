@@ -89,6 +89,19 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(action.label, "Start Ride")
     }
 
+    func testCaptureExposesTypedWriterHealthDetails() {
+        enterCapture()
+
+        let details = app.descendants(matching: .any)["capture.session-details"]
+        let writer = details.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Writer")
+        ).firstMatch
+
+        XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertTrue(writer.exists)
+        XCTAssertEqual(writer.value as? String, "Healthy")
+    }
+
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {
         enterCapture()
 

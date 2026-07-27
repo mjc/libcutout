@@ -187,6 +187,7 @@ final class CutoutAppModel {
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
     private(set) var captureStatus: CaptureStatus?
+    private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var isRecordOnlyCapture = false
     private(set) var isFinishingCapture = false
@@ -393,6 +394,7 @@ final class CutoutAppModel {
 
     private func resetCaptureSession() {
         captureStatus = nil
+        captureProgress = nil
         isFinishingCapture = false
         activeCaptureLabels.removeAll()
         captureFileName = nil
@@ -666,6 +668,14 @@ final class CutoutAppModel {
             captureStatus = captureFileName.map(CaptureStatus.recordingLocally)
         case .notificationRecorded:
             captureNotificationCount += 1
+            captureStatus = .recording(
+                label: captureLabel,
+                notificationCount: captureNotificationCount,
+                fileName: captureFileName
+            )
+        case let .progress(progress):
+            captureProgress = progress
+            captureNotificationCount = Int(clamping: progress.notificationCount)
             captureStatus = .recording(
                 label: captureLabel,
                 notificationCount: captureNotificationCount,
@@ -951,7 +961,20 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
     }
 
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool {
-        platformIdentifier == fixture.candidate.platformIdentifier
+        guard platformIdentifier == fixture.candidate.platformIdentifier else { return false }
+        let captureEvent = onCaptureEvent
+        DispatchQueue.main.async {
+            let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
+            captureEvent?(.started(fileURL: fileURL))
+            captureEvent?(.progress(CaptureProgress(
+                elapsedMilliseconds: 63_000,
+                notificationCount: 42,
+                fileSizeBytes: 12_288,
+                queuedMessageCount: 0,
+                writerError: nil
+            )))
+        }
+        return true
     }
 
     func annotateCapture(label: String) {}

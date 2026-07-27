@@ -282,6 +282,7 @@ private struct CaptureRouteView: View {
         CaptureRecordingScreen(
             deviceKind: model.recordOnlyDeviceKind,
             captureStatusText: model.captureStatusText,
+            captureProgress: model.captureProgress,
             activeLabels: model.activeCaptureLabels,
             isFinishing: model.isFinishingCapture,
             finishCapture: finishCapture,
