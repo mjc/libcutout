@@ -120,6 +120,19 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
     }
 
+    func testFinishCaptureFailureKeepsCaptureScreenVisible() {
+        enterCapture()
+
+        let finish = app.buttons["capture.stop"]
+        let capture = app.descendants(matching: .any)["capture.screen"]
+
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        finish.tap()
+
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        XCTAssertTrue(finish.exists)
+    }
+
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {
         enterCapture()
 
@@ -675,6 +688,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private var fixture: Fixture {
+        if name.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
         if name.contains("Capture") || name.contains("Advanced") { return .unknownDevice }
         if name.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
         if name.contains("LiveActivityFixture") { return .vescLiveActivity }
@@ -686,6 +700,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private enum Fixture {
         case unknownDevice
+        case unknownDeviceFinishFailure
         case euc
         case eucNoBms
         case vesc
@@ -696,6 +711,7 @@ final class CutoutAppUITests: XCTestCase {
         var environmentValue: String {
             switch self {
             case .unknownDevice: "unknown-device"
+            case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
             case .euc: "euc"
             case .eucNoBms: "euc-no-bms"
             case .vesc: "vesc"
@@ -708,6 +724,7 @@ final class CutoutAppUITests: XCTestCase {
         var launchArguments: [String] {
             switch self {
             case .unknownDevice: ["--ui-test-unknown-device"]
+            case .unknownDeviceFinishFailure: ["--ui-test-unknown-device-finish-failure"]
             case .euc: ["--ui-test-euc"]
             case .eucNoBms: ["--ui-test-euc-no-bms"]
             case .vesc: ["--ui-test-vesc"]

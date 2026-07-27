@@ -441,6 +441,10 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.captureStatus, .failed)
     }
 
+    func testUITestFixtureMarksCaptureFinalizationFailure() {
+        XCTAssertFalse(CutoutUITestSessionFixture.unknownDeviceFinishFailure.flushCaptureSucceeds)
+    }
+
     @MainActor
     func testDisconnectIgnoresLateConnectionCallbacks() {
         let row = DevicePickerRow(

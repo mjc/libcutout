@@ -806,6 +806,7 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 #if DEBUG
 enum CutoutUITestSessionFixture {
     case unknownDevice
+    case unknownDeviceFinishFailure
     case vesc
     case failedVesc
     case euc
@@ -816,6 +817,7 @@ enum CutoutUITestSessionFixture {
     init?(value: String?) {
         switch value {
         case "unknown-device": self = .unknownDevice
+        case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
         case "vesc": self = .vesc
         case "vesc-failure": self = .failedVesc
         case "euc": self = .euc
@@ -829,6 +831,8 @@ enum CutoutUITestSessionFixture {
     init?(arguments: [String]) {
         if arguments.contains("--ui-test-live-activity-auto") {
             self = .autoVescLiveActivity
+        } else if arguments.contains("--ui-test-unknown-device-finish-failure") {
+            self = .unknownDeviceFinishFailure
         } else if arguments.contains("--ui-test-unknown-device") {
             self = .unknownDevice
         } else if arguments.contains("--ui-test-vesc-failure") {
@@ -858,7 +862,7 @@ enum CutoutUITestSessionFixture {
 
     var candidate: DevicePickerDiscoveryCandidate {
         switch self {
-        case .unknownDevice:
+        case .unknownDevice, .unknownDeviceFinishFailure:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-unknown-device",
                 displayName: "Unknown BLE device",
@@ -896,6 +900,7 @@ enum CutoutUITestSessionFixture {
 
     var startsLive: Bool { self == .autoVescLiveActivity }
     var failsConnection: Bool { self == .failedVesc }
+    var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool { self == .euc || self == .eucNoBms }
 }
 
@@ -981,7 +986,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
 
     func annotateCapture(key: String, value: String) {}
 
-    func flushCapture() -> Bool { true }
+    func flushCapture() -> Bool { fixture.flushCaptureSucceeds }
 
     func disconnectAndScan() {
         connectionTask?.cancel()
