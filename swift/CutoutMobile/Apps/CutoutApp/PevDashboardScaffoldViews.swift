@@ -116,12 +116,12 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 8) {
-                    leading
+                    leadingAccessory
                     section
                 }
             } else {
                 HStack(alignment: .firstTextBaseline) {
-                    leading
+                    leadingAccessory
                     Spacer()
                     section
                 }
@@ -129,11 +129,6 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("dashboard.top.navigation")
-    }
-
-    @ViewBuilder
-    private var leading: some View {
-        leadingAccessory
     }
 
     private var section: some View {
