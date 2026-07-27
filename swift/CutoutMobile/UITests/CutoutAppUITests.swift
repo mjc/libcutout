@@ -52,18 +52,12 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(recordButton.isEnabled)
 
         captureKind.tap()
-        let keyboard = app.keyboards.firstMatch
-        _ = keyboard.waitForExistence(timeout: 2)
-
         captureKind.typeText("vesc floatwheel")
 
         XCTAssertEqual(captureKind.value as? String, "vesc floatwheel")
         XCTAssertTrue(recordButton.isEnabled)
 
-        let done = app.keyboards.buttons["Done"]
-        if done.waitForExistence(timeout: 1) {
-            done.tap()
-        }
+        finishEditing.tap()
 
         cancelCapture.tap()
         XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
