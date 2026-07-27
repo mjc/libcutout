@@ -96,8 +96,13 @@ final class CutoutAppUITests: XCTestCase {
         let writer = details.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "Writer")
         ).firstMatch
+        let pendingWrites = details.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Pending writes")
+        ).firstMatch
 
         XCTAssertTrue(details.waitForExistence(timeout: 5))
+        XCTAssertTrue(pendingWrites.exists)
+        XCTAssertEqual(pendingWrites.value as? String, "0")
         XCTAssertTrue(writer.exists)
         XCTAssertEqual(writer.value as? String, "Healthy")
     }
