@@ -59,14 +59,32 @@ struct CaptureRecordingScreen: View {
 
     private var stopCaptureButton: some View {
         Button("capture.stop", role: .destructive, action: finishCapture)
-            .buttonStyle(CaptureActionButtonStyle(fill: PevColors.yellow))
+            .buttonStyle(CaptureActionButtonStyle(tone: .finish))
             .disabled(isFinishing)
             .accessibilityIdentifier("capture.stop")
     }
 }
 
+enum CaptureActionButtonTone: Equatable, Sendable {
+    case start
+    case stop
+    case finish
+
+    static func forState(isActive: Bool) -> Self {
+        isActive ? .stop : .start
+    }
+
+    fileprivate var fill: Color {
+        switch self {
+        case .start: PevColors.yellow
+        case .stop: PevColors.orange
+        case .finish: PevColors.yellow
+        }
+    }
+}
+
 private struct CaptureActionButtonStyle: ButtonStyle {
-    let fill: Color
+    let tone: CaptureActionButtonTone
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -74,7 +92,7 @@ private struct CaptureActionButtonStyle: ButtonStyle {
             .foregroundStyle(Color.black)
             .padding(.horizontal, 18)
             .frame(minHeight: 44)
-            .background(Capsule().fill(fill))
+            .background(Capsule().fill(tone.fill))
             .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
@@ -157,9 +175,7 @@ private struct CaptureLabelControlRow: View {
                 start()
             }
         }
-        .buttonStyle(
-            CaptureActionButtonStyle(fill: isActive ? PevColors.orange : PevColors.yellow)
-        )
+        .buttonStyle(CaptureActionButtonStyle(tone: .forState(isActive: isActive)))
         .accessibilityIdentifier("capture.label.\(label.id).action")
     }
 }

@@ -8,6 +8,12 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
     }
 
+    func testCaptureActionToneFollowsTheStatefulAction() {
+        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: false), .start)
+        XCTAssertEqual(CaptureActionButtonTone.forState(isActive: true), .stop)
+        XCTAssertEqual(CaptureActionButtonTone.finish, .finish)
+    }
+
     func testCaptureQuickLabelsResolveCatalogTitlesForVisibleAndAccessibleActions() {
         for label in CaptureQuickLabel.allCases {
             XCTAssertFalse(label.title.hasPrefix("capture.label."))
