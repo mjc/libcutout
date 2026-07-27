@@ -125,12 +125,14 @@ final class CutoutAppUITests: XCTestCase {
 
         let finish = app.buttons["capture.stop"]
         let capture = app.descendants(matching: .any)["capture.screen"]
+        let status = app.descendants(matching: .any)["capture.status"]
 
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         finish.tap()
 
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
         XCTAssertTrue(finish.exists)
+        XCTAssertEqual(status.label, "Capture failed")
     }
 
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {

@@ -44,6 +44,7 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
 struct CaptureRecordingScreen: View {
     let deviceKind: String?
     let captureStatusText: String?
+    let isCaptureFailure: Bool
     let captureProgress: CaptureProgress?
     let activeLabels: Set<CaptureQuickLabel>
     let isFinishing: Bool
@@ -78,8 +79,10 @@ struct CaptureRecordingScreen: View {
                     localized: "capture.status.recording_locally_without_file",
                     table: "Localizable",
                     bundle: appLocalizationBundle
-                )
+                ),
+                isFailure: isCaptureFailure
             )
+            .accessibilityIdentifier("capture.status")
 
             if let captureProgress {
                 PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))

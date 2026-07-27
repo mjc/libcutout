@@ -535,6 +535,11 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    func testCaptureStatusMarksFinalizationFailure() {
+        XCTAssertTrue(CaptureStatus.failed.isFailure)
+        XCTAssertFalse(CaptureStatus.recordingLocally(fileName: "capture.jsonl").isFailure)
+    }
+
     @MainActor
     func testCaptureStatusConsumesTypedCoreEvents() {
         let model = CutoutAppModel()

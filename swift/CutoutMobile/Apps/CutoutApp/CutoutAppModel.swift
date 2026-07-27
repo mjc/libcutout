@@ -58,6 +58,11 @@ enum CaptureStatus: Equatable {
         }
     }
 
+    var isFailure: Bool {
+        if case .failed = self { return true }
+        return false
+    }
+
     private func captureProgressText(label: String?, notificationCount: Int, fileName: String?) -> String {
         switch (label, fileName) {
         case let (.some(label), .some(fileName)):
