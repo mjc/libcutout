@@ -19,7 +19,18 @@ struct CaptureRecordingScreen: View {
             horizontalPadding: 18,
             showsHeader: false
         ) {
-            titleBlock
+            PevScreenTitleBlock(
+                title: deviceKind ?? String(
+                    localized: "capture.session",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                ),
+                subtitle: String(
+                    localized: "capture.session",
+                    table: "Localizable",
+                    bundle: appLocalizationBundle
+                )
+            )
 
             PevStatusStrip(
                 text: captureStatusText ?? String(
@@ -44,13 +55,6 @@ struct CaptureRecordingScreen: View {
         .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
-    }
-
-    private var titleBlock: some View {
-        PevScreenTitleBlock(
-            title: deviceKind ?? String(localized: "capture.session", table: "Localizable", bundle: appLocalizationBundle),
-            subtitle: String(localized: "capture.session", table: "Localizable", bundle: appLocalizationBundle)
-        )
     }
 
     private var stopCaptureButton: some View {
