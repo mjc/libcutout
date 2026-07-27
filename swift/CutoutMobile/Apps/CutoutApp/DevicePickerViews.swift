@@ -5,7 +5,6 @@ struct DevicePickerView: View {
     let scanState: DevicePickerScanState?
     var connectionPhase: SessionConnectionPhase? = nil
     let captureStatusText: String?
-    let isRecordOnlyCapture: Bool
     let hasSavedDevice: Bool
     let pair: (DevicePickerRow) -> Void
     let forgetSavedDevice: () -> Void

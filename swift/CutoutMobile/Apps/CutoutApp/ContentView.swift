@@ -241,7 +241,6 @@ private struct DevicePickerRouteView: View {
             scanState: model.devicePickerScanState,
             connectionPhase: model.phase,
             captureStatusText: model.captureStatusText,
-            isRecordOnlyCapture: model.isRecordOnlyCapture,
             hasSavedDevice: model.hasSavedDevice,
             pair: pair,
             forgetSavedDevice: model.forgetSavedDevice,
