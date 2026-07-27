@@ -427,6 +427,25 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
     }
 
+    func testFootpadTelemetryUsesTypedContactStateForDisplayAndAccessibility() {
+        let footpad = FootpadTelemetry(
+            state: 3,
+            contactState: .both,
+            adc1Milliunits: 1_250,
+            adc2Milliunits: 875
+        )
+
+        XCTAssertEqual(footpad.stateDisplayText, "both pressed")
+        XCTAssertEqual(
+            footpad.accessibilityValue,
+            "left / adc1, 1.25, available, right / adc2, 0.88, available, both pressed"
+        )
+        XCTAssertEqual(
+            footpad.summaryText,
+            "footpad both pressed · adc1 left 1.25 · adc2 right 0.88"
+        )
+    }
+
     func testFootpadTelemetryKeepsZeroAdcAvailable() {
         let footpad = FootpadTelemetry(state: 0, adc1Milliunits: 0, adc2Milliunits: 0)
 

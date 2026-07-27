@@ -4,15 +4,16 @@ use crate::{
     CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
     DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
     Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadTelemetry, IgnoredNotificationEvidence,
-    IgnoredNotificationReason, LightState, Measured, MonotonicTimestamp, NotificationByteLen,
-    NotificationEvidence, NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics,
-    ParserDroppedBytes, ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen,
-    PhaseCurrent, Power, ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback,
-    ReadOnlyResponse, ReservedPayloadEvidence, RideOperatingState, SafetyClass, SemanticEventCount,
-    SessionInput, SessionOutput, SettingsEntry, SettingsReadback, SettingsReadbackAvailability,
-    Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
+    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
+    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
+    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
+    ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
+    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
+    RideOperatingState, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
+    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed, TelemetryDelta,
+    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
+    ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -1912,9 +1913,39 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
 
 /// UniFFI-ready footpad telemetry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FootpadContactStateDto {
+    /// Neither footpad contact is active.
+    None,
+
+    /// Only the left footpad contact is active.
+    Left,
+
+    /// Only the right footpad contact is active.
+    Right,
+
+    /// Both footpad contacts are active.
+    Both,
+}
+
+impl From<FootpadContactState> for FootpadContactStateDto {
+    fn from(state: FootpadContactState) -> Self {
+        match state {
+            FootpadContactState::None => Self::None,
+            FootpadContactState::Left => Self::Left,
+            FootpadContactState::Right => Self::Right,
+            FootpadContactState::Both => Self::Both,
+        }
+    }
+}
+
+/// UniFFI-ready footpad telemetry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FootpadTelemetryDto {
     /// Protocol-specific footpad state bitfield/nibble.
     pub state: u8,
+
+    /// Semantically decoded contact state when the protocol defines one.
+    pub contact_state: Option<FootpadContactStateDto>,
 
     /// First footpad ADC reading in protocol units, scaled by 1000.
     pub adc1_milliunits: Option<i32>,
@@ -1927,6 +1958,7 @@ impl From<FootpadTelemetry> for FootpadTelemetryDto {
     fn from(footpad: FootpadTelemetry) -> Self {
         Self {
             state: footpad.state,
+            contact_state: footpad.contact_state.map(Into::into),
             adc1_milliunits: footpad.adc1_milliunits,
             adc2_milliunits: footpad.adc2_milliunits,
         }
@@ -2577,6 +2609,7 @@ mod tests {
             roll: None,
             footpad: Some(FootpadTelemetry {
                 state: 2,
+                contact_state: None,
                 adc1_milliunits: Some(1_250),
                 adc2_milliunits: None,
             }),
@@ -2603,6 +2636,7 @@ mod tests {
             dto.footpad,
             Some(FootpadTelemetryDto {
                 state: 2,
+                contact_state: None,
                 adc1_milliunits: Some(1_250),
                 adc2_milliunits: None,
             })

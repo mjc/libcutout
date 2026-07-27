@@ -5684,6 +5684,10 @@ public struct MobileFootpadTelemetryDto: Equatable, Hashable {
      */
     public var state: UInt8
     /**
+     * Semantically decoded contact state when the protocol defines one.
+     */
+    public var contactState: MobileFootpadContactState?
+    /**
      * First footpad ADC reading in protocol units, scaled by 1000.
      */
     public var adc1Milliunits: Int32?
@@ -5699,12 +5703,16 @@ public struct MobileFootpadTelemetryDto: Equatable, Hashable {
          * Protocol-specific footpad state bitfield/nibble.
          */state: UInt8, 
         /**
+         * Semantically decoded contact state when the protocol defines one.
+         */contactState: MobileFootpadContactState?, 
+        /**
          * First footpad ADC reading in protocol units, scaled by 1000.
          */adc1Milliunits: Int32?, 
         /**
          * Second footpad ADC reading in protocol units, scaled by 1000.
          */adc2Milliunits: Int32?) {
         self.state = state
+        self.contactState = contactState
         self.adc1Milliunits = adc1Milliunits
         self.adc2Milliunits = adc2Milliunits
     }
@@ -5726,6 +5734,7 @@ public struct FfiConverterTypeMobileFootpadTelemetryDto: FfiConverterRustBuffer 
         return
             try MobileFootpadTelemetryDto(
                 state: FfiConverterUInt8.read(from: &buf), 
+                contactState: FfiConverterOptionTypeMobileFootpadContactState.read(from: &buf), 
                 adc1Milliunits: FfiConverterOptionInt32.read(from: &buf), 
                 adc2Milliunits: FfiConverterOptionInt32.read(from: &buf)
         )
@@ -5733,6 +5742,7 @@ public struct FfiConverterTypeMobileFootpadTelemetryDto: FfiConverterRustBuffer 
 
     public static func write(_ value: MobileFootpadTelemetryDto, into buf: inout [UInt8]) {
         FfiConverterUInt8.write(value.state, into: &buf)
+        FfiConverterOptionTypeMobileFootpadContactState.write(value.contactState, into: &buf)
         FfiConverterOptionInt32.write(value.adc1Milliunits, into: &buf)
         FfiConverterOptionInt32.write(value.adc2Milliunits, into: &buf)
     }
@@ -11749,6 +11759,102 @@ public func FfiConverterTypeMobileFalconProfileDto_lower(_ value: MobileFalconPr
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Mobile footpad telemetry DTO.
+ */
+
+public enum MobileFootpadContactState: Equatable, Hashable {
+    
+    /**
+     * Neither footpad contact is active.
+     */
+    case none
+    /**
+     * Only the left footpad contact is active.
+     */
+    case left
+    /**
+     * Only the right footpad contact is active.
+     */
+    case right
+    /**
+     * Both footpad contacts are active.
+     */
+    case both
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileFootpadContactState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileFootpadContactState: FfiConverterRustBuffer {
+    typealias SwiftType = MobileFootpadContactState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFootpadContactState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .none
+        
+        case 2: return .left
+        
+        case 3: return .right
+        
+        case 4: return .both
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileFootpadContactState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .none:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .left:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .right:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .both:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileFootpadContactState_lift(_ buf: RustBuffer) throws -> MobileFootpadContactState {
+    return try FfiConverterTypeMobileFootpadContactState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileFootpadContactState_lower(_ value: MobileFootpadContactState) -> RustBuffer {
+    return FfiConverterTypeMobileFootpadContactState.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Mobile GATT characteristic role.
  */
 
@@ -15203,6 +15309,30 @@ fileprivate struct FfiConverterOptionTypeMobileCommandDto: FfiConverterRustBuffe
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileCommandDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileFootpadContactState: FfiConverterRustBuffer {
+    typealias SwiftType = MobileFootpadContactState?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileFootpadContactState.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileFootpadContactState.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

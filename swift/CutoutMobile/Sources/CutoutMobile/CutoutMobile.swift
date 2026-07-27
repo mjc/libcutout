@@ -1237,13 +1237,53 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     }
 }
 
+public enum FootpadContactState: Equatable, Hashable, Sendable {
+    case none
+    case left
+    case right
+    case both
+
+    fileprivate init(_ state: MobileFootpadContactState) {
+        switch state {
+        case .none:
+            self = .none
+        case .left:
+            self = .left
+        case .right:
+            self = .right
+        case .both:
+            self = .both
+        }
+    }
+
+    fileprivate var displayText: String {
+        switch self {
+        case .none:
+            pevLocalizedText("footpad.contact.none")
+        case .left:
+            pevLocalizedText("footpad.contact.left")
+        case .right:
+            pevLocalizedText("footpad.contact.right")
+        case .both:
+            pevLocalizedText("footpad.contact.both")
+        }
+    }
+}
+
 public struct FootpadTelemetry: Equatable, Hashable, Sendable {
     public let state: UInt8
+    public let contactState: FootpadContactState?
     public let adc1Milliunits: Int32?
     public let adc2Milliunits: Int32?
 
-    public init(state: UInt8, adc1Milliunits: Int32? = nil, adc2Milliunits: Int32? = nil) {
+    public init(
+        state: UInt8,
+        contactState: FootpadContactState? = nil,
+        adc1Milliunits: Int32? = nil,
+        adc2Milliunits: Int32? = nil
+    ) {
         self.state = state
+        self.contactState = contactState
         self.adc1Milliunits = adc1Milliunits
         self.adc2Milliunits = adc2Milliunits
     }
@@ -1251,6 +1291,7 @@ public struct FootpadTelemetry: Equatable, Hashable, Sendable {
     fileprivate init(_ dto: MobileFootpadTelemetryDto) {
         self.init(
             state: dto.state,
+            contactState: dto.contactState.map(FootpadContactState.init),
             adc1Milliunits: dto.adc1Milliunits,
             adc2Milliunits: dto.adc2Milliunits
         )
@@ -1267,7 +1308,7 @@ public extension FootpadTelemetry {
     }
 
     var stateDisplayText: String {
-        pevLocalizedText("footpad.state", Int64(state))
+        contactState?.displayText ?? pevLocalizedText("footpad.state", Int64(state))
     }
 
     var accessibilityValue: String {

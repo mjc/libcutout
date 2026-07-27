@@ -1,7 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
-    Angle, BatteryCurrent, DutyCycle, FootpadTelemetry, Measured, MonotonicTimestamp, PhaseCurrent,
-    RideOperatingState, Speed, TelemetryDelta, Temperature, Voltage,
+    Angle, BatteryCurrent, DutyCycle, FootpadContactState, FootpadTelemetry, Measured,
+    MonotonicTimestamp, PhaseCurrent, RideOperatingState, Speed, TelemetryDelta, Temperature,
+    Voltage,
 };
 use thiserror::Error;
 
@@ -232,6 +233,7 @@ impl RefloatRealtimeData {
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
+                contact_state: refloat_footpad_contact_state(self.footpad_state),
                 adc1_milliunits: self.value("footpad.adc1").map(milliscale),
                 adc2_milliunits: self.value("footpad.adc2").map(milliscale),
             }),
@@ -245,6 +247,16 @@ impl RefloatRealtimeData {
             .chain(self.runtime_values.iter())
             .find(|value| value.id.as_str() == id)
             .map(|value| value.value)
+    }
+}
+
+const fn refloat_footpad_contact_state(state: u8) -> Option<FootpadContactState> {
+    match state {
+        0 => Some(FootpadContactState::None),
+        1 => Some(FootpadContactState::Left),
+        2 => Some(FootpadContactState::Right),
+        3 => Some(FootpadContactState::Both),
+        _ => None,
     }
 }
 
@@ -1106,11 +1118,33 @@ mod tests {
             delta.footpad,
             Some(FootpadTelemetry {
                 state: 3,
+                contact_state: Some(FootpadContactState::Both),
                 adc1_milliunits: Some(1_250),
                 adc2_milliunits: Some(875),
             })
         );
         assert_eq!(delta.operating_state, Some(RideOperatingState::Riding));
+    }
+
+    #[test]
+    fn refloat_footpad_contact_state_decodes_documented_states() {
+        assert_eq!(
+            refloat_footpad_contact_state(0),
+            Some(FootpadContactState::None)
+        );
+        assert_eq!(
+            refloat_footpad_contact_state(1),
+            Some(FootpadContactState::Left)
+        );
+        assert_eq!(
+            refloat_footpad_contact_state(2),
+            Some(FootpadContactState::Right)
+        );
+        assert_eq!(
+            refloat_footpad_contact_state(3),
+            Some(FootpadContactState::Both)
+        );
+        assert_eq!(refloat_footpad_contact_state(4), None);
     }
 
     #[test]

@@ -699,6 +699,22 @@
       "comment" : "Available footpad ADC reading. Argument is the formatted reading.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@, available" } } }
     },
+    "footpad.contact.both" : {
+      "comment" : "Footpad state with both contacts pressed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "both pressed" } } }
+    },
+    "footpad.contact.left" : {
+      "comment" : "Footpad state with only the left contact pressed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "left pressed" } } }
+    },
+    "footpad.contact.none" : {
+      "comment" : "Footpad state with neither contact pressed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "not pressed" } } }
+    },
+    "footpad.contact.right" : {
+      "comment" : "Footpad state with only the right contact pressed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "right pressed" } } }
+    },
     "footpad.state" : {
       "comment" : "Raw controller footpad state for diagnostics. Argument is the state number.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "state %lld" } } }

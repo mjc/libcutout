@@ -6491,11 +6491,30 @@ impl TelemetryDelta {
     }
 }
 
+/// Semantically decoded footpad contact state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FootpadContactState {
+    /// Neither footpad contact is active.
+    None,
+
+    /// Only the left footpad contact is active.
+    Left,
+
+    /// Only the right footpad contact is active.
+    Right,
+
+    /// Both footpad contacts are active.
+    Both,
+}
+
 /// Latest known footpad sensor state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FootpadTelemetry {
     /// Protocol-specific footpad state bitfield/nibble.
     pub state: u8,
+
+    /// Semantically decoded contact state when the protocol defines one.
+    pub contact_state: Option<FootpadContactState>,
 
     /// First footpad ADC reading in protocol units, scaled by 1000.
     pub adc1_milliunits: Option<i32>,
@@ -8318,6 +8337,7 @@ mod tests {
             at_ms: ms(150),
             footpad: Some(FootpadTelemetry {
                 state: 3,
+                contact_state: None,
                 adc1_milliunits: Some(1_250),
                 adc2_milliunits: Some(875),
             }),
@@ -8335,6 +8355,7 @@ mod tests {
             snapshot.footpad,
             Some(FootpadTelemetry {
                 state: 3,
+                contact_state: None,
                 adc1_milliunits: Some(1_250),
                 adc2_milliunits: Some(875),
             })

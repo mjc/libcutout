@@ -31,17 +31,17 @@ use cutout_core::{
     DiscoveryObservation as CoreDiscoveryObservation, DistanceReadingDto, Duration as CoreDuration,
     DutyCycleReadingDto, EffectiveResistance, FaultCode, FaultCodeDto, FaultHistoryAvailability,
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
-    FaultHistoryReadbackDto, FootpadTelemetryDto, GattChannel, GattFingerprint, GattRoles,
-    IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto, Measured, MonotonicMillisDto,
-    MonotonicTimestamp, NotificationByteLenDto, NotificationEvidenceDto,
-    NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
-    ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
-    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
-    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingStateDto,
-    SemanticEventCountDto, SeriesCount, SessionInputDto, SessionOutputDto, SettingsEntry,
-    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
+    FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
+    GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
+    Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
+    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
+    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
+    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord,
+    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    RideOperatingStateDto, SemanticEventCountDto, SeriesCount, SessionInputDto, SessionOutputDto,
+    SettingsEntry, SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
     SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
     TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
     TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
@@ -2174,10 +2174,29 @@ pub struct MobileTelemetrySnapshotDto {
 }
 
 /// Mobile footpad telemetry DTO.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileFootpadContactState {
+    /// Neither footpad contact is active.
+    None,
+
+    /// Only the left footpad contact is active.
+    Left,
+
+    /// Only the right footpad contact is active.
+    Right,
+
+    /// Both footpad contacts are active.
+    Both,
+}
+
+/// Mobile footpad telemetry DTO.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileFootpadTelemetryDto {
     /// Protocol-specific footpad state bitfield/nibble.
     pub state: u8,
+
+    /// Semantically decoded contact state when the protocol defines one.
+    pub contact_state: Option<MobileFootpadContactState>,
 
     /// First footpad ADC reading in protocol units, scaled by 1000.
     pub adc1_milliunits: Option<i32>,
@@ -5172,8 +5191,20 @@ impl From<FootpadTelemetryDto> for MobileFootpadTelemetryDto {
     fn from(footpad: FootpadTelemetryDto) -> Self {
         Self {
             state: footpad.state,
+            contact_state: footpad.contact_state.map(Into::into),
             adc1_milliunits: footpad.adc1_milliunits,
             adc2_milliunits: footpad.adc2_milliunits,
+        }
+    }
+}
+
+impl From<FootpadContactStateDto> for MobileFootpadContactState {
+    fn from(state: FootpadContactStateDto) -> Self {
+        match state {
+            FootpadContactStateDto::None => Self::None,
+            FootpadContactStateDto::Left => Self::Left,
+            FootpadContactStateDto::Right => Self::Right,
+            FootpadContactStateDto::Both => Self::Both,
         }
     }
 }
@@ -8484,6 +8515,7 @@ mod tests {
             refloat_snapshot.footpad,
             Some(MobileFootpadTelemetryDto {
                 state: 3,
+                contact_state: Some(MobileFootpadContactState::Both),
                 adc1_milliunits: Some(1_250),
                 adc2_milliunits: Some(875),
             })
