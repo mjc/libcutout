@@ -195,13 +195,13 @@ struct PevRideHeroSection: View {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 8) {
                     titleText
-                    statusPill
+                    PevDashboardStatusPill(title: subtitle, fill: statusFill)
                 }
             } else {
                 HStack(alignment: .center, spacing: 12) {
                     titleText
                     Spacer(minLength: 8)
-                    statusPill
+                    PevDashboardStatusPill(title: subtitle, fill: statusFill)
                 }
             }
         }
@@ -243,13 +243,6 @@ struct PevRideHeroSection: View {
         Text(title)
             .font(.system(.headline, design: .default, weight: .semibold))
             .foregroundStyle(PevColors.primaryText)
-    }
-
-    private var statusPill: some View {
-        PevDashboardStatusPill(
-            title: subtitle,
-            fill: statusFill
-        )
     }
 
     @ViewBuilder
