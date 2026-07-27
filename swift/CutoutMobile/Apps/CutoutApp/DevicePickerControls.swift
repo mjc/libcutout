@@ -8,17 +8,32 @@ struct PickerDeviceRow: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
+        if let action, row.state.isSupported {
+            Button(action: action) {
+                rowContent
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("device-picker.use.\(row.id)")
+            .accessibilityLabel(row.useActionAccessibilityLabel)
+            .accessibilityHint(localizedAppText("picker.use_action.hint"))
+        } else {
+            rowContent
+                .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var rowContent: some View {
         Group {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 12) {
                     deviceSummary
-                    actionView
+                    statusPill
                 }
             } else {
                 HStack(spacing: 14) {
                     deviceSummary
                     Spacer(minLength: 6)
-                    actionView
+                    statusPill
                 }
             }
         }
@@ -50,20 +65,8 @@ struct PickerDeviceRow: View {
         }
     }
 
-    @ViewBuilder
-    private var actionView: some View {
-        if let action, row.state.isSupported {
-            Button(action: action) {
-                PevDashboardStatusPill(devicePickerState: row.state)
-            }
-            .buttonStyle(.plain)
-            .frame(minWidth: 44, minHeight: 44)
-            .accessibilityIdentifier("device-picker.use.\(row.id)")
-            .accessibilityLabel(row.useActionAccessibilityLabel)
-            .accessibilityHint(localizedAppText("picker.use_action.hint"))
-        } else {
-            PevDashboardStatusPill(devicePickerState: row.state)
-        }
+    private var statusPill: some View {
+        PevDashboardStatusPill(devicePickerState: row.state)
     }
 }
 

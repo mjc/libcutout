@@ -63,6 +63,14 @@ final class CutoutAppUITests: XCTestCase {
         }
     }
 
+    func testSupportedPickerRowUsesOneWholeRowAction() {
+        let useButton = app.buttons["device-picker.use.ui-test-vesc"]
+
+        XCTAssertTrue(useButton.waitForExistence(timeout: 5))
+        XCTAssertEqual(useButton.label, "Use VESC, device 1234")
+        XCTAssertGreaterThanOrEqual(useButton.frame.height, 92)
+    }
+
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
 
