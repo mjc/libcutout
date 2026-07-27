@@ -6,6 +6,7 @@ public enum RideUnits {
     public static let distanceUnitMetric = "km"
     public static let voltageUnit = "V"
     public static let currentUnit = "A"
+    public static let powerUnit = "kW"
     public static let angleUnit = "°"
     public static let temperatureUnit = "°C"
     public static let percentUnit = "%"

@@ -387,7 +387,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
             kind: .power,
             label: localizedAppText("ride.metric.power"),
             metricValue: .available(display: value, accessibility: value),
-            unit: "kW",
+            unit: RideUnits.powerUnit,
             detail: powerFlowDetail(
                 telemetry.powerFlow,
                 fallback: localizedAppText("ride.power.calculated_pack_current")
@@ -405,7 +405,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
             kind: .power,
             label: localizedAppText("ride.metric.power"),
             metricValue: .available(display: value, accessibility: value),
-            unit: "kW",
+            unit: RideUnits.powerUnit,
             detail: powerFlowDetail(
                 telemetry.powerFlow,
                 fallback: localizedAppText("ride.power.live_telemetry")
@@ -418,7 +418,7 @@ func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
         kind: .power,
         label: localizedAppText("ride.metric.power"),
         metricValue: .unavailable,
-        unit: "kW",
+        unit: RideUnits.powerUnit,
         detail: localizedAppText("ride.value.unavailable"),
         accent: .yellow
     )

@@ -25,6 +25,7 @@ final class RideUnitsTests: XCTestCase {
     func testStandardMetricUnitsUseCanonicalSymbols() {
         XCTAssertEqual(RideUnits.voltageUnit, "V")
         XCTAssertEqual(RideUnits.currentUnit, "A")
+        XCTAssertEqual(RideUnits.powerUnit, "kW")
         XCTAssertEqual(RideUnits.angleUnit, "°")
         XCTAssertEqual(RideUnits.temperatureText(millicelsius: 34_000), "34")
         XCTAssertEqual(RideUnits.temperatureUnit, "°C")
