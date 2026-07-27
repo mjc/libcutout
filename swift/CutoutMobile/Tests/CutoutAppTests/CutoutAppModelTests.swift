@@ -278,6 +278,19 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
         driver.onPhaseChange?(.live)
 
+        XCTAssertEqual(
+            model.connectionState,
+            .connecting(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                phase: .discoveringServices
+            )
+        )
+        XCTAssertEqual(model.phase, .discoveringServices)
+
         driver.onPhaseChange?(.discoveringServices)
 
         XCTAssertEqual(
@@ -315,6 +328,22 @@ final class CutoutAppModelTests: XCTestCase {
         )
         XCTAssertEqual(model.connectionStatusText, "Retrying connection…")
 
+        driver.onPhaseChange?(.live)
+
+        XCTAssertEqual(
+            model.connectionState,
+            .retrying(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                retry: retry
+            )
+        )
+        XCTAssertEqual(model.phase, .discoveringServices)
+
+        driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
 
