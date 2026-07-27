@@ -176,6 +176,10 @@ private struct CaptureUnknownDeviceSheet: View {
             }
             .accessibilityIdentifier("device-picker.advanced-capture")
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("picker.capture_kind.cancel", role: .cancel) { dismiss() }
+                        .accessibilityIdentifier("device-picker.capture-kind.cancel")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("picker.capture_kind.done") { isDeviceKindFocused = false }
                         .accessibilityIdentifier("device-picker.capture-kind.done")

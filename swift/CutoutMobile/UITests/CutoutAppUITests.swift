@@ -28,6 +28,7 @@ final class CutoutAppUITests: XCTestCase {
         let advancedCapture = app.descendants(matching: .any)["device-picker.advanced-capture"]
         let captureKind = app.textFields["device-picker.capture-kind"]
         let finishEditing = app.buttons["device-picker.capture-kind.done"]
+        let cancelCapture = app.buttons["device-picker.capture-kind.cancel"]
         let recordButton = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
         ).firstMatch
@@ -44,6 +45,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureKind.isHittable)
         XCTAssertTrue(finishEditing.exists)
         XCTAssertEqual(finishEditing.label, "Done")
+        XCTAssertTrue(cancelCapture.exists)
+        XCTAssertEqual(cancelCapture.label, "Cancel")
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
         XCTAssertTrue(recordButton.label.contains("Unknown BLE device"))
         XCTAssertFalse(recordButton.isEnabled)
@@ -61,6 +64,9 @@ final class CutoutAppUITests: XCTestCase {
         if done.waitForExistence(timeout: 1) {
             done.tap()
         }
+
+        cancelCapture.tap()
+        XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
     }
 
     func testSupportedPickerRowUsesOneWholeRowAction() {

@@ -589,6 +589,10 @@
       "comment" : "Toolbar action that finishes editing the capture device-kind field.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
     },
+    "picker.capture_kind.cancel" : {
+      "comment" : "Toolbar action that dismisses Advanced capture without recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
+    },
     "picker.capture_kind.label" : {
       "comment" : "Label and VoiceOver name for the capture device-kind field.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device kind for capture" } } }
