@@ -525,6 +525,14 @@ final class CutoutAppModel {
 
     private func handlePhaseChange(_ phase: SessionConnectionPhase) {
         guard !phase.supportsLiveActivity || connectionState.selection != nil || permitsStoredDeviceAutoPairing else { return }
+        if case .failed = connectionState {
+            switch phase {
+            case .connecting, .discoveringServices, .subscribing, .live:
+                return
+            case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning, .failed:
+                break
+            }
+        }
         self.phase = phase
         switch phase {
         case .connecting, .discoveringServices, .subscribing:

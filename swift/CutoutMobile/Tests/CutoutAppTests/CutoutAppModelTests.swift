@@ -188,7 +188,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testConnectionFailureKeepsTheRememberedDeviceAndIgnoresLateRetry() {
+    func testConnectionFailureKeepsTheRememberedDeviceAndIgnoresLateConnectionCallbacks() {
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -232,6 +232,22 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
 
+        XCTAssertEqual(
+            model.connectionState,
+            .failed(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                .connectFailed("timed out")
+            )
+        )
+
+        driver.onPhaseChange?(.discoveringServices)
+        driver.onPhaseChange?(.live)
+
+        XCTAssertEqual(model.phase, .failed(.connectFailed("timed out")))
         XCTAssertEqual(
             model.connectionState,
             .failed(
