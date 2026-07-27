@@ -281,7 +281,7 @@ private struct CaptureRouteView: View {
         CaptureRecordingScreen(
             deviceKind: model.recordOnlyDeviceKind,
             captureStatusText: model.captureStatusText,
-            isCaptureFailure: model.captureStatus?.isFailure == true,
+            captureStatusTone: model.captureStatus?.statusStripTone ?? .nominal,
             captureProgress: model.captureProgress,
             activeLabels: model.activeCaptureLabels,
             isFinishing: model.isFinishingCapture,

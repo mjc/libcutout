@@ -538,6 +538,8 @@ final class CutoutAppModelTests: XCTestCase {
     func testCaptureStatusMarksFinalizationFailure() {
         XCTAssertTrue(CaptureStatus.failed.isFailure)
         XCTAssertFalse(CaptureStatus.recordingLocally(fileName: "capture.jsonl").isFailure)
+        XCTAssertEqual(CaptureStatus.failed.statusStripTone, .critical)
+        XCTAssertEqual(CaptureStatus.recordingLocally(fileName: "capture.jsonl").statusStripTone, .nominal)
     }
 
     @MainActor
