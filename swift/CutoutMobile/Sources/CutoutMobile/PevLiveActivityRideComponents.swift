@@ -112,10 +112,45 @@ public struct PevLiveActivityHeader: View {
     }
 }
 
-public struct PevLiveActivitySpeedGauge: View {
+public struct PevLiveActivitySpeedReadout: View {
     @ScaledMetric(relativeTo: .title2) private var speedScale: CGFloat = 1
     @ScaledMetric(relativeTo: .caption) private var unitScale: CGFloat = 1
 
+    let snapshot: LiveActivityRideSnapshot
+    let speedFontSize: CGFloat
+    let unitFontSize: CGFloat
+
+    public init(
+        snapshot: LiveActivityRideSnapshot,
+        speedFontSize: CGFloat,
+        unitFontSize: CGFloat
+    ) {
+        self.snapshot = snapshot
+        self.speedFontSize = speedFontSize
+        self.unitFontSize = unitFontSize
+    }
+
+    public var body: some View {
+        let speed = LiveActivityRideValue.speedPresentation(for: snapshot.speed)
+
+        VStack(spacing: 0) {
+            Text(speed.displayValue)
+                .font(.system(size: speedFontSize * speedScale, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if let unit = speed.unit {
+                Text(unit)
+                    .font(.system(size: unitFontSize * unitScale, weight: .medium))
+                    .foregroundStyle(PevLiveActivityPalette.secondaryText)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(speed.label)
+        .accessibilityValue(speed.accessibilityValue)
+    }
+}
+
+public struct PevLiveActivitySpeedGauge: View {
     let snapshot: LiveActivityRideSnapshot
     let diameter: CGFloat
 
@@ -143,17 +178,11 @@ public struct PevLiveActivitySpeedGauge: View {
                     style: StrokeStyle(lineWidth: 5, lineCap: .round)
                 )
                 .rotationEffect(.degrees(38))
-            VStack(spacing: 0) {
-                Text(speed.displayValue)
-                    .font(.system(size: diameter * 0.35 * speedScale, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let unit = speed.unit {
-                    Text(unit)
-                        .font(.system(size: diameter * 0.13 * unitScale, weight: .medium))
-                        .foregroundStyle(PevLiveActivityPalette.secondaryText)
-                }
-            }
+            PevLiveActivitySpeedReadout(
+                snapshot: snapshot,
+                speedFontSize: diameter * 0.35,
+                unitFontSize: diameter * 0.13
+            )
         }
         .frame(width: diameter, height: diameter)
         .accessibilityElement(children: .ignore)
