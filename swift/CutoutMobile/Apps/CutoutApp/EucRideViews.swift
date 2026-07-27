@@ -75,7 +75,7 @@ struct EucRideScreenView: View {
             heroStyle: .electricUnicycle,
             title: titleText,
             subtitle: phaseText,
-            statusFill: PevColors.green,
+            statusTone: .eucRide,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
             speedCaption: localizedAppText("euc.speed.caption"),

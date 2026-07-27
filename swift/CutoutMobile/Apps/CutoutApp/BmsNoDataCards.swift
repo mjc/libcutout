@@ -9,11 +9,11 @@ struct BmsNoDataHeader: View {
             HStack(alignment: .top, spacing: 12) {
                 PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle)
                 Spacer(minLength: 0)
-                PevDashboardStatusPill(title: screen.secondaryValue, fill: PevColors.yellow)
+                PevDashboardStatusPill(title: screen.secondaryValue, tone: .warning)
             }
             VStack(alignment: .leading, spacing: 10) {
                 PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle)
-                PevDashboardStatusPill(title: screen.secondaryValue, fill: PevColors.yellow)
+                PevDashboardStatusPill(title: screen.secondaryValue, tone: .warning)
             }
         }
     }

@@ -115,6 +115,20 @@ public struct PevDashboardSectionLabel: View {
     }
 }
 
+public enum PevDashboardStatusPillTone: Sendable, Equatable {
+    case eucRide
+    case vescRide
+    case warning
+
+    fileprivate var fill: Color {
+        switch self {
+        case .eucRide: PevDashboardColors.green
+        case .vescRide: PevDashboardColors.purple
+        case .warning: PevDashboardColors.yellow
+        }
+    }
+}
+
 public struct PevDashboardStatusPill: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
@@ -126,6 +140,7 @@ public struct PevDashboardStatusPill: View {
     let horizontalPadding: CGFloat
     let height: CGFloat
     let fixedHorizontal: Bool
+    public private(set) var tone: PevDashboardStatusPillTone?
 
     public init(
         title: String,
@@ -145,6 +160,12 @@ public struct PevDashboardStatusPill: View {
         self.horizontalPadding = horizontalPadding
         self.height = height
         self.fixedHorizontal = fixedHorizontal
+        tone = nil
+    }
+
+    public init(title: String, tone: PevDashboardStatusPillTone) {
+        self.init(title: title, fill: tone.fill)
+        self.tone = tone
     }
 
     public init(devicePickerState state: DevicePickerRowState) {

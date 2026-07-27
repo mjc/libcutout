@@ -185,7 +185,7 @@ struct PevRideHeroSection: View {
     let style: PevRideHeroStyle
     let title: String
     let subtitle: String
-    let statusFill: Color
+    let statusTone: PevDashboardStatusPillTone
     let captureStatusText: String?
     let speedReadout: PevRideHeroReadout
     let speedCaption: String
@@ -195,13 +195,13 @@ struct PevRideHeroSection: View {
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 8) {
                     titleText
-                    PevDashboardStatusPill(title: subtitle, fill: statusFill)
+                    PevDashboardStatusPill(title: subtitle, tone: statusTone)
                 }
             } else {
                 HStack(alignment: .center, spacing: 12) {
                     titleText
                     Spacer(minLength: 8)
-                    PevDashboardStatusPill(title: subtitle, fill: statusFill)
+                    PevDashboardStatusPill(title: subtitle, tone: statusTone)
                 }
             }
         }

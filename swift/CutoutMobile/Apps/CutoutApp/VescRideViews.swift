@@ -189,7 +189,7 @@ struct VescRideScreenView: View {
             heroStyle: .vescOnewheel,
             title: title,
             subtitle: subtitle,
-            statusFill: PevColors.purple,
+            statusTone: .vescRide,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
             speedCaption: localizedAppText("vesc.speed.caption"),

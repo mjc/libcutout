@@ -13,6 +13,8 @@ private enum PevSystemColors {
     static let cardFill = Color(uiColor: .secondarySystemBackground)
     static let primaryText = Color(uiColor: .label)
     static let mutedText = Color(uiColor: .label)
+    static let green = Color(uiColor: .systemGreen)
+    static let purple = Color(uiColor: .systemPurple)
     static let nominal = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
             ? .systemGreen
@@ -25,6 +27,8 @@ private enum PevSystemColors {
     static let cardFill = Color(nsColor: .underPageBackgroundColor)
     static let primaryText = Color(nsColor: .labelColor)
     static let mutedText = Color(nsColor: .labelColor)
+    static let green = Color(nsColor: .systemGreen)
+    static let purple = Color(nsColor: .systemPurple)
     static let nominal = Color(nsColor: .systemGreen)
     #endif
 }
@@ -36,6 +40,8 @@ public enum PevDashboardColors {
     public static let cardStroke = Color.secondary.opacity(0.35)
     public static let primaryText = PevSystemColors.primaryText
     public static let mutedText = PevSystemColors.mutedText
+    public static let green = PevSystemColors.green
+    public static let purple = PevSystemColors.purple
     public static let nominal = PevSystemColors.nominal
 }
 

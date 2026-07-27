@@ -6,7 +6,7 @@ struct PevRideDashboardShell<Content: View>: View {
     let heroStyle: PevRideHeroStyle
     let title: String
     let subtitle: String
-    let statusFill: Color
+    let statusTone: PevDashboardStatusPillTone
     let captureStatusText: String?
     let speedReadout: PevRideHeroReadout
     let speedCaption: String
@@ -18,7 +18,7 @@ struct PevRideDashboardShell<Content: View>: View {
         heroStyle: PevRideHeroStyle,
         title: String,
         subtitle: String,
-        statusFill: Color,
+        statusTone: PevDashboardStatusPillTone,
         captureStatusText: String?,
         speedReadout: PevRideHeroReadout,
         speedCaption: String,
@@ -29,7 +29,7 @@ struct PevRideDashboardShell<Content: View>: View {
         self.heroStyle = heroStyle
         self.title = title
         self.subtitle = subtitle
-        self.statusFill = statusFill
+        self.statusTone = statusTone
         self.captureStatusText = captureStatusText
         self.speedReadout = speedReadout
         self.speedCaption = speedCaption
@@ -48,7 +48,7 @@ struct PevRideDashboardShell<Content: View>: View {
                 style: heroStyle,
                 title: title,
                 subtitle: subtitle,
-                statusFill: statusFill,
+                statusTone: statusTone,
                 captureStatusText: captureStatusText,
                 speedReadout: speedReadout,
                 speedCaption: speedCaption

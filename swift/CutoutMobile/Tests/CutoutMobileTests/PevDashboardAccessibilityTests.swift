@@ -168,6 +168,19 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(unsupported.height, 30)
     }
 
+    func testStatusPillTonePreservesRideAndWarningSemantics() {
+        let euc = PevDashboardStatusPill(title: "Riding", tone: .eucRide)
+        let vesc = PevDashboardStatusPill(title: "Riding", tone: .vescRide)
+        let warning = PevDashboardStatusPill(title: "Limited data", tone: .warning)
+
+        XCTAssertEqual(euc.tone, .eucRide)
+        XCTAssertEqual(vesc.tone, .vescRide)
+        XCTAssertEqual(warning.tone, .warning)
+        XCTAssertEqual(euc.height, 30)
+        XCTAssertEqual(vesc.height, 30)
+        XCTAssertEqual(warning.height, 30)
+    }
+
     func testScanningAnimationRunsOnlyWhileScanningAndMotionIsAllowed() {
         XCTAssertTrue(PevDashboardScanningPill.showsIndicators(isScanning: true))
         XCTAssertFalse(PevDashboardScanningPill.showsIndicators(isScanning: false))
