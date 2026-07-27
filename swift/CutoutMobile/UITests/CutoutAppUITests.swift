@@ -107,6 +107,19 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(writer.value as? String, "Healthy")
     }
 
+    func testFinishCaptureReturnsToPickerAfterFinalizing() {
+        enterCapture()
+
+        let finish = app.buttons["capture.stop"]
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+
+        XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        XCTAssertEqual(finish.elementType, .button)
+        finish.tap()
+
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+    }
+
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {
         enterCapture()
 
