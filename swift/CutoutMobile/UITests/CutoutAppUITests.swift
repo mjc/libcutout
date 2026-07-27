@@ -689,19 +689,16 @@ final class CutoutAppUITests: XCTestCase {
     private func enterCapture() {
         let advancedCapture = openAdvancedCapture()
         let captureKind = app.textFields["device-picker.capture-kind"]
+        let finishEditing = app.buttons["device-picker.capture-kind.done"]
         let recordButton = app.buttons.matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
         ).firstMatch
 
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        XCTAssertTrue(finishEditing.waitForExistence(timeout: 5))
         captureKind.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 2))
         captureKind.typeText("custom vesc")
-
-        let done = app.keyboards.buttons["Done"]
-        if done.waitForExistence(timeout: 1) {
-            done.tap()
-        }
+        finishEditing.tap()
 
         XCTAssertEqual(recordButton.elementType, .button)
 
