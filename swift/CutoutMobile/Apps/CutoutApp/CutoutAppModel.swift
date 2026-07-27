@@ -58,13 +58,11 @@ enum CaptureStatus: Equatable {
         }
     }
 
-    var isFailure: Bool {
-        if case .failed = self { return true }
-        return false
-    }
-
     var statusStripTone: PevStatusStripTone {
-        isFailure ? .critical : .nominal
+        switch self {
+        case .failed: .critical
+        default: .nominal
+        }
     }
 
     private func captureProgressText(label: String?, notificationCount: Int, fileName: String?) -> String {
