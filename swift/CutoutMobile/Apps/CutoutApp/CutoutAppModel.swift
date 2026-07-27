@@ -356,7 +356,6 @@ final class CutoutAppModel {
         connectionState = .picker
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else { return false }
-        resetCaptureSession()
         let annotationKind = trimmedKind
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
@@ -376,6 +375,7 @@ final class CutoutAppModel {
             )
         }
         if didStart {
+            resetCaptureSession()
             permitsStoredDeviceAutoPairing = false
             if modelHint != .unknown {
                 core.annotateCapture(key: "device_kind", value: annotationKind)

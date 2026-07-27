@@ -567,6 +567,21 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedRecordOnlyCapturePreservesTheExistingSession() {
+        let model = CutoutAppModel()
+        let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")
+
+        model.applyCaptureEvent(.started(fileURL: priorCapture))
+        model.applyCaptureEvent(.notificationRecorded)
+        model.startCaptureLabel(.ride)
+
+        XCTAssertFalse(model.recordOnly(platformIdentifier: "missing-device", deviceKind: "Unknown device"))
+
+        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 1, fileName: "prior.cutout"))
+        XCTAssertEqual(model.activeCaptureLabels, [.ride])
+    }
+
+    @MainActor
     func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
         let model = CutoutAppModel()
 
