@@ -115,16 +115,69 @@ public struct PevDashboardSectionLabel: View {
     }
 }
 
+fileprivate struct PevDashboardStatusPillPresentation {
+    let fill: Color
+    let foreground: Color
+    let stroke: Color?
+    let width: CGFloat?
+    let horizontalPadding: CGFloat
+    let height: CGFloat
+    let fixedHorizontal: Bool
+
+    init(
+        fill: Color,
+        foreground: Color = .black,
+        stroke: Color? = nil,
+        width: CGFloat? = nil,
+        horizontalPadding: CGFloat = 12,
+        height: CGFloat = 30,
+        fixedHorizontal: Bool = false
+    ) {
+        self.fill = fill
+        self.foreground = foreground
+        self.stroke = stroke
+        self.width = width
+        self.horizontalPadding = horizontalPadding
+        self.height = height
+        self.fixedHorizontal = fixedHorizontal
+    }
+}
+
 public enum PevDashboardStatusPillTone: Sendable, Equatable {
     case eucRide
     case vescRide
     case warning
+    case pickerSupported
+    case pickerUnavailable
 
-    fileprivate var fill: Color {
+    fileprivate var presentation: PevDashboardStatusPillPresentation {
         switch self {
-        case .eucRide: PevDashboardColors.green
-        case .vescRide: PevDashboardColors.purple
-        case .warning: PevDashboardColors.yellow
+        case .eucRide:
+            PevDashboardStatusPillPresentation(fill: PevDashboardColors.green)
+        case .vescRide:
+            PevDashboardStatusPillPresentation(fill: PevDashboardColors.purple)
+        case .warning:
+            PevDashboardStatusPillPresentation(fill: PevDashboardColors.yellow)
+        case .pickerSupported:
+            PevDashboardStatusPillPresentation(
+                fill: PevDashboardColors.yellow,
+                foreground: .black,
+                stroke: nil,
+                width: 76,
+                horizontalPadding: 10,
+                height: 38,
+                fixedHorizontal: true
+            )
+        case .pickerUnavailable:
+            PevDashboardStatusPillPresentation(
+                fill: PevDashboardColors.disabledFill,
+                foreground: PevDashboardColors.mutedText,
+                stroke: PevDashboardColors.cardStroke,
+                width: 64,
+                horizontalPadding: 8,
+                height: 30,
+                fixedHorizontal: true
+            )
         }
     }
 }
@@ -142,7 +195,7 @@ public struct PevDashboardStatusPill: View {
     let fixedHorizontal: Bool
     public private(set) var tone: PevDashboardStatusPillTone?
 
-    public init(
+    private init(
         title: String,
         fill: Color,
         foreground: Color = .black,
@@ -164,20 +217,24 @@ public struct PevDashboardStatusPill: View {
     }
 
     public init(title: String, tone: PevDashboardStatusPillTone) {
-        self.init(title: title, fill: tone.fill)
+        let presentation = tone.presentation
+        self.init(
+            title: title,
+            fill: presentation.fill,
+            foreground: presentation.foreground,
+            stroke: presentation.stroke,
+            width: presentation.width,
+            horizontalPadding: presentation.horizontalPadding,
+            height: presentation.height,
+            fixedHorizontal: presentation.fixedHorizontal
+        )
         self.tone = tone
     }
 
     public init(devicePickerState state: DevicePickerRowState) {
         self.init(
             title: state.actionTitle,
-            fill: state.isSupported ? PevDashboardColors.yellow : PevDashboardColors.disabledFill,
-            foreground: state.isSupported ? .black : PevDashboardColors.mutedText,
-            stroke: state.isSupported ? nil : PevDashboardColors.cardStroke,
-            width: state.isSupported ? 76 : 64,
-            horizontalPadding: state.isSupported ? 10 : 8,
-            height: state.isSupported ? 38 : 30,
-            fixedHorizontal: true
+            tone: state.isSupported ? .pickerSupported : .pickerUnavailable
         )
     }
 
