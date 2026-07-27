@@ -74,6 +74,8 @@ struct ManualPickerRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let row: DevicePickerRow
+    var accessibilityLabelText: String { row.title }
+    var accessibilityValueText: String { row.state.actionTitle }
 
     var body: some View {
         Group {
@@ -96,6 +98,9 @@ struct ManualPickerRow: View {
         .frame(maxWidth: .infinity)
         .background(PevDashboardCardBackground(cornerRadius: 24))
         .padding(.top, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabelText)
+        .accessibilityValue(accessibilityValueText)
     }
 
     private var title: some View {

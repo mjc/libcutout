@@ -172,6 +172,22 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testManualPickerRowKeepsItsTypedStatusInOneAccessibleElement() {
+        let row = DevicePickerRow(
+            id: "manual-1234",
+            title: "Add device later",
+            subtitle: "Manual entry",
+            detail: "Device 1234",
+            state: .manual(action: "Later"),
+            symbolName: "plus.circle"
+        )
+        let view = ManualPickerRow(row: row)
+
+        XCTAssertEqual(view.accessibilityLabelText, row.title)
+        XCTAssertEqual(view.accessibilityValueText, row.state.actionTitle)
+    }
+
+    @MainActor
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
