@@ -8,32 +8,12 @@ import AppKit
 
 private enum PevSystemColors {
     #if os(iOS)
-    static let pageBackground = Color(uiColor: .systemBackground)
-    static let disabledFill = pageBackground
-    static let yellow = Color(uiColor: .systemYellow)
-    static let cyan = Color(uiColor: .systemCyan)
-    static let green = Color(uiColor: .systemGreen)
-    static let orange = Color(uiColor: .systemOrange)
-    static let red = Color(uiColor: .systemRed)
-    static let teal = Color(uiColor: .systemTeal)
-    static let brown = Color(uiColor: .systemBrown)
-    static let purple = Color(uiColor: .systemPurple)
     static let brand = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
             ? UIColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
             : UIColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
     })
     #elseif os(macOS)
-    static let pageBackground = Color(nsColor: .windowBackgroundColor)
-    static let disabledFill = pageBackground
-    static let yellow = Color(nsColor: .systemYellow)
-    static let cyan = Color(nsColor: .systemCyan)
-    static let green = Color(nsColor: .systemGreen)
-    static let orange = Color(nsColor: .systemOrange)
-    static let red = Color(nsColor: .systemRed)
-    static let teal = Color(nsColor: .systemTeal)
-    static let brown = Color(nsColor: .systemBrown)
-    static let purple = Color(nsColor: .systemPurple)
     static let brand = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             ? NSColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
@@ -70,7 +50,7 @@ extension DevicePickerRow {
 enum PevColors {
     // Semantic system colors keep the visual hierarchy intact while honoring
     // the user's light/dark appearance and contrast settings.
-    static let pageBackground = PevSystemColors.pageBackground
+    static let pageBackground = PevDashboardColors.pageBackground
     static let cardFill = PevDashboardColors.cardFill
     static let cardStroke = PevDashboardColors.cardStroke
     static let disabledFill = PevDashboardColors.disabledFill
@@ -80,17 +60,17 @@ enum PevColors {
     static let muted = PevDashboardColors.mutedText
     static let brand = PevSystemColors.brand
     static let yellow = PevDashboardColors.yellow
-    static let cyan = PevSystemColors.cyan
+    static let cyan = PevDashboardColors.cyan
     static let green = PevDashboardColors.green
-    static let orange = PevSystemColors.orange
-    static let red = PevSystemColors.red
-    static let warningText = PevSystemColors.orange
-    static let warningFill = PevSystemColors.orange.opacity(0.14)
-    static let warningStroke = PevSystemColors.orange.opacity(0.55)
-    static let teal = PevSystemColors.teal
-    static let brown = PevSystemColors.brown
+    static let orange = PevDashboardColors.orange
+    static let red = PevDashboardColors.red
+    static let warningText = PevDashboardColors.orange
+    static let warningFill = PevDashboardColors.orange.opacity(0.14)
+    static let warningStroke = PevDashboardColors.orange.opacity(0.55)
+    static let teal = PevDashboardColors.teal
+    static let brown = PevDashboardColors.brown
     static let purple = PevDashboardColors.purple
-    static let iconFill = PevSystemColors.disabledFill
+    static let iconFill = PevDashboardColors.disabledFill
 }
 
 extension PevAccent {

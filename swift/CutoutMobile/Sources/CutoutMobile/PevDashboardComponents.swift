@@ -10,6 +10,11 @@ private enum PevSystemColors {
     static let pageBackground = Color(uiColor: .systemBackground)
     static let disabledFill = pageBackground
     static let yellow = Color(uiColor: .systemYellow)
+    static let cyan = Color(uiColor: .systemCyan)
+    static let orange = Color(uiColor: .systemOrange)
+    static let red = Color(uiColor: .systemRed)
+    static let teal = Color(uiColor: .systemTeal)
+    static let brown = Color(uiColor: .systemBrown)
     static let cardFill = Color(uiColor: .secondarySystemBackground)
     static let primaryText = Color(uiColor: .label)
     static let mutedText = Color(uiColor: .label)
@@ -24,6 +29,11 @@ private enum PevSystemColors {
     static let pageBackground = Color(nsColor: .windowBackgroundColor)
     static let disabledFill = pageBackground
     static let yellow = Color(nsColor: .systemYellow)
+    static let cyan = Color(nsColor: .systemCyan)
+    static let orange = Color(nsColor: .systemOrange)
+    static let red = Color(nsColor: .systemRed)
+    static let teal = Color(nsColor: .systemTeal)
+    static let brown = Color(nsColor: .systemBrown)
     static let cardFill = Color(nsColor: .underPageBackgroundColor)
     static let primaryText = Color(nsColor: .labelColor)
     static let mutedText = Color(nsColor: .labelColor)
@@ -34,8 +44,14 @@ private enum PevSystemColors {
 }
 
 public enum PevDashboardColors {
+    public static let pageBackground = PevSystemColors.pageBackground
     public static let disabledFill = PevSystemColors.disabledFill
     public static let yellow = PevSystemColors.yellow
+    public static let cyan = PevSystemColors.cyan
+    public static let orange = PevSystemColors.orange
+    public static let red = PevSystemColors.red
+    public static let teal = PevSystemColors.teal
+    public static let brown = PevSystemColors.brown
     public static let cardFill = PevSystemColors.cardFill
     public static let cardStroke = Color.secondary.opacity(0.35)
     public static let primaryText = PevSystemColors.primaryText
