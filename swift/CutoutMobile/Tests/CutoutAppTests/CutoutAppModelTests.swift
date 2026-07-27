@@ -14,6 +14,13 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(CaptureActionButtonTone.finish, .finish)
     }
 
+    func testRecordOnlyCaptureToneRequiresADeviceKind() {
+        XCTAssertEqual(CaptureRecordActionTone.forDeviceKind(""), .requiresDeviceKind)
+        XCTAssertFalse(CaptureRecordActionTone.requiresDeviceKind.isEnabled)
+        XCTAssertEqual(CaptureRecordActionTone.forDeviceKind("VESC"), .ready)
+        XCTAssertTrue(CaptureRecordActionTone.ready.isEnabled)
+    }
+
     func testCaptureQuickLabelsResolveCatalogTitlesForVisibleAndAccessibleActions() {
         for label in CaptureQuickLabel.allCases {
             XCTAssertFalse(label.title.hasPrefix("capture.label."))

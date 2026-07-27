@@ -96,6 +96,40 @@ struct DevicePickerView: View {
 
 }
 
+enum CaptureRecordActionTone: Equatable, Sendable {
+    case requiresDeviceKind
+    case ready
+
+    static func forDeviceKind(_ deviceKind: String) -> Self {
+        deviceKind.isEmpty ? .requiresDeviceKind : .ready
+    }
+
+    var isEnabled: Bool {
+        self == .ready
+    }
+
+    fileprivate var foreground: Color {
+        switch self {
+        case .requiresDeviceKind: PevColors.brand
+        case .ready: PevColors.yellow
+        }
+    }
+
+    fileprivate var fill: Color {
+        switch self {
+        case .requiresDeviceKind: PevColors.disabledFill
+        case .ready: PevColors.warningFill
+        }
+    }
+
+    fileprivate var stroke: Color {
+        switch self {
+        case .requiresDeviceKind: PevColors.cardStroke
+        case .ready: PevColors.warningStroke
+        }
+    }
+}
+
 private struct CaptureUnknownDeviceSheet: View {
     let sections: DevicePickerSections
     let recordOnly: (DevicePickerRow, String) -> Bool
@@ -166,31 +200,30 @@ private struct CaptureUnknownDeviceSheet: View {
     }
 
     private func captureButton(for row: DevicePickerRow) -> some View {
-        Button {
+        let tone = CaptureRecordActionTone.forDeviceKind(trimmedDeviceKind)
+        return Button {
             if recordOnly(row, trimmedDeviceKind) {
                 dismiss()
             }
         } label: {
             Label(row.captureActionTitle, systemImage: "record.circle")
                 .font(.callout.weight(.bold))
-                .foregroundStyle(hasDeviceKind ? PevColors.yellow : PevColors.brand)
+                .foregroundStyle(tone.foreground)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(
                     PevDashboardCardBackground(
                         cornerRadius: 8,
-                        fill: hasDeviceKind ? PevColors.warningFill : PevColors.disabledFill,
-                        stroke: hasDeviceKind ? PevColors.warningStroke : PevColors.cardStroke
+                        fill: tone.fill,
+                        stroke: tone.stroke
                     )
                 )
         }
         .buttonStyle(.plain)
-        .disabled(!hasDeviceKind)
+        .disabled(!tone.isEnabled)
         .accessibilityLabel(row.captureActionAccessibilityLabel)
-        .accessibilityHint(hasDeviceKind ? "" : localizedAppText("picker.capture_kind_required_hint"))
+        .accessibilityHint(tone.isEnabled ? "" : localizedAppText("picker.capture_kind_required_hint"))
         .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
-
-    private var hasDeviceKind: Bool { !trimmedDeviceKind.isEmpty }
 
     private var trimmedDeviceKind: String {
         deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
