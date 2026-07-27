@@ -659,6 +659,10 @@
       "comment" : "VoiceOver status-strip severity for a condition that needs immediate attention.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "critical" } } }
     },
+    "status.accessibility.warning" : {
+      "comment" : "VoiceOver status-pill severity for a caution that needs attention.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "warning" } } }
+    },
     "tab.debug" : {
       "comment" : "Bottom navigation tab for diagnostics.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }

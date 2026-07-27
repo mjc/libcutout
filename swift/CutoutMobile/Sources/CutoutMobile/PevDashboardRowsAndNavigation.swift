@@ -180,6 +180,13 @@ public enum PevDashboardStatusPillTone: Sendable, Equatable {
             )
         }
     }
+
+    var accessibilityValueText: String {
+        switch self {
+        case .warning: pevLocalizedText("status.accessibility.warning")
+        case .eucRide, .vescRide, .pickerSupported, .pickerUnavailable: ""
+        }
+    }
 }
 
 public struct PevDashboardStatusPill: View {
@@ -194,6 +201,7 @@ public struct PevDashboardStatusPill: View {
     let height: CGFloat
     let fixedHorizontal: Bool
     public private(set) var tone: PevDashboardStatusPillTone?
+    var accessibilityValueText: String { tone?.accessibilityValueText ?? "" }
 
     private init(
         title: String,
@@ -258,6 +266,9 @@ public struct PevDashboardStatusPill: View {
                         )
                     )
             )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue(accessibilityValueText)
     }
 }
 

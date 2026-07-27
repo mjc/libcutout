@@ -191,6 +191,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(euc.tone, .eucRide)
         XCTAssertEqual(vesc.tone, .vescRide)
         XCTAssertEqual(warning.tone, .warning)
+        XCTAssertEqual(warning.accessibilityValueText, "warning")
         XCTAssertEqual(euc.height, 30)
         XCTAssertEqual(vesc.height, 30)
         XCTAssertEqual(warning.height, 30)
