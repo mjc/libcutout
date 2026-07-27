@@ -29,6 +29,11 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
             value: fileSize
         ),
         PevDashboardKeyValueRow(
+            id: "capture-queued-messages",
+            label: localizedAppText("capture.detail.pending_writes"),
+            value: progress.queuedMessageCount.formatted()
+        ),
+        PevDashboardKeyValueRow(
             id: "capture-writer-health",
             label: localizedAppText("capture.detail.writer"),
             value: writerHealth

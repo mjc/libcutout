@@ -592,8 +592,16 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(
             healthyRows.map(\.id),
-            ["capture-elapsed", "capture-packets", "capture-file-size", "capture-writer-health"]
+            [
+                "capture-elapsed",
+                "capture-packets",
+                "capture-file-size",
+                "capture-queued-messages",
+                "capture-writer-health",
+            ]
         )
+        XCTAssertEqual(healthyRows[3].label, "Pending writes")
+        XCTAssertEqual(healthyRows[3].accessibilityValueText, "0")
         XCTAssertEqual(healthyRows.last?.label, "Writer")
         XCTAssertEqual(healthyRows.last?.accessibilityValueText, "Healthy")
         XCTAssertEqual(failedRows.last?.accessibilityValueText, "Failed")

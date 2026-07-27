@@ -497,6 +497,10 @@
       "comment" : "Capture session detail label for recorded Bluetooth notification packets.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Packets" } } }
     },
+    "capture.detail.pending_writes" : {
+      "comment" : "Capture session detail label for Bluetooth notifications queued for the capture writer.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending writes" } } }
+    },
     "capture.detail.writer" : {
       "comment" : "Capture session detail label for the writer health state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writer" } } }
