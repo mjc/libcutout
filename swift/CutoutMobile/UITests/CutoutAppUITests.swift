@@ -118,6 +118,8 @@ final class CutoutAppUITests: XCTestCase {
         finish.tap()
 
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(picker.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].isHittable)
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenVisible() {
@@ -130,7 +132,13 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         finish.tap()
 
+        let failure = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Capture failed"),
+            object: status
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [failure], timeout: 5), .completed)
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        XCTAssertTrue(capture.isHittable)
         XCTAssertTrue(finish.exists)
         XCTAssertEqual(status.label, "Capture failed")
     }
