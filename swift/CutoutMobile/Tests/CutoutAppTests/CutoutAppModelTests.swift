@@ -3,6 +3,14 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppModelTests: XCTestCase {
+    private static let priorCaptureProgress = CaptureProgress(
+        elapsedMilliseconds: 63_000,
+        notificationCount: 42,
+        fileSizeBytes: 12_288,
+        queuedMessageCount: 0,
+        writerError: nil
+    )
+
     func testCaptureQuickLabelProvidesOneStatefulActionName() {
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
@@ -595,21 +603,25 @@ final class CutoutAppModelTests: XCTestCase {
     func testNewRecordOnlyCaptureClearsPriorSessionStatusBeforeCoreEvents() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")
+        let priorProgress = Self.priorCaptureProgress
 
         model.applyCaptureEvent(.started(fileURL: priorCapture))
-        model.applyCaptureEvent(.notificationRecorded)
+        model.applyCaptureEvent(.progress(priorProgress))
         model.startCaptureLabel(.ride)
-        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 1, fileName: "prior.cutout"))
+        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(model.captureProgress, priorProgress)
         XCTAssertEqual(model.activeCaptureLabels, [.ride])
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
-        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 1, fileName: "prior.cutout"))
+        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(model.captureProgress, priorProgress)
         XCTAssertEqual(model.activeCaptureLabels, [.ride])
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
 
         XCTAssertNil(model.captureStatus)
         XCTAssertNil(model.captureStatusText)
+        XCTAssertNil(model.captureProgress)
         XCTAssertTrue(model.activeCaptureLabels.isEmpty)
     }
 
@@ -617,14 +629,16 @@ final class CutoutAppModelTests: XCTestCase {
     func testRejectedRecordOnlyCapturePreservesTheExistingSession() {
         let model = CutoutAppModel()
         let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")
+        let priorProgress = Self.priorCaptureProgress
 
         model.applyCaptureEvent(.started(fileURL: priorCapture))
-        model.applyCaptureEvent(.notificationRecorded)
+        model.applyCaptureEvent(.progress(priorProgress))
         model.startCaptureLabel(.ride)
 
         XCTAssertFalse(model.recordOnly(platformIdentifier: "missing-device", deviceKind: "Unknown device"))
 
-        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 1, fileName: "prior.cutout"))
+        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 42, fileName: "prior.cutout"))
+        XCTAssertEqual(model.captureProgress, priorProgress)
         XCTAssertEqual(model.activeCaptureLabels, [.ride])
     }
 
