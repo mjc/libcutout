@@ -1,20 +1,32 @@
 import SwiftUI
 
+public enum PevStatusStripTone: Sendable, Equatable {
+    case nominal
+    case critical
+
+    var indicatorColor: Color {
+        switch self {
+        case .nominal: PevDashboardColors.nominal
+        case .critical: PevDashboardColors.red
+        }
+    }
+}
+
 public struct PevStatusStrip: View {
     let text: String
-    let isFailure: Bool
+    public let tone: PevStatusStripTone
 
     var accessibilityLabelText: String { text }
 
-    public init(text: String, isFailure: Bool = false) {
+    public init(text: String, tone: PevStatusStripTone = .nominal) {
         self.text = text
-        self.isFailure = isFailure
+        self.tone = tone
     }
 
     public var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(isFailure ? PevDashboardColors.red : PevDashboardColors.nominal)
+                .fill(tone.indicatorColor)
                 .frame(width: 10, height: 10)
                 .accessibilityHidden(true)
             Text(text)

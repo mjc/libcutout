@@ -158,9 +158,10 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     }
 
     func testStatusStripUsesVisibleTextAsItsAccessibilityLabel() {
-        let strip = PevStatusStrip(text: "Saved capture")
+        let strip = PevStatusStrip(text: "Saved capture", tone: .critical)
 
         XCTAssertEqual(strip.accessibilityLabelText, "Saved capture")
+        XCTAssertEqual(strip.tone, .critical)
     }
 
     func testPickerStateBuildsItsSharedStatusPill() {

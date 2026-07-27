@@ -80,7 +80,7 @@ struct CaptureRecordingScreen: View {
                     table: "Localizable",
                     bundle: appLocalizationBundle
                 ),
-                isFailure: isCaptureFailure
+                tone: isCaptureFailure ? .critical : .nominal
             )
             .accessibilityIdentifier("capture.status")
 
