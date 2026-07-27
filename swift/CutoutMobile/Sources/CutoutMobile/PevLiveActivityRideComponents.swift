@@ -21,6 +21,7 @@ private enum PevLiveActivitySystemColors {
     static let accent2 = Color(uiColor: .systemPink)
     static let connected = Color(uiColor: .systemGreen)
     static let warning = Color(uiColor: .systemOrange)
+    static let critical = Color(uiColor: .systemRed)
     static let orange = Color(uiColor: .systemOrange)
     #elseif os(macOS)
     static let background = Color(nsColor: .windowBackgroundColor)
@@ -28,6 +29,7 @@ private enum PevLiveActivitySystemColors {
     static let accent2 = Color(nsColor: .systemPink)
     static let connected = Color(nsColor: .systemGreen)
     static let warning = Color(nsColor: .systemOrange)
+    static let critical = Color(nsColor: .systemRed)
     static let orange = Color(nsColor: .systemOrange)
     #endif
 }
@@ -159,6 +161,83 @@ public struct PevLiveActivitySpeedGauge: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(speed.label)
         .accessibilityValue(speed.accessibilityValue)
+    }
+}
+
+public struct PevLiveActivityCompactPwmBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let snapshot: LiveActivityRideSnapshot
+
+    public init(snapshot: LiveActivityRideSnapshot) {
+        self.snapshot = snapshot
+    }
+
+    nonisolated static func shouldPulse(severity: LiveActivityRidePwmSeverity, reduceMotion: Bool) -> Bool {
+        severity == .critical && !reduceMotion
+    }
+
+    public var body: some View {
+        let speed = LiveActivityRideValue.speedPresentation(for: snapshot.speed)
+        let pwm = snapshot.pwm
+        let severity = snapshot.pwmSeverity
+
+        GeometryReader { proxy in
+            ZStack {
+                Capsule()
+                    .fill(PevLiveActivityPalette.track)
+                pwmFill(width: proxy.size.width, pwm: pwm, severity: severity)
+                HStack(spacing: 3) {
+                    Text(speed.displayValue)
+                        .font(.caption.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    if let unit = speed.unit {
+                        Text(unit)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                    if severity == .critical {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption2.weight(.bold))
+                            .accessibilityHidden(true)
+                    }
+                }
+                .foregroundStyle(PevLiveActivityPalette.primaryText)
+            }
+        }
+        .frame(width: 86, height: 28)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(speed.label)
+        .accessibilityValue(
+            [speed.accessibilityValue, pwm.label, pwm.accessibilityValue, severity.accessibilityDescription]
+                .compactMap { $0 }
+                .joined(separator: ", ")
+        )
+    }
+
+    @ViewBuilder
+    private func pwmFill(
+        width: CGFloat,
+        pwm: LiveActivityRideValue,
+        severity: LiveActivityRidePwmSeverity
+    ) -> some View {
+        let fill = Capsule()
+            .fill(severity == .critical ? PevLiveActivityPalette.critical : PevLiveActivityPalette.accent)
+            .frame(width: width * (pwm.progressValue ?? 0), alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipShape(.capsule)
+
+        if Self.shouldPulse(severity: severity, reduceMotion: reduceMotion) {
+            PhaseAnimator([0, 1]) { phase in
+                fill.opacity(phase == 0 ? 1 : 0.55)
+            } animation: { _ in
+                .easeInOut(duration: 0.5)
+            }
+        } else {
+            fill
+        }
     }
 }
 
@@ -333,5 +412,6 @@ public enum PevLiveActivityPalette {
     public static let accent2 = PevLiveActivitySystemColors.accent2
     public static let connected = PevLiveActivitySystemColors.connected
     public static let warning = PevLiveActivitySystemColors.warning
+    public static let critical = PevLiveActivitySystemColors.critical
     public static let orange = PevLiveActivitySystemColors.orange
 }

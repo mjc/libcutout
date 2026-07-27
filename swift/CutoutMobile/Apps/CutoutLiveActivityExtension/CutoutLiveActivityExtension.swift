@@ -60,19 +60,23 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     DynamicIslandRideActivityView(snapshot: context.presentationSnapshot)
                 }
             } compactLeading: {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 4) {
-                        PevLiveActivityBrandMark(size: 18)
+                if context.presentationSnapshot.showsCompactPwmBar {
+                    PevLiveActivityCompactPwmBar(snapshot: context.presentationSnapshot)
+                } else {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 4) {
+                            PevLiveActivityBrandMark(size: 18)
+                            Text(context.presentationSnapshot.speed.displayValue)
+                                .font(.caption.weight(.bold))
+                        }
                         Text(context.presentationSnapshot.speed.displayValue)
                             .font(.caption.weight(.bold))
                     }
-                    Text(context.presentationSnapshot.speed.displayValue)
-                        .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(context.presentationSnapshot.speed.label)
+                    .accessibilityValue(context.presentationSnapshot.speed.accessibilityValue)
                 }
-                .frame(maxWidth: .infinity)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(context.presentationSnapshot.speed.label)
-                .accessibilityValue(context.presentationSnapshot.speed.accessibilityValue)
             } compactTrailing: {
                 HStack(spacing: 4) {
                     if context.presentationSnapshot.headroomSeverity == .reduceAcceleration {

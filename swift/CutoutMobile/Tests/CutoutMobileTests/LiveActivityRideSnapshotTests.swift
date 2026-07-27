@@ -654,6 +654,42 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertEqual(values.map { $0.0.progressValue }, values.map(\.1))
     }
 
+    func testPwmPresentationUsesDutyAndAStrictCriticalThreshold() {
+        let values: [(LiveActivityRideValue, LiveActivityRidePwmSeverity)] = [
+            (.available(label: "PWM", value: "80", unit: "%", normalizedProgress: 0.80, source: .liveTelemetry), .nominal),
+            (.available(label: "PWM", value: "81", unit: "%", normalizedProgress: 0.801, source: .liveTelemetry), .critical),
+            (.available(label: "PWM", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry), .critical),
+            (.unavailable(label: "PWM", unit: "%"), .unavailable),
+        ]
+
+        XCTAssertEqual(values.map { LiveActivityRidePwmSeverity(pwm: $0.0) }, values.map(\.1))
+        XCTAssertEqual(LiveActivityRidePwmSeverity.criticalThreshold, 0.80)
+    }
+
+    func testVescCompactIslandPwmBarUsesDutyAndRespectsReduceMotion() {
+        let snapshot = LiveActivityRideSnapshot(
+            identity: .device("VESC BLE UART"),
+            glyph: .floatwheelAtom,
+            rideState: liveRideState(
+                speed: 12_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 12_000),
+                    operatingState: .riding,
+                    pwm: DutyCycle(permille: 810)
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+
+        XCTAssertTrue(snapshot.showsCompactPwmBar)
+        XCTAssertEqual(snapshot.pwmSeverity, .critical)
+        XCTAssertEqual(snapshot.pwm.progressValue, 0.81)
+        XCTAssertEqual(snapshot.pwmSeverity.accessibilityDescription, "critical PWM")
+        XCTAssertTrue(PevLiveActivityCompactPwmBar.shouldPulse(severity: .critical, reduceMotion: false))
+        XCTAssertFalse(PevLiveActivityCompactPwmBar.shouldPulse(severity: .critical, reduceMotion: true))
+    }
+
     func testSpeedGaugeProgressComesFromTypedNumericState() {
         let values: [(LiveActivityRideValue, Double?)] = [
             (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.5, source: .liveTelemetry), 0.5),

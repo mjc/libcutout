@@ -285,6 +285,26 @@ public enum LiveActivityRideHeadroomSeverity: String, Codable, Equatable, Hashab
     case notApplicable
 }
 
+public enum LiveActivityRidePwmSeverity: String, Codable, Equatable, Hashable, Sendable {
+    case nominal
+    case critical
+    case unavailable
+
+    public static let criticalThreshold = 0.80
+
+    public init(pwm: LiveActivityRideValue) {
+        guard let usage = pwm.progressValue else {
+            self = .unavailable
+            return
+        }
+        self = usage > Self.criticalThreshold ? .critical : .nominal
+    }
+
+    public var accessibilityDescription: String? {
+        self == .critical ? localizedLiveActivityText("live_activity.pwm.critical") : nil
+    }
+}
+
 public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     public let identity: LiveActivityRideIdentity
     public let glyph: LiveActivityRideGlyph
@@ -393,6 +413,14 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
 
     public var compactTrailingValue: LiveActivityRideValue {
         headroomSeverity == .reduceAcceleration ? headroom : battery
+    }
+
+    public var pwmSeverity: LiveActivityRidePwmSeverity {
+        LiveActivityRidePwmSeverity(pwm: pwm)
+    }
+
+    public var showsCompactPwmBar: Bool {
+        glyph == .floatwheelAtom && pwm.progressValue != nil
     }
 
     public static var activityAccessibilityLabel: String {

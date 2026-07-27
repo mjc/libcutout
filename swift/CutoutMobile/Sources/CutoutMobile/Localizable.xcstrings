@@ -523,6 +523,10 @@
       "comment" : "Live Activity metric label for pulse-width modulation.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM" } } }
     },
+    "live_activity.pwm.critical" : {
+      "comment" : "VoiceOver safety warning when PWM duty is above the critical threshold.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "critical PWM" } } }
+    },
     "live_activity.label.speed" : {
       "comment" : "Live Activity metric label.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed" } } }
