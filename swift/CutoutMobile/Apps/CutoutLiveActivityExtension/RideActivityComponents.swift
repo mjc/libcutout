@@ -49,26 +49,23 @@ struct LockScreenRideActivityView: View {
     let snapshot: LiveActivityRideSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            PevLiveActivityHeader(snapshot: snapshot, compact: true)
-            ViewThatFits(in: .vertical) {
-                PevLiveActivitySpeedReadout(
-                    snapshot: snapshot,
-                    speedFontSize: 96,
-                    unitFontSize: 16
-                )
-                PevLiveActivitySpeedReadout(
-                    snapshot: snapshot,
-                    speedFontSize: 82,
-                    unitFontSize: 14
-                )
+        VStack(alignment: .leading, spacing: 7) {
+            PevLiveActivityHeader(snapshot: snapshot, compact: false)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 106)
+                    PevLiveActivityMetricGrid(snapshot: snapshot, compact: true)
+                        .frame(maxWidth: .infinity)
+                        .layoutPriority(1)
+                }
+
+                PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 106)
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
-            .layoutPriority(1)
             PevLiveActivitySafetyFooter(snapshot: snapshot, compact: false)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
         .foregroundStyle(PevLiveActivityPalette.primaryText)
         .accessibilityElement(children: .contain)
