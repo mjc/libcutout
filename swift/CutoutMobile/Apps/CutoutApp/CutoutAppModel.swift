@@ -549,7 +549,7 @@ final class CutoutAppModel {
 
     private func handleReconnectScheduled(_ retry: SessionConnectionRetry) {
         guard
-            let selection = connectionState.selection,
+            case let .connecting(selection, _) = connectionState,
             selection.platformIdentifier == retry.platformIdentifier
         else { return }
         connectionState = .retrying(selection, retry: retry)
