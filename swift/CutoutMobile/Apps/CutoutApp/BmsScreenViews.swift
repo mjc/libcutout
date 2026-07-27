@@ -38,7 +38,10 @@ struct BmsScreenView: View {
                 VStack(spacing: 0) {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 14) {
-                            header
+                            PevScreenTitleBlock(
+                                title: screen.title,
+                                subtitle: localizedAppText("bms.screen.subtitle")
+                            )
                             chipRow
                             contentSection()
                             if let bmsSnapshot, bmsSnapshot.shouldRenderReadback {
@@ -78,10 +81,6 @@ struct BmsScreenView: View {
         case .noData:
             EmptyView()
         }
-    }
-
-    private var header: some View {
-        PevScreenTitleBlock(title: screen.title, subtitle: localizedAppText("bms.screen.subtitle"))
     }
 
     private var chipRow: some View {

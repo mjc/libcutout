@@ -7,19 +7,15 @@ struct BmsNoDataHeader: View {
     var body: some View {
         ViewThatFits(in: .horizontal) {
             HStack(alignment: .top, spacing: 12) {
-                titleBlock
+                PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle)
                 Spacer(minLength: 0)
                 PevDashboardStatusPill(title: screen.secondaryValue, fill: PevColors.yellow)
             }
             VStack(alignment: .leading, spacing: 10) {
-                titleBlock
+                PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle)
                 PevDashboardStatusPill(title: screen.secondaryValue, fill: PevColors.yellow)
             }
         }
-    }
-
-    private var titleBlock: some View {
-        PevScreenTitleBlock(title: screen.title, subtitle: screen.subtitle)
     }
 }
 
