@@ -122,7 +122,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].isHittable)
     }
 
-    func testFinishCaptureFailureKeepsCaptureScreenVisible() {
+    func testFinishCaptureFailureKeepsCaptureScreenVisible() throws {
         enterCapture()
 
         let finish = app.buttons["capture.stop"]
@@ -141,6 +141,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(capture.isHittable)
         XCTAssertTrue(finish.exists)
         XCTAssertEqual(status.label, "Capture failed")
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {
