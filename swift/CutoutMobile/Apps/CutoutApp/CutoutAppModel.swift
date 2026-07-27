@@ -528,6 +528,9 @@ final class CutoutAppModel {
         if case .live = phase {
             guard case .connecting(_, phase: .subscribing) = connectionState else { return }
         }
+        if case .failed = phase {
+            guard connectionState.selection != nil else { return }
+        }
         if case .failed = connectionState {
             switch phase {
             case .connecting, .discoveringServices, .subscribing, .live:

@@ -548,6 +548,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         driver.onPhaseChange?(.live)
+        driver.onPhaseChange?(.failed(.connectFailed("timed out")))
 
         XCTAssertEqual(model.phase, .scanning)
         XCTAssertNil(model.selectedRideTitle)
