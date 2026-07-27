@@ -64,9 +64,9 @@ enum PevColors {
     static let green = PevDashboardColors.green
     static let orange = PevDashboardColors.orange
     static let red = PevDashboardColors.red
-    static let warningText = PevDashboardColors.orange
-    static let warningFill = PevDashboardColors.orange.opacity(0.14)
-    static let warningStroke = PevDashboardColors.orange.opacity(0.55)
+    static let warningText = PevDashboardColors.warningText
+    static let warningFill = PevDashboardColors.warningFill
+    static let warningStroke = PevDashboardColors.warningStroke
     static let teal = PevDashboardColors.teal
     static let brown = PevDashboardColors.brown
     static let purple = PevDashboardColors.purple

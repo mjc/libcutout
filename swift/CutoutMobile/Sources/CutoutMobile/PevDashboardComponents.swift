@@ -52,6 +52,9 @@ public enum PevDashboardColors {
     public static let red = PevSystemColors.red
     public static let teal = PevSystemColors.teal
     public static let brown = PevSystemColors.brown
+    public static let warningText = orange
+    public static let warningFill = orange.opacity(0.14)
+    public static let warningStroke = orange.opacity(0.55)
     public static let cardFill = PevSystemColors.cardFill
     public static let cardStroke = Color.secondary.opacity(0.35)
     public static let primaryText = PevSystemColors.primaryText
