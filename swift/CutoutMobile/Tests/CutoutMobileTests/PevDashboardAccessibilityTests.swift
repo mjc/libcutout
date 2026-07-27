@@ -146,6 +146,17 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(card.accessibilityValueText, "Retrying in 5 seconds")
     }
 
+    func testWarningToneOwnsTheObservedVescPresentation() {
+        let card = PevDashboardWarningCard(
+            title: "Telemetry pending",
+            detail: "Waiting for the first sample",
+            tone: .vesc
+        )
+
+        XCTAssertEqual(card.tone, .vesc)
+        XCTAssertEqual(card.cornerRadius, 24)
+    }
+
     func testStatusStripUsesVisibleTextAsItsAccessibilityLabel() {
         let strip = PevStatusStrip(text: "Saved capture")
 

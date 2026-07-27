@@ -226,11 +226,7 @@ struct VescRideScreenView: View {
                 PevDashboardWarningCard(
                     title: localizedAppText("vesc.subtitle.telemetry_pending"),
                     detail: localizedAppText("vesc.telemetry_pending.detail"),
-                    accent: PevColors.purple,
-                    detailColor: PevColors.primaryText,
-                    fill: PevColors.purple.opacity(0.18),
-                    stroke: PevColors.purple.opacity(0.55),
-                    cornerRadius: 24
+                    tone: .vesc
                 )
                     .padding(.top, 12)
             }
@@ -239,11 +235,7 @@ struct VescRideScreenView: View {
                 PevDashboardWarningCard(
                     title: warningCard.title,
                     detail: warningCard.detail,
-                    accent: PevColors.purple,
-                    detailColor: PevColors.primaryText,
-                    fill: PevColors.purple.opacity(0.18),
-                    stroke: PevColors.purple.opacity(0.55),
-                    cornerRadius: 24
+                    tone: .vesc
                 )
                     .padding(.top, 10)
             }

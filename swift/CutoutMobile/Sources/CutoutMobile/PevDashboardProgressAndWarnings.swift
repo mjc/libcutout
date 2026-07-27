@@ -104,6 +104,26 @@ public struct PevDashboardProgressCard: View {
     }
 }
 
+public enum PevDashboardWarningCardTone: Sendable, Equatable {
+    case vesc
+
+    fileprivate var accent: Color {
+        PevDashboardColors.purple
+    }
+
+    fileprivate var fill: Color {
+        PevDashboardColors.purple.opacity(0.18)
+    }
+
+    fileprivate var stroke: Color {
+        PevDashboardColors.purple.opacity(0.55)
+    }
+
+    fileprivate var cornerRadius: CGFloat {
+        24
+    }
+}
+
 public struct PevDashboardWarningCard: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
@@ -115,6 +135,7 @@ public struct PevDashboardWarningCard: View {
     let fill: Color
     let stroke: Color
     let cornerRadius: CGFloat
+    public private(set) var tone: PevDashboardWarningCardTone?
 
     var accessibilityValueText: String { detail }
 
@@ -139,6 +160,20 @@ public struct PevDashboardWarningCard: View {
         self.fill = fill
         self.stroke = stroke
         self.cornerRadius = cornerRadius
+        tone = nil
+    }
+
+    public init(title: String, detail: String, tone: PevDashboardWarningCardTone) {
+        self.init(
+            title: title,
+            detail: detail,
+            accent: tone.accent,
+            detailColor: PevDashboardColors.primaryText,
+            fill: tone.fill,
+            stroke: tone.stroke,
+            cornerRadius: tone.cornerRadius
+        )
+        self.tone = tone
     }
 
     public var body: some View {
