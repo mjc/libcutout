@@ -165,8 +165,7 @@ public enum PevDashboardStatusPillTone: Sendable, Equatable {
                 stroke: nil,
                 width: 76,
                 horizontalPadding: 10,
-                height: 38,
-                fixedHorizontal: true
+                height: 38
             )
         case .pickerUnavailable:
             PevDashboardStatusPillPresentation(
@@ -175,8 +174,7 @@ public enum PevDashboardStatusPillTone: Sendable, Equatable {
                 stroke: PevDashboardColors.cardStroke,
                 width: 64,
                 horizontalPadding: 8,
-                height: 30,
-                fixedHorizontal: true
+                height: 30
             )
         }
     }

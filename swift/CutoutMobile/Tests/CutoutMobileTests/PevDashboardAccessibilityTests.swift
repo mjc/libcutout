@@ -177,10 +177,12 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(supported.tone, .pickerSupported)
         XCTAssertEqual(supported.width, 76)
         XCTAssertEqual(supported.height, 38)
+        XCTAssertFalse(supported.fixedHorizontal)
         XCTAssertEqual(unsupported.title, "Unavailable")
         XCTAssertEqual(unsupported.tone, .pickerUnavailable)
         XCTAssertEqual(unsupported.width, 64)
         XCTAssertEqual(unsupported.height, 30)
+        XCTAssertFalse(unsupported.fixedHorizontal)
     }
 
     func testStatusPillTonePreservesRideAndWarningSemantics() {
