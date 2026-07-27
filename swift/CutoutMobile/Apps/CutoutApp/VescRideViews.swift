@@ -114,7 +114,7 @@ struct VescRideScreenView: View {
                     let text = RideUnits.voltageText(millivolts: voltage.value)
                     return .available(display: text, accessibility: text)
                 } ?? .unavailable,
-                unit: "V",
+                unit: RideUnits.voltageUnit,
                 detail: batteryDetail,
                 accent: .yellow
             ),
@@ -125,7 +125,7 @@ struct VescRideScreenView: View {
                     let text = RideUnits.currentText(milliamps: current.value)
                     return .available(display: text, accessibility: text)
                 } ?? .unavailable,
-                unit: "A",
+                unit: RideUnits.currentUnit,
                 detail: motorCurrentDetail,
                 accent: .orange
             ),
@@ -136,7 +136,7 @@ struct VescRideScreenView: View {
                     let text = RideUnits.angleText(millidegrees: angle.value)
                     return .available(display: text, accessibility: text)
                 } ?? .unavailable,
-                unit: "°",
+                unit: RideUnits.angleUnit,
                 detail: boardAngleDetail ?? localizedAppText("vesc.board_angle.unavailable"),
                 accent: .cyan
             ),
@@ -147,7 +147,7 @@ struct VescRideScreenView: View {
                     let text = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
                     return .available(display: text, accessibility: text)
                 } ?? .unavailable,
-                unit: "°C",
+                unit: RideUnits.temperatureUnit,
                 detail: liveSnapshot.motorTemperature.map {
                     localizedAppText(
                         "vesc.motor_temperature.available",

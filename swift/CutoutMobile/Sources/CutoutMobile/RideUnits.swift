@@ -4,7 +4,11 @@ public enum RideUnits {
     public static let speedUnit = "mph"
     public static let distanceUnitImperial = "mi"
     public static let distanceUnitMetric = "km"
+    public static let voltageUnit = "V"
+    public static let currentUnit = "A"
+    public static let angleUnit = "°"
     public static let temperatureUnit = "°C"
+    public static let percentUnit = "%"
 
     private static let milesPerHourPerMillimeterPerSecond = 0.002_236_936_292_054_4
 

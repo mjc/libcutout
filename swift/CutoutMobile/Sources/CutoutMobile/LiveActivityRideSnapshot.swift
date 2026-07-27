@@ -547,7 +547,7 @@ extension LiveActivityRideSnapshot {
             return value(
                 label: localizedLiveActivityText("live_activity.label.battery"),
                 value: percentageString(fromPercent: reported.value),
-                unit: "%",
+                unit: RideUnits.percentUnit,
                 normalizedProgress: Double(reported.value) / 100,
                 source: .liveTelemetry,
                 connectionState: connectionState
@@ -559,12 +559,12 @@ extension LiveActivityRideSnapshot {
                 value(
                     label: localizedLiveActivityText("live_activity.label.battery"),
                     value: percentageString(fromPercent: $0.value),
-                    unit: "%",
+                    unit: RideUnits.percentUnit,
                     normalizedProgress: Double($0.value) / 100,
                     source: .derivedTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.battery"), unit: "%")
+            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.battery"), unit: RideUnits.percentUnit)
     }
 
     static func voltageValue(
@@ -576,11 +576,11 @@ extension LiveActivityRideSnapshot {
                 value(
                     label: localizedLiveActivityText("live_activity.label.voltage"),
                     value: decimalString(fromMillivolts: $0.value, fractionDigits: 1),
-                    unit: "V",
+                    unit: RideUnits.voltageUnit,
                     source: .liveTelemetry,
                     connectionState: connectionState
                 )
-            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.voltage"), unit: "V")
+            } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.voltage"), unit: RideUnits.voltageUnit)
     }
 
     static func pwmValue(
@@ -594,14 +594,14 @@ extension LiveActivityRideSnapshot {
                     value(
                         label: localizedLiveActivityText("live_activity.label.pwm"),
                         value: percentageString(fromPermille: abs($0.permille)),
-                        unit: "%",
+                        unit: RideUnits.percentUnit,
                         normalizedProgress: Double(abs(Int($0.permille))) / 1_000,
                         source: .liveTelemetry,
                         connectionState: connectionState
                     )
-                } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: "%")
+                } ?? .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: RideUnits.percentUnit)
         case .unavailable:
-            return .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: "%")
+            return .unavailable(label: localizedLiveActivityText("live_activity.label.pwm"), unit: RideUnits.percentUnit)
         case .notApplicable:
             return .notApplicable(label: localizedLiveActivityText("live_activity.label.pwm"))
         }

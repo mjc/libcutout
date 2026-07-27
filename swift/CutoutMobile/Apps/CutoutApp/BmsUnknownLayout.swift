@@ -25,7 +25,7 @@ struct BmsUnknownLayout: View {
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.reported_voltage"),
                     metricValue: bmsVoltageMetricValue(snapshot.voltage),
-                    unit: "V",
+                    unit: RideUnits.voltageUnit,
                     detail: snapshot.unknownTopologyVoltageDetail
                 )
                 PevDashboardMetricTile(

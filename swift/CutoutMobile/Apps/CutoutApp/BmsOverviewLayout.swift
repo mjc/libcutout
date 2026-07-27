@@ -19,7 +19,7 @@ struct BmsOverviewLayout: View {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.average_group"),
                             metricValue: bmsVoltageMetricValue(averageGroupVoltage),
-                            unit: "V",
+                            unit: RideUnits.voltageUnit,
                             detail: ""
                         )
                     }
@@ -27,7 +27,7 @@ struct BmsOverviewLayout: View {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.lowest_group"),
                             metricValue: bmsVoltageMetricValue(lowestGroupVoltage),
-                            unit: "V",
+                            unit: RideUnits.voltageUnit,
                             detail: snapshot.lowestGroupLabel ?? ""
                         )
                     }
@@ -38,7 +38,7 @@ struct BmsOverviewLayout: View {
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.overview.highest_temperature"),
                     metricValue: bmsTemperatureMetricValue(snapshot.highestTemperature),
-                    unit: "°C",
+                    unit: RideUnits.temperatureUnit,
                     detail: snapshot.highestTemperatureLabel ?? ""
                 )
             }

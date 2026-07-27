@@ -151,9 +151,9 @@ struct BmsNoDataTelemetryCard: View {
                 columns: [GridItem(.adaptive(minimum: 100), spacing: 18)],
                 spacing: 18
             ) {
-                BmsNoDataMetric(metricValue: voltageMetricValue, unit: "V", label: localizedAppText("bms.no_data.pack_voltage"))
-                BmsNoDataMetric(metricValue: rideSagMetricValue, unit: "V", label: localizedAppText("bms.no_data.ride_sag"))
-                BmsNoDataMetric(metricValue: loadMetricValue, unit: "A", label: localizedAppText("bms.no_data.load_now"))
+                BmsNoDataMetric(metricValue: voltageMetricValue, unit: RideUnits.voltageUnit, label: localizedAppText("bms.no_data.pack_voltage"))
+                BmsNoDataMetric(metricValue: rideSagMetricValue, unit: RideUnits.voltageUnit, label: localizedAppText("bms.no_data.ride_sag"))
+                BmsNoDataMetric(metricValue: loadMetricValue, unit: RideUnits.currentUnit, label: localizedAppText("bms.no_data.load_now"))
             }
         }
         .padding(.horizontal, 20)

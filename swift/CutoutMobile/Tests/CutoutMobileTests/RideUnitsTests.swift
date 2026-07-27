@@ -22,9 +22,13 @@ final class RideUnitsTests: XCTestCase {
         XCTAssertEqual(RideUnits.distanceText(millimetres: 1_000_000, unit: "km"), "1.0")
     }
 
-    func testTemperatureUnitUsesDegreeSymbol() {
+    func testStandardMetricUnitsUseCanonicalSymbols() {
+        XCTAssertEqual(RideUnits.voltageUnit, "V")
+        XCTAssertEqual(RideUnits.currentUnit, "A")
+        XCTAssertEqual(RideUnits.angleUnit, "°")
         XCTAssertEqual(RideUnits.temperatureText(millicelsius: 34_000), "34")
         XCTAssertEqual(RideUnits.temperatureUnit, "°C")
+        XCTAssertEqual(RideUnits.percentUnit, "%")
     }
 
     func testDecimalStringUsesRequestedLocale() {

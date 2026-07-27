@@ -200,7 +200,7 @@ struct BmsDetailLayout: View {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.detail.temperature"),
                             metricValue: bmsTemperatureMetricValue(selectedGroup.temperature),
-                            unit: "°C",
+                            unit: RideUnits.temperatureUnit,
                             detail: ""
                         )
                         PevDashboardMetricTile(
