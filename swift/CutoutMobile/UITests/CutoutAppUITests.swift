@@ -371,6 +371,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
         try performVisibleLayoutAccessibilityAudit()
 
+        let lateRide = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        let resurrected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "exists == true"),
+            object: lateRide
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [resurrected], timeout: 1), .timedOut)
+        XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
+
         XCTAssertTrue(pairAvailableDevice(.vesc))
         let retrying = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label BEGINSWITH %@", "Connecting"),

@@ -969,6 +969,13 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
             guard !Task.isCancelled else { return }
             if self.fixture.failsConnection {
                 self.onPhaseChange?(.failed(.connectFailed("deterministic fixture")))
+                do {
+                    try await Task.sleep(for: .milliseconds(500))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self.emitLiveState()
             } else {
                 self.emitLiveState()
             }
