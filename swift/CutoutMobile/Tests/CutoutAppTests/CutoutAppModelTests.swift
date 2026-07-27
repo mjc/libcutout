@@ -545,6 +545,28 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testNewRecordOnlyCaptureClearsPriorSessionStatusBeforeCoreEvents() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        let priorCapture = URL(fileURLWithPath: "/tmp/prior.cutout")
+
+        model.applyCaptureEvent(.started(fileURL: priorCapture))
+        model.applyCaptureEvent(.notificationRecorded)
+        model.startCaptureLabel(.ride)
+        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 1, fileName: "prior.cutout"))
+        XCTAssertEqual(model.activeCaptureLabels, [.ride])
+
+        XCTAssertFalse(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: " "))
+        XCTAssertEqual(model.captureStatus, .labelStarted(label: "Ride", notificationCount: 1, fileName: "prior.cutout"))
+        XCTAssertEqual(model.activeCaptureLabels, [.ride])
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
+
+        XCTAssertNil(model.captureStatus)
+        XCTAssertNil(model.captureStatusText)
+        XCTAssertTrue(model.activeCaptureLabels.isEmpty)
+    }
+
+    @MainActor
     func testCaptureLabelActionsIgnoreInvalidRepeatedTransitions() {
         let model = CutoutAppModel()
 

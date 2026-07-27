@@ -354,10 +354,9 @@ final class CutoutAppModel {
 
     func recordOnly(platformIdentifier: String, deviceKind: String) -> Bool {
         connectionState = .picker
-        captureLabel = nil
-        isFinishingCapture = false
         let trimmedKind = deviceKind.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedKind.isEmpty else { return false }
+        resetCaptureSession()
         let annotationKind = trimmedKind
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
@@ -390,6 +389,16 @@ final class CutoutAppModel {
             syncLiveActivity()
         }
         return didStart
+    }
+
+    private func resetCaptureSession() {
+        captureStatus = nil
+        isFinishingCapture = false
+        activeCaptureLabels.removeAll()
+        captureFileName = nil
+        captureNotificationCount = 0
+        captureLabel = nil
+        recordOnlyDeviceKind = nil
     }
 
     func startCaptureLabel(_ label: CaptureQuickLabel) {
