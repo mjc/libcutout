@@ -161,6 +161,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         let strip = PevStatusStrip(text: "Saved capture", tone: .critical)
 
         XCTAssertEqual(strip.accessibilityLabelText, "Saved capture")
+        XCTAssertEqual(strip.accessibilityValueText, "critical")
         XCTAssertEqual(strip.tone, .critical)
     }
 

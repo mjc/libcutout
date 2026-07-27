@@ -10,6 +10,13 @@ public enum PevStatusStripTone: Sendable, Equatable {
         case .critical: PevDashboardColors.red
         }
     }
+
+    var accessibilityValueText: String {
+        switch self {
+        case .nominal: ""
+        case .critical: pevLocalizedText("status.accessibility.critical")
+        }
+    }
 }
 
 public struct PevStatusStrip: View {
@@ -17,6 +24,7 @@ public struct PevStatusStrip: View {
     public let tone: PevStatusStripTone
 
     var accessibilityLabelText: String { text }
+    var accessibilityValueText: String { tone.accessibilityValueText }
 
     public init(text: String, tone: PevStatusStripTone = .nominal) {
         self.text = text
@@ -42,5 +50,6 @@ public struct PevStatusStrip: View {
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabelText)
+        .accessibilityValue(accessibilityValueText)
     }
 }

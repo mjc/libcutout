@@ -655,6 +655,10 @@
       "comment" : "Ride screen button that disconnects from the current device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnect" } } }
     },
+    "status.accessibility.critical" : {
+      "comment" : "VoiceOver status-strip severity for a condition that needs immediate attention.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "critical" } } }
+    },
     "tab.debug" : {
       "comment" : "Bottom navigation tab for diagnostics.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }
