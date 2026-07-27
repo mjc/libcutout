@@ -51,25 +51,15 @@ struct LockScreenRideActivityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             PevLiveActivityHeader(snapshot: snapshot, compact: false)
-            ViewThatFits(in: [.horizontal, .vertical]) {
+            ViewThatFits(in: .horizontal) {
                 HStack(alignment: .center, spacing: 12) {
-                    VStack(spacing: 5) {
-                        PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 78)
-                        PevLiveActivityGlyph(snapshot: snapshot)
-                            .frame(width: 54, height: 28)
-                    }
-                    PevLiveActivityMetricGrid(snapshot: snapshot)
+                    PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 106)
+                    PevLiveActivityMetricGrid(snapshot: snapshot, compact: true)
                         .frame(maxWidth: .infinity)
                         .layoutPriority(1)
                 }
 
-                VStack(spacing: 7) {
-                    PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 68)
-                    PevLiveActivityMetricGrid(snapshot: snapshot, compact: true)
-                }
-                .frame(maxWidth: .infinity)
-
-                PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 56)
+                PevLiveActivitySpeedGauge(snapshot: snapshot, diameter: 106)
                 .frame(maxWidth: .infinity)
             }
             PevLiveActivitySafetyFooter(snapshot: snapshot, compact: false)
