@@ -2910,6 +2910,40 @@ private func bmsMetricValue<Value>(
     return .available(display: text, accessibility: text)
 }
 
+public func bmsGroupVoltageMetricValue(_ group: BmsGroupSnapshot?) -> PevDashboardMetricValue {
+    bmsVoltageMetricValue(group?.voltage)
+}
+
+public func bmsVoltageMetricValue(_ voltage: Voltage?) -> PevDashboardMetricValue {
+    bmsMetricValue(voltage) {
+        RideUnits.voltageText(millivolts: $0.value, fractionDigits: 3)
+    }
+}
+
+public func bmsPackVoltageMetricValue(_ voltage: Voltage?) -> PevDashboardMetricValue {
+    bmsMetricValue(voltage) {
+        RideUnits.voltageText(millivolts: $0.value)
+    }
+}
+
+public func bmsVoltageSagMetricValue(_ voltageSag: VoltageDelta?) -> PevDashboardMetricValue {
+    bmsMetricValue(voltageSag) {
+        RideUnits.decimalString(abs(Double($0.value)) / 1_000.0, fractionDigits: 1)
+    }
+}
+
+public func bmsBatteryCurrentMetricValue(_ current: BatteryCurrent?) -> PevDashboardMetricValue {
+    bmsMetricValue(current) {
+        RideUnits.decimalString(Double($0.value) / 1_000.0, fractionDigits: 0)
+    }
+}
+
+public func bmsTemperatureMetricValue(_ temperature: Temperature?) -> PevDashboardMetricValue {
+    bmsMetricValue(temperature) {
+        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1)
+    }
+}
+
 private func bmsPageMetricValue(
     selector: UInt8?,
     tag: UInt16?,

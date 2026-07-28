@@ -27,7 +27,6 @@
 		300000000000000000000007 /* Apps/CutoutApp/BmsOverviewLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000007 /* Apps/CutoutApp/BmsOverviewLayout.swift */; };
 		300000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift */; };
 		300000000000000000000009 /* Apps/CutoutApp/BmsUnknownLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000009 /* Apps/CutoutApp/BmsUnknownLayout.swift */; };
-		30000000000000000000000A /* Apps/CutoutApp/BmsVoltageFormatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000A /* Apps/CutoutApp/BmsVoltageFormatters.swift */; };
 		30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */; };
 		30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */; };
 		30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */; };
@@ -91,7 +90,6 @@
 		400000000000000000000007 /* Apps/CutoutApp/BmsOverviewLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsOverviewLayout.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsTopologyCells.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000009 /* Apps/CutoutApp/BmsUnknownLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsUnknownLayout.swift; sourceTree = SOURCE_ROOT; };
-		40000000000000000000000A /* Apps/CutoutApp/BmsVoltageFormatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsVoltageFormatters.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureViews.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceGlyphs.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerControls.swift; sourceTree = SOURCE_ROOT; };
@@ -164,7 +162,6 @@
 				400000000000000000000007 /* Apps/CutoutApp/BmsOverviewLayout.swift */,
 				400000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift */,
 				400000000000000000000009 /* Apps/CutoutApp/BmsUnknownLayout.swift */,
-				40000000000000000000000A /* Apps/CutoutApp/BmsVoltageFormatters.swift */,
 				40000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift */,
 				40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */,
 				40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */,
@@ -378,7 +375,6 @@
 				300000000000000000000007 /* Apps/CutoutApp/BmsOverviewLayout.swift in Sources */,
 				300000000000000000000008 /* Apps/CutoutApp/BmsTopologyCells.swift in Sources */,
 				300000000000000000000009 /* Apps/CutoutApp/BmsUnknownLayout.swift in Sources */,
-				30000000000000000000000A /* Apps/CutoutApp/BmsVoltageFormatters.swift in Sources */,
 				30000000000000000000000B /* Apps/CutoutApp/CaptureViews.swift in Sources */,
 				30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */,
 				30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */,

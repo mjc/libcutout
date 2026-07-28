@@ -159,6 +159,22 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(BmsSnapshot(topology: topology).captureActionMetricValue, .unavailable)
     }
 
+    func testSharedBmsMetricFormattersKeepUnavailableAndZeroDistinct() {
+        XCTAssertEqual(bmsGroupVoltageMetricValue(nil), .unavailable)
+        XCTAssertEqual(
+            bmsGroupVoltageMetricValue(BmsGroupSnapshot(index: 7, voltage: Voltage(value: 4_036))),
+            .available(display: "4.036", accessibility: "4.036")
+        )
+        XCTAssertEqual(
+            bmsPackVoltageMetricValue(Voltage(value: 0)),
+            .available(display: "0.0", accessibility: "0.0")
+        )
+        XCTAssertEqual(
+            bmsBatteryCurrentMetricValue(BatteryCurrent(value: 0)),
+            .available(display: "0", accessibility: "0")
+        )
+    }
+
     func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {
         let group = BmsGroupSnapshot(
             index: 7,
