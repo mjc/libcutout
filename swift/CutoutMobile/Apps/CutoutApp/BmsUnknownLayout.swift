@@ -30,10 +30,7 @@ struct BmsUnknownLayout: View {
                 )
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.cell_count"),
-                    metricValue: .available(
-                        display: snapshot.unknownTopologyCellCountValue,
-                        accessibility: snapshot.unknownTopologyCellCountValue
-                    ),
+                    metricValue: snapshot.unknownTopologyCellCountMetricValue,
                     unit: "",
                     detail: snapshot.unknownTopologyCellCountDetail
                 )

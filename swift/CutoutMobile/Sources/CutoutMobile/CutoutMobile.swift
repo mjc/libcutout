@@ -2482,8 +2482,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         topology.layoutLabel
     }
 
-    public var unknownTopologyCellCountValue: String {
-        topology.seriesGroupCount.map(String.init) ?? "?"
+    public var unknownTopologyCellCountMetricValue: PevDashboardMetricValue {
+        guard let count = topology.seriesGroupCount else { return .unavailable }
+        let value = RideUnits.decimalString(Double(count), fractionDigits: 0)
+        return .available(display: value, accessibility: value)
     }
 
     public var unknownTopologyCellCountDetail: String {

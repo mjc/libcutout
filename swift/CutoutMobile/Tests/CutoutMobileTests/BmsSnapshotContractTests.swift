@@ -403,7 +403,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.unknownTopologyVoltageDetail, "topology unverified")
-        XCTAssertEqual(snapshot.unknownTopologyCellCountValue, "?")
+        XCTAssertEqual(snapshot.unknownTopologyCellCountMetricValue, .unavailable)
         XCTAssertEqual(snapshot.unknownTopologyCellCountDetail, "layout unverified")
         XCTAssertNil(snapshot.unknownTopologyTemperatureSensorCount)
         XCTAssertEqual(snapshot.unknownTopologyTemperatureDetail, "sensor names unavailable")
@@ -428,6 +428,24 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.unknownTopologyTemperatureSensorCount, 2)
+    }
+
+    func testUnknownTopologyCellCountKeepsReportedValueAvailable() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "topology inferred",
+                seriesGroupCount: 20,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .inferred
+            )
+        )
+
+        XCTAssertEqual(
+            snapshot.unknownTopologyCellCountMetricValue,
+            .available(display: "20", accessibility: "20")
+        )
     }
 
     func testSnapshotExposesScrollableCellMapHelpers() {
