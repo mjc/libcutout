@@ -177,6 +177,7 @@ struct BmsDetailLayout: View {
                     Text(bmsGroupVoltageMetricValue(selectedGroup).displayText)
                         .font(.largeTitle.weight(.black))
                         .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
                         .accessibilityLabel(localizedAppText("bms.detail.voltage"))
                         .accessibilityValue(selectedGroup.accessibilityValue)
                     Text(snapshot.detailGroupStatus(for: selectedGroup.index))
