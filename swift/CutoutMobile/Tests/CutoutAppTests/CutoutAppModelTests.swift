@@ -925,7 +925,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)?
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     private let scanState: DevicePickerScanState

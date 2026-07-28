@@ -130,8 +130,8 @@ final class PevScreenThemeTests: XCTestCase {
             snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
         )
         XCTAssertEqual(unavailable.speedMetricValue, .unavailable)
-        XCTAssertEqual(eucGpsSpeedTile(from: unavailable, at: 0).metricValue, .unavailable)
-        XCTAssertEqual(eucGpsSpeedTile(from: unavailable, at: 0).unit, "")
+        XCTAssertEqual(eucGpsSpeedTile(from: unavailable, at: MonotonicMilliseconds(0)).metricValue, .unavailable)
+        XCTAssertEqual(eucGpsSpeedTile(from: unavailable, at: MonotonicMilliseconds(0)).unit, "")
 
         let zero = PhoneLocationReadback(
             snapshot: MobilePhoneLocationSnapshotDto(
@@ -144,7 +144,7 @@ final class PevScreenThemeTests: XCTestCase {
                 )
             )
         )
-        let tile = eucGpsSpeedTile(from: zero, at: 0)
+        let tile = eucGpsSpeedTile(from: zero, at: MonotonicMilliseconds(0))
         let value = RideUnits.speedText(millimetersPerSecond: 0)
         XCTAssertEqual(
             zero.speedMetricValue,

@@ -9,27 +9,25 @@ final class PhoneLocationReadbackTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("gps.detail.stale"), "stale GPS")
     }
 
-    func testRustGpsSpeedIsAvailableAndFresh() {
-        let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: 2_500))
+    func testRustGpsSpeedUsesInjectedMonotonicFreshnessBoundaries() {
+        let readback = PhoneLocationReadback(
+            snapshot: snapshot(sampleTime: 10_000, speed: 2_500),
+            receivedAt: MonotonicMilliseconds(10_000)
+        )
 
         XCTAssertEqual(readback.speed.millimetersPerSecond, 2_500)
-        XCTAssertEqual(readback.freshness(at: 12_000), .fresh)
-        XCTAssertEqual(readback.detail(at: 12_000), "fresh GPS")
-    }
-
-    func testRustGpsSpeedBecomesExplicitlyStale() {
-        let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: 2_500))
-
-        XCTAssertEqual(readback.freshness(at: 13_001), .stale)
-        XCTAssertEqual(readback.detail(at: 13_001), "stale GPS")
+        XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(11_999)), .fresh)
+        XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(12_000)), .fresh)
+        XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(12_001)), .stale)
+        XCTAssertEqual(readback.detail(at: MonotonicMilliseconds(12_001)), "stale GPS")
     }
 
     func testMissingRustGpsSpeedIsExplicitlyUnavailable() {
         let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: nil))
 
-        XCTAssertEqual(readback.freshness(at: 10_001), .unavailable)
+        XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(10_001)), .unavailable)
         XCTAssertEqual(readback.speed.displayValue, "--")
-        XCTAssertEqual(readback.detail(at: 10_001), "GPS unavailable")
+        XCTAssertEqual(readback.detail(at: MonotonicMilliseconds(10_001)), "GPS unavailable")
     }
 
     private func snapshot(sampleTime: UInt64, speed: Int32?) -> MobilePhoneLocationSnapshotDto {

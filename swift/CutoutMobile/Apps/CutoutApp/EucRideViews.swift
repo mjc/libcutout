@@ -1,6 +1,5 @@
 import Accessibility
 import CutoutMobile
-import Foundation
 import SwiftUI
 
 struct EucRideScreenView: View {
@@ -65,7 +64,6 @@ struct EucRideScreenView: View {
     }
 
     private var gpsSpeedTile: PevDashboardTile {
-        let now = UInt64(max(0, Date().timeIntervalSince1970 * 1_000))
         return eucGpsSpeedTile(from: phoneLocationReadback, at: now)
     }
 
@@ -121,15 +119,15 @@ struct EucRideScreenView: View {
 
 func eucGpsSpeedTile(
     from readback: PhoneLocationReadback,
-    at wallClockUnixMilliseconds: UInt64
+    at now: MonotonicMilliseconds
 ) -> PevDashboardTile {
     return PevDashboardTile(
         kind: .gpsSpeed,
         label: localizedAppText("euc.metric.gps_speed"),
         metricValue: readback.speedMetricValue,
         unit: readback.speed.millimetersPerSecond == nil ? "" : RideUnits.speedUnit,
-        detail: readback.detail(at: wallClockUnixMilliseconds),
-        accent: readback.freshness(at: wallClockUnixMilliseconds) == .fresh ? .cyan : .yellow
+        detail: readback.detail(at: now),
+        accent: readback.freshness(at: now) == .fresh ? .cyan : .yellow
     )
 }
 

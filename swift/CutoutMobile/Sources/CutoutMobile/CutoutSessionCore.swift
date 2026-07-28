@@ -181,7 +181,7 @@ public final class CutoutSessionCore: NSObject {
     public var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
-    public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)?
+    public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock = MonotonicClock()
@@ -884,7 +884,8 @@ public final class CutoutSessionCore: NSObject {
 
     private func publishPhoneLocationSnapshot() {
         let value = phoneLocationSnapshot
-        publishOnMain { self.onPhoneLocationSnapshotChange?(value) }
+        let receivedAt = clock.now()
+        publishOnMain { self.onPhoneLocationSnapshotChange?(value, receivedAt) }
     }
 
     private func publishProtocolIdentityCandidate() {

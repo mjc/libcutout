@@ -2061,28 +2061,31 @@ public enum PhoneLocationFreshness: String, Equatable, Hashable, Sendable {
 
 public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
     public let speed: SpeedReadout
-    public let sampleWallClockUnixMilliseconds: UInt64?
+    public let receivedAt: MonotonicMilliseconds?
 
-    public init(snapshot: MobilePhoneLocationSnapshotDto) {
+    public init(
+        snapshot: MobilePhoneLocationSnapshotDto,
+        receivedAt: MonotonicMilliseconds? = nil
+    ) {
         self.speed = SpeedReadout(millimetersPerSecond: snapshot.gpsSpeed?.value.value)
-        self.sampleWallClockUnixMilliseconds = snapshot.latestSample?.wallClockUnixMs
+        self.receivedAt = speed.millimetersPerSecond == nil || snapshot.latestSample == nil
+            ? nil
+            : receivedAt
     }
 
     public func freshness(
-        at wallClockUnixMilliseconds: UInt64,
-        staleAfterMilliseconds: UInt64 = 3_000
+        at now: MonotonicMilliseconds,
+        staleAfter: MonotonicMilliseconds = MonotonicMilliseconds(2_000)
     ) -> PhoneLocationFreshness {
-        guard speed.millimetersPerSecond != nil, let sampleWallClockUnixMilliseconds else {
+        guard speed.millimetersPerSecond != nil, let receivedAt else {
             return .unavailable
         }
-        guard wallClockUnixMilliseconds >= sampleWallClockUnixMilliseconds else {
-            return .stale
-        }
-        return wallClockUnixMilliseconds - sampleWallClockUnixMilliseconds <= staleAfterMilliseconds ? .fresh : .stale
+        let elapsed = now.rawValue >= receivedAt.rawValue ? now.rawValue - receivedAt.rawValue : 0
+        return elapsed <= staleAfter.rawValue ? .fresh : .stale
     }
 
-    public func detail(at wallClockUnixMilliseconds: UInt64) -> String {
-        switch freshness(at: wallClockUnixMilliseconds) {
+    public func detail(at now: MonotonicMilliseconds) -> String {
+        switch freshness(at: now) {
         case .unavailable:
             pevLocalizedText("gps.detail.unavailable")
         case .fresh:

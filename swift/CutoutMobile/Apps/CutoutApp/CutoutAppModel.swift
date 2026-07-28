@@ -163,7 +163,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)? { get set }
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)? { get set }
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
 
@@ -303,8 +303,8 @@ final class CutoutAppModel {
         self.core.onBmsSnapshotChange = { [weak self] bmsSnapshot in
             self?.bmsSnapshot = bmsSnapshot
         }
-        self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot in
-            self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot)
+        self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot, receivedAt in
+            self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
         }
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
@@ -935,7 +935,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
     var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto) -> Void)?
+    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
 
