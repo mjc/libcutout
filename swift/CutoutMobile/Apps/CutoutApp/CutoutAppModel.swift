@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import Observation
 
@@ -1077,6 +1078,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
                 voltage: Voltage(value: 50_400),
                 batteryCurrent: BatteryCurrent(value: 12_000),
                 controllerTemperature: Temperature(value: 32_000),
+                pwm: DutyCycle(permille: 230),
                 batteryLevelReported: BatteryLevel(value: 72)
             )
             onDisplayStateChange?(RideDisplayState(

@@ -502,6 +502,25 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        assertMetricIsReachable("Duty headroom", in: screen)
+        let headroom = screen.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Duty headroom")
+        ).firstMatch
+        XCTAssertTrue(
+            (headroom.value as? String)?.contains("77%") == true,
+            "The VESC duty-headroom metric must speak its percent unit: \(String(describing: headroom.value))"
+        )
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
+    }
+
     func testVescRidePassesAccessibilityAuditAtExtraExtraExtraLargeType() throws {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
