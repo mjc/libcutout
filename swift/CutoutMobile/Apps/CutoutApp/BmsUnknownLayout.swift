@@ -10,8 +10,8 @@ struct BmsUnknownLayout: View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: localizedAppText("bms.unknown.title"),
-                metricValue: faultMetricValue,
-                detail: snapshot.faultDetail ?? "",
+                metricValue: snapshot.unknownTopologySummaryMetricValue,
+                detail: snapshot.unknownTopologySummaryDetail,
                 stroke: PevColors.orange
             )
 
@@ -42,11 +42,9 @@ struct BmsUnknownLayout: View {
                 )
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.unknown.fault_bits"),
-                    metricValue: snapshot.faults.first.map {
-                        .available(display: $0.code, accessibility: $0.code)
-                    } ?? .unavailable,
+                    metricValue: snapshot.unknownTopologyFaultMetricValue,
                     unit: "",
-                    detail: snapshot.faults.first?.label ?? ""
+                    detail: snapshot.unknownTopologyFaultDetail
                 )
             }
 
@@ -76,8 +74,4 @@ struct BmsUnknownLayout: View {
         }
     }
 
-    private var faultMetricValue: PevDashboardMetricValue {
-        guard let faultSummary = snapshot.faultSummary else { return .unavailable }
-        return .available(display: faultSummary, accessibility: faultSummary)
-    }
 }

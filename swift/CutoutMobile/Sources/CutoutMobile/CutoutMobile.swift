@@ -2510,6 +2510,24 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         highestTemperatureLabel ?? pevLocalizedText("bms.topology.sensor_names_unavailable")
     }
 
+    public var unknownTopologySummaryMetricValue: PevDashboardMetricValue {
+        guard let faultSummary else { return .unavailable }
+        return .status(display: faultSummary, accessibility: faultSummary)
+    }
+
+    public var unknownTopologySummaryDetail: String {
+        faultDetail ?? ""
+    }
+
+    public var unknownTopologyFaultMetricValue: PevDashboardMetricValue {
+        guard let fault = faults.first else { return .unavailable }
+        return .available(display: fault.code, accessibility: fault.code)
+    }
+
+    public var unknownTopologyFaultDetail: String {
+        faults.first?.label ?? ""
+    }
+
     public var unknownTopologyCaptureDetail: String {
         faultDetail ?? topology.layoutLabel
     }

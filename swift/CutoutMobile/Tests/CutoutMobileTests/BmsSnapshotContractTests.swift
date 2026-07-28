@@ -407,6 +407,15 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.unknownTopologyCellCountDetail, "layout unverified")
         XCTAssertEqual(snapshot.unknownTopologyTemperatureSensorCountMetricValue, .unavailable)
         XCTAssertEqual(snapshot.unknownTopologyTemperatureDetail, "sensor names unavailable")
+        XCTAssertEqual(
+            snapshot.unknownTopologySummaryMetricValue,
+            .status(display: "BMS found, map unknown", accessibility: "BMS found, map unknown")
+        )
+        XCTAssertEqual(
+            snapshot.unknownTopologyFaultMetricValue,
+            .available(display: "0x0040", accessibility: "0x0040")
+        )
+        XCTAssertEqual(snapshot.unknownTopologyFaultDetail, "needs decoder")
         XCTAssertEqual(snapshot.unknownTopologyCaptureDetail, "show raw-safe info until topology is confirmed")
     }
 
