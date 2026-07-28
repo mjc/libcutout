@@ -2,13 +2,13 @@ import SwiftUI
 
 public struct PevDashboardProgressBar: View {
     let label: String
-    let value: String
-    let progress: Double
+    let metricValue: PevDashboardMetricValue
+    let progress: Double?
     let track: Color
     let height: CGFloat
 
-    var clampedProgress: Double {
-        max(0, min(1, progress))
+    var clampedProgress: Double? {
+        progress.map { max(0, min(1, $0)) }
     }
 
     public init(
@@ -19,7 +19,21 @@ public struct PevDashboardProgressBar: View {
         height: CGFloat = 17
     ) {
         self.label = label
-        self.value = value
+        metricValue = .available(display: value, accessibility: value)
+        self.progress = progress
+        self.track = track
+        self.height = height
+    }
+
+    public init(
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        progress: Double?,
+        track: Color = PevDashboardColors.cardFill,
+        height: CGFloat = 17
+    ) {
+        self.label = label
+        self.metricValue = metricValue
         self.progress = progress
         self.track = track
         self.height = height
@@ -32,7 +46,7 @@ public struct PevDashboardProgressBar: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevDashboardColors.mutedText)
                 Spacer()
-                Text(value)
+                Text(metricValue.displayText)
                     .font(.headline.weight(.black))
                     .foregroundStyle(PevDashboardColors.primaryText)
                     .monospacedDigit()
@@ -42,16 +56,18 @@ public struct PevDashboardProgressBar: View {
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(track)
-                    Capsule()
-                        .fill(PevDashboardColors.primaryText)
-                        .frame(width: clampedProgress * proxy.size.width)
+                    if let clampedProgress {
+                        Capsule()
+                            .fill(PevDashboardColors.primaryText)
+                            .frame(width: clampedProgress * proxy.size.width)
+                    }
                 }
             }
             .frame(height: height)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
-        .accessibilityValue(value)
+        .accessibilityValue(metricValue.accessibilityText)
     }
 }
 

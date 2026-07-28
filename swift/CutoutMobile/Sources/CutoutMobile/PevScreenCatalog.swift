@@ -42,14 +42,20 @@ public enum PevSafetyBarID: Equatable, Hashable, Sendable {
 public struct PevSafetyBar: Equatable, Hashable, Sendable, Identifiable {
     public let id: PevSafetyBarID
     public let label: String
-    public let value: String
-    public let progress: Double
+    public let metricValue: PevDashboardMetricValue
+    public let progress: Double?
     public let accent: PevAccent
 
-    public init(id: PevSafetyBarID, label: String, value: String, progress: Double, accent: PevAccent) {
+    public init(
+        id: PevSafetyBarID,
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        progress: Double?,
+        accent: PevAccent
+    ) {
         self.id = id
         self.label = label
-        self.value = value
+        self.metricValue = metricValue
         self.progress = progress
         self.accent = accent
     }

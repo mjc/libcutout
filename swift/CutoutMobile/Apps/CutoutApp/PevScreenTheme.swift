@@ -96,24 +96,30 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
             return PevSafetyBar(
                 id: .pwmHeadroom,
                 label: localizedAppText("ride.safety.pwm_headroom"),
-                value: percentageString(fromPermille: headroomPermille),
+                metricValue: .available(
+                    display: percentageString(fromPermille: headroomPermille),
+                    accessibility: percentageString(fromPermille: headroomPermille)
+                ),
                 progress: Double(headroomPermille) / 1_000.0,
                 accent: .yellow
             )
         } ?? PevSafetyBar(
             id: .pwmHeadroom,
             label: localizedAppText("ride.safety.pwm_headroom"),
-            value: state.pwmHeadroomApplicability == .notApplicable
-                ? localizedAppText("ride.value.not_applicable")
-                : localizedAppText("ride.value.unavailable"),
-            progress: 0,
+            metricValue: state.pwmHeadroomApplicability == .notApplicable
+                ? .status(
+                    display: localizedAppText("ride.value.not_applicable"),
+                    accessibility: localizedAppText("ride.value.not_applicable")
+                )
+                : .unavailable,
+            progress: nil,
             accent: .yellow
         ),
         PevSafetyBar(
             id: .sagAdjustedEnergy,
             label: localizedAppText("ride.safety.sag_adjusted_energy"),
-            value: localizedAppText("ride.value.unavailable"),
-            progress: 0,
+            metricValue: .unavailable,
+            progress: nil,
             accent: .cyan
         ),
     ]

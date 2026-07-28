@@ -82,7 +82,7 @@ struct EucRideScreenView: View {
                 ForEach(safetyBars) { bar in
                     PevDashboardProgressBar(
                         label: bar.label,
-                        value: bar.value,
+                        metricValue: bar.metricValue,
                         progress: bar.progress
                     )
                 }

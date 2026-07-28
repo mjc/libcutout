@@ -326,6 +326,31 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testEucSafetyBarsKeepUnavailableProgressDistinctFromValidZero() {
+        let unavailable = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: TelemetrySnapshot())
+        )
+        let unavailableBars = liveSafetyBars(for: unavailable)
+        XCTAssertEqual(unavailableBars.first?.metricValue, .unavailable)
+        XCTAssertNil(unavailableBars.first?.progress)
+        XCTAssertEqual(unavailableBars.last?.metricValue, .unavailable)
+        XCTAssertNil(unavailableBars.last?.progress)
+
+        let zeroHeadroom = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    operatingState: .riding,
+                    pwm: DutyCycle(permille: 1_000)
+                )
+            )
+        )
+        let headroom = try? XCTUnwrap(liveSafetyBars(for: zeroHeadroom).first)
+        XCTAssertEqual(headroom?.metricValue, .available(display: "0%", accessibility: "0%"))
+        XCTAssertEqual(headroom?.progress, 0)
+    }
+
     func testBmsNoDataWarningUsesLocaleAwareAccessibilityList() {
         let card = BmsNoDataWarningCard(
             snapshot: BmsSnapshot(

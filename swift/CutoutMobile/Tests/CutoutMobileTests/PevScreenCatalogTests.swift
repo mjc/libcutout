@@ -262,21 +262,21 @@ final class PevScreenCatalogTests: XCTestCase {
         let headroom = PevSafetyBar(
             id: .pwmHeadroom,
             label: "PWM headroom",
-            value: "75%",
+            metricValue: .available(display: "75%", accessibility: "75%"),
             progress: 0.75,
             accent: .yellow
         )
         let localizedHeadroom = PevSafetyBar(
             id: .pwmHeadroom,
             label: "marge PWM",
-            value: "75 %",
+            metricValue: .available(display: "75 %", accessibility: "75 %"),
             progress: 0.75,
             accent: .yellow
         )
         let energyWithSameLabel = PevSafetyBar(
             id: .sagAdjustedEnergy,
             label: "PWM headroom",
-            value: "75%",
+            metricValue: .available(display: "75%", accessibility: "75%"),
             progress: 0.75,
             accent: .cyan
         )
