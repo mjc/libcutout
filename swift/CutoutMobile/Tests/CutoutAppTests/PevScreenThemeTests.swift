@@ -44,14 +44,22 @@ final class PevScreenThemeTests: XCTestCase {
         let current = PhaseCurrent(value: 71_000)
         let angle = Angle(value: -1_800)
         let temperature = Temperature(value: 54_000)
+        let dutyCycle = DutyCycle(permille: -450)
+        let headroom = BatteryLevel(value: 55)
+        let balanceAngle = Angle(value: 500)
+        let motorTemperature = Temperature(value: 49_000)
         let metrics = VescRideSnapshot(
             title: "VESC",
             vehicleKind: .float,
             subProtocol: .generic,
             controllerState: .unknown,
+            dutyCycle: dutyCycle,
+            dutyHeadroom: headroom,
             motorCurrent: current,
             boardAngle: angle,
-            controllerTemperature: temperature
+            balanceAngle: balanceAngle,
+            controllerTemperature: temperature,
+            motorTemperature: motorTemperature
         )
         let currentText = RideUnits.currentText(milliamps: current.value)
         let angleText = RideUnits.angleText(millidegrees: angle.value)
@@ -70,6 +78,29 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             metrics.controllerTemperatureMetricValue,
             .available(display: temperatureText, accessibility: temperatureText)
+        )
+        let dutyText = RideUnits.percentText(45)
+        let headroomText = RideUnits.percentText(headroom.value)
+        let balanceText = RideUnits.angleText(millidegrees: balanceAngle.value)
+        let motorTemperatureText = RideUnits.temperatureText(
+            millicelsius: motorTemperature.value,
+            fractionDigits: 1
+        )
+        XCTAssertEqual(
+            metrics.dutyCycleMetricValue,
+            .available(display: dutyText, accessibility: dutyText)
+        )
+        XCTAssertEqual(
+            metrics.dutyHeadroomMetricValue,
+            .available(display: headroomText, accessibility: headroomText)
+        )
+        XCTAssertEqual(
+            metrics.balanceAngleMetricValue,
+            .available(display: balanceText, accessibility: balanceText)
+        )
+        XCTAssertEqual(
+            metrics.motorTemperatureMetricValue,
+            .available(display: motorTemperatureText, accessibility: motorTemperatureText)
         )
     }
 
@@ -154,6 +185,31 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             tiles[3].detail,
             localizedAppText("vesc.debug.detail.motor_temperature", "unavailable")
+        )
+    }
+
+    func testVescDebugTilesForwardSnapshotMetricValues() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            dutyCycle: DutyCycle(permille: 450),
+            dutyHeadroom: BatteryLevel(value: 55),
+            boardAngle: Angle(value: -1_800),
+            balanceAngle: Angle(value: 500),
+            controllerTemperature: Temperature(value: 54_000),
+            motorTemperature: Temperature(value: 49_000)
+        )
+
+        XCTAssertEqual(
+            vescDebugTiles(snapshot).map(\.metricValue),
+            [
+                snapshot.dutyCycleMetricValue,
+                snapshot.dutyHeadroomMetricValue,
+                snapshot.boardAngleMetricValue,
+                snapshot.controllerTemperatureMetricValue,
+            ]
         )
     }
 

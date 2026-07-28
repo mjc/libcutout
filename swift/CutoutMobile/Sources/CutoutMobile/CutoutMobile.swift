@@ -1585,28 +1585,61 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var batteryVoltageMetricValue: PevDashboardMetricValue {
-        guard let voltage = batteryVoltage else { return .unavailable }
-        let text = RideUnits.voltageText(millivolts: voltage.value)
-        return .available(display: text, accessibility: text)
+        vescMetricValue(batteryVoltage) {
+            RideUnits.voltageText(millivolts: $0.value)
+        }
     }
 
     public var motorCurrentMetricValue: PevDashboardMetricValue {
-        guard let current = motorCurrent else { return .unavailable }
-        let text = RideUnits.currentText(milliamps: current.value)
-        return .available(display: text, accessibility: text)
+        vescMetricValue(motorCurrent) {
+            RideUnits.currentText(milliamps: $0.value)
+        }
     }
 
     public var boardAngleMetricValue: PevDashboardMetricValue {
-        guard let angle = boardAngle else { return .unavailable }
-        let text = RideUnits.angleText(millidegrees: angle.value)
-        return .available(display: text, accessibility: text)
+        vescMetricValue(boardAngle) {
+            RideUnits.angleText(millidegrees: $0.value)
+        }
     }
 
     public var controllerTemperatureMetricValue: PevDashboardMetricValue {
-        guard let temperature = controllerTemperature else { return .unavailable }
-        let text = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
-        return .available(display: text, accessibility: text)
+        vescMetricValue(controllerTemperature) {
+            RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1)
+        }
     }
+
+    public var dutyCycleMetricValue: PevDashboardMetricValue {
+        vescMetricValue(dutyCycle) {
+            RideUnits.percentText(abs(Int($0.permille)) / 10)
+        }
+    }
+
+    public var dutyHeadroomMetricValue: PevDashboardMetricValue {
+        vescMetricValue(dutyHeadroom) {
+            RideUnits.percentText($0.value)
+        }
+    }
+
+    public var balanceAngleMetricValue: PevDashboardMetricValue {
+        vescMetricValue(balanceAngle) {
+            RideUnits.angleText(millidegrees: $0.value)
+        }
+    }
+
+    public var motorTemperatureMetricValue: PevDashboardMetricValue {
+        vescMetricValue(motorTemperature) {
+            RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1)
+        }
+    }
+}
+
+private func vescMetricValue<Value>(
+    _ value: Value?,
+    text: (Value) -> String
+) -> PevDashboardMetricValue {
+    guard let value else { return .unavailable }
+    let text = text(value)
+    return .available(display: text, accessibility: text)
 }
 
 public extension VescRideSnapshot {
