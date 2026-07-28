@@ -97,17 +97,18 @@ struct CaptureRecordingScreen: View {
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
         }
-        .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
     }
 
     private var stopCaptureButton: some View {
-        Button("capture.stop", role: .destructive, action: finishCapture)
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.capsule)
-            .tint(CaptureActionButtonTone.finish.tint)
-            .frame(minHeight: 44)
+        Button(role: .destructive, action: finishCapture) {
+            Text("capture.stop")
+                .font(.callout.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(.plain)
             .disabled(isFinishing)
             .accessibilityIdentifier("capture.stop")
     }
@@ -174,7 +175,7 @@ private struct CaptureLabelControlRow: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
-        .background(PevDashboardCardBackground(cornerRadius: 8))
+        .background(PevDashboardCardBackground(cornerRadius: 8, fill: .black))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.label.\(label.id)")
     }
@@ -183,10 +184,10 @@ private struct CaptureLabelControlRow: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.title)
                 .font(.headline)
-                .foregroundStyle(PevColors.primaryText)
+                .foregroundStyle(.white)
             Text(stateText)
                 .font(.caption)
-                .foregroundStyle(PevColors.primaryText.opacity(isActive ? 1 : 0.9))
+                .foregroundStyle(.white)
                 .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
@@ -203,17 +204,19 @@ private struct CaptureLabelControlRow: View {
     }
 
     private var actions: some View {
-        Button(label.actionTitle(isActive: isActive), role: isActive ? .destructive : nil) {
+        Button(role: isActive ? .destructive : nil) {
             if isActive {
                 stop()
             } else {
                 start()
             }
+        } label: {
+            Text(label.actionTitle(isActive: isActive))
+                .font(.callout.weight(.bold))
+                .foregroundStyle(CaptureActionButtonTone.forState(isActive: isActive).tint)
+                .frame(minHeight: 44)
         }
-        .buttonStyle(.borderedProminent)
-        .buttonBorderShape(.capsule)
-        .tint(CaptureActionButtonTone.forState(isActive: isActive).tint)
-        .frame(minHeight: 44)
+        .buttonStyle(.plain)
         .accessibilityIdentifier("capture.label.\(label.id).action")
     }
 }
