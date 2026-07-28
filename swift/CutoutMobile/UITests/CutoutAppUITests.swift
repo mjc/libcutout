@@ -766,6 +766,7 @@ final class CutoutAppUITests: XCTestCase {
         captureKind.typeText("custom vesc")
         finishEditing.tap()
 
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(recordButton.elementType, .button)
 
         for _ in 0..<6 where !recordButton.isHittable {
