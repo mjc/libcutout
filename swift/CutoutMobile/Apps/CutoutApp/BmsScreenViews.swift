@@ -52,6 +52,7 @@ struct BmsScreenView: View {
                         .padding(.top, 31)
                         .padding(.bottom, 18)
                     }
+                    .safeAreaPadding(.bottom)
                 }
             }
         }
