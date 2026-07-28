@@ -222,6 +222,10 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertTrue(snapshot.faults.isEmpty)
         XCTAssertNil(snapshot.captureActionTitle)
         XCTAssertNil(snapshot.captureActionState)
+        XCTAssertEqual(
+            snapshot.readbackRows.first(where: { $0.id == "voltage" })?.metricValue,
+            .unavailable
+        )
     }
 
     func testSnapshotExposesReadbackRowsForLivePackData() {
@@ -264,9 +268,18 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(
             snapshot.readbackRows,
             [
-                SessionDebugRow(id: "availability", label: "availability", value: "available"),
+                SessionDebugRow(
+                    id: "availability",
+                    label: "availability",
+                    metricValue: .status(display: "available", accessibility: "available")
+                ),
                 SessionDebugRow(id: "page", label: "page", value: "temperature #3", role: .transportMetadata),
-                SessionDebugRow(id: "page-verification", label: "page verification", value: "hardware verified", role: .transportMetadata),
+                SessionDebugRow(
+                    id: "page-verification",
+                    label: "page verification",
+                    metricValue: .status(display: "hardware verified", accessibility: "hardware verified"),
+                    role: .transportMetadata
+                ),
                 SessionDebugRow(id: "charge", label: "charge", value: "72%"),
                 SessionDebugRow(id: "voltage", label: "voltage", value: "81.6"),
                 SessionDebugRow(id: "current", label: "current", value: "-12.4"),

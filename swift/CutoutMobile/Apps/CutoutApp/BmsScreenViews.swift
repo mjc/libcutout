@@ -112,7 +112,7 @@ struct BmsDiagnosticsSection: View {
                         PevDashboardKeyValueRow(
                             id: row.id,
                             label: row.label,
-                            metricValue: .available(display: row.value, accessibility: row.value)
+                            metricValue: row.metricValue
                         )
                     },
                 verticalPadding: 6

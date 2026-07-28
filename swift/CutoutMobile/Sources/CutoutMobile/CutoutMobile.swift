@@ -2253,29 +2253,65 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public var readbackRows: [SessionDebugRow] {
         var rows = [
-            SessionDebugRow(id: "availability", label: "availability", value: availability.displayText),
+            SessionDebugRow(
+                id: "availability",
+                label: "availability",
+                metricValue: .status(
+                    display: availability.displayText,
+                    accessibility: availability.displayText
+                )
+            ),
             SessionDebugRow(
                 id: "page",
                 label: "page",
-                value: bmsPageText(selector: pageSelector, tag: pageTag, kind: pageKind),
+                metricValue: bmsPageMetricValue(
+                    selector: pageSelector,
+                    tag: pageTag,
+                    kind: pageKind
+                ),
                 role: .transportMetadata
             ),
             SessionDebugRow(
                 id: "page-verification",
                 label: "page verification",
-                value: pageVerification?.displayText ?? "unavailable",
+                metricValue: pageVerification.map { verification in
+                    .status(
+                        display: verification.displayText,
+                        accessibility: verification.displayText
+                    )
+                } ?? .unavailable,
                 role: .transportMetadata
             ),
-            SessionDebugRow(id: "charge", label: "charge", value: bmsPercentText(energyPercent)),
-            SessionDebugRow(id: "voltage", label: "voltage", value: bmsVoltageText(voltage)),
-            SessionDebugRow(id: "current", label: "current", value: bmsCurrentText(current)),
+            SessionDebugRow(
+                id: "charge",
+                label: "charge",
+                metricValue: bmsMetricValue(energyPercent) {
+                    RideUnits.percentText($0.value) + "%"
+                }
+            ),
+            SessionDebugRow(
+                id: "voltage",
+                label: "voltage",
+                metricValue: bmsMetricValue(voltage) {
+                    RideUnits.voltageText(millivolts: $0.value)
+                }
+            ),
+            SessionDebugRow(
+                id: "current",
+                label: "current",
+                metricValue: bmsMetricValue(current) {
+                    RideUnits.currentText(milliamps: $0.value)
+                }
+            ),
         ]
         if let bmsPackCurrent0 {
             rows.append(
                 SessionDebugRow(
                     id: "bms-current-0",
                     label: "bms current 0",
-                    value: bmsCurrentText(bmsPackCurrent0)
+                    metricValue: bmsMetricValue(bmsPackCurrent0) {
+                        RideUnits.currentText(milliamps: $0.value)
+                    }
                 )
             )
         }
@@ -2284,26 +2320,59 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                 SessionDebugRow(
                     id: "bms-current-1",
                     label: "bms current 1",
-                    value: bmsCurrentText(bmsPackCurrent1)
+                    metricValue: bmsMetricValue(bmsPackCurrent1) {
+                        RideUnits.currentText(milliamps: $0.value)
+                    }
                 )
             )
         }
         rows += [
-            SessionDebugRow(id: "high-group", label: "high group", value: bmsGroupVoltageText(highGroupVoltage)),
-            SessionDebugRow(id: "low-group", label: "low group", value: bmsGroupVoltageText(lowGroupVoltage)),
-            SessionDebugRow(id: "delta", label: "delta", value: bmsMillivoltsText(cellDelta)),
+            SessionDebugRow(
+                id: "high-group",
+                label: "high group",
+                metricValue: bmsMetricValue(highGroupVoltage) {
+                    RideUnits.voltageText(millivolts: $0.value, fractionDigits: 3)
+                }
+            ),
+            SessionDebugRow(
+                id: "low-group",
+                label: "low group",
+                metricValue: bmsMetricValue(lowGroupVoltage) {
+                    RideUnits.voltageText(millivolts: $0.value, fractionDigits: 3)
+                }
+            ),
+            SessionDebugRow(
+                id: "delta",
+                label: "delta",
+                metricValue: bmsMetricValue(cellDelta) { String($0.value) }
+            ),
             SessionDebugRow(
                 id: "lowest-group",
                 label: "lowest group",
-                value: lowestGroupIndex.map(String.init) ?? "unavailable"
+                metricValue: bmsMetricValue(lowestGroupIndex, format: String.init)
             ),
-            SessionDebugRow(id: "temperature", label: "temperature", value: bmsTemperatureText(highestTemperature)),
+            SessionDebugRow(
+                id: "temperature",
+                label: "temperature",
+                metricValue: bmsMetricValue(highestTemperature) {
+                    RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1)
+                }
+            ),
             SessionDebugRow(
                 id: "temperature-sensors",
                 label: "temperature sensors",
-                value: bmsCountText(temperatureReadings.count)
+                metricValue: temperatureReadings.isEmpty
+                    ? .unavailable
+                    : bmsMetricValue(temperatureReadings.count, format: String.init)
             ),
-            SessionDebugRow(id: "topology", label: "topology", value: topology.layoutLabel),
+            SessionDebugRow(
+                id: "topology",
+                label: "topology",
+                metricValue: .available(
+                    display: topology.layoutLabel,
+                    accessibility: topology.layoutLabel
+                )
+            ),
         ]
         return rows
     }
@@ -2605,12 +2674,20 @@ private func mergeGroups(_ updates: [BmsGroupSnapshot], into existing: [BmsGroup
     return groupsByIndex.values.sorted { $0.index < $1.index }
 }
 
-private func bmsPercentText(_ value: BatteryLevel?) -> String {
-    guard let value else { return "--" }
-    return RideUnits.percentText(value.value) + "%"
+private func bmsMetricValue<Value>(
+    _ value: Value?,
+    format: (Value) -> String
+) -> PevDashboardMetricValue {
+    guard let value else { return .unavailable }
+    let text = format(value)
+    return .available(display: text, accessibility: text)
 }
 
-private func bmsPageText(selector: UInt8?, tag: UInt16?, kind: String?) -> String {
+private func bmsPageMetricValue(
+    selector: UInt8?,
+    tag: UInt16?,
+    kind: String?
+) -> PevDashboardMetricValue {
     var parts: [String] = []
     if let kind {
         parts.append(kind)
@@ -2621,32 +2698,9 @@ private func bmsPageText(selector: UInt8?, tag: UInt16?, kind: String?) -> Strin
     if let selector {
         parts.append("#\(selector)")
     }
-    return parts.isEmpty ? "--" : parts.joined(separator: " ")
-}
-
-private func bmsVoltageText(_ value: Voltage?) -> String {
-    value.map { RideUnits.voltageText(millivolts: $0.value) } ?? "--"
-}
-
-private func bmsCurrentText(_ value: BatteryCurrent?) -> String {
-    value.map { RideUnits.currentText(milliamps: $0.value) } ?? "--"
-}
-
-private func bmsMillivoltsText(_ value: VoltageDelta?) -> String {
-    value.map { String($0.value) } ?? "--"
-}
-
-private func bmsCountText(_ value: Int) -> String {
-    value == 0 ? "--" : String(value)
-}
-
-private func bmsTemperatureText(_ value: Temperature?) -> String {
-    value.map { RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1) } ?? "--"
-}
-
-private func bmsGroupVoltageText(_ value: Voltage?) -> String {
-    guard let value else { return "--" }
-    return RideUnits.voltageText(millivolts: value.value, fractionDigits: 3)
+    guard !parts.isEmpty else { return .unavailable }
+    let text = parts.joined(separator: " ")
+    return .available(display: text, accessibility: text)
 }
 
 public enum SessionDebugRowRole: Equatable, Hashable, Sendable {
@@ -2657,8 +2711,21 @@ public enum SessionDebugRowRole: Equatable, Hashable, Sendable {
 public struct SessionDebugRow: Equatable, Hashable, Sendable {
     public let id: String
     public let label: String
-    public let value: String
+    public let metricValue: PevDashboardMetricValue
+    public var value: String { metricValue.displayText }
     public let role: SessionDebugRowRole
+
+    public init(
+        id: String,
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        role: SessionDebugRowRole = .data
+    ) {
+        self.id = id
+        self.label = label
+        self.metricValue = metricValue
+        self.role = role
+    }
 
     public init(
         id: String,
@@ -2666,10 +2733,12 @@ public struct SessionDebugRow: Equatable, Hashable, Sendable {
         value: String,
         role: SessionDebugRowRole = .data
     ) {
-        self.id = id
-        self.label = label
-        self.value = value
-        self.role = role
+        self.init(
+            id: id,
+            label: label,
+            metricValue: .available(display: value, accessibility: value),
+            role: role
+        )
     }
 
     public init(label: String, value: String, role: SessionDebugRowRole = .data) {
