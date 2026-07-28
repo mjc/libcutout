@@ -232,7 +232,7 @@ final class PevScreenCatalogTests: XCTestCase {
         let battery = PevDashboardTile(
             kind: .batteryCurrent,
             label: "battery current",
-            value: "12",
+            metricValue: .available(display: "12", accessibility: "12"),
             unit: "A",
             detail: "live telemetry",
             accent: .yellow
@@ -240,7 +240,7 @@ final class PevScreenCatalogTests: XCTestCase {
         let localizedBattery = PevDashboardTile(
             kind: .batteryCurrent,
             label: "courant de batterie",
-            value: "12",
+            metricValue: .available(display: "12", accessibility: "12"),
             unit: "A",
             detail: "télémétrie en direct",
             accent: .yellow
@@ -248,7 +248,7 @@ final class PevScreenCatalogTests: XCTestCase {
         let motorWithSameLabel = PevDashboardTile(
             kind: .motorCurrent,
             label: "battery current",
-            value: "12",
+            metricValue: .available(display: "12", accessibility: "12"),
             unit: "A",
             detail: "live telemetry",
             accent: .orange

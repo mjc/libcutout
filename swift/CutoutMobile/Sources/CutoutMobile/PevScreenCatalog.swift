@@ -127,24 +127,6 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
     public init(
         kind: PevDashboardTileKind,
         label: String,
-        value: String,
-        unit: String,
-        detail: String,
-        accent: PevAccent
-    ) {
-        self.init(
-            kind: kind,
-            label: label,
-            metricValue: .available(display: value, accessibility: value),
-            unit: unit,
-            detail: detail,
-            accent: accent
-        )
-    }
-
-    public init(
-        kind: PevDashboardTileKind,
-        label: String,
         metricValue: PevDashboardMetricValue,
         unit: String,
         detail: String,
