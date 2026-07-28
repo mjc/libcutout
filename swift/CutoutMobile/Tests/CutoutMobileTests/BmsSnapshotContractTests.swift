@@ -405,7 +405,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.unknownTopologyVoltageDetail, "topology unverified")
         XCTAssertEqual(snapshot.unknownTopologyCellCountMetricValue, .unavailable)
         XCTAssertEqual(snapshot.unknownTopologyCellCountDetail, "layout unverified")
-        XCTAssertNil(snapshot.unknownTopologyTemperatureSensorCount)
+        XCTAssertEqual(snapshot.unknownTopologyTemperatureSensorCountMetricValue, .unavailable)
         XCTAssertEqual(snapshot.unknownTopologyTemperatureDetail, "sensor names unavailable")
         XCTAssertEqual(snapshot.unknownTopologyCaptureDetail, "show raw-safe info until topology is confirmed")
     }
@@ -427,7 +427,10 @@ final class BmsSnapshotContractTests: XCTestCase {
             ]
         )
 
-        XCTAssertEqual(snapshot.unknownTopologyTemperatureSensorCount, 2)
+        XCTAssertEqual(
+            snapshot.unknownTopologyTemperatureSensorCountMetricValue,
+            .available(display: "2", accessibility: "2")
+        )
     }
 
     func testUnknownTopologyCellCountKeepsReportedValueAvailable() {

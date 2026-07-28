@@ -2499,9 +2499,11 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
     }
 
-    public var unknownTopologyTemperatureSensorCount: Int? {
+    public var unknownTopologyTemperatureSensorCountMetricValue: PevDashboardMetricValue {
         let sensorCount = groups.compactMap(\.temperature).count
-        return sensorCount > 0 ? sensorCount : nil
+        guard sensorCount > 0 else { return .unavailable }
+        let value = RideUnits.decimalString(Double(sensorCount), fractionDigits: 0)
+        return .available(display: value, accessibility: value)
     }
 
     public var unknownTopologyTemperatureDetail: String {
