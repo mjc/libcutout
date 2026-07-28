@@ -198,10 +198,10 @@ struct VescRideScreenView: View {
                     cornerRadius: 24
                 )
                 .padding(.top, 12)
-            } else if let liveSnapshot, liveSnapshot.dutyHeadroomMetricValue != .unavailable {
+            } else if let liveSnapshot, liveSnapshot.dutyHeadroomProgressMetricValue != .unavailable {
                 PevDashboardProgressCard(
                     label: localizedAppText("vesc.duty_headroom.label"),
-                    metricValue: liveSnapshot.dutyHeadroomMetricValue,
+                    metricValue: liveSnapshot.dutyHeadroomProgressMetricValue,
                     detail: localizedAppText("vesc.duty_headroom.detail"),
                     progress: liveSnapshot.dutyHeadroomProgress
                 )

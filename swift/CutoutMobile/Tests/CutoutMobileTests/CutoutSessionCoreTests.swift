@@ -384,6 +384,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(loaded.dutyCycle, dutyCycle(230))
         XCTAssertEqual(loaded.dutyHeadroom, batteryLevelValue(77))
         XCTAssertEqual(loaded.dutyHeadroomMetricValue, .available(display: "77", accessibility: "77"))
+        XCTAssertEqual(
+            loaded.dutyHeadroomProgressMetricValue,
+            .available(display: "77%", accessibility: "77%")
+        )
         XCTAssertEqual(try XCTUnwrap(loaded.dutyHeadroomProgress), 0.77, accuracy: 0.001)
     }
 
@@ -402,6 +406,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             snapshot.dutyHeadroomMetricValue,
             .status(display: "Not applicable", accessibility: "Not applicable")
         )
+        XCTAssertEqual(
+            snapshot.dutyHeadroomProgressMetricValue,
+            .status(display: "Not applicable", accessibility: "Not applicable")
+        )
         XCTAssertNil(snapshot.dutyHeadroomProgress)
     }
 
@@ -417,6 +425,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(snapshot.dutyHeadroom)
         XCTAssertEqual(snapshot.dutyHeadroomApplicability, .unavailable)
         XCTAssertEqual(snapshot.dutyHeadroomMetricValue, .unavailable)
+        XCTAssertEqual(snapshot.dutyHeadroomProgressMetricValue, .unavailable)
         XCTAssertNil(snapshot.dutyHeadroomProgress)
     }
 

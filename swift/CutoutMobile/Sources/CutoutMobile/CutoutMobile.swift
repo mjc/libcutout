@@ -1646,6 +1646,15 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         dutyHeadroom.map { Double($0.value) / 100.0 }
     }
 
+    public var dutyHeadroomProgressMetricValue: PevDashboardMetricValue {
+        switch dutyHeadroomMetricValue {
+        case .available(let display, let accessibility):
+            .available(display: display + "%", accessibility: accessibility + "%")
+        case .status, .unavailable:
+            dutyHeadroomMetricValue
+        }
+    }
+
     public var balanceAngleMetricValue: PevDashboardMetricValue {
         vescMetricValue(balanceAngle) {
             RideUnits.angleText(millidegrees: $0.value)
