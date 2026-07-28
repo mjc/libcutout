@@ -65,14 +65,10 @@ struct BmsOverviewLayout: View {
     @ViewBuilder
     private var summaryCard: some View {
         if let energyProgress = snapshot.energyProgress,
-           let energyPercent = snapshot.energyPercent {
-            let energyText = percentText(energyPercent)
+           snapshot.energyPercent != nil {
             PevDashboardHeroCard(
                 eyebrow: localizedAppText("bms.overview.usable_energy"),
-                metricValue: .available(
-                    display: energyText,
-                    accessibility: energyText
-                ),
+                metricValue: snapshot.energyMetricValue,
                 unit: snapshot.availability.displayText,
                 detail: snapshot.topology.layoutLabel,
                 progress: energyProgress

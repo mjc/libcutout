@@ -2259,6 +2259,12 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         energyPercent.map { min(max(Double($0.value) / 100, 0), 1) }
     }
 
+    public var energyMetricValue: PevDashboardMetricValue {
+        bmsMetricValue(energyPercent) {
+            RideUnits.percentText($0.value) + "%"
+        }
+    }
+
     public var readbackRows: [SessionDebugRow] {
         var rows = [
             SessionDebugRow(
@@ -2293,9 +2299,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "charge",
                 label: "charge",
-                metricValue: bmsMetricValue(energyPercent) {
-                    RideUnits.percentText($0.value) + "%"
-                }
+                metricValue: energyMetricValue
             ),
             SessionDebugRow(
                 id: "voltage",

@@ -49,9 +49,14 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
 
         XCTAssertNil(BmsSnapshot(topology: topology).energyProgress)
+        XCTAssertEqual(BmsSnapshot(topology: topology).energyMetricValue, .unavailable)
         XCTAssertEqual(
             BmsSnapshot(topology: topology, energyPercent: BatteryLevel(value: 72)).energyProgress,
             0.72
+        )
+        XCTAssertEqual(
+            BmsSnapshot(topology: topology, energyPercent: BatteryLevel(value: 72)).energyMetricValue,
+            .available(display: "72%", accessibility: "72%")
         )
         XCTAssertEqual(
             BmsSnapshot(topology: topology, energyPercent: BatteryLevel(value: 255)).energyProgress,
