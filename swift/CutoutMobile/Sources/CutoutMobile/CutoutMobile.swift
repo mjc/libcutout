@@ -1985,6 +1985,12 @@ public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
             pevLocalizedText("gps.detail.stale")
         }
     }
+
+    public var speedMetricValue: PevDashboardMetricValue {
+        guard let speed = speed.millimetersPerSecond else { return .unavailable }
+        let text = RideUnits.speedText(millimetersPerSecond: speed)
+        return .available(display: text, accessibility: text)
+    }
 }
 
 public enum BmsTopologyConfidence: Equatable, Hashable, Sendable {

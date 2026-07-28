@@ -123,14 +123,10 @@ func eucGpsSpeedTile(
     from readback: PhoneLocationReadback,
     at wallClockUnixMilliseconds: UInt64
 ) -> PevDashboardTile {
-    let metricValue = readback.speed.millimetersPerSecond.map { speed in
-        let value = RideUnits.speedText(millimetersPerSecond: speed)
-        return PevDashboardMetricValue.available(display: value, accessibility: value)
-    } ?? .unavailable
     return PevDashboardTile(
         kind: .gpsSpeed,
         label: localizedAppText("euc.metric.gps_speed"),
-        metricValue: metricValue,
+        metricValue: readback.speedMetricValue,
         unit: readback.speed.millimetersPerSecond == nil ? "" : RideUnits.speedUnit,
         detail: readback.detail(at: wallClockUnixMilliseconds),
         accent: readback.freshness(at: wallClockUnixMilliseconds) == .fresh ? .cyan : .yellow
