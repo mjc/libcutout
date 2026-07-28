@@ -2259,15 +2259,15 @@ public enum BmsNoDataTextRow: Hashable, Sendable, Identifiable {
     public var text: String {
         switch self {
         case .cellBalanceWarning:
-            "CutOut can’t see individual cell balance or weak groups."
+            pevLocalizedText("bms.no_data.row.cell_balance_warning")
         case .bmsDiagnosticsWarning:
-            "BMS temperature, faults, or cutout reason stay unavailable."
+            pevLocalizedText("bms.no_data.row.diagnostics_warning")
         case .cellVoltages:
-            "individual cell/group voltages"
+            pevLocalizedText("bms.no_data.row.cell_voltages")
         case .weakGroups:
-            "cell balance / weak parallel group"
+            pevLocalizedText("bms.no_data.row.weak_groups")
         case .bmsDiagnostics:
-            "BMS temperature, faults, and cutout reason"
+            pevLocalizedText("bms.no_data.row.diagnostics")
         }
     }
 }

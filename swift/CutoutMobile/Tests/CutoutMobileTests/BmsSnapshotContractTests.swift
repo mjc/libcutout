@@ -53,6 +53,21 @@ final class BmsSnapshotContractTests: XCTestCase {
         }
     }
 
+    func testBmsNoDataRowsResolveFromThePackageCatalog() {
+        let cases: [(BmsNoDataTextRow, String, String)] = [
+            (.cellBalanceWarning, "bms.no_data.row.cell_balance_warning", "CutOut can’t see individual cell balance or weak groups."),
+            (.bmsDiagnosticsWarning, "bms.no_data.row.diagnostics_warning", "BMS temperature, faults, or cutout reason stay unavailable."),
+            (.cellVoltages, "bms.no_data.row.cell_voltages", "individual cell/group voltages"),
+            (.weakGroups, "bms.no_data.row.weak_groups", "cell balance / weak parallel group"),
+            (.bmsDiagnostics, "bms.no_data.row.diagnostics", "BMS temperature, faults, and cutout reason"),
+        ]
+
+        for (row, key, expected) in cases {
+            XCTAssertEqual(pevLocalizedText(key), expected)
+            XCTAssertEqual(row.text, pevLocalizedText(key))
+        }
+    }
+
     func testEnergyProgressUsesAndClampsTypedBatteryLevel() {
         let topology = BmsTopology(
             layoutLabel: "test pack",
