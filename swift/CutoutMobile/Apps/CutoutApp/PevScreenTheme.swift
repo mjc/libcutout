@@ -92,27 +92,11 @@ extension PevAccent {
 
 func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
     [
-        state.pwmHeadroomPermille.map { headroomPermille in
-            return PevSafetyBar(
-                id: .pwmHeadroom,
-                label: localizedAppText("ride.safety.pwm_headroom"),
-                metricValue: .available(
-                    display: percentageString(fromPermille: headroomPermille),
-                    accessibility: percentageString(fromPermille: headroomPermille)
-                ),
-                progress: Double(headroomPermille) / 1_000.0,
-                accent: .yellow
-            )
-        } ?? PevSafetyBar(
+        PevSafetyBar(
             id: .pwmHeadroom,
             label: localizedAppText("ride.safety.pwm_headroom"),
-            metricValue: state.pwmHeadroomApplicability == .notApplicable
-                ? .status(
-                    display: localizedAppText("ride.value.not_applicable"),
-                    accessibility: localizedAppText("ride.value.not_applicable")
-                )
-                : .unavailable,
-            progress: nil,
+            metricValue: state.pwmHeadroomMetricValue,
+            progress: state.pwmHeadroomProgress,
             accent: .yellow
         ),
         PevSafetyBar(

@@ -325,6 +325,10 @@
       "comment" : "Generic metric availability used visually and by VoiceOver when no reading exists.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unavailable" } } }
     },
+    "metric.availability.not_applicable" : {
+      "comment" : "Generic metric availability used visually and by VoiceOver when a reading does not apply to the current state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not applicable" } } }
+    },
     "euc.failure.characteristic_discovery" : {
       "comment" : "Connection failure. The placeholder is the platform's characteristic-discovery error description.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Characteristic discovery failed: %@" } } }

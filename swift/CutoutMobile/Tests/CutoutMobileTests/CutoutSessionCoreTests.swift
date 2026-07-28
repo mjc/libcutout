@@ -1807,6 +1807,38 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(rideState.pwmHeadroomPermille)
     }
 
+    func testRideStateOwnsTypedPwmHeadroomPresentation() throws {
+        let available = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(230))
+            )
+        )
+        let notApplicable = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(0))
+            )
+        )
+        let unavailable = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: TelemetrySnapshot(operatingState: .riding))
+        )
+
+        XCTAssertEqual(
+            available.pwmHeadroomMetricValue,
+            .available(display: "77%", accessibility: "77%")
+        )
+        XCTAssertEqual(try XCTUnwrap(available.pwmHeadroomProgress), 0.77, accuracy: 0.001)
+        XCTAssertEqual(
+            notApplicable.pwmHeadroomMetricValue,
+            .status(display: "Not applicable", accessibility: "Not applicable")
+        )
+        XCTAssertNil(notApplicable.pwmHeadroomProgress)
+        XCTAssertEqual(unavailable.pwmHeadroomMetricValue, .unavailable)
+        XCTAssertNil(unavailable.pwmHeadroomProgress)
+    }
+
     func testRideStateTreatsMissingPwmHeadroomAsUnavailable() {
         let rideState = EucRideScreenState(
             phase: .live,

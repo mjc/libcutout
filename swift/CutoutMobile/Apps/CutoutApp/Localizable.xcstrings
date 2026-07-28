@@ -801,10 +801,6 @@
       "comment" : "Ride thermal tile detail. The placeholders are motor and battery temperatures, each followed by its unit.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "motor %1$@ %2$@ · battery %3$@ %4$@" } } }
     },
-    "ride.value.not_applicable" : {
-      "comment" : "Ride safety-bar value when a metric does not apply to the current riding state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not applicable" } } }
-    },
     "ride.value.percent" : {
       "comment" : "Ride percentage value. The placeholder is the locale-formatted numeric percentage without its percent sign.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@%%" } } }

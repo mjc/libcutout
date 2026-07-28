@@ -3216,6 +3216,27 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         telemetry?.pwmHeadroomPermille
     }
 
+    public var pwmHeadroomMetricValue: PevDashboardMetricValue {
+        switch pwmHeadroomApplicability {
+        case .available:
+            guard let pwmHeadroomPermille else {
+                return .unavailable
+            }
+
+            let value = RideUnits.permillePercentText(pwmHeadroomPermille) + "%"
+            return .available(display: value, accessibility: value)
+        case .notApplicable:
+            let value = pevLocalizedText("metric.availability.not_applicable")
+            return .status(display: value, accessibility: value)
+        case .unavailable:
+            return .unavailable
+        }
+    }
+
+    public var pwmHeadroomProgress: Double? {
+        pwmHeadroomPermille.map { Double($0) / 1_000.0 }
+    }
+
     public var regenerationPower: Power? {
         guard telemetry?.powerFlow == .regeneration else {
             return nil
