@@ -2490,6 +2490,24 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         topology.layoutLabel
     }
 
+    public var balancingMetricValue: PevDashboardMetricValue {
+        guard let balancingSummary else { return .unavailable }
+        return .status(display: balancingSummary, accessibility: balancingSummary)
+    }
+
+    public var balancingMetricDetail: String {
+        balancingDetail ?? ""
+    }
+
+    public var faultMetricValue: PevDashboardMetricValue {
+        guard let faultSummary else { return .unavailable }
+        return .status(display: faultSummary, accessibility: faultSummary)
+    }
+
+    public var faultMetricDetail: String {
+        faultDetail ?? ""
+    }
+
     public var unknownTopologyCellCountMetricValue: PevDashboardMetricValue {
         guard let count = topology.seriesGroupCount else { return .unavailable }
         let value = RideUnits.decimalString(Double(count), fractionDigits: 0)

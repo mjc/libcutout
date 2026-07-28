@@ -43,19 +43,19 @@ struct BmsOverviewLayout: View {
                 )
             }
 
-            if let balancingSummary = snapshot.balancingSummary {
+            if snapshot.balancingSummary != nil {
                 PevDashboardWideCard(
                     title: localizedAppText("bms.overview.balancing"),
-                    metricValue: .available(display: balancingSummary, accessibility: balancingSummary),
-                    detail: snapshot.balancingDetail ?? ""
+                    metricValue: snapshot.balancingMetricValue,
+                    detail: snapshot.balancingMetricDetail
                 )
             }
 
-            if let faultSummary = snapshot.faultSummary {
+            if snapshot.faultSummary != nil {
                 PevDashboardWideCard(
                     title: localizedAppText("bms.overview.fault_state"),
-                    metricValue: .available(display: faultSummary, accessibility: faultSummary),
-                    detail: snapshot.faultDetail ?? "",
+                    metricValue: snapshot.faultMetricValue,
+                    detail: snapshot.faultMetricDetail,
                     stroke: PevColors.red
                 )
             }

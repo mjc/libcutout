@@ -139,6 +139,16 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.groups.map { $0.isBalancing }, [true])
         XCTAssertEqual(snapshot.groups.map { $0.resistance }, [Resistance(value: 21)])
         XCTAssertEqual(snapshot.groups.map { $0.alertLevel }, [BmsAlertLevel.warning])
+        XCTAssertEqual(
+            snapshot.balancingMetricValue,
+            .status(display: "idle - top groups only", accessibility: "idle - top groups only")
+        )
+        XCTAssertEqual(snapshot.balancingMetricDetail, "3 groups bleeding: 03, 11, 19")
+        XCTAssertEqual(
+            snapshot.faultMetricValue,
+            .status(display: "no active faults", accessibility: "no active faults")
+        )
+        XCTAssertEqual(snapshot.faultMetricDetail, "last: under-voltage warning - 3 days ago")
         XCTAssertEqual(snapshot.captureActionState, "disabled for launch")
     }
 
