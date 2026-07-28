@@ -110,6 +110,18 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(bar.metricValue.accessibilityText, "unavailable")
     }
 
+    func testProgressCardUsesTheSameTypedUnavailableState() {
+        let card = PevDashboardProgressCard(
+            label: "Headroom",
+            metricValue: .unavailable,
+            detail: "",
+            progress: nil
+        )
+
+        XCTAssertEqual(card.metricValue, .unavailable)
+        XCTAssertNil(card.progress)
+    }
+
     func testHeroProgressAndReadbackUseTheSameTypedValues() {
         let card = PevDashboardHeroCard(
             eyebrow: "Battery",

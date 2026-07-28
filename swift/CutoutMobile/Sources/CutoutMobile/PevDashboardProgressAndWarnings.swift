@@ -73,9 +73,9 @@ public struct PevDashboardProgressBar: View {
 
 public struct PevDashboardProgressCard: View {
     let label: String
-    let value: String
+    let metricValue: PevDashboardMetricValue
     let detail: String
-    let progress: Double
+    let progress: Double?
 
     public init(
         label: String,
@@ -84,7 +84,19 @@ public struct PevDashboardProgressCard: View {
         progress: Double
     ) {
         self.label = label
-        self.value = value
+        metricValue = .available(display: value, accessibility: value)
+        self.detail = detail
+        self.progress = progress
+    }
+
+    public init(
+        label: String,
+        metricValue: PevDashboardMetricValue,
+        detail: String,
+        progress: Double?
+    ) {
+        self.label = label
+        self.metricValue = metricValue
         self.detail = detail
         self.progress = progress
     }
@@ -93,7 +105,7 @@ public struct PevDashboardProgressCard: View {
         VStack(alignment: .leading, spacing: 11) {
             PevDashboardProgressBar(
                 label: label,
-                value: value,
+                metricValue: metricValue,
                 progress: progress,
                 track: PevDashboardColors.cardStroke
             )
@@ -116,7 +128,11 @@ public struct PevDashboardProgressCard: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(label)
-        .accessibilityValue(detail.isEmpty ? value : "\(value), \(detail)")
+        .accessibilityValue(
+            detail.isEmpty
+                ? metricValue.accessibilityText
+                : "\(metricValue.accessibilityText), \(detail)"
+        )
     }
 }
 

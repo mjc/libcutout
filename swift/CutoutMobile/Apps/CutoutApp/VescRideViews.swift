@@ -205,7 +205,11 @@ struct VescRideScreenView: View {
             } else if let dutyHeadroom {
                 PevDashboardProgressCard(
                     label: localizedAppText("vesc.duty_headroom.label"),
-                    value: percentText(dutyHeadroom),
+                    metricValue: liveSnapshot?.dutyHeadroomMetricValue
+                        ?? .available(
+                            display: percentText(dutyHeadroom),
+                            accessibility: percentText(dutyHeadroom)
+                        ),
                     detail: localizedAppText("vesc.duty_headroom.detail"),
                     progress: Double(dutyHeadroom.value) / 100.0
                 )
