@@ -51,20 +51,21 @@ if [[ "$destination" == platform=iOS,* ]]; then
 fi
 xcodebuild_args+=("$@")
 
+if [[ -n "${CUTOUT_IOS_UI_TEST_RUN_TIMEOUT:-}" ]]; then
+  ui_test_run_timeout="$CUTOUT_IOS_UI_TEST_RUN_TIMEOUT"
+elif [[ " ${xcodebuild_args[*]} " == *" -only-testing:"* ]]; then
+  ui_test_run_timeout=150
+else
+  ui_test_run_timeout=1800
+fi
+
 if [[ "$mode" != "test-without-building" ]]; then
   /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
 fi
 
-if [[ "$mode" == "test" ]]; then
-  /usr/bin/xcrun xcodebuild \
-    "${xcodebuild_args[@]}" \
-    -parallel-testing-enabled NO \
-    -test-timeouts-enabled YES \
-    -default-test-execution-time-allowance 120 \
-    -maximum-test-execution-time-allowance 120 \
-    test-without-building
-elif [[ "$mode" == "test-without-building" ]]; then
-  /usr/bin/xcrun xcodebuild \
+if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
+  timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
+    /usr/bin/xcrun xcodebuild \
     "${xcodebuild_args[@]}" \
     -parallel-testing-enabled NO \
     -test-timeouts-enabled YES \
