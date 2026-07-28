@@ -247,6 +247,28 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(liveThermalValue(telemetry: TelemetrySnapshot()), .unavailable)
     }
 
+    func testTelemetrySnapshotUsesTypedLiveVoltageAndThermalMetrics() {
+        let unavailable = TelemetrySnapshot()
+        XCTAssertEqual(unavailable.packVoltageMetricValue, .unavailable)
+        XCTAssertEqual(unavailable.thermalMetricValue, .unavailable)
+
+        let snapshot = TelemetrySnapshot(
+            voltage: Voltage(value: 62_800),
+            controllerTemperature: Temperature(value: 42_000),
+            motorTemperature: Temperature(value: 54_000)
+        )
+        let voltageText = RideUnits.voltageText(millivolts: 62_800, fractionDigits: 1)
+        let thermalText = RideUnits.temperatureText(millicelsius: 54_000, fractionDigits: 0)
+        XCTAssertEqual(
+            snapshot.packVoltageMetricValue,
+            .available(display: voltageText, accessibility: voltageText)
+        )
+        XCTAssertEqual(
+            snapshot.thermalMetricValue,
+            .available(display: thermalText, accessibility: thermalText)
+        )
+    }
+
     func testBmsNoDataWarningUsesLocaleAwareAccessibilityList() {
         let card = BmsNoDataWarningCard(
             snapshot: BmsSnapshot(

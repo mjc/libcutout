@@ -121,7 +121,7 @@ func liveSafetyBars(for state: EucRideScreenState) -> [PevSafetyBar] {
 
 func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnapshot) -> [PevDashboardTile] {
     let distanceUnit = RideUnits.distanceUnit(forSpeedUnit: state.speedUnit)
-    let thermalMetricValue = liveThermalValue(telemetry: telemetry)
+    let thermalMetricValue = telemetry.thermalMetricValue
     let thermalDetail = if case .available = thermalMetricValue {
         liveThermalDetail(telemetry: telemetry)
     } else {
@@ -130,23 +130,15 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
 
     return [
         chargeEstimateTile(from: state),
-        telemetry.voltage.map { voltage in
-            let value = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
-            return PevDashboardTile(
-                kind: .packVoltage,
-                label: localizedAppText("ride.metric.pack"),
-                metricValue: .available(display: value, accessibility: value),
-                unit: RideUnits.voltageUnit,
-                detail: telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
-                    ?? localizedAppText("ride.detail.sag_unavailable"),
-                accent: .cyan
-            )
-        } ?? PevDashboardTile(
+        PevDashboardTile(
             kind: .packVoltage,
             label: localizedAppText("ride.metric.pack"),
-            metricValue: .unavailable,
+            metricValue: telemetry.packVoltageMetricValue,
             unit: RideUnits.voltageUnit,
-            detail: localizedAppText("ride.value.unavailable"),
+            detail: telemetry.voltage == nil
+                ? localizedAppText("ride.value.unavailable")
+                : telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
+                    ?? localizedAppText("ride.detail.sag_unavailable"),
             accent: .cyan
         ),
         livePowerTile(from: telemetry),
@@ -440,13 +432,7 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
 }
 
 func liveThermalValue(telemetry: TelemetrySnapshot) -> PevDashboardMetricValue {
-    let values = [telemetry.controllerTemperature, telemetry.motorTemperature, telemetry.batteryTemperature]
-        .compactMap { $0?.value }
-    guard let maxValue = values.max() else {
-        return .unavailable
-    }
-    let text = RideUnits.temperatureText(millicelsius: maxValue, fractionDigits: 0)
-    return .available(display: text, accessibility: text)
+    telemetry.thermalMetricValue
 }
 
 func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {

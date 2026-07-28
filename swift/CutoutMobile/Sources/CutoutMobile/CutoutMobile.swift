@@ -1235,6 +1235,20 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             chargeEstimate: chargeEstimate
         )
     }
+
+    public var packVoltageMetricValue: PevDashboardMetricValue {
+        guard let voltage else { return .unavailable }
+        let text = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
+        return .available(display: text, accessibility: text)
+    }
+
+    public var thermalMetricValue: PevDashboardMetricValue {
+        let temperatures = [controllerTemperature, motorTemperature, batteryTemperature]
+            .compactMap { $0?.value }
+        guard let maximum = temperatures.max() else { return .unavailable }
+        let text = RideUnits.temperatureText(millicelsius: maximum, fractionDigits: 0)
+        return .available(display: text, accessibility: text)
+    }
 }
 
 public enum FootpadContactState: Equatable, Hashable, Sendable {
