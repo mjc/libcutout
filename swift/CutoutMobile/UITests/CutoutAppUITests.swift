@@ -792,8 +792,6 @@ final class CutoutAppUITests: XCTestCase {
 
         let screen = app.descendants(matching: .any)["capture.screen"]
         let stopCapture = app.buttons["capture.stop"]
-        let firstAnnotation = app.buttons["capture.label.ride.action"]
-        let lastAnnotation = app.buttons["capture.label.pwm_percent.action"]
         XCTAssertTrue(screen.exists)
 
         for _ in 0..<6 where !stopCapture.isHittable {
@@ -803,16 +801,13 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
         XCTAssertEqual(stopCapture.label, "Finish capture")
+        let firstAnnotation = reachableCaptureAnnotation("ride", in: screen)
         XCTAssertTrue(firstAnnotation.isHittable)
         XCTAssertEqual(firstAnnotation.label, "Start Ride")
         firstAnnotation.tap()
         XCTAssertEqual(firstAnnotation.label, "Stop Ride")
 
-        let annotationScrollView = screen.scrollViews.firstMatch
-        for _ in 0..<8 where !lastAnnotation.isHittable {
-            annotationScrollView.swipeUp()
-        }
-
+        let lastAnnotation = reachableCaptureAnnotation("pwm_percent", in: screen)
         XCTAssertTrue(lastAnnotation.exists)
         XCTAssertTrue(lastAnnotation.isHittable)
         XCTAssertEqual(lastAnnotation.label, "Start PWM percent")
@@ -967,6 +962,19 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(group.elementType, .button)
         XCTAssertTrue(group.isHittable, bmsScreen.debugDescription)
         return group
+    }
+
+    private func reachableCaptureAnnotation(_ id: String, in screen: XCUIElement) -> XCUIElement {
+        let annotation = app.buttons["capture.label.\(id).action"]
+
+        for _ in 0..<12 where !annotation.exists || !annotation.isHittable {
+            let scrollView = screen.scrollViews.firstMatch
+            (scrollView.exists ? scrollView : screen).swipeUp()
+        }
+
+        XCTAssertTrue(annotation.waitForExistence(timeout: 5))
+        XCTAssertTrue(annotation.isHittable, screen.debugDescription)
+        return annotation
     }
 
     private func assertEucBmsAccessibility(

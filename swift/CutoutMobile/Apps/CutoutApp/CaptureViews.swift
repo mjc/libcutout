@@ -104,7 +104,10 @@ struct CaptureRecordingScreen: View {
 
     private var stopCaptureButton: some View {
         Button("capture.stop", role: .destructive, action: finishCapture)
-            .buttonStyle(CaptureActionButtonStyle(tone: .finish))
+            .buttonStyle(.borderedProminent)
+            .buttonBorderShape(.capsule)
+            .tint(CaptureActionButtonTone.finish.tint)
+            .frame(minHeight: 44)
             .disabled(isFinishing)
             .accessibilityIdentifier("capture.stop")
     }
@@ -119,26 +122,12 @@ enum CaptureActionButtonTone: Equatable, Sendable {
         isActive ? .stop : .start
     }
 
-    fileprivate var fill: Color {
+    fileprivate var tint: Color {
         switch self {
         case .start: PevColors.yellow
         case .stop: PevColors.orange
         case .finish: PevColors.yellow
         }
-    }
-}
-
-private struct CaptureActionButtonStyle: ButtonStyle {
-    let tone: CaptureActionButtonTone
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body.weight(.semibold))
-            .foregroundStyle(Color.black)
-            .padding(.horizontal, 18)
-            .frame(minHeight: 44)
-            .background(Capsule().fill(tone.fill))
-            .opacity(configuration.isPressed ? 0.82 : 1)
     }
 }
 
@@ -197,7 +186,8 @@ private struct CaptureLabelControlRow: View {
                 .foregroundStyle(PevColors.primaryText)
             Text(stateText)
                 .font(.caption)
-                .foregroundStyle(isActive ? PevColors.primaryText : PevColors.muted)
+                .foregroundStyle(PevColors.primaryText.opacity(isActive ? 1 : 0.9))
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label.title)
@@ -220,7 +210,10 @@ private struct CaptureLabelControlRow: View {
                 start()
             }
         }
-        .buttonStyle(CaptureActionButtonStyle(tone: .forState(isActive: isActive)))
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .tint(CaptureActionButtonTone.forState(isActive: isActive).tint)
+        .frame(minHeight: 44)
         .accessibilityIdentifier("capture.label.\(label.id).action")
     }
 }
