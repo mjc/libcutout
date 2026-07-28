@@ -444,10 +444,7 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
-        let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
-        XCTAssertTrue(group.exists)
-        XCTAssertEqual(group.elementType, .button)
-        XCTAssertTrue(group.isHittable)
+        let group = reachableBmsGroup(7, in: bmsScreen)
         group.tap()
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
@@ -466,9 +463,7 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
-        let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
-        XCTAssertTrue(group.waitForExistence(timeout: 5))
-        XCTAssertTrue(group.isHittable)
+        let group = reachableBmsGroup(7, in: bmsScreen)
         group.tap()
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
@@ -481,9 +476,7 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
-        let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
-        XCTAssertTrue(group.waitForExistence(timeout: 5))
-        XCTAssertTrue(group.isHittable)
+        let group = reachableBmsGroup(7, in: bmsScreen)
         group.tap()
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
@@ -496,9 +489,7 @@ final class CutoutAppUITests: XCTestCase {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
-        let group = bmsScreen.descendants(matching: .any)["bms.group.7"]
-        XCTAssertTrue(group.waitForExistence(timeout: 5))
-        XCTAssertTrue(group.isHittable)
+        let group = reachableBmsGroup(7, in: bmsScreen)
         group.tap()
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
@@ -741,7 +732,16 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         var launchArguments: [String] {
-            ["-CUTOUT_UI_TEST_FIXTURE", environmentValue]
+            switch self {
+            case .unknownDevice: ["--ui-test-unknown-device"]
+            case .unknownDeviceFinishFailure: ["--ui-test-unknown-device-finish-failure"]
+            case .euc: ["--ui-test-euc"]
+            case .eucNoBms: ["--ui-test-euc-no-bms"]
+            case .vesc: ["--ui-test-vesc"]
+            case .vescFailure: ["--ui-test-vesc-failure"]
+            case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
+            case .vescLiveActivityAuto: ["--ui-test-live-activity-auto"]
+            }
         }
     }
 
@@ -955,6 +955,32 @@ final class CutoutAppUITests: XCTestCase {
         return bmsScreen
     }
 
+    private func reachableBmsGroup(_ index: Int, in bmsScreen: XCUIElement) -> XCUIElement {
+        let group = app.buttons["bms.group.\(index)"]
+        let scrollView = bmsScreen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : bmsScreen
+
+        for attempt in 0..<6 where !group.exists || !group.isHittable {
+            let startOffset = attempt < 3
+                ? CGVector(dx: 0.5, dy: 0.62)
+                : CGVector(dx: 0.5, dy: 0.28)
+            let endOffset = attempt < 3
+                ? CGVector(dx: 0.5, dy: 0.28)
+                : CGVector(dx: 0.5, dy: 0.62)
+            scrollTarget.coordinate(withNormalizedOffset: startOffset).press(
+                forDuration: 0.05,
+                thenDragTo: scrollTarget.coordinate(withNormalizedOffset: endOffset),
+                withVelocity: .slow,
+                thenHoldForDuration: 0
+            )
+        }
+
+        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        XCTAssertEqual(group.elementType, .button)
+        XCTAssertTrue(group.isHittable, bmsScreen.debugDescription)
+        return group
+    }
+
     private func assertEucBmsAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [.contrast]
     ) throws {
@@ -984,17 +1010,11 @@ final class CutoutAppUITests: XCTestCase {
             disconnectIfConnected()
         }
 
-        let useButtons = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.use.")
-        )
-        guard useButtons.firstMatch.waitForExistence(timeout: 8) else { return false }
-
-        let buttons = useButtons.allElementsBoundByIndex
-        guard let button = buttons.first(where: { family.matches(label: $0.label) }) else {
-            return false
-        }
+        let button = app.buttons[family.useButtonIdentifier]
+        guard button.waitForExistence(timeout: 8) else { return false }
 
         XCTAssertEqual(button.elementType, .button)
+        XCTAssertTrue(family.matches(label: button.label))
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         for _ in 0..<6 where !button.isHittable {
@@ -1025,6 +1045,13 @@ private enum ConnectedDeviceFamily: Equatable {
         switch self {
         case .euc: "dashboard.screen.eucRide"
         case .vesc: "dashboard.screen.vescRide"
+        }
+    }
+
+    var useButtonIdentifier: String {
+        switch self {
+        case .euc: "device-picker.use.ui-test-euc"
+        case .vesc: "device-picker.use.ui-test-vesc"
         }
     }
 
