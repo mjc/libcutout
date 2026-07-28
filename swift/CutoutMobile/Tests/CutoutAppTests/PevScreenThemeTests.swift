@@ -42,12 +42,14 @@ final class PevScreenThemeTests: XCTestCase {
         )
 
         let current = PhaseCurrent(value: 71_000)
+        let batteryCurrent = BatteryCurrent(value: 12_400)
         let angle = Angle(value: -1_800)
         let temperature = Temperature(value: 54_000)
         let dutyCycle = DutyCycle(permille: -450)
         let headroom = BatteryLevel(value: 55)
         let balanceAngle = Angle(value: 500)
         let motorTemperature = Temperature(value: 49_000)
+        let footpad = FootpadTelemetry(state: 3, adc1Milliunits: 1_250, adc2Milliunits: 875)
         let metrics = VescRideSnapshot(
             title: "VESC",
             vehicleKind: .float,
@@ -55,11 +57,13 @@ final class PevScreenThemeTests: XCTestCase {
             controllerState: .unknown,
             dutyCycle: dutyCycle,
             dutyHeadroom: headroom,
+            batteryCurrent: batteryCurrent,
             motorCurrent: current,
             boardAngle: angle,
             balanceAngle: balanceAngle,
             controllerTemperature: temperature,
-            motorTemperature: motorTemperature
+            motorTemperature: motorTemperature,
+            footpad: footpad
         )
         let currentText = RideUnits.currentText(milliamps: current.value)
         let angleText = RideUnits.angleText(millidegrees: angle.value)
@@ -70,6 +74,11 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             metrics.motorCurrentMetricValue,
             .available(display: currentText, accessibility: currentText)
+        )
+        let batteryCurrentText = RideUnits.currentText(milliamps: batteryCurrent.value)
+        XCTAssertEqual(
+            metrics.batteryCurrentMetricValue,
+            .available(display: batteryCurrentText, accessibility: batteryCurrentText)
         )
         XCTAssertEqual(
             metrics.boardAngleMetricValue,
@@ -101,6 +110,10 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             metrics.motorTemperatureMetricValue,
             .available(display: motorTemperatureText, accessibility: motorTemperatureText)
+        )
+        XCTAssertEqual(
+            metrics.footpadMetricValue,
+            .available(display: footpad.stateDisplayText, accessibility: footpad.stateDisplayText)
         )
     }
 

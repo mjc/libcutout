@@ -1596,6 +1596,12 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         }
     }
 
+    public var batteryCurrentMetricValue: PevDashboardMetricValue {
+        vescMetricValue(batteryCurrent) {
+            RideUnits.currentText(milliamps: $0.value)
+        }
+    }
+
     public var boardAngleMetricValue: PevDashboardMetricValue {
         vescMetricValue(boardAngle) {
             RideUnits.angleText(millidegrees: $0.value)
@@ -1630,6 +1636,10 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         vescMetricValue(motorTemperature) {
             RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1)
         }
+    }
+
+    public var footpadMetricValue: PevDashboardMetricValue {
+        vescMetricValue(footpad, text: \.stateDisplayText)
     }
 }
 

@@ -244,35 +244,50 @@ func vescDebugRows(
         PevDashboardKeyValueRow(
             id: "voltage",
             label: localizedAppText("vesc.debug.row.pack_voltage"),
-            metricValue: snapshot.batteryVoltage.map { voltage in
-                let text = localizedAppText("vesc.debug.value.voltage", RideUnits.voltageText(millivolts: voltage.value))
-                return .available(display: text, accessibility: text)
-            } ?? .unavailable
+            metricValue: vescDebugMetricValue(
+                snapshot.batteryVoltageMetricValue,
+                format: "vesc.debug.value.voltage"
+            )
         ),
         PevDashboardKeyValueRow(
             id: "battery-current",
             label: localizedAppText("vesc.debug.row.battery_current"),
-            metricValue: snapshot.batteryCurrent.map { current in
-                let text = localizedAppText("vesc.debug.value.current", RideUnits.currentText(milliamps: current.value))
-                return .available(display: text, accessibility: text)
-            } ?? .unavailable
+            metricValue: vescDebugMetricValue(
+                snapshot.batteryCurrentMetricValue,
+                format: "vesc.debug.value.current"
+            )
         ),
         PevDashboardKeyValueRow(
             id: "motor-current",
             label: localizedAppText("vesc.debug.row.motor_current"),
-            metricValue: snapshot.motorCurrent.map { current in
-                let text = localizedAppText("vesc.debug.value.current", RideUnits.currentText(milliamps: current.value))
-                return .available(display: text, accessibility: text)
-            } ?? .unavailable
+            metricValue: vescDebugMetricValue(
+                snapshot.motorCurrentMetricValue,
+                format: "vesc.debug.value.current"
+            )
         ),
         PevDashboardKeyValueRow(
             id: "footpad",
             label: localizedAppText("vesc.debug.row.footpad"),
-            metricValue: snapshot.footpad.map { footpad in
-                .available(display: footpad.stateDisplayText, accessibility: footpad.stateDisplayText)
-            } ?? .unavailable
+            metricValue: snapshot.footpadMetricValue
         ),
     ]
+}
+
+private func vescDebugMetricValue(
+    _ metricValue: PevDashboardMetricValue,
+    format key: String
+) -> PevDashboardMetricValue {
+    switch metricValue {
+    case .available(let display, let accessibility):
+        .available(
+            display: localizedAppText(key, display),
+            accessibility: localizedAppText(key, accessibility)
+        )
+    case .status:
+        metricValue
+    case .unavailable:
+        .unavailable
+    }
 }
 
 func vescDebugProtocolText(_ subProtocol: VescSubProtocol) -> String {
