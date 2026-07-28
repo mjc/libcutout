@@ -118,10 +118,7 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .motorCurrent,
                 label: localizedAppText("vesc.metric.motor_current"),
-                metricValue: liveSnapshot.motorCurrent.map { current in
-                    let text = RideUnits.currentText(milliamps: current.value)
-                    return .available(display: text, accessibility: text)
-                } ?? .unavailable,
+                metricValue: liveSnapshot.motorCurrentMetricValue,
                 unit: RideUnits.currentUnit,
                 detail: motorCurrentDetail,
                 accent: .orange
@@ -129,10 +126,7 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .boardAngle,
                 label: localizedAppText("vesc.metric.board_angle"),
-                metricValue: liveSnapshot.boardAngle.map { angle in
-                    let text = RideUnits.angleText(millidegrees: angle.value)
-                    return .available(display: text, accessibility: text)
-                } ?? .unavailable,
+                metricValue: liveSnapshot.boardAngleMetricValue,
                 unit: RideUnits.angleUnit,
                 detail: boardAngleDetail ?? localizedAppText("vesc.board_angle.unavailable"),
                 accent: .cyan
@@ -140,10 +134,7 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .controller,
                 label: localizedAppText("vesc.metric.controller"),
-                metricValue: liveSnapshot.controllerTemperature.map { temperature in
-                    let text = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
-                    return .available(display: text, accessibility: text)
-                } ?? .unavailable,
+                metricValue: liveSnapshot.controllerTemperatureMetricValue,
                 unit: RideUnits.temperatureUnit,
                 detail: liveSnapshot.motorTemperature.map {
                     localizedAppText(

@@ -1589,6 +1589,24 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         let text = RideUnits.voltageText(millivolts: voltage.value)
         return .available(display: text, accessibility: text)
     }
+
+    public var motorCurrentMetricValue: PevDashboardMetricValue {
+        guard let current = motorCurrent else { return .unavailable }
+        let text = RideUnits.currentText(milliamps: current.value)
+        return .available(display: text, accessibility: text)
+    }
+
+    public var boardAngleMetricValue: PevDashboardMetricValue {
+        guard let angle = boardAngle else { return .unavailable }
+        let text = RideUnits.angleText(millidegrees: angle.value)
+        return .available(display: text, accessibility: text)
+    }
+
+    public var controllerTemperatureMetricValue: PevDashboardMetricValue {
+        guard let temperature = controllerTemperature else { return .unavailable }
+        let text = RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 1)
+        return .available(display: text, accessibility: text)
+    }
 }
 
 public extension VescRideSnapshot {

@@ -18,7 +18,7 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
-    func testVescRideSnapshotUsesTypedVoltageMetricValue() {
+    func testVescRideSnapshotUsesTypedDashboardMetricValues() {
         let unavailable = VescRideSnapshot(
             title: "VESC",
             vehicleKind: .float,
@@ -39,6 +39,37 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(
             available.batteryVoltageMetricValue,
             .available(display: text, accessibility: text)
+        )
+
+        let current = PhaseCurrent(value: 71_000)
+        let angle = Angle(value: -1_800)
+        let temperature = Temperature(value: 54_000)
+        let metrics = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            motorCurrent: current,
+            boardAngle: angle,
+            controllerTemperature: temperature
+        )
+        let currentText = RideUnits.currentText(milliamps: current.value)
+        let angleText = RideUnits.angleText(millidegrees: angle.value)
+        let temperatureText = RideUnits.temperatureText(
+            millicelsius: temperature.value,
+            fractionDigits: 1
+        )
+        XCTAssertEqual(
+            metrics.motorCurrentMetricValue,
+            .available(display: currentText, accessibility: currentText)
+        )
+        XCTAssertEqual(
+            metrics.boardAngleMetricValue,
+            .available(display: angleText, accessibility: angleText)
+        )
+        XCTAssertEqual(
+            metrics.controllerTemperatureMetricValue,
+            .available(display: temperatureText, accessibility: temperatureText)
         )
     }
 
