@@ -12,31 +12,33 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
     let writerHealth = progress.writerError == nil
         ? localizedAppText("capture.detail.writer.healthy")
         : localizedAppText("capture.detail.writer.failed")
+    let notificationCount = progress.notificationCount.formatted()
+    let queuedMessageCount = progress.queuedMessageCount.formatted()
     return [
         PevDashboardKeyValueRow(
             id: "capture-elapsed",
             label: localizedAppText("capture.detail.elapsed"),
-            value: elapsed
+            metricValue: .available(display: elapsed, accessibility: elapsed)
         ),
         PevDashboardKeyValueRow(
             id: "capture-packets",
             label: localizedAppText("capture.detail.packets"),
-            value: progress.notificationCount.formatted()
+            metricValue: .available(display: notificationCount, accessibility: notificationCount)
         ),
         PevDashboardKeyValueRow(
             id: "capture-file-size",
             label: localizedAppText("capture.detail.file_size"),
-            value: fileSize
+            metricValue: .available(display: fileSize, accessibility: fileSize)
         ),
         PevDashboardKeyValueRow(
             id: "capture-queued-messages",
             label: localizedAppText("capture.detail.pending_writes"),
-            value: progress.queuedMessageCount.formatted()
+            metricValue: .available(display: queuedMessageCount, accessibility: queuedMessageCount)
         ),
         PevDashboardKeyValueRow(
             id: "capture-writer-health",
             label: localizedAppText("capture.detail.writer"),
-            value: writerHealth
+            metricValue: .available(display: writerHealth, accessibility: writerHealth)
         ),
     ]
 }

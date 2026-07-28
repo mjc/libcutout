@@ -249,15 +249,19 @@ func vescDebugRows(
         return [PevDashboardKeyValueRow(
             id: "phase",
             label: localizedAppText("vesc.debug.row.session"),
-            value: phase.displayText
+            metricValue: .available(display: phase.displayText, accessibility: phase.displayText)
         )]
     }
 
+    let phaseText = phase.displayText
+    let protocolText = vescDebugProtocolText(snapshot.subProtocol)
+    let stateText = vescOperatingStateText(snapshot)
+    let notificationText = String(notificationCount)
     return [
-        PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), value: phase.displayText),
-        PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), value: vescDebugProtocolText(snapshot.subProtocol)),
-        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), value: vescOperatingStateText(snapshot)),
-        PevDashboardKeyValueRow(id: "notifications", label: localizedAppText("vesc.debug.row.notifications"), value: String(notificationCount)),
+        PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), metricValue: .available(display: phaseText, accessibility: phaseText)),
+        PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), metricValue: .available(display: protocolText, accessibility: protocolText)),
+        PevDashboardKeyValueRow(id: "state", label: localizedAppText("vesc.debug.row.state"), metricValue: .available(display: stateText, accessibility: stateText)),
+        PevDashboardKeyValueRow(id: "notifications", label: localizedAppText("vesc.debug.row.notifications"), metricValue: .available(display: notificationText, accessibility: notificationText)),
         PevDashboardKeyValueRow(
             id: "voltage",
             label: localizedAppText("vesc.debug.row.pack_voltage"),

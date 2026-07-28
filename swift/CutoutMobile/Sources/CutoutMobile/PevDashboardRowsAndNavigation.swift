@@ -7,14 +7,6 @@ public struct PevDashboardKeyValueRow: Identifiable {
     public var value: String { metricValue.displayText }
     public var accessibilityValueText: String { metricValue.accessibilityText }
 
-    public init(id: String, label: String, value: String) {
-        self.init(
-            id: id,
-            label: label,
-            metricValue: .available(display: value, accessibility: value)
-        )
-    }
-
     public init(
         id: String,
         label: String,

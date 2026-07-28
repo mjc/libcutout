@@ -109,7 +109,11 @@ struct BmsDiagnosticsSection: View {
                 rows: snapshot.readbackRows
                     .filter { $0.role == .data }
                     .map { row in
-                        PevDashboardKeyValueRow(id: row.id, label: row.label, value: row.value)
+                        PevDashboardKeyValueRow(
+                            id: row.id,
+                            label: row.label,
+                            metricValue: .available(display: row.value, accessibility: row.value)
+                        )
                     },
                 verticalPadding: 6
             )
