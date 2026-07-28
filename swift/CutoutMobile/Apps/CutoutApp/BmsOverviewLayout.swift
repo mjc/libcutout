@@ -12,7 +12,8 @@ struct BmsOverviewLayout: View {
 
             if hasCellVoltageEvidence {
                 PevDashboardGrid(
-                    columns: [GridItem(.adaptive(minimum: 140), spacing: 14)],
+                    adaptiveMinimumColumnWidth: 140,
+                    columnSpacing: 14,
                     spacing: 14
                 ) {
                     if let averageGroupVoltage {

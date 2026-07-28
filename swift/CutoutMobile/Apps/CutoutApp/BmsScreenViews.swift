@@ -85,7 +85,8 @@ struct BmsScreenView: View {
 
     private var chipRow: some View {
         PevDashboardGrid(
-            columns: [GridItem(.adaptive(minimum: 100), spacing: 10)],
+            adaptiveMinimumColumnWidth: 100,
+            columnSpacing: 10,
             spacing: 10
         ) {
             ForEach(content.chips) { chip in

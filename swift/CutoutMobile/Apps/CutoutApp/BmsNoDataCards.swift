@@ -148,7 +148,8 @@ struct BmsNoDataTelemetryCard: View {
         VStack(alignment: .leading, spacing: 14) {
             PevDashboardSectionLabel(title: localizedAppText("bms.no_data.what_we_can_see"), font: .caption.weight(.bold))
             PevDashboardGrid(
-                columns: [GridItem(.adaptive(minimum: 100), spacing: 18)],
+                adaptiveMinimumColumnWidth: 100,
+                columnSpacing: 18,
                 spacing: 18
             ) {
                 BmsNoDataMetric(metricValue: voltageMetricValue, unit: RideUnits.voltageUnit, label: localizedAppText("bms.no_data.pack_voltage"))

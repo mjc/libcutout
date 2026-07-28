@@ -215,7 +215,8 @@ struct BmsModeGrid: View {
 
     var body: some View {
         PevDashboardGrid(
-            columns: [GridItem(.adaptive(minimum: 100), spacing: 10)],
+            adaptiveMinimumColumnWidth: 100,
+            columnSpacing: 10,
             spacing: 10
         ) {
             ForEach(modes) { mode in
