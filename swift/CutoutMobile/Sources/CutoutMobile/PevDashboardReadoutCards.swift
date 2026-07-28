@@ -144,7 +144,8 @@ public struct PevDashboardMetricTile: View {
 
 public struct PevDashboardHeroCard: View {
     let eyebrow: String
-    let value: String
+    let metricValue: PevDashboardMetricValue
+    var value: String { metricValue.displayText }
     let unit: String
     let detail: String
     let progress: Double
@@ -154,18 +155,18 @@ public struct PevDashboardHeroCard: View {
     }
 
     var accessibilityValueText: String {
-        pevDashboardAccessibilityValue([value, unit, detail])
+        metricValue.accessibilityValue(unit: unit, detail: detail)
     }
 
     public init(
         eyebrow: String,
-        value: String,
+        metricValue: PevDashboardMetricValue,
         unit: String,
         detail: String,
         progress: Double
     ) {
         self.eyebrow = eyebrow
-        self.value = value
+        self.metricValue = metricValue
         self.unit = unit
         self.detail = detail
         self.progress = progress

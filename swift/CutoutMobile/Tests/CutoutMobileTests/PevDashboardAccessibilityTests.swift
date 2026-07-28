@@ -102,7 +102,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     func testHeroProgressAndReadbackUseTheSameTypedValues() {
         let card = PevDashboardHeroCard(
             eyebrow: "Battery",
-            value: "82",
+            metricValue: .available(display: "82", accessibility: "82"),
             unit: "percent",
             detail: "charging",
             progress: 1.4
@@ -110,6 +110,18 @@ final class PevDashboardAccessibilityTests: XCTestCase {
 
         XCTAssertEqual(card.clampedProgress, 1)
         XCTAssertEqual(card.accessibilityValueText, "82, percent, and charging")
+    }
+
+    func testHeroCardSpeaksTypedUnavailableValue() {
+        let card = PevDashboardHeroCard(
+            eyebrow: "Battery",
+            metricValue: .unavailable,
+            unit: "percent",
+            detail: "charging",
+            progress: 0
+        )
+
+        XCTAssertEqual(card.accessibilityValueText, "unavailable")
     }
 
     func testWideCardWithoutTitleUsesValueAsItsAccessibilityLabel() {
