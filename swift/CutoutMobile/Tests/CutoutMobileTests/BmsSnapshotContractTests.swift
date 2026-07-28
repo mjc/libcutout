@@ -123,6 +123,42 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
     }
 
+    func testNoDataMetricsAreOwnedByTheBmsSnapshot() {
+        let topology = BmsTopology(
+            layoutLabel: "test pack",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .verified
+        )
+        let snapshot = BmsSnapshot(
+            topology: topology,
+            energyPercent: BatteryLevel(value: 72),
+            captureActionTitle: "record unsupported pack"
+        )
+
+        let fallbackEstimate = RideUnits.decimalString(72, fractionDigits: 0)
+        XCTAssertEqual(
+            snapshot.noDataPackEstimateMetricValue(controllerEstimatePercent: nil),
+            .available(display: fallbackEstimate, accessibility: fallbackEstimate)
+        )
+        let controllerEstimate = RideUnits.decimalString(64, fractionDigits: 0)
+        XCTAssertEqual(
+            snapshot.noDataPackEstimateMetricValue(controllerEstimatePercent: BatteryLevel(value: 64)),
+            .available(display: controllerEstimate, accessibility: controllerEstimate)
+        )
+        XCTAssertEqual(
+            BmsSnapshot(topology: topology).noDataPackEstimateMetricValue(controllerEstimatePercent: nil),
+            .unavailable
+        )
+        XCTAssertEqual(
+            snapshot.captureActionMetricValue,
+            .available(display: "record unsupported pack", accessibility: "record unsupported pack")
+        )
+        XCTAssertEqual(BmsSnapshot(topology: topology).captureActionMetricValue, .unavailable)
+    }
+
     func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {
         let group = BmsGroupSnapshot(
             index: 7,

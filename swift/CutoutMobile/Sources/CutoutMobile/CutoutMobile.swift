@@ -2392,6 +2392,18 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
     }
 
+    public func noDataPackEstimateMetricValue(
+        controllerEstimatePercent: BatteryLevel?
+    ) -> PevDashboardMetricValue {
+        bmsMetricValue(controllerEstimatePercent ?? energyPercent) {
+            RideUnits.decimalString(Double($0.value), fractionDigits: 0)
+        }
+    }
+
+    public var captureActionMetricValue: PevDashboardMetricValue {
+        bmsMetricValue(captureActionTitle) { $0 }
+    }
+
     public var voltageMetricValue: PevDashboardMetricValue {
         bmsMetricValue(voltage) {
             RideUnits.voltageText(millivolts: $0.value)
