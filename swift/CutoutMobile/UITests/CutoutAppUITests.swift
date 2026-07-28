@@ -957,22 +957,10 @@ final class CutoutAppUITests: XCTestCase {
 
     private func reachableBmsGroup(_ index: Int, in bmsScreen: XCUIElement) -> XCUIElement {
         let group = app.buttons["bms.group.\(index)"]
-        let scrollView = bmsScreen.scrollViews.firstMatch
-        let scrollTarget = scrollView.exists ? scrollView : bmsScreen
 
-        for attempt in 0..<6 where !group.exists || !group.isHittable {
-            let startOffset = attempt < 3
-                ? CGVector(dx: 0.5, dy: 0.62)
-                : CGVector(dx: 0.5, dy: 0.28)
-            let endOffset = attempt < 3
-                ? CGVector(dx: 0.5, dy: 0.28)
-                : CGVector(dx: 0.5, dy: 0.62)
-            scrollTarget.coordinate(withNormalizedOffset: startOffset).press(
-                forDuration: 0.05,
-                thenDragTo: scrollTarget.coordinate(withNormalizedOffset: endOffset),
-                withVelocity: .slow,
-                thenHoldForDuration: 0
-            )
+        for _ in 0..<12 where !group.exists || !group.isHittable {
+            let scrollView = bmsScreen.scrollViews.firstMatch
+            (scrollView.exists ? scrollView : bmsScreen).swipeUp()
         }
 
         XCTAssertTrue(group.waitForExistence(timeout: 5))

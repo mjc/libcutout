@@ -16,7 +16,9 @@ struct BmsInlineLayout: View {
             )
 
             PevDashboardGrid(
-                columns: [GridItem(.adaptive(minimum: 96), spacing: 12)],
+                adaptiveMinimumColumnWidth: 96,
+                accessibilityMinimumColumnWidth: 240,
+                columnSpacing: 12,
                 spacing: 14
             ) {
                 ForEach(snapshot.groups) { group in
