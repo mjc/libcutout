@@ -51,10 +51,6 @@ struct BmsScrollableLayout: View {
 
     private var snapshot: BmsSnapshot { content.snapshot }
 
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 72), spacing: 8)]
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
@@ -63,7 +59,12 @@ struct BmsScrollableLayout: View {
                 detail: snapshot.topology.layoutLabel
             )
 
-            PevDashboardGrid(columns: columns, spacing: 8) {
+            PevDashboardGrid(
+                adaptiveMinimumColumnWidth: 72,
+                accessibilityMinimumColumnWidth: 240,
+                columnSpacing: 8,
+                spacing: 8
+            ) {
                 ForEach(snapshot.groups) { group in
                     BmsStripCell(
                         group: group,
@@ -142,10 +143,6 @@ struct BmsDetailLayout: View {
         return snapshot.groups.first
     }
 
-    private var columns: [GridItem] {
-        [GridItem(.adaptive(minimum: 52), spacing: 10)]
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: showCellMap) {
@@ -156,7 +153,12 @@ struct BmsDetailLayout: View {
             .frame(minHeight: 44)
             .accessibilityIdentifier("bms.detail.back")
 
-            PevDashboardGrid(columns: columns, spacing: 10) {
+            PevDashboardGrid(
+                adaptiveMinimumColumnWidth: 52,
+                accessibilityMinimumColumnWidth: 240,
+                columnSpacing: 10,
+                spacing: 10
+            ) {
                 ForEach(snapshot.groups) { group in
                     BmsGroupIndexCell(
                         group: group,
@@ -182,9 +184,8 @@ struct BmsDetailLayout: View {
                         .foregroundStyle(PevColors.primaryText)
 
                     PevDashboardGrid(
-                        columns: [
-                            GridItem(.adaptive(minimum: 140), spacing: 14),
-                        ],
+                        adaptiveMinimumColumnWidth: 140,
+                        columnSpacing: 14,
                         spacing: 14
                     ) {
                         PevDashboardMetricTile(
