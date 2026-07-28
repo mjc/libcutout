@@ -500,7 +500,7 @@ final class PevScreenThemeTests: XCTestCase {
         let display = "state value"
 
         XCTAssertEqual(
-            chargeEstimateMetricValue(kind: .available, display: display),
+            ChargeEstimateStateKind.available.dashboardMetricValue(display: display),
             .available(display: display, accessibility: display)
         )
         for kind in [
@@ -510,7 +510,7 @@ final class PevScreenThemeTests: XCTestCase {
             .failed,
         ] {
             XCTAssertEqual(
-                chargeEstimateMetricValue(kind: kind, display: display),
+                kind.dashboardMetricValue(display: display),
                 .status(display: display, accessibility: display)
             )
         }

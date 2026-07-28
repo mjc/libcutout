@@ -327,23 +327,11 @@ func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
     return PevDashboardTile(
         kind: .chargeEstimate,
         label: localizedAppText("ride.metric.charge"),
-        metricValue: chargeEstimateMetricValue(kind: estimate.kind, display: estimate.displayValue),
+        metricValue: estimate.kind.dashboardMetricValue(display: estimate.displayValue),
         unit: "",
         detail: detail,
         accent: .green
     )
-}
-
-func chargeEstimateMetricValue(
-    kind: ChargeEstimateStateKind,
-    display: String
-) -> PevDashboardMetricValue {
-    switch kind {
-    case .available:
-        .available(display: display, accessibility: display)
-    case .collectingSamples, .stale, .unavailable, .failed:
-        .status(display: display, accessibility: display)
-    }
 }
 
 func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {

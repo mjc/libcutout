@@ -610,6 +610,15 @@ public enum ChargeEstimateStateKind: Equatable, Hashable, Sendable {
         case .failed: self = .failed
         }
     }
+
+    public func dashboardMetricValue(display: String) -> PevDashboardMetricValue {
+        switch self {
+        case .available:
+            .available(display: display, accessibility: display)
+        case .collectingSamples, .stale, .unavailable, .failed:
+            .status(display: display, accessibility: display)
+        }
+    }
 }
 
 public enum BatteryLevelBasis: Equatable, Hashable, Sendable {
