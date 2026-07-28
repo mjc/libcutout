@@ -1,44 +1,38 @@
 import CutoutMobile
-import Foundation
 import SwiftUI
 
 func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValueRow] {
-    let elapsed = Duration.seconds(Double(progress.elapsedMilliseconds) / 1_000)
-        .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
-    let fileSize = ByteCountFormatter.string(
-        fromByteCount: Int64(clamping: progress.fileSizeBytes),
-        countStyle: .file
-    )
-    let writerHealth = progress.writerError == nil
-        ? localizedAppText("capture.detail.writer.healthy")
-        : localizedAppText("capture.detail.writer.failed")
-    let notificationCount = progress.notificationCount.formatted()
-    let queuedMessageCount = progress.queuedMessageCount.formatted()
+    let writerHealth = switch progress.writerHealth {
+    case .healthy:
+        localizedAppText("capture.detail.writer.healthy")
+    case .failed:
+        localizedAppText("capture.detail.writer.failed")
+    }
     return [
         PevDashboardKeyValueRow(
             id: "capture-elapsed",
             label: localizedAppText("capture.detail.elapsed"),
-            metricValue: .available(display: elapsed, accessibility: elapsed)
+            metricValue: progress.elapsedMetricValue
         ),
         PevDashboardKeyValueRow(
             id: "capture-packets",
             label: localizedAppText("capture.detail.packets"),
-            metricValue: .available(display: notificationCount, accessibility: notificationCount)
+            metricValue: progress.notificationCountMetricValue
         ),
         PevDashboardKeyValueRow(
             id: "capture-file-size",
             label: localizedAppText("capture.detail.file_size"),
-            metricValue: .available(display: fileSize, accessibility: fileSize)
+            metricValue: progress.fileSizeMetricValue
         ),
         PevDashboardKeyValueRow(
             id: "capture-queued-messages",
             label: localizedAppText("capture.detail.pending_writes"),
-            metricValue: .available(display: queuedMessageCount, accessibility: queuedMessageCount)
+            metricValue: progress.queuedMessageCountMetricValue
         ),
         PevDashboardKeyValueRow(
             id: "capture-writer-health",
             label: localizedAppText("capture.detail.writer"),
-            metricValue: .available(display: writerHealth, accessibility: writerHealth)
+            metricValue: .status(display: writerHealth, accessibility: writerHealth)
         ),
     ]
 }

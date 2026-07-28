@@ -667,20 +667,29 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     func testCaptureSessionDetailsExposeTypedWriterHealth() {
-        let healthyRows = captureSessionDetailRows(progress: CaptureProgress(
+        let healthyProgress = CaptureProgress(
             elapsedMilliseconds: 63_000,
             notificationCount: 42,
             fileSizeBytes: 12_288,
             queuedMessageCount: 0,
             writerError: nil
-        ))
-        let failedRows = captureSessionDetailRows(progress: CaptureProgress(
+        )
+        let failedProgress = CaptureProgress(
             elapsedMilliseconds: 63_000,
             notificationCount: 42,
             fileSizeBytes: 12_288,
             queuedMessageCount: 0,
             writerError: "queue overrun"
-        ))
+        )
+        let healthyRows = captureSessionDetailRows(progress: healthyProgress)
+        let failedRows = captureSessionDetailRows(progress: failedProgress)
+
+        XCTAssertEqual(healthyProgress.writerHealth, .healthy)
+        XCTAssertEqual(failedProgress.writerHealth, .failed)
+        XCTAssertEqual(healthyRows[0].metricValue, healthyProgress.elapsedMetricValue)
+        XCTAssertEqual(healthyRows[1].metricValue, healthyProgress.notificationCountMetricValue)
+        XCTAssertEqual(healthyRows[2].metricValue, healthyProgress.fileSizeMetricValue)
+        XCTAssertEqual(healthyRows[3].metricValue, healthyProgress.queuedMessageCountMetricValue)
 
         XCTAssertEqual(
             healthyRows.map(\.id),

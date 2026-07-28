@@ -18,6 +18,11 @@ func protocolIdentityFallbackDisplayName(
     }
 }
 
+public enum CaptureWriterHealth: Equatable, Sendable {
+    case healthy
+    case failed
+}
+
 public struct CaptureProgress: Equatable, Sendable {
     public let elapsedMilliseconds: UInt64
     public let notificationCount: UInt64
@@ -37,6 +42,34 @@ public struct CaptureProgress: Equatable, Sendable {
         self.fileSizeBytes = fileSizeBytes
         self.queuedMessageCount = queuedMessageCount
         self.writerError = writerError
+    }
+
+    public var writerHealth: CaptureWriterHealth {
+        writerError == nil ? .healthy : .failed
+    }
+
+    public var elapsedMetricValue: PevDashboardMetricValue {
+        let value = Duration.seconds(Double(elapsedMilliseconds) / 1_000)
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+        return .available(display: value, accessibility: value)
+    }
+
+    public var notificationCountMetricValue: PevDashboardMetricValue {
+        let value = notificationCount.formatted()
+        return .available(display: value, accessibility: value)
+    }
+
+    public var fileSizeMetricValue: PevDashboardMetricValue {
+        let value = ByteCountFormatter.string(
+            fromByteCount: Int64(clamping: fileSizeBytes),
+            countStyle: .file
+        )
+        return .available(display: value, accessibility: value)
+    }
+
+    public var queuedMessageCountMetricValue: PevDashboardMetricValue {
+        let value = queuedMessageCount.formatted()
+        return .available(display: value, accessibility: value)
     }
 }
 
