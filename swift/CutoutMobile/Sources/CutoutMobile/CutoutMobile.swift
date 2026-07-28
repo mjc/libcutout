@@ -1119,6 +1119,34 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     }
 }
 
+public enum TelemetryPowerPresentation: Equatable, Hashable, Sendable {
+    case calculatedPackCurrent(Power)
+    case reported(Power)
+    case unavailable
+
+    public var power: Power? {
+        switch self {
+        case let .calculatedPackCurrent(power), let .reported(power):
+            power
+        case .unavailable:
+            nil
+        }
+    }
+
+    public var metricValue: PevDashboardMetricValue {
+        guard let power else { return .unavailable }
+        let text = RideUnits.powerText(
+            milliwatts: power.value,
+            fractionDigits: telemetryPowerFractionDigits(fromMilliwatts: power.value)
+        )
+        return .available(display: text, accessibility: text)
+    }
+}
+
+private func telemetryPowerFractionDigits<T: BinaryInteger>(fromMilliwatts value: T) -> Int {
+    abs(Int64(value)) < 1_000_000 ? 2 : 1
+}
+
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let at: MonotonicMilliseconds?
     public let speed: Speed?
@@ -1248,6 +1276,18 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         guard let maximum = temperatures.max() else { return .unavailable }
         let text = RideUnits.temperatureText(millicelsius: maximum, fractionDigits: 0)
         return .available(display: text, accessibility: text)
+    }
+
+    public var powerPresentation: TelemetryPowerPresentation {
+        if let voltage, let batteryCurrent, batteryCurrent.value != 0 {
+            return .calculatedPackCurrent(
+                Power(value: Int64(voltage.value) * Int64(batteryCurrent.value) / 1_000)
+            )
+        }
+        if let power {
+            return .reported(power)
+        }
+        return .unavailable
     }
 }
 
@@ -3146,7 +3186,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
             return nil
         }
 
-        return telemetry?.displayPower
+        return telemetry?.powerPresentation.power
     }
 
     public var voltageSag: VoltageDelta? {
@@ -3330,7 +3370,7 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         if telemetry?.voltage == nil {
             missing.append(.packVoltage)
         }
-        if telemetry?.displayPower == nil {
+        if telemetry?.powerPresentation.power == nil {
             missing.append(.power)
         }
         if telemetry?.pwm == nil {
@@ -3378,10 +3418,10 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         guard let telemetry else {
             return .explicitlyUnavailable
         }
-        if telemetry.derivedPackPower != nil {
+        if case .calculatedPackCurrent = telemetry.powerPresentation {
             return .derivedTelemetry
         }
-        if telemetry.power != nil {
+        if case .reported = telemetry.powerPresentation {
             return .liveTelemetry
         }
         return .explicitlyUnavailable
@@ -3417,18 +3457,6 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
 }
 
 private extension TelemetrySnapshot {
-    var displayPower: Power? {
-        derivedPackPower ?? power
-    }
-
-    var derivedPackPower: Power? {
-        guard let voltage, let batteryCurrent, batteryCurrent.value != 0 else {
-            return nil
-        }
-
-        return Power(value: Int64(voltage.value) * Int64(batteryCurrent.value) / 1_000)
-    }
-
     var hasVisibleRideValues: Bool {
         speed != nil
             || voltage != nil

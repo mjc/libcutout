@@ -365,51 +365,28 @@ func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {
 }
 
 func livePowerTile(from telemetry: TelemetrySnapshot) -> PevDashboardTile {
-    if let voltage = telemetry.voltage,
-       let current = telemetry.batteryCurrent,
-       current.value != 0 {
-        let milliwatts = Int64(voltage.value) * Int64(current.value) / 1_000
-        let value = RideUnits.powerText(
-            milliwatts: milliwatts,
-            fractionDigits: powerFractionDigits(fromMilliwatts: milliwatts)
+    let presentation = telemetry.powerPresentation
+    let detail: String
+    switch presentation {
+    case .calculatedPackCurrent:
+        detail = powerFlowDetail(
+            telemetry.powerFlow,
+            fallback: localizedAppText("ride.power.calculated_pack_current")
         )
-        return PevDashboardTile(
-            kind: .power,
-            label: localizedAppText("ride.metric.power"),
-            metricValue: .available(display: value, accessibility: value),
-            unit: RideUnits.powerUnit,
-            detail: powerFlowDetail(
-                telemetry.powerFlow,
-                fallback: localizedAppText("ride.power.calculated_pack_current")
-            ),
-            accent: .yellow
+    case .reported:
+        detail = powerFlowDetail(
+            telemetry.powerFlow,
+            fallback: localizedAppText("ride.power.live_telemetry")
         )
+    case .unavailable:
+        detail = localizedAppText("ride.value.unavailable")
     }
-
-    if let power = telemetry.power {
-        let value = RideUnits.powerText(
-            milliwatts: power.value,
-            fractionDigits: powerFractionDigits(fromMilliwatts: power.value)
-        )
-        return PevDashboardTile(
-            kind: .power,
-            label: localizedAppText("ride.metric.power"),
-            metricValue: .available(display: value, accessibility: value),
-            unit: RideUnits.powerUnit,
-            detail: powerFlowDetail(
-                telemetry.powerFlow,
-                fallback: localizedAppText("ride.power.live_telemetry")
-            ),
-            accent: .yellow
-        )
-    }
-
     return PevDashboardTile(
         kind: .power,
         label: localizedAppText("ride.metric.power"),
-        metricValue: .unavailable,
+        metricValue: presentation.metricValue,
         unit: RideUnits.powerUnit,
-        detail: localizedAppText("ride.value.unavailable"),
+        detail: detail,
         accent: .yellow
     )
 }
@@ -481,8 +458,4 @@ func percentageString<T: BinaryInteger>(fromPercent percent: T) -> String {
 
 func percentageString<T: BinaryInteger>(fromPermille permille: T) -> String {
     localizedAppText("ride.value.percent", RideUnits.permillePercentText(permille))
-}
-
-func powerFractionDigits<T: BinaryInteger>(fromMilliwatts value: T) -> Int {
-    abs(Int64(value)) < 1_000_000 ? 2 : 1
 }

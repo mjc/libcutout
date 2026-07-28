@@ -269,6 +269,35 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testTelemetrySnapshotPowerPresentationOwnsSourceAndValidZeroRule() {
+        XCTAssertEqual(TelemetrySnapshot().powerPresentation, .unavailable)
+
+        let derived = TelemetrySnapshot(
+            voltage: Voltage(value: 60_000),
+            batteryCurrent: BatteryCurrent(value: 10_000),
+            power: Power(value: 900_000)
+        )
+        let derivedPower = Power(value: 600_000)
+        let derivedText = RideUnits.powerText(milliwatts: derivedPower.value, fractionDigits: 2)
+        XCTAssertEqual(derived.powerPresentation, .calculatedPackCurrent(derivedPower))
+        XCTAssertEqual(
+            derived.powerPresentation.metricValue,
+            .available(display: derivedText, accessibility: derivedText)
+        )
+
+        let reportedZero = TelemetrySnapshot(
+            voltage: Voltage(value: 60_000),
+            batteryCurrent: BatteryCurrent(value: 0),
+            power: Power(value: 0)
+        )
+        let zeroText = RideUnits.powerText(milliwatts: 0, fractionDigits: 2)
+        XCTAssertEqual(reportedZero.powerPresentation, .reported(Power(value: 0)))
+        XCTAssertEqual(
+            reportedZero.powerPresentation.metricValue,
+            .available(display: zeroText, accessibility: zeroText)
+        )
+    }
+
     func testBmsNoDataWarningUsesLocaleAwareAccessibilityList() {
         let card = BmsNoDataWarningCard(
             snapshot: BmsSnapshot(
@@ -420,12 +449,14 @@ final class PevScreenThemeTests: XCTestCase {
         )
 
         let expectedPower = RideUnits.powerText(milliwatts: 673_320, fractionDigits: 2)
-        XCTAssertEqual(livePowerTile(from: telemetry).label, "power")
+        let powerTile = livePowerTile(from: telemetry)
+        XCTAssertEqual(powerTile.label, "power")
         XCTAssertEqual(
-            livePowerTile(from: telemetry).metricValue,
+            powerTile.metricValue,
             .available(display: expectedPower, accessibility: expectedPower)
         )
-        XCTAssertEqual(livePowerTile(from: telemetry).detail, "discharging")
+        XCTAssertEqual(powerTile.metricValue, telemetry.powerPresentation.metricValue)
+        XCTAssertEqual(powerTile.detail, "discharging")
         XCTAssertEqual(liveThermalDetail(telemetry: telemetry), "ESC 54 °C · motor 49 °C")
         XCTAssertEqual(localizedAppText("ride.metric.power"), "power")
         XCTAssertEqual(
