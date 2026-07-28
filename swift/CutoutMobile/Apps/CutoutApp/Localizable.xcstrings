@@ -169,6 +169,26 @@
       "comment" : "VESC diagnostics controller state when telemetry does not report an armed state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unknown" } } }
     },
+    "vesc.vehicle.bike" : {
+      "comment" : "VESC vehicle kind for a bike controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Bike" } } }
+    },
+    "vesc.vehicle.electric_unicycle" : {
+      "comment" : "VESC vehicle kind for an electric unicycle controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "EUC" } } }
+    },
+    "vesc.vehicle.float" : {
+      "comment" : "VESC vehicle kind for a Float controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Float" } } }
+    },
+    "vesc.vehicle.skateboard" : {
+      "comment" : "VESC vehicle kind for an electric skateboard controller.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Skateboard" } } }
+    },
+    "vesc.vehicle.unknown" : {
+      "comment" : "VESC vehicle kind when the controller type is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC" } } }
+    },
     "bms.diagnostics.detail" : {
       "comment" : "BMS diagnostics disclosure detail explaining that raw readback is for troubleshooting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Raw readback, available when we need to debug" } } }

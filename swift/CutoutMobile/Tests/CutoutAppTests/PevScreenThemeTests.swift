@@ -372,6 +372,29 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(vescRideSubtitle(snapshot), "Charging")
     }
 
+    func testVescUnknownStateSubtitleUsesTheAppCatalog() {
+        let vehicleKinds: [(VescVehicleKind, String)] = [
+            (.float, "Float"),
+            (.bike, "Bike"),
+            (.skateboard, "Skateboard"),
+            (.electricUnicycle, "EUC"),
+            (.unknown, "VESC"),
+        ]
+        for (vehicleKind, expected) in vehicleKinds {
+            XCTAssertEqual(vescVehicleKindText(vehicleKind), expected)
+        }
+
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown
+        )
+
+        XCTAssertEqual(localizedAppText("vesc.vehicle.float"), "Float")
+        XCTAssertEqual(vescRideSubtitle(snapshot), localizedAppText("vesc.vehicle.float"))
+    }
+
     func testVescFootpadPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("vesc.footpad.left"), "LEFT / ADC1")
         XCTAssertEqual(localizedAppText("vesc.footpad.right"), "RIGHT / ADC2")

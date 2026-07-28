@@ -306,9 +306,24 @@ func vescOperatingStateText(_ snapshot: VescRideSnapshot) -> String {
     }
 }
 
+func vescVehicleKindText(_ vehicleKind: VescVehicleKind) -> String {
+    switch vehicleKind {
+    case .float:
+        localizedAppText("vesc.vehicle.float")
+    case .bike:
+        localizedAppText("vesc.vehicle.bike")
+    case .skateboard:
+        localizedAppText("vesc.vehicle.skateboard")
+    case .electricUnicycle:
+        localizedAppText("vesc.vehicle.electric_unicycle")
+    case .unknown:
+        localizedAppText("vesc.vehicle.unknown")
+    }
+}
+
 func vescRideSubtitle(_ snapshot: VescRideSnapshot) -> String {
     if case .unknown = snapshot.operatingState {
-        return snapshot.vehicleKind.shortDisplayName
+        return vescVehicleKindText(snapshot.vehicleKind)
     }
     return vescOperatingStateText(snapshot)
 }
