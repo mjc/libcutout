@@ -298,6 +298,34 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testEucRideStateOwnsLimpHomeRangeMetricValue() {
+        let unavailable = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState()
+        )
+        XCTAssertEqual(unavailable.limpHomeRangeMetricValue, .unavailable)
+
+        let range = Distance(value: 22_852_500)
+        let telemetry = TelemetrySnapshot(limpHomeRange: range)
+        let state = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(telemetry: telemetry)
+        )
+        let text = RideUnits.distanceText(
+            millimetres: range.value,
+            unit: RideUnits.distanceUnit(forSpeedUnit: state.speedUnit),
+            fractionDigits: 1
+        )
+        XCTAssertEqual(
+            state.limpHomeRangeMetricValue,
+            .available(display: text, accessibility: text)
+        )
+        XCTAssertEqual(
+            liveDashboardTiles(from: state, telemetry: telemetry).first { $0.kind == .limpHomeRange }?.metricValue,
+            state.limpHomeRangeMetricValue
+        )
+    }
+
     func testBmsNoDataWarningUsesLocaleAwareAccessibilityList() {
         let card = BmsNoDataWarningCard(
             snapshot: BmsSnapshot(

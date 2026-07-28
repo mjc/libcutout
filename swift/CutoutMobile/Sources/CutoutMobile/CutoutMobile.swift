@@ -3201,6 +3201,16 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
         telemetry?.limpHomeRange
     }
 
+    public var limpHomeRangeMetricValue: PevDashboardMetricValue {
+        guard let limpHomeRange else { return .unavailable }
+        let text = RideUnits.distanceText(
+            millimetres: limpHomeRange.value,
+            unit: RideUnits.distanceUnit(forSpeedUnit: speedUnit),
+            fractionDigits: 1
+        )
+        return .available(display: text, accessibility: text)
+    }
+
     public var controllerOnlyEstimatePercent: BatteryLevel? {
         telemetry?.batteryLevelReported ?? telemetry?.batteryLevelEstimated
     }
