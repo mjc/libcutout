@@ -1583,6 +1583,12 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             nil
         }
     }
+
+    public var batteryVoltageMetricValue: PevDashboardMetricValue {
+        guard let voltage = batteryVoltage else { return .unavailable }
+        let text = RideUnits.voltageText(millivolts: voltage.value)
+        return .available(display: text, accessibility: text)
+    }
 }
 
 public extension VescRideSnapshot {

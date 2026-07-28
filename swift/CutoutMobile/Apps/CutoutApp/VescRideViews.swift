@@ -110,10 +110,7 @@ struct VescRideScreenView: View {
             PevDashboardTile(
                 kind: .batteryVoltage,
                 label: localizedAppText("vesc.metric.battery_voltage"),
-                metricValue: liveSnapshot.batteryVoltage.map { voltage in
-                    let text = RideUnits.voltageText(millivolts: voltage.value)
-                    return .available(display: text, accessibility: text)
-                } ?? .unavailable,
+                metricValue: liveSnapshot.batteryVoltageMetricValue,
                 unit: RideUnits.voltageUnit,
                 detail: batteryDetail,
                 accent: .yellow

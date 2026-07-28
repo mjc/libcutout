@@ -18,6 +18,30 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testVescRideSnapshotUsesTypedVoltageMetricValue() {
+        let unavailable = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown
+        )
+        XCTAssertEqual(unavailable.batteryVoltageMetricValue, .unavailable)
+
+        let voltage = Voltage(value: 81_600)
+        let available = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            batteryVoltage: voltage
+        )
+        let text = RideUnits.voltageText(millivolts: voltage.value)
+        XCTAssertEqual(
+            available.batteryVoltageMetricValue,
+            .available(display: text, accessibility: text)
+        )
+    }
+
     func testEucRideAppPresentationUsesTheAppCatalog() {
         XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
         XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")
