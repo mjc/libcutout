@@ -129,6 +129,7 @@
     "bms.cell_map.spread_unavailable" : { "comment" : "Cell-map summary when no voltage spread is available.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "delta unavailable" } } } },
     "bms.detail.group_from_average" : { "comment" : "Cell-group detail. Arguments: group index and millivolts from pack average.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "group %1$lld · %2$lld mV from pack avg" } } } },
     "bms.detail.history_unavailable" : { "comment" : "Cell-group detail when history is insufficient.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "not enough history" } } } },
+    "bms.detail.trend" : { "comment" : "BMS group trend value. Argument: trend state.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trend: %@" } } } },
     "bms.detail.unnamed_group" : { "comment" : "Fallback cell-group label. Argument: one-based group index.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "group %lld" } } } },
     "bms.detail.lowest_below_average" : { "comment" : "Cell-group detail. Argument: millivolts below pack average.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "lowest group · %lld mV below pack avg" } } } },
     "bms.detail.lowest_group" : { "comment" : "Cell-group detail when it is the lowest group.", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "lowest group" } } } },

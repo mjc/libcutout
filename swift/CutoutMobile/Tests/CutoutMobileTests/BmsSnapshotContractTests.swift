@@ -116,6 +116,11 @@ final class BmsSnapshotContractTests: XCTestCase {
                 accessibility: snapshot.cellMapFocusSummary
             )
         )
+        let trend = pevLocalizedText("bms.detail.trend", snapshot.detailGroupTrend(for: 7))
+        XCTAssertEqual(
+            snapshot.detailGroupTrendMetricValue(for: 7),
+            .status(display: trend, accessibility: trend)
+        )
     }
 
     func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {

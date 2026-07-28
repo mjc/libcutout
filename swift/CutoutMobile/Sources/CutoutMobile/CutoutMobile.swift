@@ -2629,6 +2629,11 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         groups.first(where: { $0.index == index })?.detail ?? pevLocalizedText("bms.detail.history_unavailable")
     }
 
+    public func detailGroupTrendMetricValue(for index: Int) -> PevDashboardMetricValue {
+        let value = pevLocalizedText("bms.detail.trend", detailGroupTrend(for: index))
+        return .status(display: value, accessibility: value)
+    }
+
     public func detailGroupTrendDetail(for index: Int) -> String {
         guard groups.contains(where: { $0.index == index }) else {
             return topology.layoutLabel

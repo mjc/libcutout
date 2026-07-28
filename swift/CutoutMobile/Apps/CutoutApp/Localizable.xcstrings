@@ -349,10 +349,6 @@
       "comment" : "BMS metric label for cell-group temperature.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } } }
     },
-    "bms.detail.trend" : {
-      "comment" : "BMS group trend value. The placeholder is the trend state.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Trend: %@" } } }
-    },
     "bms.inline.range_of_interest" : {
       "comment" : "BMS inline cell-map card title for the voltage range that needs attention.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Range of interest" } } }

@@ -201,10 +201,7 @@ struct BmsDetailLayout: View {
 
                     PevDashboardWideCard(
                         title: nil,
-                        metricValue: {
-                            let value = localizedAppText("bms.detail.trend", snapshot.detailGroupTrend(for: selectedGroup.index))
-                            return .available(display: value, accessibility: value)
-                        }(),
+                        metricValue: snapshot.detailGroupTrendMetricValue(for: selectedGroup.index),
                         detail: snapshot.detailGroupTrendDetail(for: selectedGroup.index)
                     )
                 }
