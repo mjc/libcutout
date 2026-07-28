@@ -664,6 +664,26 @@
       "comment" : "VoiceOver status-pill severity for a caution that needs attention.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "warning" } } }
     },
+    "verification.hardware_verified" : {
+      "comment" : "Readback verification when device hardware confirms the value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "hardware verified" } } }
+    },
+    "verification.inferred" : {
+      "comment" : "Readback verification when the value is inferred from available evidence.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "inferred" } } }
+    },
+    "verification.source_and_hardware_verified" : {
+      "comment" : "Readback verification when source evidence and device hardware confirm the value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "source and hardware verified" } } }
+    },
+    "verification.source_verified" : {
+      "comment" : "Readback verification when the source document confirms the value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "source verified" } } }
+    },
+    "verification.unverified" : {
+      "comment" : "Readback verification when no source or hardware confirmation exists.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "unverified" } } }
+    },
     "tab.debug" : {
       "comment" : "Bottom navigation tab for diagnostics.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Debug" } } }

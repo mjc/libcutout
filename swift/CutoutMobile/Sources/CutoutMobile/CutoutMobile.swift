@@ -3024,15 +3024,15 @@ public extension VerificationState {
     var displayText: String {
         switch self {
         case .unverified:
-            "unverified"
+            pevLocalizedText("verification.unverified")
         case .inferred:
-            "inferred"
+            pevLocalizedText("verification.inferred")
         case .sourceVerified:
-            "source verified"
+            pevLocalizedText("verification.source_verified")
         case .hardwareVerified:
-            "hardware verified"
+            pevLocalizedText("verification.hardware_verified")
         case .sourceAndHardwareVerified:
-            "source and hardware verified"
+            pevLocalizedText("verification.source_and_hardware_verified")
         }
     }
 }

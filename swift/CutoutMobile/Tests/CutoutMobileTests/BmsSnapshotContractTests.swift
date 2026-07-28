@@ -38,6 +38,21 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("bms.accessibility.show_details"), "Show available details for this cell group")
     }
 
+    func testVerificationStatesResolveFromThePackageCatalog() {
+        let cases: [(VerificationState, String, String)] = [
+            (.unverified, "verification.unverified", "unverified"),
+            (.inferred, "verification.inferred", "inferred"),
+            (.sourceVerified, "verification.source_verified", "source verified"),
+            (.hardwareVerified, "verification.hardware_verified", "hardware verified"),
+            (.sourceAndHardwareVerified, "verification.source_and_hardware_verified", "source and hardware verified"),
+        ]
+
+        for (state, key, expected) in cases {
+            XCTAssertEqual(pevLocalizedText(key), expected)
+            XCTAssertEqual(state.displayText, pevLocalizedText(key))
+        }
+    }
+
     func testEnergyProgressUsesAndClampsTypedBatteryLevel() {
         let topology = BmsTopology(
             layoutLabel: "test pack",
