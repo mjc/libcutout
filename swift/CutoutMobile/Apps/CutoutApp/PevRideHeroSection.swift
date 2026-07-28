@@ -115,12 +115,12 @@ enum PevRideHeroReadout: Equatable {
     ) -> Self {
         let freshness = state?.updateAge(
             at: now,
-            staleAfter: MonotonicMilliseconds(2_000)
+            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
         ).freshness ?? .unavailable
         let severity = PevRideMetricSeverity(
             state?.warningState(
                 at: now,
-                staleAfter: MonotonicMilliseconds(2_000)
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
             ).severity ?? .unavailable
         )
         guard let state, state.telemetry?.speed != nil else {
@@ -145,7 +145,7 @@ enum PevRideHeroReadout: Equatable {
     ) -> Self {
         let freshness = snapshot?.updateAge(
             at: now,
-            staleAfter: MonotonicMilliseconds(2_000)
+            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
         ).freshness ?? .unavailable
         let severity = PevRideMetricSeverity(snapshot?.warning ?? .unknown)
         guard let boardSpeed = snapshot?.boardSpeed else {

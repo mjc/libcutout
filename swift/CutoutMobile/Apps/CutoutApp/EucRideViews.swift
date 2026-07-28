@@ -40,7 +40,7 @@ struct EucRideScreenView: View {
         guard let rideState else {
             return nil
         }
-        return rideState.warningState(at: now, staleAfter: MonotonicMilliseconds(2_000))
+        return rideState.warningState(at: now, staleAfter: RideTelemetryFreshnessPolicy.staleAfter)
     }
 
     private var safetyBars: [PevSafetyBar] {

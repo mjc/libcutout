@@ -9,6 +9,10 @@ final class PhoneLocationReadbackTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("gps.detail.stale"), "stale GPS")
     }
 
+    func testTelemetryFreshnessUsesOneSharedTwoSecondThreshold() {
+        XCTAssertEqual(RideTelemetryFreshnessPolicy.staleAfter, MonotonicMilliseconds(2_000))
+    }
+
     func testRustGpsSpeedUsesInjectedMonotonicFreshnessBoundaries() {
         let readback = PhoneLocationReadback(
             snapshot: snapshot(sampleTime: 10_000, speed: 2_500),

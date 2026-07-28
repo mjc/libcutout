@@ -53,7 +53,7 @@ struct VescRideScreenView: View {
     private var telemetryAge: EucRideUpdateAge? {
         liveSnapshot?.updateAge(
             at: now,
-            staleAfter: MonotonicMilliseconds(2_000)
+            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
         )
     }
 

@@ -83,7 +83,7 @@ public enum LiveActivityRideConnectionState: String, Codable, Equatable, Hashabl
 }
 
 public enum LiveActivityRideFreshnessPolicy {
-    public static let staleAfter: TimeInterval = 2
+    public static let staleAfter = TimeInterval(RideTelemetryFreshnessPolicy.staleAfter.rawValue) / 1_000
 
     public static func staleDate(after now: Date) -> Date {
         now.addingTimeInterval(staleAfter)
@@ -328,7 +328,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
         glyph: LiveActivityRideGlyph = .electricUnicycle,
         rideState: EucRideScreenState,
         now: MonotonicMilliseconds? = nil,
-        staleAfter staleThreshold: MonotonicMilliseconds = MonotonicMilliseconds(2_000),
+        staleAfter staleThreshold: MonotonicMilliseconds = RideTelemetryFreshnessPolicy.staleAfter,
         rideDuration: MonotonicMilliseconds? = nil
     ) {
         let connectionState = Self.deriveConnectionState(
