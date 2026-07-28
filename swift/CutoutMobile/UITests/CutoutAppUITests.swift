@@ -741,16 +741,7 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         var launchArguments: [String] {
-            switch self {
-            case .unknownDevice: ["--ui-test-unknown-device"]
-            case .unknownDeviceFinishFailure: ["--ui-test-unknown-device-finish-failure"]
-            case .euc: ["--ui-test-euc"]
-            case .eucNoBms: ["--ui-test-euc-no-bms"]
-            case .vesc: ["--ui-test-vesc"]
-            case .vescFailure: ["--ui-test-vesc-failure"]
-            case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
-            case .vescLiveActivityAuto: ["--ui-test-live-activity-auto"]
-            }
+            ["-CUTOUT_UI_TEST_FIXTURE", environmentValue]
         }
     }
 

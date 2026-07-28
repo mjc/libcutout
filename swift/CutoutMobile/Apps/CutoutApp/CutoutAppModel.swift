@@ -850,7 +850,9 @@ enum CutoutUITestSessionFixture {
     }
 
     init?(arguments: [String]) {
-        if arguments.contains("--ui-test-live-activity-auto") {
+        if let value = Self.standardLaunchArgumentValue(arguments), let fixture = Self(value: value) {
+            self = fixture
+        } else if arguments.contains("--ui-test-live-activity-auto") {
             self = .autoVescLiveActivity
         } else if arguments.contains("--ui-test-unknown-device-finish-failure") {
             self = .unknownDeviceFinishFailure
@@ -877,8 +879,15 @@ enum CutoutUITestSessionFixture {
         arguments: [String]
     ) -> Self? {
         Self(value: environmentValue)
-            ?? Self(value: persistedValue)
             ?? Self(arguments: arguments)
+            ?? Self(value: persistedValue)
+    }
+
+    private static func standardLaunchArgumentValue(_ arguments: [String]) -> String? {
+        guard let keyIndex = arguments.firstIndex(of: "-CUTOUT_UI_TEST_FIXTURE") else { return nil }
+        let valueIndex = arguments.index(after: keyIndex)
+        guard valueIndex < arguments.endIndex else { return nil }
+        return arguments[valueIndex]
     }
 
     var candidate: DevicePickerDiscoveryCandidate {

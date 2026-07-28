@@ -891,6 +891,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertFalse(fixture?.startsLive ?? true)
         XCTAssertFalse(fixture?.isEuc ?? true)
     }
+
+    func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: nil,
+            environmentValue: nil,
+            arguments: ["-CUTOUT_UI_TEST_FIXTURE", "euc"]
+        )
+
+        XCTAssertTrue(fixture?.isEuc ?? false)
+    }
 }
 
 private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
