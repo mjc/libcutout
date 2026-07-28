@@ -2082,6 +2082,14 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
     }
 }
 
+public extension BmsGroupSnapshot {
+    var resistanceMetricValue: PevDashboardMetricValue {
+        guard let resistance else { return .unavailable }
+        let text = RideUnits.decimalString(Double(resistance.value), fractionDigits: 0)
+        return .available(display: text, accessibility: text)
+    }
+}
+
 public struct BmsFault: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { code }
 

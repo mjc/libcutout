@@ -10,6 +10,14 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.unknown.temperature_sensors"), "sensors")
     }
 
+    func testBmsResistanceUsesTypedUnavailableValue() {
+        XCTAssertEqual(BmsGroupSnapshot(index: 0).resistanceMetricValue, .unavailable)
+        XCTAssertEqual(
+            BmsGroupSnapshot(index: 0, resistance: Resistance(value: 21)).resistanceMetricValue,
+            .available(display: "21", accessibility: "21")
+        )
+    }
+
     func testEucRideAppPresentationUsesTheAppCatalog() {
         XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
         XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")
