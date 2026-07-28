@@ -8,13 +8,13 @@ func protocolIdentityFallbackDisplayName(
 ) -> String {
     switch protocolFamily {
     case .veteranLeaperkimNosfet:
-        "Veteran/NOSFET device"
+        pevLocalizedText("protocol_identity.fallback.veteran_nosfet")
     case .begodeGotway:
-        "Begode device"
+        pevLocalizedText("protocol_identity.fallback.begode")
     case .vesc:
-        "VESC device"
+        pevLocalizedText("protocol_identity.fallback.vesc")
     case nil:
-        "Detected rideable"
+        pevLocalizedText("protocol_identity.fallback.unknown")
     }
 }
 
@@ -1174,7 +1174,7 @@ private extension CoreBluetoothAdvertisement {
         }
         return Self(
             peripheralIdentifier: peripheralIdentifier,
-            localName: "VESC device",
+            localName: protocolIdentityFallbackDisplayName(protocolFamily: .vesc),
             advertisedServiceUuids: advertisedServiceUuids,
             manufacturerData: manufacturerData,
             rssiDbm: rssiDbm

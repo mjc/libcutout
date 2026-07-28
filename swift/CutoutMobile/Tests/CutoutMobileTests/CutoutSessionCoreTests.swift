@@ -1192,22 +1192,17 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testProtocolIdentityFallbackDisplayNameUsesDetectedFamily() {
-        XCTAssertEqual(
-            protocolIdentityFallbackDisplayName(protocolFamily: .veteranLeaperkimNosfet),
-            "Veteran/NOSFET device"
-        )
-        XCTAssertEqual(
-            protocolIdentityFallbackDisplayName(protocolFamily: .begodeGotway),
-            "Begode device"
-        )
-        XCTAssertEqual(
-            protocolIdentityFallbackDisplayName(protocolFamily: .vesc),
-            "VESC device"
-        )
-        XCTAssertEqual(
-            protocolIdentityFallbackDisplayName(protocolFamily: nil),
-            "Detected rideable"
-        )
+        let cases: [(DeviceDetectionProtocolFamily?, String, String)] = [
+            (.veteranLeaperkimNosfet, "protocol_identity.fallback.veteran_nosfet", "Veteran/NOSFET device"),
+            (.begodeGotway, "protocol_identity.fallback.begode", "Begode device"),
+            (.vesc, "protocol_identity.fallback.vesc", "VESC device"),
+            (nil, "protocol_identity.fallback.unknown", "Detected rideable"),
+        ]
+
+        for (protocolFamily, key, expected) in cases {
+            XCTAssertEqual(pevLocalizedText(key), expected)
+            XCTAssertEqual(protocolIdentityFallbackDisplayName(protocolFamily: protocolFamily), pevLocalizedText(key))
+        }
     }
 
     func testPevcapIdentityDoesNotUseProvisionalSelectedModel() {

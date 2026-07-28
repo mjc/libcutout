@@ -645,6 +645,22 @@
       "comment" : "Device picker status after a Bluetooth scan finishes with no rideable device found.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No rideable devices found" } } }
     },
+    "protocol_identity.fallback.begode" : {
+      "comment" : "Fallback picker name for a detected Begode or GotWay device before its model is identified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Begode device" } } }
+    },
+    "protocol_identity.fallback.unknown" : {
+      "comment" : "Fallback picker name for a detected rideable before its protocol family is identified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Detected rideable" } } }
+    },
+    "protocol_identity.fallback.veteran_nosfet" : {
+      "comment" : "Fallback picker name for a detected Veteran or NOSFET device before its model is identified.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Veteran/NOSFET device" } } }
+    },
+    "protocol_identity.fallback.vesc" : {
+      "comment" : "Fallback picker name for a detected VESC device before a controller title is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "VESC device" } } }
+    },
     "readback.availability.available" : {
       "comment" : "Readback availability when live data is present.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "available" } } }
