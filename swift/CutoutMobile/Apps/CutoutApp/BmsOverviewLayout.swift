@@ -76,7 +76,7 @@ struct BmsOverviewLayout: View {
         } else {
             PevDashboardWideCard(
                 title: localizedAppText("bms.overview.pack_telemetry"),
-                metricValue: telemetryMetricValue,
+                metricValue: snapshot.voltageMetricValue,
                 detail: snapshot.topology.layoutLabel
             )
         }
@@ -90,12 +90,6 @@ struct BmsOverviewLayout: View {
     private var averageGroupVoltage: Voltage? {
         guard hasCellVoltageEvidence else { return nil }
         return snapshot.averageGroupVoltage.flatMap(nonZeroVoltage)
-    }
-
-    private var telemetryMetricValue: PevDashboardMetricValue {
-        guard let voltage = snapshot.voltage else { return .unavailable }
-        let display = "\(voltageText(voltage)) V"
-        return .available(display: display, accessibility: display)
     }
 
     private var hasCellVoltageEvidence: Bool {

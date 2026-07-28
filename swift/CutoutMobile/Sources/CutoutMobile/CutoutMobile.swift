@@ -2265,6 +2265,12 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         }
     }
 
+    public var voltageMetricValue: PevDashboardMetricValue {
+        bmsMetricValue(voltage) {
+            RideUnits.voltageText(millivolts: $0.value)
+        }
+    }
+
     public var readbackRows: [SessionDebugRow] {
         var rows = [
             SessionDebugRow(
@@ -2304,9 +2310,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "voltage",
                 label: "voltage",
-                metricValue: bmsMetricValue(voltage) {
-                    RideUnits.voltageText(millivolts: $0.value)
-                }
+                metricValue: voltageMetricValue
             ),
             SessionDebugRow(
                 id: "current",

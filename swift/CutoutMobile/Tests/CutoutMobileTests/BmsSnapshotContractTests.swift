@@ -62,6 +62,13 @@ final class BmsSnapshotContractTests: XCTestCase {
             BmsSnapshot(topology: topology, energyPercent: BatteryLevel(value: 255)).energyProgress,
             1
         )
+
+        XCTAssertEqual(BmsSnapshot(topology: topology).voltageMetricValue, .unavailable)
+        let voltageText = RideUnits.voltageText(millivolts: 81_600)
+        XCTAssertEqual(
+            BmsSnapshot(topology: topology, voltage: Voltage(value: 81_600)).voltageMetricValue,
+            .available(display: voltageText, accessibility: voltageText)
+        )
     }
 
     func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {
