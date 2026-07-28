@@ -21,6 +21,10 @@ func protocolIdentityFallbackDisplayName(
 public enum CaptureWriterHealth: Equatable, Sendable {
     case healthy
     case failed
+
+    public func metricValue(display: String) -> PevDashboardMetricValue {
+        .status(display: display, accessibility: display)
+    }
 }
 
 public struct CaptureProgress: Equatable, Sendable {

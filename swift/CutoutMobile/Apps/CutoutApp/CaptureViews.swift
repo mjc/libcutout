@@ -32,7 +32,7 @@ func captureSessionDetailRows(progress: CaptureProgress) -> [PevDashboardKeyValu
         PevDashboardKeyValueRow(
             id: "capture-writer-health",
             label: localizedAppText("capture.detail.writer"),
-            metricValue: .status(display: writerHealth, accessibility: writerHealth)
+            metricValue: progress.writerHealth.metricValue(display: writerHealth)
         ),
     ]
 }

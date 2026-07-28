@@ -690,6 +690,14 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(healthyRows[1].metricValue, healthyProgress.notificationCountMetricValue)
         XCTAssertEqual(healthyRows[2].metricValue, healthyProgress.fileSizeMetricValue)
         XCTAssertEqual(healthyRows[3].metricValue, healthyProgress.queuedMessageCountMetricValue)
+        XCTAssertEqual(
+            healthyRows[4].metricValue,
+            healthyProgress.writerHealth.metricValue(display: "Healthy")
+        )
+        XCTAssertEqual(
+            failedRows[4].metricValue,
+            failedProgress.writerHealth.metricValue(display: "Failed")
+        )
 
         XCTAssertEqual(
             healthyRows.map(\.id),
