@@ -218,6 +218,24 @@ final class CutoutSessionCoreTests: XCTestCase {
         wait(for: [published], timeout: 1.0)
     }
 
+    func testDisplayPublicationThrottleUsesMonotonicTime() {
+        let clock = TestMonotonicClock(MonotonicMilliseconds(1_000))
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { clock.now }))
+        var publicationCount = 0
+        core.onDisplayStateChange = { _ in publicationCount += 1 }
+
+        let step = CoreBluetoothSessionStep(operations: [], snapshot: TelemetrySnapshot())
+        core.applyNotificationStep(step, receivedAt: MonotonicMilliseconds(1_000))
+
+        clock.now = MonotonicMilliseconds(1_200)
+        core.applyNotificationStep(step, receivedAt: MonotonicMilliseconds(1_200))
+
+        clock.now = MonotonicMilliseconds(1_333)
+        core.applyNotificationStep(step, receivedAt: MonotonicMilliseconds(1_333))
+
+        XCTAssertEqual(publicationCount, 2)
+    }
+
     func testVescRideSnapshotKeepsRideCriticalFieldsTyped() {
         let snapshot = VescRideSnapshot(
             title: "Fungineers X7",
@@ -2195,6 +2213,14 @@ private func batteryLevelValue(_ value: UInt8) -> BatteryLevel {
 
 private func dutyCycle(_ permille: Int16) -> DutyCycle {
     DutyCycle(permille: permille)
+}
+
+private final class TestMonotonicClock {
+    var now: MonotonicMilliseconds
+
+    init(_ now: MonotonicMilliseconds) {
+        self.now = now
+    }
 }
 
 private extension [EucRideVisibleFieldCoverage] {

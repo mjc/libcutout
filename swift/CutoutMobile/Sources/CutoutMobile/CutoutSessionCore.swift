@@ -184,7 +184,7 @@ public final class CutoutSessionCore: NSObject {
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
-    private let clock = MonotonicClock()
+    private let clock: MonotonicClock
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth", qos: .userInitiated)
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState = CutoutSessionStateHandle()
@@ -210,9 +210,9 @@ public final class CutoutSessionCore: NSObject {
     private var deviceDetectionSession = DeviceDetectionSession()
     private var pendingBegodeProbeResponses = Set<DeviceDetectionPendingProbe>()
     private var pendingDisplayState: RideDisplayState?
-    private var pendingDisplayStateQueuedAt: Date?
+    private var pendingDisplayStateQueuedAt: MonotonicMilliseconds?
     private var displayPublishWorkItem: DispatchWorkItem?
-    private var lastDisplayPublication = Date.distantPast
+    private var lastDisplayPublication: MonotonicMilliseconds?
     private let phoneLocationState = MobilePhoneLocationState()
     private var didRequestAlwaysLocationAuthorization = false
     private lazy var locationManager: CLLocationManager = {
@@ -224,7 +224,12 @@ public final class CutoutSessionCore: NSObject {
         return manager
     }()
 
-    public override init() {
+    public override convenience init() {
+        self.init(clock: MonotonicClock())
+    }
+
+    init(clock: MonotonicClock) {
+        self.clock = clock
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -811,10 +816,10 @@ public final class CutoutSessionCore: NSObject {
         if DispatchQueue.getSpecific(key: bleQueueKey) != nil {
             return work()
         }
-        let queuedAt = Date()
+        let queuedAt = clock.now()
         return bleQueue.sync {
             let result = work()
-            let waitMilliseconds = max(0, Int(Date().timeIntervalSince(queuedAt) * 1_000))
+            let waitMilliseconds = elapsedMilliseconds(since: queuedAt, until: clock.now())
             if waitMilliseconds > 0 {
                 record("ble_queue_wait_ms=\(waitMilliseconds)")
             }
@@ -824,18 +829,24 @@ public final class CutoutSessionCore: NSObject {
 
     private func publishDisplayState() {
         let value = displayState
-        let queuedAt = Date()
+        let queuedAt = clock.now()
         publishOnMain { self.publishDisplayStateOnMain(value, queuedAt: queuedAt) }
     }
 
-    private func publishDisplayStateOnMain(_ value: RideDisplayState, queuedAt: Date? = nil) {
+    private func publishDisplayStateOnMain(
+        _ value: RideDisplayState,
+        queuedAt: MonotonicMilliseconds? = nil
+    ) {
         pendingDisplayState = value
         if let queuedAt {
             pendingDisplayStateQueuedAt = queuedAt
         }
-        let elapsed = Date().timeIntervalSince(lastDisplayPublication)
-        let interval = 0.333
-        guard elapsed >= interval else {
+        let now = clock.now()
+        let intervalMilliseconds: UInt64 = 333
+        let elapsed = lastDisplayPublication.map {
+            elapsedMilliseconds(since: $0, until: now)
+        } ?? intervalMilliseconds
+        guard elapsed >= intervalMilliseconds else {
             guard displayPublishWorkItem == nil else { return }
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
@@ -846,20 +857,28 @@ public final class CutoutSessionCore: NSObject {
             }
             displayPublishWorkItem = work
             DispatchQueue.main.asyncAfter(
-                deadline: .now() + interval - elapsed,
+                deadline: .now() + .milliseconds(Int(intervalMilliseconds - elapsed)),
                 execute: work
             )
             return
         }
+        displayPublishWorkItem?.cancel()
+        displayPublishWorkItem = nil
         pendingDisplayState = nil
-        let publicationDelayMilliseconds = max(
-            0,
-            Int(Date().timeIntervalSince(pendingDisplayStateQueuedAt ?? Date()) * 1_000)
-        )
+        let publicationDelayMilliseconds = pendingDisplayStateQueuedAt.map {
+            elapsedMilliseconds(since: $0, until: now)
+        } ?? 0
         pendingDisplayStateQueuedAt = nil
-        lastDisplayPublication = Date()
+        lastDisplayPublication = now
         onDisplayStateChange?(value)
         onRecord?("snapshot_publication_ms=\(publicationDelayMilliseconds)")
+    }
+
+    private func elapsedMilliseconds(
+        since start: MonotonicMilliseconds,
+        until end: MonotonicMilliseconds
+    ) -> UInt64 {
+        end.rawValue >= start.rawValue ? end.rawValue - start.rawValue : 0
     }
 
     private func publishScanState() {
