@@ -1449,25 +1449,6 @@ public enum VescVehicleKind: Equatable, Hashable, Sendable {
     case electricUnicycle
     case unknown
 
-    public var displayName: String {
-        self == .unknown ? "VESC" : "VESC \(shortDisplayName)"
-    }
-
-    public var shortDisplayName: String {
-        switch self {
-        case .float:
-            "Float"
-        case .bike:
-            "Bike"
-        case .skateboard:
-            "Skateboard"
-        case .electricUnicycle:
-            "EUC"
-        case .unknown:
-            "VESC"
-        }
-    }
-
     fileprivate init(_ dto: MobileVescVehicleKindDto) {
         switch dto {
         case .float:
@@ -1489,19 +1470,6 @@ public enum VescSubProtocol: Equatable, Hashable, Sendable {
     case bike
     case eskate
     case generic
-
-    public var displayName: String {
-        switch self {
-        case .refloat:
-            "Refloat"
-        case .bike:
-            "Bike"
-        case .eskate:
-            "eSkate"
-        case .generic:
-            "VESC"
-        }
-    }
 
     fileprivate init(_ dto: MobileVescSubProtocolDto) {
         switch dto {
@@ -1619,21 +1587,6 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             footpad: telemetry.footpad,
             lastUpdate: telemetry.at ?? displayState.lastUpdate
         )
-    }
-
-    public var screenSubtitle: String {
-        switch operatingState {
-        case .parked:
-            "Parked"
-        case .standing:
-            "Standing"
-        case .riding:
-            "Riding"
-        case .charging:
-            "Charging"
-        case .unknown:
-            vehicleKind.shortDisplayName
-        }
     }
 
     public var displayedDutyHeadroom: BatteryLevel? {

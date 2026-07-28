@@ -237,9 +237,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.vehicleKind, .float)
-        XCTAssertEqual(snapshot.vehicleKind.displayName, "VESC Float")
         XCTAssertEqual(snapshot.subProtocol, .refloat)
-        XCTAssertEqual(snapshot.subProtocol.displayName, "Refloat")
         XCTAssertEqual(snapshot.controllerState, .unknown)
         XCTAssertEqual(snapshot.warning, .pushbackSoon)
         XCTAssertEqual(snapshot.boardSpeed, speedValue(19_000))
@@ -261,9 +259,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             controllerState: .unknown
         )
 
-        XCTAssertEqual(snapshot.vehicleKind.displayName, "VESC Bike")
+        XCTAssertEqual(snapshot.vehicleKind, .bike)
         XCTAssertEqual(snapshot.subProtocol, .generic)
-        XCTAssertEqual(snapshot.subProtocol.displayName, "VESC")
 
         let bike = VescRideSnapshot(
             title: "VESC Bike",
@@ -271,8 +268,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             subProtocol: .bike,
             controllerState: .unknown
         )
-        XCTAssertEqual(bike.vehicleKind.displayName, "VESC Bike")
-        XCTAssertEqual(bike.subProtocol.displayName, "Bike")
+        XCTAssertEqual(bike.vehicleKind, .bike)
+        XCTAssertEqual(bike.subProtocol, .bike)
 
         let eskate = VescRideSnapshot(
             title: "VESC Skateboard",
@@ -280,8 +277,8 @@ final class CutoutSessionCoreTests: XCTestCase {
             subProtocol: .eskate,
             controllerState: .unknown
         )
-        XCTAssertEqual(eskate.vehicleKind.displayName, "VESC Skateboard")
-        XCTAssertEqual(eskate.subProtocol.displayName, "eSkate")
+        XCTAssertEqual(eskate.vehicleKind, .skateboard)
+        XCTAssertEqual(eskate.subProtocol, .eskate)
     }
 
     func testVescRideSnapshotProjectsLiveDisplayTelemetryWithoutInventingSpeed() throws {
@@ -328,7 +325,6 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(snapshot.batteryLevelReported, batteryLevelValue(72))
         XCTAssertEqual(snapshot.batteryLevelEstimated, batteryLevelValue(70))
         XCTAssertEqual(snapshot.lastUpdate, MonotonicMilliseconds(900))
-        XCTAssertEqual(snapshot.screenSubtitle, "Parked")
         XCTAssertEqual(
             snapshot.updateAge(
                 at: MonotonicMilliseconds(1_000),
