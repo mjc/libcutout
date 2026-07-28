@@ -965,6 +965,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
         guard platformIdentifier == fixture.candidate.platformIdentifier else { return false }
         connectionTask?.cancel()
         onPhaseChange?(.discoveringServices)
+        onPhaseChange?(.subscribing)
         connectionTask = Task { [weak self] in
             guard let self else { return }
             do {
