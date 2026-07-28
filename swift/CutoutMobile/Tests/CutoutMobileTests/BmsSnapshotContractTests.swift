@@ -71,6 +71,53 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
     }
 
+    func testCellMapSummaryMetricValuesKeepStatusDistinctFromAvailableData() {
+        let topology = BmsTopology(
+            layoutLabel: "test pack",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .verified
+        )
+        let unavailableSpread = BmsSnapshot(topology: topology)
+        XCTAssertEqual(
+            unavailableSpread.cellMapSpreadMetricValue,
+            .status(
+                display: unavailableSpread.cellMapSpreadSummary,
+                accessibility: unavailableSpread.cellMapSpreadSummary
+            )
+        )
+
+        let snapshot = BmsSnapshot(
+            topology: topology,
+            cellDelta: VoltageDelta(value: 18),
+            lowestGroupIndex: 7,
+            groups: [BmsGroupSnapshot(index: 7)]
+        )
+        XCTAssertEqual(
+            snapshot.cellMapVisibilityMetricValue,
+            .available(
+                display: snapshot.cellMapVisibilitySummary,
+                accessibility: snapshot.cellMapVisibilitySummary
+            )
+        )
+        XCTAssertEqual(
+            snapshot.cellMapSpreadMetricValue,
+            .available(
+                display: snapshot.cellMapSpreadSummary,
+                accessibility: snapshot.cellMapSpreadSummary
+            )
+        )
+        XCTAssertEqual(
+            snapshot.cellMapFocusMetricValue,
+            .status(
+                display: snapshot.cellMapFocusSummary,
+                accessibility: snapshot.cellMapFocusSummary
+            )
+        )
+    }
+
     func testGroupAccessibilityDescribesVoltageAlertAndBalancingState() {
         let group = BmsGroupSnapshot(
             index: 7,

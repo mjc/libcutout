@@ -2572,9 +2572,20 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         pevLocalizedText("bms.cell_map.groups_visible", Int64(groups.count))
     }
 
+    public var cellMapVisibilityMetricValue: PevDashboardMetricValue {
+        .available(display: cellMapVisibilitySummary, accessibility: cellMapVisibilitySummary)
+    }
+
     public var cellMapSpreadSummary: String {
         cellDelta.map { pevLocalizedText("bms.cell_map.spread", Int64($0.value)) }
             ?? pevLocalizedText("bms.cell_map.spread_unavailable")
+    }
+
+    public var cellMapSpreadMetricValue: PevDashboardMetricValue {
+        guard cellDelta != nil else {
+            return .status(display: cellMapSpreadSummary, accessibility: cellMapSpreadSummary)
+        }
+        return .available(display: cellMapSpreadSummary, accessibility: cellMapSpreadSummary)
     }
 
     public var cellMapFocusSummary: String {
@@ -2583,6 +2594,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             return lowestGroupLabel.map { pevLocalizedText("bms.cell_map.lowest", $0) } ?? topology.layoutLabel
         }
         return pevLocalizedText("bms.cell_map.flagged", flaggedIndices.map(String.init).joined(separator: ", "))
+    }
+
+    public var cellMapFocusMetricValue: PevDashboardMetricValue {
+        .status(display: cellMapFocusSummary, accessibility: cellMapFocusSummary)
     }
 
     public var cellMapFocusDetail: String? {

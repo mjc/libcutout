@@ -11,10 +11,7 @@ struct BmsInlineLayout: View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: localizedAppText("bms.inline.topology_fits"),
-                metricValue: .available(
-                    display: snapshot.cellMapVisibilitySummary,
-                    accessibility: snapshot.cellMapVisibilitySummary
-                ),
+                metricValue: snapshot.cellMapVisibilityMetricValue,
                 detail: snapshot.topology.layoutLabel
             )
 
@@ -33,10 +30,7 @@ struct BmsInlineLayout: View {
 
             PevDashboardWideCard(
                 title: localizedAppText("bms.inline.range_of_interest"),
-                metricValue: .available(
-                    display: snapshot.cellMapSpreadSummary,
-                    accessibility: snapshot.cellMapSpreadSummary
-                ),
+                metricValue: snapshot.cellMapSpreadMetricValue,
                 detail: snapshot.cellMapFocusSummary
             )
 
@@ -63,10 +57,7 @@ struct BmsScrollableLayout: View {
         VStack(alignment: .leading, spacing: 16) {
             PevDashboardWideCard(
                 title: localizedAppText("bms.scroll.large_packs"),
-                metricValue: .available(
-                    display: snapshot.cellMapVisibilitySummary,
-                    accessibility: snapshot.cellMapVisibilitySummary
-                ),
+                metricValue: snapshot.cellMapVisibilityMetricValue,
                 detail: snapshot.topology.layoutLabel
             )
 
@@ -82,10 +73,7 @@ struct BmsScrollableLayout: View {
 
             PevDashboardWideCard(
                 title: localizedAppText("bms.scroll.interesting_groups"),
-                metricValue: .available(
-                    display: snapshot.cellMapFocusSummary,
-                    accessibility: snapshot.cellMapFocusSummary
-                ),
+                metricValue: snapshot.cellMapFocusMetricValue,
                 detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
                 stroke: PevColors.orange
             )
