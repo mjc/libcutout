@@ -79,18 +79,6 @@ public struct PevDashboardProgressCard: View {
 
     public init(
         label: String,
-        value: String,
-        detail: String,
-        progress: Double
-    ) {
-        self.label = label
-        metricValue = .available(display: value, accessibility: value)
-        self.detail = detail
-        self.progress = progress
-    }
-
-    public init(
-        label: String,
         metricValue: PevDashboardMetricValue,
         detail: String,
         progress: Double?

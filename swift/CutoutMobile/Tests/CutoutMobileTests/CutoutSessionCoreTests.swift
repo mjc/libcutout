@@ -383,9 +383,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(idleNoise.dutyHeadroom, batteryLevelValue(100))
         XCTAssertEqual(loaded.dutyCycle, dutyCycle(230))
         XCTAssertEqual(loaded.dutyHeadroom, batteryLevelValue(77))
+        XCTAssertEqual(loaded.dutyHeadroomMetricValue, .available(display: "77", accessibility: "77"))
+        XCTAssertEqual(try XCTUnwrap(loaded.dutyHeadroomProgress), 0.77, accuracy: 0.001)
     }
 
-    func testVescRideSnapshotShowsFullIdleHeadroomWhenParked() throws {
+    func testVescRideSnapshotMarksParkedHeadroomNotApplicableWithoutProgress() throws {
         let telemetry = TelemetrySnapshot(operatingState: .parked, pwm: dutyCycle(10))
 
         let snapshot = try XCTUnwrap(VescRideSnapshot(
@@ -396,7 +398,11 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(snapshot.dutyCycle, dutyCycle(10))
         XCTAssertNil(snapshot.dutyHeadroom)
         XCTAssertEqual(snapshot.dutyHeadroomApplicability, .notApplicable)
-        XCTAssertEqual(snapshot.displayedDutyHeadroom, batteryLevelValue(100))
+        XCTAssertEqual(
+            snapshot.dutyHeadroomMetricValue,
+            .status(display: "Not applicable", accessibility: "Not applicable")
+        )
+        XCTAssertNil(snapshot.dutyHeadroomProgress)
     }
 
     func testVescRideSnapshotKeepsMissingDutyHeadroomUnavailable() throws {
@@ -410,7 +416,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(snapshot.dutyCycle)
         XCTAssertNil(snapshot.dutyHeadroom)
         XCTAssertEqual(snapshot.dutyHeadroomApplicability, .unavailable)
-        XCTAssertNil(snapshot.displayedDutyHeadroom)
+        XCTAssertEqual(snapshot.dutyHeadroomMetricValue, .unavailable)
+        XCTAssertNil(snapshot.dutyHeadroomProgress)
     }
 
     func testVescRideSnapshotProjectsFootpadFromSharedTelemetry() throws {

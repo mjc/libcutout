@@ -1589,17 +1589,6 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         )
     }
 
-    public var displayedDutyHeadroom: BatteryLevel? {
-        switch dutyHeadroomApplicability {
-        case .available:
-            dutyHeadroom
-        case .notApplicable:
-            BatteryLevel(value: 100)
-        case .unavailable:
-            nil
-        }
-    }
-
     public var batteryVoltageMetricValue: PevDashboardMetricValue {
         vescMetricValue(batteryVoltage) {
             RideUnits.voltageText(millivolts: $0.value)
@@ -1637,9 +1626,24 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var dutyHeadroomMetricValue: PevDashboardMetricValue {
-        vescMetricValue(dutyHeadroom) {
-            RideUnits.percentText($0.value)
+        switch dutyHeadroomApplicability {
+        case .available:
+            guard let dutyHeadroom else {
+                return .unavailable
+            }
+
+            let value = RideUnits.percentText(dutyHeadroom.value)
+            return .available(display: value, accessibility: value)
+        case .notApplicable:
+            let value = pevLocalizedText("metric.availability.not_applicable")
+            return .status(display: value, accessibility: value)
+        case .unavailable:
+            return .unavailable
         }
+    }
+
+    public var dutyHeadroomProgress: Double? {
+        dutyHeadroom.map { Double($0.value) / 100.0 }
     }
 
     public var balanceAngleMetricValue: PevDashboardMetricValue {

@@ -46,10 +46,6 @@ struct VescRideScreenView: View {
         liveSnapshot?.footpad?.summaryText
     }
 
-    private var dutyHeadroom: BatteryLevel? {
-        liveSnapshot?.displayedDutyHeadroom
-    }
-
     private var telemetryAge: EucRideUpdateAge? {
         liveSnapshot?.updateAge(
             at: now,
@@ -202,16 +198,12 @@ struct VescRideScreenView: View {
                     cornerRadius: 24
                 )
                 .padding(.top, 12)
-            } else if let dutyHeadroom {
+            } else if let liveSnapshot, liveSnapshot.dutyHeadroomMetricValue != .unavailable {
                 PevDashboardProgressCard(
                     label: localizedAppText("vesc.duty_headroom.label"),
-                    metricValue: liveSnapshot?.dutyHeadroomMetricValue
-                        ?? .available(
-                            display: percentText(dutyHeadroom),
-                            accessibility: percentText(dutyHeadroom)
-                        ),
+                    metricValue: liveSnapshot.dutyHeadroomMetricValue,
                     detail: localizedAppText("vesc.duty_headroom.detail"),
-                    progress: Double(dutyHeadroom.value) / 100.0
+                    progress: liveSnapshot.dutyHeadroomProgress
                 )
                     .padding(.top, 12)
             } else if liveSnapshot == nil && phase == .live {
