@@ -449,7 +449,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: detailScreen)
+        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
 
         let backToMap = app.buttons["bms.detail.back"]
         XCTAssertTrue(backToMap.exists)
@@ -468,7 +468,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: detailScreen)
+        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
         try performVisibleLayoutAccessibilityAudit()
     }
 
@@ -481,7 +481,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: detailScreen)
+        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
@@ -494,7 +494,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: detailScreen)
+        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
@@ -882,6 +882,12 @@ final class CutoutAppUITests: XCTestCase {
             (metric.value as? String)?.isEmpty ?? true,
             "The \(label) metric has no accessible value"
         )
+    }
+
+    private func assertSelectedBmsGroupDetailIsReachable(in screen: XCUIElement) {
+        let heading = screen.staticTexts["Cell group 7, right pack group 7"]
+        XCTAssertTrue(heading.exists, "The selected BMS group heading is missing")
+        assertMetricIsReachable("Voltage", in: screen)
     }
 
     private func performVisibleLayoutAccessibilityAudit(

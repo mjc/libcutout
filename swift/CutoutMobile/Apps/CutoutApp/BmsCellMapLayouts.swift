@@ -170,14 +170,14 @@ struct BmsDetailLayout: View {
 
             if let selectedGroup {
                 VStack(alignment: .leading, spacing: 15) {
-                    Text(localizedAppText("bms.detail.group", Int64(selectedGroup.index)))
+                    Text(selectedGroup.accessibilityLabel)
                         .font(.headline)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityHeading(.h2)
                     Text(bmsGroupVoltageMetricValue(selectedGroup).displayText)
                         .font(.largeTitle.weight(.black))
                         .monospacedDigit()
-                        .accessibilityLabel(selectedGroup.accessibilityLabel)
+                        .accessibilityLabel(localizedAppText("bms.detail.voltage"))
                         .accessibilityValue(selectedGroup.accessibilityValue)
                     Text(snapshot.detailGroupStatus(for: selectedGroup.index))
                         .font(.headline.weight(.black))

@@ -369,6 +369,10 @@
       "comment" : "BMS metric label for cell-group temperature.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature" } } }
     },
+    "bms.detail.voltage" : {
+      "comment" : "VoiceOver label for the selected BMS cell-group voltage readout.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Voltage" } } }
+    },
     "bms.inline.range_of_interest" : {
       "comment" : "BMS inline cell-map card title for the voltage range that needs attention.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Range of interest" } } }
