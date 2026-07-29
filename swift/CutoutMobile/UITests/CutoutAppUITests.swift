@@ -198,6 +198,18 @@ final class CutoutAppUITests: XCTestCase {
         try assertCaptureAccessibility()
     }
 
+    func testCapturePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        try assertCaptureAccessibility()
+
+        let stopCapture = app.buttons["capture.stop"]
+        XCTAssertFalse(stopCapture.label.isEmpty)
+        XCTAssertNotEqual(
+            stopCapture.label,
+            "Finish capture",
+            "The pseudolocalized launch did not expand catalog-backed Capture copy"
+        )
+    }
+
     func testCapturePassesAccessibilityAuditInRightToLeftLayout() throws {
         try assertCaptureAccessibility(excluding: .contrast)
     }
@@ -863,19 +875,20 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
-        XCTAssertEqual(stopCapture.label, "Finish capture")
         let firstAnnotation = reachableCaptureAnnotation("ride", in: screen)
         XCTAssertTrue(firstAnnotation.isHittable)
-        XCTAssertEqual(firstAnnotation.label, "Start Ride")
+        let firstAnnotationInitialLabel = firstAnnotation.label
+        XCTAssertFalse(firstAnnotationInitialLabel.isEmpty)
         firstAnnotation.tap()
-        XCTAssertEqual(firstAnnotation.label, "Stop Ride")
+        XCTAssertNotEqual(firstAnnotation.label, firstAnnotationInitialLabel)
 
         let lastAnnotation = reachableCaptureAnnotation("pwm_percent", in: screen)
         XCTAssertTrue(lastAnnotation.exists)
         XCTAssertTrue(lastAnnotation.isHittable)
-        XCTAssertEqual(lastAnnotation.label, "Start PWM percent")
+        let lastAnnotationInitialLabel = lastAnnotation.label
+        XCTAssertFalse(lastAnnotationInitialLabel.isEmpty)
         lastAnnotation.tap()
-        XCTAssertEqual(lastAnnotation.label, "Stop PWM percent")
+        XCTAssertNotEqual(lastAnnotation.label, lastAnnotationInitialLabel)
         try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
