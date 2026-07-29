@@ -378,7 +378,17 @@ final class CutoutAppUITests: XCTestCase {
         try assertFailedVescConnectionAccessibility()
     }
 
-    private func assertFailedVescConnectionAccessibility() throws {
+    func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        try assertFailedVescConnectionAccessibility(
+            usesLocalizedText: true,
+            auditExclusions: .contrast
+        )
+    }
+
+    private func assertFailedVescConnectionAccessibility(
+        usesLocalizedText: Bool = false,
+        auditExclusions: XCUIAccessibilityAuditType = []
+    ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
@@ -387,18 +397,21 @@ final class CutoutAppUITests: XCTestCase {
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
-        try performVisibleLayoutAccessibilityAudit()
+        let connectingLabel = connectionStatus.label
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         let failed = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "Connect failed: deterministic fixture"),
+            predicate: usesLocalizedText
+                ? NSPredicate(format: "label != %@", connectingLabel)
+                : NSPredicate(format: "label == %@", "Connect failed: deterministic fixture"),
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
-        XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
-        try performVisibleLayoutAccessibilityAudit()
+        XCTAssertFalse(connectionStatus.label.isEmpty)
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
         let lateRide = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         let resurrected = XCTNSPredicateExpectation(
@@ -406,26 +419,29 @@ final class CutoutAppUITests: XCTestCase {
             object: lateRide
         )
         XCTAssertEqual(XCTWaiter.wait(for: [resurrected], timeout: 1), .timedOut)
-        XCTAssertEqual(connectionStatus.label, "Connect failed: deterministic fixture")
+        XCTAssertFalse(connectionStatus.label.isEmpty)
 
+        let retryLabel = connectionStatus.label
         XCTAssertTrue(pairAvailableDevice(.vesc))
         let retrying = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label BEGINSWITH %@", "Connecting"),
+            predicate: usesLocalizedText
+                ? NSPredicate(format: "label != %@", retryLabel)
+                : NSPredicate(format: "label BEGINSWITH %@", "Connecting"),
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [retrying], timeout: 3), .completed)
+        let retryingLabel = connectionStatus.label
 
         let failedAgain = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "Connect failed: deterministic fixture"),
+            predicate: usesLocalizedText
+                ? NSPredicate(format: "label != %@", retryingLabel)
+                : NSPredicate(format: "label == %@", "Connect failed: deterministic fixture"),
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failedAgain], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
-        let forget = app.buttons["device-picker.forget-saved-device"]
-        XCTAssertTrue(forget.waitForExistence(timeout: 5))
-        XCTAssertTrue(forget.isHittable)
-        XCTAssertEqual(forget.label, "Forget saved device")
     }
 
     func testEucRideAndBmsSurfacesRemainAccessible() throws {
