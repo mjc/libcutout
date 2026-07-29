@@ -1356,20 +1356,21 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         let button = app.buttons[family.useButtonIdentifier]
-        guard button.waitForExistence(timeout: 8) else { return false }
-
-        XCTAssertEqual(button.elementType, .button)
-        XCTAssertTrue(family.matches(label: button.label))
-
         let picker = app.descendants(matching: .any)["device-picker.screen"]
-        for _ in 0..<6 where !button.isHittable {
+        guard picker.waitForExistence(timeout: 8) else { return false }
+
+        for _ in 0..<6 where !button.exists || !button.isHittable {
             picker.swipeUp()
         }
 
-        guard button.isHittable else {
-            XCTFail("The \(family.name) Use button cannot be reached by scrolling")
+        guard button.exists, button.isHittable else {
+            XCTFail(
+                "The \(family.name) Use button cannot be reached by scrolling.\n\(picker.debugDescription)"
+            )
             return false
         }
+        XCTAssertEqual(button.elementType, .button)
+        XCTAssertTrue(family.matches(label: button.label))
         button.tap()
         return true
     }
