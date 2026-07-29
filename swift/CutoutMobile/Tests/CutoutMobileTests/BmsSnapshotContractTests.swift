@@ -429,7 +429,15 @@ final class BmsSnapshotContractTests: XCTestCase {
                     label: "availability",
                     metricValue: .status(display: "available", accessibility: "available")
                 ),
-                SessionDebugRow(id: "page", label: "page", value: "temperature #3", role: .transportMetadata),
+                SessionDebugRow(
+                    id: "page",
+                    label: "page",
+                    metricValue: .status(
+                        display: "temperature #3",
+                        accessibility: "temperature #3"
+                    ),
+                    role: .transportMetadata
+                ),
                 SessionDebugRow(
                     id: "page-verification",
                     label: "page verification",
@@ -447,7 +455,14 @@ final class BmsSnapshotContractTests: XCTestCase {
                 SessionDebugRow(id: "lowest-group", label: "lowest group", value: "17"),
                 SessionDebugRow(id: "temperature", label: "temperature", value: "37.8"),
                 SessionDebugRow(id: "temperature-sensors", label: "temperature sensors", value: "2"),
-                SessionDebugRow(id: "topology", label: "topology", value: "20S4P split pack"),
+                SessionDebugRow(
+                    id: "topology",
+                    label: "topology",
+                    metricValue: .status(
+                        display: "20S4P split pack",
+                        accessibility: "20S4P split pack"
+                    )
+                ),
             ]
         )
     }

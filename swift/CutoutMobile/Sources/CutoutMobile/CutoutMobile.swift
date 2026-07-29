@@ -2511,7 +2511,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "topology",
                 label: "topology",
-                metricValue: .available(
+                metricValue: .status(
                     display: topology.layoutLabel,
                     accessibility: topology.layoutLabel
                 )
@@ -2937,7 +2937,7 @@ private func bmsPageMetricValue(
     }
     guard !parts.isEmpty else { return .unavailable }
     let text = parts.joined(separator: " ")
-    return .available(display: text, accessibility: text)
+    return .status(display: text, accessibility: text)
 }
 
 public enum SessionDebugRowRole: Equatable, Hashable, Sendable {
