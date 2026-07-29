@@ -46,8 +46,8 @@ struct VescRideScreenView: View {
         liveSnapshot?.footpad?.summaryText
     }
 
-    private var telemetryAge: EucRideUpdateAge? {
-        liveSnapshot?.updateAge(
+    private var staleTelemetryElapsed: MonotonicMilliseconds? {
+        liveSnapshot?.staleTelemetryElapsed(
             at: now,
             staleAfter: RideTelemetryFreshnessPolicy.staleAfter
         )
@@ -184,7 +184,7 @@ struct VescRideScreenView: View {
                 metricsGrid
             }
 
-            if let age = telemetryAge, age.freshness == .stale, let elapsed = age.elapsed {
+            if let elapsed = staleTelemetryElapsed {
                 PevDashboardWarningCard(
                     title: localizedAppText("vesc.warning.telemetry_stale"),
                     detail: localizedAppText(

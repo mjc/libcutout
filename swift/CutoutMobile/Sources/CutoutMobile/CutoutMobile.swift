@@ -1688,6 +1688,15 @@ public extension VescRideSnapshot {
     ) -> EucRideUpdateAge {
         rideUpdateAge(updatedAt: lastUpdate, at: now, staleAfter: staleThreshold)
     }
+
+    func staleTelemetryElapsed(
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> MonotonicMilliseconds? {
+        let age = updateAge(at: now, staleAfter: staleThreshold)
+        guard age.freshness == .stale else { return nil }
+        return age.elapsed
+    }
 }
 
 private let dutyHeadroomIdleDeadbandPermille = 20

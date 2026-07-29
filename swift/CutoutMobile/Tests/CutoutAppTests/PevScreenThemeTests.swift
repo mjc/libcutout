@@ -117,6 +117,36 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testVescRideSnapshotOwnsTheStrictStaleTelemetryBoundary() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            lastUpdate: MonotonicMilliseconds(1_000)
+        )
+
+        XCTAssertNil(
+            snapshot.staleTelemetryElapsed(
+                at: MonotonicMilliseconds(2_999),
+                staleAfter: MonotonicMilliseconds(2_000)
+            )
+        )
+        XCTAssertNil(
+            snapshot.staleTelemetryElapsed(
+                at: MonotonicMilliseconds(3_000),
+                staleAfter: MonotonicMilliseconds(2_000)
+            )
+        )
+        XCTAssertEqual(
+            snapshot.staleTelemetryElapsed(
+                at: MonotonicMilliseconds(3_001),
+                staleAfter: MonotonicMilliseconds(2_000)
+            ),
+            MonotonicMilliseconds(2_001)
+        )
+    }
+
     func testEucRideAppPresentationUsesTheAppCatalog() {
         XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
         XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")
