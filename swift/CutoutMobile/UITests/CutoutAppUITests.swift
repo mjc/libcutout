@@ -199,6 +199,23 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
     }
 
+    func testVescUseDisconnectCycleKeepsOneNativeRideRoute() {
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        let ride = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        let disconnect = app.buttons["dashboard.disconnect"]
+
+        for cycle in 1...3 {
+            XCTAssertTrue(pairAvailableDevice(.vesc), "Cycle \(cycle) did not start from the native Use button")
+            XCTAssertTrue(ride.waitForExistence(timeout: 20), "Cycle \(cycle) did not open the VESC Ride screen")
+            XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
+            XCTAssertEqual(disconnect.elementType, .button)
+
+            disconnect.tap()
+            XCTAssertTrue(picker.waitForExistence(timeout: 5), "Cycle \(cycle) did not return to the picker")
+            XCTAssertFalse(ride.exists, "Cycle \(cycle) left the previous Ride screen visible")
+        }
+    }
+
     func testCapturePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertCaptureAccessibility()
     }
