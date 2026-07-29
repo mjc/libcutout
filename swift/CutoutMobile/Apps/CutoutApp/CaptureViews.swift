@@ -50,7 +50,7 @@ struct CaptureRecordingScreen: View {
 
     var body: some View {
         PevDashboardScaffold(
-            sectionTitle: String(localized: "capture.section.record", table: "Localizable", bundle: appLocalizationBundle),
+            sectionTitle: localizedAppText("capture.section.record"),
             bottomPadding: 24,
             allowsVerticalScroll: true,
             contentSpacing: 16,
@@ -58,24 +58,12 @@ struct CaptureRecordingScreen: View {
             showsHeader: false
         ) {
             PevScreenTitleBlock(
-                title: deviceKind ?? String(
-                    localized: "capture.session",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                ),
-                subtitle: String(
-                    localized: "capture.session",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                )
+                title: deviceKind ?? localizedAppText("capture.session"),
+                subtitle: localizedAppText("capture.session")
             )
 
             PevStatusStrip(
-                text: captureStatusText ?? String(
-                    localized: "capture.status.recording_locally_without_file",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                ),
+                text: captureStatusText ?? localizedAppText("capture.status.recording_locally_without_file"),
                 tone: captureStatusTone
             )
             .accessibilityIdentifier("capture.status")

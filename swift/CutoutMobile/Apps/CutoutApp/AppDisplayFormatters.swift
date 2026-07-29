@@ -34,23 +34,23 @@ struct DevicePickerConnectionPresentation: Equatable {
         switch phase {
         case .bluetoothPermissionDenied:
             self = .init(
-                title: String(localized: "picker.status.bluetooth_permission_denied", table: "Localizable", bundle: appLocalizationBundle),
+                title: localizedAppText("picker.status.bluetooth_permission_denied"),
                 showsActivity: false,
                 symbolName: "lock.slash.fill"
             )
         case .bluetoothUnavailable:
             self = .init(
-                title: String(localized: "picker.status.bluetooth_unavailable", table: "Localizable", bundle: appLocalizationBundle),
+                title: localizedAppText("picker.status.bluetooth_unavailable"),
                 showsActivity: false,
                 symbolName: "bolt.slash.fill"
             )
         case .failed(let failure):
             self = .init(title: failure.displayText, showsActivity: false, symbolName: "xmark.octagon.fill")
         case .connecting, .discoveringServices, .subscribing:
-            self = .init(title: String(localized: "picker.status.connecting", table: "Localizable", bundle: appLocalizationBundle), showsActivity: true)
+            self = .init(title: localizedAppText("picker.status.connecting"), showsActivity: true)
         case .starting:
             self = .init(
-                title: String(localized: "picker.status.starting_bluetooth", table: "Localizable", bundle: appLocalizationBundle),
+                title: localizedAppText("picker.status.starting_bluetooth"),
                 showsActivity: false,
                 symbolName: "bolt.horizontal.circle"
             )
@@ -61,7 +61,7 @@ struct DevicePickerConnectionPresentation: Equatable {
             )
         case .live:
             self = .init(
-                title: String(localized: "picker.status.live", table: "Localizable", bundle: appLocalizationBundle),
+                title: localizedAppText("picker.status.live"),
                 showsActivity: false,
                 symbolName: "checkmark.circle.fill"
             )
@@ -77,20 +77,20 @@ struct DevicePickerConnectionPresentation: Equatable {
 
 private func pickerScanStatusTitle(_ scanState: DevicePickerScanState?) -> String {
     guard let scanState else {
-        return String(localized: "picker.status.starting_bluetooth", table: "Localizable", bundle: appLocalizationBundle)
+        return localizedAppText("picker.status.starting_bluetooth")
     }
 
     return switch scanState.status {
     case .scanning:
-        String(localized: "picker.status.scanning_bluetooth", table: "Localizable", bundle: appLocalizationBundle)
+        localizedAppText("picker.status.scanning_bluetooth")
     case .idle where scanState.rows.isEmpty:
-        String(localized: "picker.status.no_devices", table: "Localizable", bundle: appLocalizationBundle)
+        localizedAppText("picker.status.no_devices")
     case .idle:
-        String(localized: "picker.status.scan_complete", table: "Localizable", bundle: appLocalizationBundle)
+        localizedAppText("picker.status.scan_complete")
     case .bluetoothUnavailable:
-        String(localized: "picker.status.bluetooth_unavailable", table: "Localizable", bundle: appLocalizationBundle)
+        localizedAppText("picker.status.bluetooth_unavailable")
     case .permissionDenied:
-        String(localized: "picker.status.bluetooth_permission_denied", table: "Localizable", bundle: appLocalizationBundle)
+        localizedAppText("picker.status.bluetooth_permission_denied")
     case .failed(let message):
         message
     }
@@ -154,7 +154,7 @@ extension SessionConnectionPhase {
         case .starting, .scanning, .discoveringServices, .subscribing:
             nil
         case .bluetoothPermissionDenied:
-            String(localized: "picker.announcement.bluetooth_permission_denied", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("picker.announcement.bluetooth_permission_denied")
         case .bluetoothUnavailable:
             String(
                 localized: "picker.announcement.bluetooth_unavailable",
