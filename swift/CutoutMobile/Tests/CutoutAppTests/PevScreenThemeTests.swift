@@ -397,6 +397,10 @@ final class PevScreenThemeTests: XCTestCase {
             ]
         )
         XCTAssertEqual(
+            vescDebugRows(snapshot, phase: .live, notificationCount: 12_345)[3].metricValue,
+            .status(display: "12,345", accessibility: "12,345")
+        )
+        XCTAssertEqual(
             rows.suffix(4).map(\.metricValue),
             [.unavailable, .unavailable, .unavailable, .unavailable]
         )

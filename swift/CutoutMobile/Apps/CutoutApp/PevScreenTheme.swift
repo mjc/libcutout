@@ -210,7 +210,7 @@ func vescDebugRows(
     let phaseText = phase.displayText
     let protocolText = vescDebugProtocolText(snapshot.subProtocol)
     let stateText = vescOperatingStateText(snapshot)
-    let notificationText = String(notificationCount)
+    let notificationText = notificationCount.formatted()
     return [
         PevDashboardKeyValueRow(id: "phase", label: localizedAppText("vesc.debug.row.session"), metricValue: .status(display: phaseText, accessibility: phaseText)),
         PevDashboardKeyValueRow(id: "protocol", label: localizedAppText("vesc.debug.row.protocol"), metricValue: .status(display: protocolText, accessibility: protocolText)),
