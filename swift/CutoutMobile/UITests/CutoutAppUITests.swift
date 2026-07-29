@@ -71,6 +71,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(useButton.frame.height, 92)
     }
 
+    func testEucFixtureSelectionIgnoresXCTestSelectorCase() {
+        XCTAssertEqual(Fixture.testFixture(for: "testEUCBmsDetailPassesAccessibilityAudit"), .euc)
+        XCTAssertEqual(Fixture.testFixture(for: "testEUCNoBmsSurfacePassesAccessibilityAudit"), .eucNoBms)
+    }
+
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
         enterCapture()
 
@@ -771,16 +776,7 @@ final class CutoutAppUITests: XCTestCase {
         name.contains("InLandscape")
     }
 
-    private var fixture: Fixture {
-        if name.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
-        if name.contains("Capture") || name.contains("Advanced") { return .unknownDevice }
-        if name.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
-        if name.contains("LiveActivityFixture") { return .vescLiveActivity }
-        if name.contains("FailedVescConnection") { return .vescFailure }
-        if name.contains("EucNoBms") { return .eucNoBms }
-        if name.contains("Euc") { return .euc }
-        return .vesc
-    }
+    private var fixture: Fixture { Fixture.testFixture(for: name) }
 
     private enum Fixture {
         case unknownDevice
@@ -791,6 +787,17 @@ final class CutoutAppUITests: XCTestCase {
         case vescFailure
         case vescLiveActivity
         case vescLiveActivityAuto
+
+        static func testFixture(for testName: String) -> Self {
+            if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
+            if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
+            if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
+            if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
+            if testName.contains("FailedVescConnection") { return .vescFailure }
+            if testName.localizedCaseInsensitiveContains("EucNoBms") { return .eucNoBms }
+            if testName.localizedCaseInsensitiveContains("Euc") { return .euc }
+            return .vesc
+        }
 
         var environmentValue: String {
             switch self {
