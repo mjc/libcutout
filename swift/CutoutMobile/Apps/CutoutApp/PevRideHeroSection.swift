@@ -98,13 +98,13 @@ struct PevRideHeroSection: View {
         }
 
         VStack(alignment: .center, spacing: 2) {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(spacing: 2) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
                     speed
                     unit
                 }
-            } else {
-                HStack(alignment: .firstTextBaseline, spacing: 9) {
+
+                VStack(spacing: 2) {
                     speed
                     unit
                 }
@@ -147,9 +147,7 @@ struct PevRideHeroSection: View {
     }
 
     private var speedFont: Font {
-        dynamicTypeSize.isAccessibilitySize
-            ? .largeTitle.weight(.black)
-            : .system(size: speedFontSize, weight: .black)
+        .system(size: speedFontSize, weight: .black)
     }
 
     @ViewBuilder
