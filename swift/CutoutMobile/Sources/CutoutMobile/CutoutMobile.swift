@@ -1370,6 +1370,14 @@ public extension FootpadTelemetry {
         formatFootpadReading(adc2Milliunits)
     }
 
+    var adc1MetricValue: PevDashboardMetricValue {
+        footpadMetricValue(adc1Milliunits)
+    }
+
+    var adc2MetricValue: PevDashboardMetricValue {
+        footpadMetricValue(adc2Milliunits)
+    }
+
     var stateDisplayText: String {
         contactState?.displayText ?? pevLocalizedText("footpad.state", Int64(state))
     }
@@ -1406,6 +1414,15 @@ private func footpadAvailabilityText(for value: Int32?, displayText: String) -> 
     value == nil
         ? pevLocalizedText("footpad.unavailable")
         : pevLocalizedText("footpad.available", displayText)
+}
+
+private func footpadMetricValue(_ value: Int32?) -> PevDashboardMetricValue {
+    guard value != nil else { return .unavailable }
+    let displayText = formatFootpadReading(value)
+    return .available(
+        display: displayText,
+        accessibility: footpadAvailabilityText(for: value, displayText: displayText)
+    )
 }
 
 public enum VescControllerState: Equatable, Hashable, Sendable {

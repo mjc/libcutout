@@ -234,11 +234,10 @@ struct VescRideScreenView: View {
             if let footpad = liveSnapshot?.footpad {
                 PevDashboardFootpadReadout(
                     leftLabel: localizedAppText("vesc.footpad.left"),
-                    leftValue: footpad.adc1DisplayText,
+                    leftMetricValue: footpad.adc1MetricValue,
                     rightLabel: localizedAppText("vesc.footpad.right"),
-                    rightValue: footpad.adc2DisplayText,
-                    detail: footpad.stateDisplayText,
-                    accessibilityValue: footpad.accessibilityValue
+                    rightMetricValue: footpad.adc2MetricValue,
+                    detail: footpad.stateDisplayText
                 )
                 .padding(.top, 8)
             }

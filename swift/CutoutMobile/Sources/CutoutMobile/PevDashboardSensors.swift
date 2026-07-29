@@ -5,32 +5,31 @@ public struct PevDashboardFootpadReadout: View {
 
     let title: String
     let leftLabel: String
-    let leftValue: String
+    let leftMetricValue: PevDashboardMetricValue
     let rightLabel: String
-    let rightValue: String
+    let rightMetricValue: PevDashboardMetricValue
     let detail: String
     let accessibilityValueText: String
 
     public init(
         title: String = "footpad",
         leftLabel: String = "left",
-        leftValue: String,
+        leftMetricValue: PevDashboardMetricValue,
         rightLabel: String = "right",
-        rightValue: String,
-        detail: String,
-        accessibilityValue: String? = nil
+        rightMetricValue: PevDashboardMetricValue,
+        detail: String
     ) {
         self.title = title
         self.leftLabel = leftLabel
-        self.leftValue = leftValue
+        self.leftMetricValue = leftMetricValue
         self.rightLabel = rightLabel
-        self.rightValue = rightValue
+        self.rightMetricValue = rightMetricValue
         self.detail = detail
-        accessibilityValueText = accessibilityValue ?? [
+        accessibilityValueText = [
             leftLabel,
-            leftValue,
+            leftMetricValue.accessibilityText,
             rightLabel,
-            rightValue,
+            rightMetricValue.accessibilityText,
             detail,
         ].formatted(.list(type: .and))
     }
@@ -49,19 +48,19 @@ public struct PevDashboardFootpadReadout: View {
 
             if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 10) {
-                    footpadSide(label: leftLabel, value: leftValue)
-                    footpadSide(label: rightLabel, value: rightValue)
+                    footpadSide(label: leftLabel, metricValue: leftMetricValue)
+                    footpadSide(label: rightLabel, metricValue: rightMetricValue)
                 }
             } else {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        footpadSide(label: leftLabel, value: leftValue)
-                        footpadSide(label: rightLabel, value: rightValue)
+                        footpadSide(label: leftLabel, metricValue: leftMetricValue)
+                        footpadSide(label: rightLabel, metricValue: rightMetricValue)
                     }
 
                     VStack(alignment: .leading, spacing: 10) {
-                        footpadSide(label: leftLabel, value: leftValue)
-                        footpadSide(label: rightLabel, value: rightValue)
+                        footpadSide(label: leftLabel, metricValue: leftMetricValue)
+                        footpadSide(label: rightLabel, metricValue: rightMetricValue)
                     }
                 }
             }
@@ -81,14 +80,14 @@ public struct PevDashboardFootpadReadout: View {
         .accessibilityValue(accessibilityValueText)
     }
 
-    private func footpadSide(label: String, value: String) -> some View {
+    private func footpadSide(label: String, metricValue: PevDashboardMetricValue) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 Text(label)
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(PevDashboardColors.mutedText)
             }
-            Text(value)
+            Text(metricValue.displayText)
                 .font(.title3.weight(.black))
                 .foregroundStyle(PevDashboardColors.primaryText)
                 .monospacedDigit()

@@ -312,18 +312,16 @@ final class PevDashboardAccessibilityTests: XCTestCase {
 
         XCTAssertEqual(
             readout.accessibilityValueText,
-            "left, 1.2 volts, right, unavailable, and engaged"
+            "left, 1.2 volts, available, right, unavailable, and engaged"
         )
     }
 
-    func testFootpadReadoutAcceptsTypedAvailabilitySemantics() {
-        let readout = makeFootpadReadout(
-            accessibilityValue: "left, 1.2 volts, available, right, unavailable, engaged"
-        )
+    func testFootpadReadoutBuildsTypedAvailabilitySemantics() {
+        let readout = makeFootpadReadout()
 
         XCTAssertEqual(
             readout.accessibilityValueText,
-            "left, 1.2 volts, available, right, unavailable, engaged"
+            "left, 1.2 volts, available, right, unavailable, and engaged"
         )
     }
 
@@ -335,16 +333,13 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
     }
 
-    private func makeFootpadReadout(
-        accessibilityValue: String? = nil
-    ) -> PevDashboardFootpadReadout {
+    private func makeFootpadReadout() -> PevDashboardFootpadReadout {
         PevDashboardFootpadReadout(
             leftLabel: "left",
-            leftValue: "1.2 volts",
+            leftMetricValue: .available(display: "1.2 volts", accessibility: "1.2 volts, available"),
             rightLabel: "right",
-            rightValue: "unavailable",
-            detail: "engaged",
-            accessibilityValue: accessibilityValue
+            rightMetricValue: .unavailable,
+            detail: "engaged"
         )
     }
 }
