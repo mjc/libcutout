@@ -365,10 +365,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertTrue(recordButton.isHittable)
 
-        for _ in 0..<6 where !captureKind.isHittable {
-            advancedCapture.swipeDown()
-        }
-        XCTAssertTrue(captureKind.isHittable)
+        restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
         // XCTest misreports the system-owned NavigationStack toolbar's native
         // Cancel/Done controls as Dynamic Type failures. The dedicated keyboard
         // test below proves their dismissal path at Accessibility XXXL.
@@ -431,7 +428,11 @@ final class CutoutAppUITests: XCTestCase {
             advancedCapture.swipeUp()
         }
         XCTAssertTrue(recordButton.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .dynamicType])
+        restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: .dynamicType,
+            ignoringSystemToolbarContrastWarning: true
+        )
     }
 
     func testAdvancedCaptureControlsRemainReachableInLandscapeAtAccessibilityDynamicType() throws {
@@ -450,7 +451,11 @@ final class CutoutAppUITests: XCTestCase {
             advancedCapture.swipeUp()
         }
         XCTAssertTrue(recordButton.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .dynamicType])
+        restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: .dynamicType,
+            ignoringSystemToolbarContrastWarning: true
+        )
     }
 
     func testVescUseOpensAnAccessibleLiveRide() throws {
@@ -1296,6 +1301,16 @@ final class CutoutAppUITests: XCTestCase {
         for _ in 0..<4 {
             picker.swipeDown()
         }
+    }
+
+    private func restoreAdvancedCaptureViewport(
+        _ advancedCapture: XCUIElement,
+        captureKind: XCUIElement
+    ) {
+        for _ in 0..<6 where !captureKind.isHittable {
+            advancedCapture.swipeDown()
+        }
+        XCTAssertTrue(captureKind.isHittable)
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
