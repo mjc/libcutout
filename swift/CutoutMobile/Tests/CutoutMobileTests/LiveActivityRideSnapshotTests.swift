@@ -657,7 +657,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
     func testPwmPresentationUsesDutyAndAStrictCriticalThreshold() {
         let values: [(LiveActivityRideValue, LiveActivityRidePwmSeverity)] = [
             (.available(label: "PWM", value: "80", unit: "%", normalizedProgress: 0.80, source: .liveTelemetry), .nominal),
-            (.available(label: "PWM", value: "81", unit: "%", normalizedProgress: 0.801, source: .liveTelemetry), .critical),
+            (.available(label: "PWM", value: "not parsed", unit: "%", normalizedProgress: 0.801, source: .liveTelemetry), .critical),
             (.available(label: "PWM", value: "120", unit: "%", normalizedProgress: 1.2, source: .liveTelemetry), .critical),
             (.unavailable(label: "PWM", unit: "%"), .unavailable),
         ]
