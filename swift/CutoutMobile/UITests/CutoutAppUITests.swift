@@ -476,6 +476,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
+    func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        try assertEucNoBmsSurface()
+    }
+
     func testEucNoBmsSurfacePassesAccessibilityAuditInRightToLeftLayout() throws {
         try assertEucNoBmsSurface()
     }
