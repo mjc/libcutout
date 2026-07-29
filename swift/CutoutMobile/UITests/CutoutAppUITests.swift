@@ -451,6 +451,19 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        let group = reachableBmsGroup(7, in: bmsScreen)
+        group.tap()
+
+        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
+        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testEucBmsPassesAccessibilityAuditInRightToLeftLayout() throws {
         try assertEucBmsAccessibility()
     }
@@ -969,9 +982,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertSelectedBmsGroupDetailIsReachable(in screen: XCUIElement) {
-        let heading = screen.staticTexts["Cell group 7, right pack group 7"]
+        let heading = screen.staticTexts["bms.detail.selected-group"]
         XCTAssertTrue(heading.exists, "The selected BMS group heading is missing")
-        assertMetricIsReachable("Voltage", in: screen)
+        let voltage = screen.staticTexts["bms.detail.voltage"]
+        XCTAssertTrue(voltage.exists, "The selected BMS group voltage is missing")
+        XCTAssertFalse((voltage.value as? String)?.isEmpty ?? true)
     }
 
     private func performVisibleLayoutAccessibilityAudit(
