@@ -208,6 +208,7 @@ struct PevRideHeroSection: View {
         .padding(.top, 8)
         .accessibilityElement(children: .combine)
         .accessibilityHeading(.h1)
+        .accessibilityIdentifier("ride.hero.status")
 
         if let captureStatusText {
             PevStatusStrip(

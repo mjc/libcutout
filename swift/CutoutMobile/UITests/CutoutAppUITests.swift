@@ -459,7 +459,11 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescReconnectAccessibility()
     }
 
-    private func assertVescReconnectAccessibility() throws {
+    func testVescReconnectKeepsRideAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        try assertVescReconnectAccessibility(usesLocalizedText: true)
+    }
+
+    private func assertVescReconnectAccessibility(usesLocalizedText: Bool = false) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let rideScreen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
@@ -467,10 +471,22 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
-        let retrying = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label CONTAINS %@", "Retrying connection")
-        ).firstMatch
-        XCTAssertTrue(retrying.waitForExistence(timeout: 5))
+        if usesLocalizedText {
+            let status = app.descendants(matching: .any)["ride.hero.status"]
+            XCTAssertTrue(status.waitForExistence(timeout: 5))
+            let liveStatus = status.label
+            let retrying = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label != %@ AND label != %@", liveStatus, ""),
+                object: status
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [retrying], timeout: 5), .completed)
+            XCTAssertNotEqual(status.label, "Retrying connection…")
+        } else {
+            let retrying = app.descendants(matching: .any).matching(
+                NSPredicate(format: "label CONTAINS %@", "Retrying connection")
+            ).firstMatch
+            XCTAssertTrue(retrying.waitForExistence(timeout: 5))
+        }
         XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.vesc.screenIdentifier)
         XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
