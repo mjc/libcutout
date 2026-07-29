@@ -26,10 +26,7 @@ struct EucRideScreenView: View {
     }
 
     private var warningCard: PevWarningCard? {
-        if let warningState {
-            return PevWarningCard(title: warningState.title, detail: warningState.detail)
-        }
-        return nil
+        warningState.map { PevWarningCard(title: $0.title, detail: $0.detail) }
     }
 
     private var warningSeverity: EucRideWarningSeverity {
@@ -44,27 +41,17 @@ struct EucRideScreenView: View {
     }
 
     private var safetyBars: [PevSafetyBar] {
-        if let rideState {
-            if rideState.telemetry != nil {
-                return liveSafetyBars(for: rideState)
-            }
-            return []
-        }
-        return []
+        guard let rideState, rideState.telemetry != nil else { return [] }
+        return liveSafetyBars(for: rideState)
     }
 
     private var dashboardTiles: [PevDashboardTile] {
-        if let rideState {
-            if let telemetry = rideState.telemetry {
-                return liveDashboardTiles(from: rideState, telemetry: telemetry)
-            }
-            return []
-        }
-        return []
+        guard let rideState, let telemetry = rideState.telemetry else { return [] }
+        return liveDashboardTiles(from: rideState, telemetry: telemetry)
     }
 
     private var gpsSpeedTile: PevDashboardTile {
-        return eucGpsSpeedTile(from: phoneLocationReadback, at: now)
+        eucGpsSpeedTile(from: phoneLocationReadback, at: now)
     }
 
     var body: some View {
