@@ -634,6 +634,10 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.unknownTopologyVoltageDetail, "topology unverified")
+        XCTAssertEqual(
+            snapshot.unknownTopologyVoltageMetricValue,
+            .available(display: "75.900", accessibility: "75.900")
+        )
         XCTAssertEqual(snapshot.unknownTopologyCellCountMetricValue, .unavailable)
         XCTAssertEqual(snapshot.unknownTopologyCellCountDetail, "layout unverified")
         XCTAssertEqual(snapshot.unknownTopologyTemperatureSensorCountMetricValue, .unavailable)

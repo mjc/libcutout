@@ -2821,6 +2821,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         topology.layoutLabel
     }
 
+    public var unknownTopologyVoltageMetricValue: PevDashboardMetricValue {
+        bmsVoltageMetricValue(voltage)
+    }
+
     public var balancingMetricValue: PevDashboardMetricValue {
         guard let balancingSummary else { return .unavailable }
         return .status(display: balancingSummary, accessibility: balancingSummary)
