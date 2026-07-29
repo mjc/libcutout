@@ -310,6 +310,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     func testFootpadReadoutBuildsACompleteDefaultAccessibilityValue() {
         let readout = makeFootpadReadout()
 
+        XCTAssertEqual(readout.title, "Footpad")
         XCTAssertEqual(
             readout.accessibilityValueText,
             "left, 1.2 volts, available, right, unavailable, and engaged"

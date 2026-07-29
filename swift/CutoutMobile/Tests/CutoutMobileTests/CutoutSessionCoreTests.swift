@@ -578,6 +578,10 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             Bundle.module.localizedString(forKey: "footpad.accessibility.summary", value: nil, table: "Localizable"),
             "%1$@, %2$@, %3$@, %4$@, %5$@"
         )
+        XCTAssertEqual(
+            Bundle.module.localizedString(forKey: "footpad.title", value: nil, table: "Localizable"),
+            "Footpad"
+        )
     }
 
     func testVescRideSnapshotProjectsAngleOnlyTelemetry() throws {

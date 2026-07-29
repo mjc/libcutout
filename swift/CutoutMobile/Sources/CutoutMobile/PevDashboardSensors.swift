@@ -12,7 +12,7 @@ public struct PevDashboardFootpadReadout: View {
     let accessibilityValueText: String
 
     public init(
-        title: String = "footpad",
+        title: String = pevLocalizedText("footpad.title"),
         leftLabel: String = "left",
         leftMetricValue: PevDashboardMetricValue,
         rightLabel: String = "right",
