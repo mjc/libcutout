@@ -44,9 +44,6 @@ struct BmsNoDataLayout: View {
             localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable")
         }
     }
-    private var controllerRidingRuleProgress: Double {
-        controllerConfidence.ridingRuleProgress
-    }
     private var packVoltage: Voltage? {
         rideState?.telemetry?.voltage ?? snapshot.voltage
     }
@@ -103,11 +100,6 @@ struct BmsNoDataLayout: View {
                     )
 
                     BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows)
-
-                    BmsNoDataRidingRuleCard(
-                        metricValue: snapshot.captureActionMetricValue,
-                        progress: controllerRidingRuleProgress
-                    )
 
                     if let liveSnapshot, liveSnapshot.shouldRenderReadback {
                         BmsDiagnosticsSection(snapshot: liveSnapshot)

@@ -635,6 +635,16 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
+    func testEucNoBmsSurfaceDoesNotInventARidingRule() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
+        defer { disconnectIfConnected() }
+
+        XCTAssertFalse(
+            bmsScreen.staticTexts["RIDING RULE"].exists,
+            "No-BMS telemetry does not provide a riding rule; do not relabel a capture action as safety guidance."
+        )
+    }
+
     func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertEucNoBmsSurface()
     }

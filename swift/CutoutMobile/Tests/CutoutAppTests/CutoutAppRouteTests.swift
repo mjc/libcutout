@@ -49,10 +49,8 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.no_data.ride_sag"), "Ride sag")
         XCTAssertEqual(localizedAppText("bms.no_data.load_now"), "Load now")
         XCTAssertEqual(localizedAppText("bms.no_data.what_is_unknown"), "WHAT IS UNKNOWN")
-        XCTAssertEqual(localizedAppText("bms.no_data.riding_rule"), "RIDING RULE")
         XCTAssertEqual(localizedAppText("bms.no_data.pack_estimate_accessibility"), "Pack estimate")
         XCTAssertEqual(localizedAppText("bms.no_data.confidence_accessibility"), "Confidence")
-        XCTAssertEqual(localizedAppText("bms.no_data.riding_rule_progress_accessibility"), "Riding rule progress")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Derived from voltage curve + recent sag")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Derived from voltage curve only")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.unavailable"), "Estimate unavailable")
@@ -79,7 +77,6 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("bms.no_data.confidence_accessibility_value", "Medium", "Not cell-safe"),
             "Medium. Not cell-safe"
         )
-        XCTAssertEqual(localizedAppText("bms.no_data.riding_rule_progress_value", Int64(62)), "62 percent")
         XCTAssertEqual(
             PevScreen(id: .bmsCellDetail, title: "", subtitle: "", secondaryValue: "").tabTitle,
             "Cells"

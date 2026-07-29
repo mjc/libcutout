@@ -269,18 +269,6 @@
       "comment" : "No-data BMS metric label for the voltage drop under riding load.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride sag" } } }
     },
-    "bms.no_data.riding_rule" : {
-      "comment" : "No-data BMS section heading for the recommended riding rule.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "RIDING RULE" } } }
-    },
-    "bms.no_data.riding_rule_progress_accessibility" : {
-      "comment" : "VoiceOver label for no-data BMS riding-rule progress.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Riding rule progress" } } }
-    },
-    "bms.no_data.riding_rule_progress_value" : {
-      "comment" : "VoiceOver value for no-data BMS riding-rule progress. The placeholder is the rounded percentage.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld percent" } } }
-    },
     "bms.no_data.what_is_unknown" : {
       "comment" : "No-data BMS section heading for facts the controller cannot establish.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "WHAT IS UNKNOWN" } } }

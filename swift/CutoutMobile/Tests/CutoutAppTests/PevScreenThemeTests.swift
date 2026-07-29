@@ -753,42 +753,6 @@ final class PevScreenThemeTests: XCTestCase {
     }
 
     @MainActor
-    func testBmsNoDataRidingRuleExposesClampedProgressToAccessibility() {
-        let metricValue = BmsSnapshot(
-            topology: BmsTopology(
-                layoutLabel: "test pack",
-                seriesGroupCount: nil,
-                parallelCount: nil,
-                packCount: 1,
-                bmsCount: 1,
-                confidence: .verified
-            ),
-            captureActionTitle: "record unsupported pack"
-        ).captureActionMetricValue
-        XCTAssertEqual(
-            BmsNoDataRidingRuleCard(
-                metricValue: metricValue,
-                progress: 0.62
-            ).progressAccessibilityValue,
-            "62 percent"
-        )
-        XCTAssertEqual(
-            BmsNoDataRidingRuleCard(
-                metricValue: metricValue,
-                progress: 1.8
-            ).progressAccessibilityValue,
-            "100 percent"
-        )
-        XCTAssertEqual(
-            BmsNoDataRidingRuleCard(
-                metricValue: metricValue,
-                progress: -0.4
-            ).progressAccessibilityValue,
-            "0 percent"
-        )
-    }
-
-    @MainActor
     func testBmsNoDataMetricSpeaksTypedUnavailableValue() {
         let metric = BmsNoDataMetric(
             metricValue: .unavailable,
@@ -827,23 +791,6 @@ final class PevScreenThemeTests: XCTestCase {
                 detail
             )
         )
-    }
-
-    func testBmsNoDataRidingRuleSpeaksTypedUnavailableTitle() {
-        let metricValue = BmsSnapshot(
-            topology: BmsTopology(
-                layoutLabel: "test pack",
-                seriesGroupCount: nil,
-                parallelCount: nil,
-                packCount: 1,
-                bmsCount: 1,
-                confidence: .verified
-            )
-        ).captureActionMetricValue
-        let card = BmsNoDataRidingRuleCard(metricValue: metricValue, progress: 0)
-
-        XCTAssertEqual(metricValue, .unavailable)
-        XCTAssertEqual(card.titleAccessibilityText, "unavailable")
     }
 
     func testBmsVoltageUsesTypedUnavailableMetricValue() {

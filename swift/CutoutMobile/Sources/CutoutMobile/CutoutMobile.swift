@@ -3185,17 +3185,6 @@ public enum ControllerOnlyEstimateConfidence: Equatable, Hashable, Sendable {
     case medium
     case low
     case unknown
-
-    public var ridingRuleProgress: Double {
-        switch self {
-        case .medium:
-            0.62
-        case .low:
-            0.35
-        case .unknown:
-            0.15
-        }
-    }
 }
 
 public enum ControllerOnlyEstimateDetail: Equatable, Hashable, Sendable {
