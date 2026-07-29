@@ -774,7 +774,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
         XCTAssertEqual(warning.label, "Telemetry pending")
         XCTAssertEqual(warning.value as? String, "Waiting for live values.")
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     private func assertVescStaleTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
