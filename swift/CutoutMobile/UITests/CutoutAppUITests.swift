@@ -73,6 +73,7 @@ final class CutoutAppUITests: XCTestCase {
     func testEucFixtureSelectionIgnoresXCTestSelectorCase() {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCBmsDetailPassesAccessibilityAudit"), .euc)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCNoBmsSurfacePassesAccessibilityAudit"), .eucNoBms)
+        XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
     }
 
     func testCaptureAnnotationUsesOneStatefulAccessibleAction() {
