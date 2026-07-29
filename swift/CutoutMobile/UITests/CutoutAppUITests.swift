@@ -222,13 +222,21 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescUseDisconnectCycleKeepsOneNativeRideRoute() {
+        assertUseDisconnectCycles(for: .vesc)
+    }
+
+    func testEucUseDisconnectCycleKeepsOneNativeRideRoute() {
+        assertUseDisconnectCycles(for: .euc)
+    }
+
+    private func assertUseDisconnectCycles(for family: ConnectedDeviceFamily) {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
-        let ride = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        let ride = app.descendants(matching: .any)[family.screenIdentifier]
         let disconnect = app.buttons["dashboard.disconnect"]
 
         for cycle in 1...3 {
-            XCTAssertTrue(pairAvailableDevice(.vesc), "Cycle \(cycle) did not start from the native Use button")
-            XCTAssertTrue(ride.waitForExistence(timeout: 20), "Cycle \(cycle) did not open the VESC Ride screen")
+            XCTAssertTrue(pairAvailableDevice(family), "Cycle \(cycle) did not start from the native \(family.name) Use button")
+            XCTAssertTrue(ride.waitForExistence(timeout: 20), "Cycle \(cycle) did not open the \(family.name) Ride screen")
             XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
             XCTAssertEqual(disconnect.elementType, .button)
 
