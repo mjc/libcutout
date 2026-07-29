@@ -545,6 +545,14 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertEqual(snapshot.cellMapSpreadSummary, "18 mV spread")
         XCTAssertEqual(snapshot.cellMapFocusSummary, "groups 17, 18, 19, 31 flagged")
         XCTAssertEqual(snapshot.cellMapFocusDetail, "sagging under load")
+        XCTAssertEqual(snapshot.scrollableCellMapFocusDetail, "sagging under load")
+
+        let noTrend = BmsSnapshot(
+            topology: snapshot.topology,
+            cellDelta: VoltageDelta(value: 12),
+            groups: [BmsGroupSnapshot(index: 0, voltage: Voltage(value: 4_071))]
+        )
+        XCTAssertEqual(noTrend.scrollableCellMapFocusDetail, "12 mV spread")
     }
 
     func testSnapshotExposesDetailHelpersForSelectedGroup() {

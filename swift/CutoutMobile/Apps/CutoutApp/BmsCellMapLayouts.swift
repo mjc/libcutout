@@ -77,7 +77,7 @@ struct BmsScrollableLayout: View {
             PevDashboardWideCard(
                 title: localizedAppText("bms.scroll.interesting_groups"),
                 metricValue: snapshot.cellMapFocusMetricValue,
-                detail: snapshot.cellMapFocusDetail ?? snapshot.cellMapSpreadSummary,
+                detail: snapshot.scrollableCellMapFocusDetail,
                 stroke: PevColors.orange
             )
 

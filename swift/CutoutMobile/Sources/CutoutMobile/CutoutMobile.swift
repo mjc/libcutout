@@ -2728,6 +2728,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         flaggedGroups.lazy.compactMap(\.detail).first ?? highestTemperatureLabel
     }
 
+    public var scrollableCellMapFocusDetail: String {
+        cellMapFocusDetail ?? cellMapSpreadSummary
+    }
+
     public func detailGroupStatus(for index: Int) -> String {
         guard let group = groups.first(where: { $0.index == index }) else {
             return topology.layoutLabel
