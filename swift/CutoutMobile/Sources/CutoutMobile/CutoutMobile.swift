@@ -1362,14 +1362,6 @@ public struct FootpadTelemetry: Equatable, Hashable, Sendable {
 }
 
 public extension FootpadTelemetry {
-    var adc1DisplayText: String {
-        formatFootpadReading(adc1Milliunits)
-    }
-
-    var adc2DisplayText: String {
-        formatFootpadReading(adc2Milliunits)
-    }
-
     var adc1MetricValue: PevDashboardMetricValue {
         footpadMetricValue(adc1Milliunits)
     }
@@ -1386,9 +1378,9 @@ public extension FootpadTelemetry {
         pevLocalizedText(
             "footpad.accessibility.summary",
             pevLocalizedText("footpad.adc1"),
-            footpadAvailabilityText(for: adc1Milliunits, displayText: adc1DisplayText),
+            adc1MetricValue.accessibilityText,
             pevLocalizedText("footpad.adc2"),
-            footpadAvailabilityText(for: adc2Milliunits, displayText: adc2DisplayText),
+            adc2MetricValue.accessibilityText,
             stateDisplayText
         )
     }
@@ -1397,31 +1389,23 @@ public extension FootpadTelemetry {
         pevLocalizedText(
             "footpad.summary",
             stateDisplayText,
-            adc1Milliunits == nil ? pevLocalizedText("footpad.unavailable") : adc1DisplayText,
-            adc2Milliunits == nil ? pevLocalizedText("footpad.unavailable") : adc2DisplayText
+            footpadSummaryText(adc1MetricValue),
+            footpadSummaryText(adc2MetricValue)
         )
     }
 }
 
-private func formatFootpadReading(_ value: Int32?) -> String {
-    guard let value else {
-        return "--"
-    }
-    return RideUnits.decimalString(Double(value) / 1_000, fractionDigits: 2)
-}
-
-private func footpadAvailabilityText(for value: Int32?, displayText: String) -> String {
-    value == nil
-        ? pevLocalizedText("footpad.unavailable")
-        : pevLocalizedText("footpad.available", displayText)
+private func footpadSummaryText(_ metricValue: PevDashboardMetricValue) -> String {
+    guard case .unavailable = metricValue else { return metricValue.displayText }
+    return pevLocalizedText("footpad.unavailable")
 }
 
 private func footpadMetricValue(_ value: Int32?) -> PevDashboardMetricValue {
-    guard value != nil else { return .unavailable }
-    let displayText = formatFootpadReading(value)
+    guard let value else { return .unavailable }
+    let displayText = RideUnits.decimalString(Double(value) / 1_000, fractionDigits: 2)
     return .available(
         display: displayText,
-        accessibility: footpadAvailabilityText(for: value, displayText: displayText)
+        accessibility: pevLocalizedText("footpad.available", displayText)
     )
 }
 

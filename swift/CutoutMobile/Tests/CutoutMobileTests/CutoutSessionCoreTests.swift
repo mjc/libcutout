@@ -518,21 +518,15 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(snapshot.boardAngle)
     }
 
-    func testFootpadTelemetryExposesCompactDisplayText() {
+    func testFootpadTelemetryExposesTypedAdcValues() {
         let footpad = FootpadTelemetry(state: 3, adc1Milliunits: 1_250, adc2Milliunits: nil)
 
-        XCTAssertEqual(footpad.adc1DisplayText, "1.25")
-        XCTAssertEqual(footpad.adc2DisplayText, "--")
         XCTAssertEqual(
             footpad.adc1MetricValue,
             .available(display: "1.25", accessibility: "1.25, available")
         )
         XCTAssertEqual(footpad.adc2MetricValue, .unavailable)
         XCTAssertEqual(footpad.stateDisplayText, "state 3")
-        XCTAssertEqual(
-            footpad.accessibilityValue,
-            "left / adc1, 1.25, available, right / adc2, unavailable, state 3"
-        )
         XCTAssertEqual(
             footpad.summaryText,
             "footpad state 3 · adc1 left 1.25 · adc2 right unavailable"
@@ -561,11 +555,13 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     func testFootpadTelemetryKeepsZeroAdcAvailable() {
         let footpad = FootpadTelemetry(state: 0, adc1Milliunits: 0, adc2Milliunits: 0)
 
-        XCTAssertEqual(footpad.adc1DisplayText, "0.00")
-        XCTAssertEqual(footpad.adc2DisplayText, "0.00")
         XCTAssertEqual(
-            footpad.accessibilityValue,
-            "left / adc1, 0.00, available, right / adc2, 0.00, available, state 0"
+            footpad.adc1MetricValue,
+            .available(display: "0.00", accessibility: "0.00, available")
+        )
+        XCTAssertEqual(
+            footpad.adc2MetricValue,
+            .available(display: "0.00", accessibility: "0.00, available")
         )
     }
 
