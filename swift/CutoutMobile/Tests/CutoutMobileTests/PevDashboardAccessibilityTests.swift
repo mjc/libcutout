@@ -318,6 +318,25 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
     }
 
+    func testFootpadReadoutLocalizesItsDefaultSideLabels() {
+        let readout = PevDashboardFootpadReadout(
+            leftMetricValue: .available(display: "1.2", accessibility: "1.2, available"),
+            rightMetricValue: .unavailable,
+            detail: "engaged"
+        )
+
+        XCTAssertEqual(readout.leftLabel, "Left")
+        XCTAssertEqual(readout.rightLabel, "Right")
+        XCTAssertEqual(
+            Bundle.module.localizedString(forKey: "footpad.left", value: nil, table: "Localizable"),
+            "Left"
+        )
+        XCTAssertEqual(
+            Bundle.module.localizedString(forKey: "footpad.right", value: nil, table: "Localizable"),
+            "Right"
+        )
+    }
+
     func testFootpadReadoutBuildsTypedAvailabilitySemantics() {
         let readout = makeFootpadReadout()
 

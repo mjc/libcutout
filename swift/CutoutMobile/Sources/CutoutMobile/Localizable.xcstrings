@@ -757,6 +757,14 @@
       "comment" : "Footpad state with only the right contact pressed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "right pressed" } } }
     },
+    "footpad.left" : {
+      "comment" : "Visible label for the left footpad side.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Left" } } }
+    },
+    "footpad.right" : {
+      "comment" : "Visible label for the right footpad side.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Right" } } }
+    },
     "footpad.state" : {
       "comment" : "Raw controller footpad state for diagnostics. Argument is the state number.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "state %lld" } } }

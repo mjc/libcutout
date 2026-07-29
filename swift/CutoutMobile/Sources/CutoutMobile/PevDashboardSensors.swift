@@ -13,9 +13,9 @@ public struct PevDashboardFootpadReadout: View {
 
     public init(
         title: String = pevLocalizedText("footpad.title"),
-        leftLabel: String = "left",
+        leftLabel: String = pevLocalizedText("footpad.left"),
         leftMetricValue: PevDashboardMetricValue,
-        rightLabel: String = "right",
+        rightLabel: String = pevLocalizedText("footpad.right"),
         rightMetricValue: PevDashboardMetricValue,
         detail: String
     ) {
