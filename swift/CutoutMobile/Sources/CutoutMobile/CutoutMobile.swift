@@ -2949,7 +2949,6 @@ public struct SessionDebugRow: Equatable, Hashable, Sendable {
     public let id: String
     public let label: String
     public let metricValue: PevDashboardMetricValue
-    public var value: String { metricValue.displayText }
     public let role: SessionDebugRowRole
 
     public init(
