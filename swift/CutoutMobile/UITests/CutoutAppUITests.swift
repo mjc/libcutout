@@ -552,7 +552,7 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
         let connectingLabel = connectionStatus.label
-        picker.swipeDown()
+        restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
         let failed = XCTNSPredicateExpectation(
@@ -565,7 +565,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(connectionStatus.label.isEmpty)
-        picker.swipeDown()
+        restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
         let lateRide = app.descendants(matching: .any)["dashboard.screen.vescRide"]
@@ -595,7 +595,7 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failedAgain], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
-        picker.swipeDown()
+        restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
     }
@@ -1270,6 +1270,10 @@ final class CutoutAppUITests: XCTestCase {
             }
             return false
         }
+    }
+
+    private func restorePickerViewport(_ picker: XCUIElement) {
+        picker.swipeDown()
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
