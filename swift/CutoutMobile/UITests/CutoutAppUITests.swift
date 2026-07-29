@@ -128,6 +128,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenVisible() throws {
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
+    }
+
+    func testFinishCaptureFailureKeepsCaptureScreenAccessibleAtAccessibilityDynamicType() throws {
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
+    }
+
+    private func assertFinishCaptureFailureKeepsCaptureScreenAccessible() throws {
         enterCapture()
 
         let finish = app.buttons["capture.stop"]
