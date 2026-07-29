@@ -188,6 +188,57 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testVescRideSnapshotOwnsDashboardSupportPriority() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            dutyHeadroom: BatteryLevel(value: 75),
+            lastUpdate: MonotonicMilliseconds(1_000)
+        )
+
+        XCTAssertEqual(
+            VescRideSnapshot.dashboardSupport(
+                for: snapshot,
+                phase: .live,
+                at: MonotonicMilliseconds(3_001),
+                staleAfter: MonotonicMilliseconds(2_000)
+            ),
+            .telemetryStale(elapsed: MonotonicMilliseconds(2_001))
+        )
+        XCTAssertEqual(
+            VescRideSnapshot.dashboardSupport(
+                for: snapshot,
+                phase: .live,
+                at: MonotonicMilliseconds(3_000),
+                staleAfter: MonotonicMilliseconds(2_000)
+            ),
+            .dutyHeadroom(
+                metricValue: .available(display: "75%", accessibility: "75%"),
+                progress: 0.75
+            )
+        )
+        XCTAssertEqual(
+            VescRideSnapshot.dashboardSupport(
+                for: nil,
+                phase: .live,
+                at: MonotonicMilliseconds(3_000),
+                staleAfter: MonotonicMilliseconds(2_000)
+            ),
+            .telemetryPending
+        )
+        XCTAssertEqual(
+            VescRideSnapshot.dashboardSupport(
+                for: nil,
+                phase: .starting,
+                at: MonotonicMilliseconds(3_000),
+                staleAfter: MonotonicMilliseconds(2_000)
+            ),
+            .none
+        )
+    }
+
     func testEucRideStateOwnsTheStrictStaleTelemetryBoundary() {
         let state = EucRideScreenState(
             phase: .live,

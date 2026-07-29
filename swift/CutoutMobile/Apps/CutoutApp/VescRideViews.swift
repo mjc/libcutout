@@ -51,8 +51,10 @@ struct VescRideScreenView: View {
         liveSnapshot?.footpad?.summaryText
     }
 
-    private var staleTelemetryElapsed: MonotonicMilliseconds? {
-        liveSnapshot?.staleTelemetryElapsed(
+    private var dashboardSupport: VescRideDashboardSupport {
+        VescRideSnapshot.dashboardSupport(
+            for: liveSnapshot,
+            phase: phase,
             at: now,
             staleAfter: RideTelemetryFreshnessPolicy.staleAfter
         )
@@ -201,7 +203,8 @@ struct VescRideScreenView: View {
                 metricsGrid
             }
 
-            if let elapsed = staleTelemetryElapsed {
+            switch dashboardSupport {
+            case let .telemetryStale(elapsed):
                 PevDashboardWarningCard(
                     title: localizedAppText("vesc.warning.telemetry_stale"),
                     detail: localizedAppText(
@@ -216,22 +219,24 @@ struct VescRideScreenView: View {
                 )
                 .accessibilityIdentifier("vesc.warning.telemetry-stale")
                 .padding(.top, 12)
-            } else if let liveSnapshot, liveSnapshot.dutyHeadroomProgressMetricValue != .unavailable {
+            case let .dutyHeadroom(metricValue, progress):
                 PevDashboardProgressCard(
                     label: localizedAppText("vesc.duty_headroom.label"),
-                    metricValue: liveSnapshot.dutyHeadroomProgressMetricValue,
+                    metricValue: metricValue,
                     detail: localizedAppText("vesc.duty_headroom.detail"),
-                    progress: liveSnapshot.dutyHeadroomProgress
+                    progress: progress
                 )
-                    .padding(.top, 12)
-            } else if liveSnapshot == nil && phase == .live {
+                .padding(.top, 12)
+            case .telemetryPending:
                 PevDashboardWarningCard(
                     title: localizedAppText("vesc.subtitle.telemetry_pending"),
                     detail: localizedAppText("vesc.telemetry_pending.detail"),
                     tone: .vesc
                 )
-                    .accessibilityIdentifier("vesc.warning.telemetry-pending")
-                    .padding(.top, 12)
+                .accessibilityIdentifier("vesc.warning.telemetry-pending")
+                .padding(.top, 12)
+            case .none:
+                EmptyView()
             }
 
             if let warningCard {

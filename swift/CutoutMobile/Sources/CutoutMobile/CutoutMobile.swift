@@ -1543,6 +1543,13 @@ public enum VescControllerTemperatureDetail: Equatable, Hashable, Sendable {
     case unavailable
 }
 
+public enum VescRideDashboardSupport: Equatable, Hashable, Sendable {
+    case telemetryStale(elapsed: MonotonicMilliseconds)
+    case dutyHeadroom(metricValue: PevDashboardMetricValue, progress: Double)
+    case telemetryPending
+    case none
+}
+
 public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public static let defaultTitle = "VESC"
 
@@ -1771,6 +1778,29 @@ private func vescMetricValue<Value>(
 }
 
 public extension VescRideSnapshot {
+    static func dashboardSupport(
+        for snapshot: VescRideSnapshot?,
+        phase: SessionConnectionPhase,
+        at now: MonotonicMilliseconds,
+        staleAfter staleThreshold: MonotonicMilliseconds
+    ) -> VescRideDashboardSupport {
+        if let staleElapsed = snapshot?.staleTelemetryElapsed(at: now, staleAfter: staleThreshold) {
+            return .telemetryStale(elapsed: staleElapsed)
+        }
+        if let snapshot,
+           case let .available(display, accessibility) = snapshot.dutyHeadroomProgressMetricValue,
+           let progress = snapshot.dutyHeadroomProgress {
+            return .dutyHeadroom(
+                metricValue: .available(display: display, accessibility: accessibility),
+                progress: progress
+            )
+        }
+        if snapshot == nil, phase == .live {
+            return .telemetryPending
+        }
+        return .none
+    }
+
     func updateAge(
         at now: MonotonicMilliseconds,
         staleAfter staleThreshold: MonotonicMilliseconds
