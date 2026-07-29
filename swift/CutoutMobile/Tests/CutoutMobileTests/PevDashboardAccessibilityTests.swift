@@ -158,9 +158,10 @@ final class PevDashboardAccessibilityTests: XCTestCase {
             metricValue: .unavailable,
             unit: "percent",
             detail: "charging",
-            progress: 0
+            progress: 0.72
         )
 
+        XCTAssertNil(card.clampedProgress)
         XCTAssertEqual(card.accessibilityValueText, "unavailable")
     }
 

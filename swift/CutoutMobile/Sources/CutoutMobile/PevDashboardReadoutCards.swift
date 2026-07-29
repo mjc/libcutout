@@ -149,10 +149,11 @@ public struct PevDashboardHeroCard: View {
     var value: String { metricValue.displayText }
     let unit: String
     let detail: String
-    let progress: Double
+    let progress: Double?
 
-    var clampedProgress: Double {
-        max(0, min(1, progress))
+    var clampedProgress: Double? {
+        guard case .available = metricValue else { return nil }
+        return progress.map { max(0, min(1, $0)) }
     }
 
     var accessibilityValueText: String {
@@ -164,7 +165,7 @@ public struct PevDashboardHeroCard: View {
         metricValue: PevDashboardMetricValue,
         unit: String,
         detail: String,
-        progress: Double
+        progress: Double?
     ) {
         self.eyebrow = eyebrow
         self.metricValue = metricValue
@@ -193,9 +194,11 @@ public struct PevDashboardHeroCard: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(PevDashboardColors.cardStroke)
-                    Capsule()
-                        .fill(PevDashboardColors.primaryText)
-                        .frame(width: clampedProgress * proxy.size.width)
+                    if let clampedProgress {
+                        Capsule()
+                            .fill(PevDashboardColors.primaryText)
+                            .frame(width: clampedProgress * proxy.size.width)
+                    }
                 }
             }
             .frame(height: 12)
