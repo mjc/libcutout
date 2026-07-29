@@ -197,6 +197,7 @@ struct VescRideScreenView: View {
                     stroke: PevColors.primaryText,
                     cornerRadius: 24
                 )
+                .accessibilityIdentifier("vesc.warning.telemetry-stale")
                 .padding(.top, 12)
             } else if let liveSnapshot, liveSnapshot.dutyHeadroomProgressMetricValue != .unavailable {
                 PevDashboardProgressCard(

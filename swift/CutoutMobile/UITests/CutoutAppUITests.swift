@@ -633,21 +633,30 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility()
     }
 
-    private func assertVescStaleTelemetryAccessibility() throws {
+    func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
+    }
+
+    private func assertVescStaleTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
             return
         }
 
-        let warning = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", "Telemetry stale")
-        ).firstMatch
+        let warning = app.descendants(matching: .any)["vesc.warning.telemetry-stale"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            (warning.value as? String)?.hasPrefix("Last update ") == true,
-            "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
-        )
+        if usesLocalizedText {
+            XCTAssertNotEqual(warning.label, "Telemetry stale")
+            XCTAssertFalse(warning.label.isEmpty)
+            XCTAssertFalse((warning.value as? String ?? "").isEmpty)
+        } else {
+            XCTAssertEqual(warning.label, "Telemetry stale")
+            XCTAssertTrue(
+                (warning.value as? String)?.hasPrefix("Last update ") == true,
+                "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
+            )
+        }
         try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
     }
 
