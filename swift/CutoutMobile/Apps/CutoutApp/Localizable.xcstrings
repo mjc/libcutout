@@ -305,10 +305,6 @@
       "comment" : "BMS overview hero-card eyebrow for the usable pack energy percentage.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Usable energy" } } }
     },
-    "bms.unknown.capture_unavailable" : {
-      "comment" : "Fallback title when an unknown-topology BMS has no recommended capture action.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
-    },
     "bms.unknown.cell_count" : {
       "comment" : "Unknown-topology BMS metric label for reported cell count.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cell count" } } }

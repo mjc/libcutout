@@ -5,6 +5,9 @@ struct BmsUnknownLayout: View {
     let content: PevBmsContent
 
     private var snapshot: BmsSnapshot { content.snapshot }
+    private var capturePresentation: BmsUnknownTopologyCapturePresentation {
+        snapshot.unknownTopologyCapturePresentation
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -53,12 +56,12 @@ struct BmsUnknownLayout: View {
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityHeading(.h2)
-                Text(snapshot.captureActionTitle ?? localizedAppText("bms.unknown.capture_unavailable"))
+                Text(capturePresentation.title)
                     .font(.title2.weight(.black))
-                Text(snapshot.unknownTopologyCaptureDetail)
+                Text(capturePresentation.detail)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
-                Text(snapshot.captureActionState ?? "")
+                Text(capturePresentation.state)
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText.opacity(0.82))
                     .padding(.horizontal, 18)

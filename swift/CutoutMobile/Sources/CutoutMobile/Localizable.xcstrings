@@ -77,6 +77,10 @@
       "comment" : "BMS status chip when pack topology is not verified.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Topology unverified" } } }
     },
+    "bms.unknown.capture_unavailable" : {
+      "comment" : "Fallback title when an unknown-topology BMS has no recommended capture action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
     "bms.layout.no_live_readback" : {
       "comment" : "BMS topology label when no live BMS readback exists.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live BMS readback unavailable" } } }

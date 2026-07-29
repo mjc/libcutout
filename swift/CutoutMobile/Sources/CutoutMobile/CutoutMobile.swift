@@ -2314,6 +2314,12 @@ public struct BmsOverviewPresentation: Equatable, Hashable, Sendable {
     public let highestTemperatureLabel: String
 }
 
+public struct BmsUnknownTopologyCapturePresentation: Equatable, Hashable, Sendable {
+    public let title: String
+    public let detail: String
+    public let state: String
+}
+
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let availability: ReadbackAvailability
     public let topology: BmsTopology
@@ -2799,6 +2805,14 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public var unknownTopologyCaptureDetail: String {
         faultDetail ?? topology.layoutLabel
+    }
+
+    public var unknownTopologyCapturePresentation: BmsUnknownTopologyCapturePresentation {
+        BmsUnknownTopologyCapturePresentation(
+            title: captureActionTitle ?? pevLocalizedText("bms.unknown.capture_unavailable"),
+            detail: unknownTopologyCaptureDetail,
+            state: captureActionState ?? ""
+        )
     }
 
     public var inlineCellMapModes: [PevBmsMode] {

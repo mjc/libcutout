@@ -614,6 +614,16 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
         XCTAssertEqual(snapshot.unknownTopologyFaultDetail, "needs decoder")
         XCTAssertEqual(snapshot.unknownTopologyCaptureDetail, "show raw-safe info until topology is confirmed")
+
+        let capture = snapshot.unknownTopologyCapturePresentation
+        XCTAssertEqual(capture.title, "record unsupported pack")
+        XCTAssertEqual(capture.detail, "show raw-safe info until topology is confirmed")
+        XCTAssertEqual(capture.state, "disabled for launch")
+
+        let unavailableCapture = BmsSnapshot(topology: snapshot.topology).unknownTopologyCapturePresentation
+        XCTAssertEqual(unavailableCapture.title, "Unavailable")
+        XCTAssertEqual(unavailableCapture.detail, "topology unverified")
+        XCTAssertEqual(unavailableCapture.state, "")
     }
 
     func testUnknownTopologyTemperatureSensorCountUsesOnlyReportedTemperatures() {
