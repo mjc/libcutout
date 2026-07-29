@@ -447,7 +447,8 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // Leave the activity running for the caller to inspect on the device.
+        // XCTest terminates the app in tearDown. Physical ActivityKit inspection
+        // must launch the fixture with scripts/run-ios-app-on-phone.sh instead.
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
@@ -456,7 +457,8 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // Leave the activity running for the caller to inspect on the device.
+        // XCTest terminates the app in tearDown. Physical ActivityKit inspection
+        // must launch the fixture with scripts/run-ios-app-on-phone.sh instead.
     }
 
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() throws {
