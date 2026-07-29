@@ -1486,6 +1486,33 @@ public enum VescSubProtocol: Equatable, Hashable, Sendable {
     }
 }
 
+public enum VescBatteryDetail: Equatable, Hashable, Sendable {
+    case reported(level: BatteryLevel, current: BatteryCurrent?)
+    case estimated(level: BatteryLevel, current: BatteryCurrent?)
+    case unavailable(current: BatteryCurrent?)
+}
+
+public enum VescMotorCurrentDetail: Equatable, Hashable, Sendable {
+    case available(powerFlow: PowerFlowDirection?)
+    case unavailable
+}
+
+public enum VescBoardOrientation: Equatable, Hashable, Sendable {
+    case noseDown
+    case level
+    case noseUp
+}
+
+public enum VescBoardAngleDetail: Equatable, Hashable, Sendable {
+    case available(orientation: VescBoardOrientation, balanceAngle: Angle?)
+    case unavailable
+}
+
+public enum VescControllerTemperatureDetail: Equatable, Hashable, Sendable {
+    case available(motorTemperature: Temperature)
+    case unavailable
+}
+
 public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public static let defaultTitle = "VESC"
 
@@ -1670,6 +1697,37 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public var footpadMetricValue: PevDashboardMetricValue {
         vescMetricValue(footpad, text: \.stateDisplayText)
+    }
+
+    public var batteryDetail: VescBatteryDetail {
+        if let batteryLevelReported {
+            return .reported(level: batteryLevelReported, current: batteryCurrent)
+        }
+        if let batteryLevelEstimated {
+            return .estimated(level: batteryLevelEstimated, current: batteryCurrent)
+        }
+        return .unavailable(current: batteryCurrent)
+    }
+
+    public var motorCurrentDetail: VescMotorCurrentDetail {
+        motorCurrent == nil ? .unavailable : .available(powerFlow: powerFlow)
+    }
+
+    public var boardAngleDetail: VescBoardAngleDetail {
+        guard let boardAngle else { return .unavailable }
+        let orientation: VescBoardOrientation
+        if boardAngle.value < 0 {
+            orientation = .noseDown
+        } else if boardAngle.value > 0 {
+            orientation = .noseUp
+        } else {
+            orientation = .level
+        }
+        return .available(orientation: orientation, balanceAngle: balanceAngle)
+    }
+
+    public var controllerTemperatureDetail: VescControllerTemperatureDetail {
+        motorTemperature.map(VescControllerTemperatureDetail.available) ?? .unavailable
     }
 }
 

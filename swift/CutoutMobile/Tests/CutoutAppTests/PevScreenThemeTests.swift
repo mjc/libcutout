@@ -117,6 +117,47 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testVescSnapshotOwnsDashboardDetailFacts() {
+        let reportedBattery = BatteryLevel(value: 71)
+        let estimatedBattery = BatteryLevel(value: 68)
+        let current = BatteryCurrent(value: 12_400)
+        let balance = Angle(value: 500)
+        let motorTemperature = Temperature(value: 49_000)
+
+        let detailed = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown,
+            batteryLevelReported: reportedBattery,
+            batteryLevelEstimated: estimatedBattery,
+            batteryCurrent: current,
+            powerFlow: .discharge,
+            motorCurrent: PhaseCurrent(value: 71_000),
+            boardAngle: Angle(value: -1_800),
+            balanceAngle: balance,
+            motorTemperature: motorTemperature
+        )
+        let missing = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .generic,
+            controllerState: .unknown
+        )
+
+        XCTAssertEqual(detailed.batteryDetail, .reported(level: reportedBattery, current: current))
+        XCTAssertEqual(detailed.motorCurrentDetail, .available(powerFlow: .discharge))
+        XCTAssertEqual(
+            detailed.boardAngleDetail,
+            .available(orientation: .noseDown, balanceAngle: balance)
+        )
+        XCTAssertEqual(detailed.controllerTemperatureDetail, .available(motorTemperature: motorTemperature))
+        XCTAssertEqual(missing.batteryDetail, .unavailable(current: nil))
+        XCTAssertEqual(missing.motorCurrentDetail, .unavailable)
+        XCTAssertEqual(missing.boardAngleDetail, .unavailable)
+        XCTAssertEqual(missing.controllerTemperatureDetail, .unavailable)
+    }
+
     func testVescRideSnapshotOwnsTheStrictStaleTelemetryBoundary() {
         let snapshot = VescRideSnapshot(
             title: "VESC",

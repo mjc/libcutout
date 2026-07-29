@@ -60,49 +60,52 @@ struct VescRideScreenView: View {
 
     private var batteryDetail: String {
         guard let liveSnapshot else { return "" }
-        if let battery = liveSnapshot.batteryLevelReported {
-            if let current = liveSnapshot.batteryCurrent {
+        switch liveSnapshot.batteryDetail {
+        case let .reported(level, current):
+            if let current {
                 return localizedAppText(
                     "vesc.battery_detail.reported_current",
-                    percentText(battery),
+                    percentText(level),
                     currentText(current)
                 )
             }
             return localizedAppText(
                 "vesc.battery_detail.reported_unavailable",
-                percentText(battery)
+                percentText(level)
             )
-        }
-        if let battery = liveSnapshot.batteryLevelEstimated {
-            if let current = liveSnapshot.batteryCurrent {
+        case let .estimated(level, current):
+            if let current {
                 return localizedAppText(
                     "vesc.battery_detail.estimated_current",
-                    percentText(battery),
+                    percentText(level),
                     currentText(current)
                 )
             }
             return localizedAppText(
                 "vesc.battery_detail.estimated_unavailable",
-                percentText(battery)
+                percentText(level)
             )
+        case let .unavailable(current):
+            if let current {
+                return localizedAppText(
+                    "vesc.battery_detail.unavailable_current",
+                    currentText(current)
+                )
+            }
+            return localizedAppText("vesc.battery_detail.unavailable_unavailable")
         }
-        if let current = liveSnapshot.batteryCurrent {
-            return localizedAppText(
-                "vesc.battery_detail.unavailable_current",
-                currentText(current)
-            )
-        }
-        return localizedAppText("vesc.battery_detail.unavailable_unavailable")
     }
 
     private var motorCurrentDetail: String {
-        guard let liveSnapshot, liveSnapshot.motorCurrent != nil else {
+        guard let liveSnapshot else {
             return localizedAppText("vesc.current.unavailable")
         }
-        return powerFlowDetail(
-            liveSnapshot.powerFlow,
-            fallback: localizedAppText("vesc.phase_current")
-        )
+        switch liveSnapshot.motorCurrentDetail {
+        case let .available(powerFlow):
+            return powerFlowDetail(powerFlow, fallback: localizedAppText("vesc.phase_current"))
+        case .unavailable:
+            return localizedAppText("vesc.current.unavailable")
+        }
     }
 
     var dashboardTiles: [PevDashboardTile] {
@@ -137,13 +140,7 @@ struct VescRideScreenView: View {
                 label: localizedAppText("vesc.metric.controller"),
                 metricValue: liveSnapshot.controllerTemperatureMetricValue,
                 unit: RideUnits.temperatureUnit,
-                detail: liveSnapshot.motorTemperature.map {
-                    localizedAppText(
-                        "vesc.motor_temperature.available",
-                        temperatureText($0),
-                        RideUnits.temperatureUnit
-                    )
-                } ?? localizedAppText("vesc.motor_temperature.unavailable"),
+                detail: controllerTemperatureDetail(for: liveSnapshot),
                 accent: .green
             ),
         ]
@@ -154,22 +151,37 @@ struct VescRideScreenView: View {
     }
 
     private var boardAngleDetail: String? {
-        guard let angle = liveSnapshot?.boardAngle else { return nil }
-        let direction: String
-        if angle.value < 0 {
-            direction = "nose_down"
-        } else if angle.value > 0 {
-            direction = "nose_up"
-        } else {
-            direction = "level"
+        guard let liveSnapshot else { return nil }
+        switch liveSnapshot.boardAngleDetail {
+        case let .available(orientation, balanceAngle):
+            let direction = switch orientation {
+            case .noseDown: "nose_down"
+            case .level: "level"
+            case .noseUp: "nose_up"
+            }
+            if let balanceAngle {
+                return localizedAppText(
+                    "vesc.board_angle.\(direction)_with_balance",
+                    angleText(balanceAngle)
+                )
+            }
+            return localizedAppText("vesc.board_angle.\(direction)")
+        case .unavailable:
+            return nil
         }
-        if let balance = liveSnapshot?.balanceAngle {
+    }
+
+    private func controllerTemperatureDetail(for snapshot: VescRideSnapshot) -> String {
+        switch snapshot.controllerTemperatureDetail {
+        case let .available(motorTemperature):
             return localizedAppText(
-                "vesc.board_angle.\(direction)_with_balance",
-                angleText(balance)
+                "vesc.motor_temperature.available",
+                temperatureText(motorTemperature),
+                RideUnits.temperatureUnit
             )
+        case .unavailable:
+            return localizedAppText("vesc.motor_temperature.unavailable")
         }
-        return localizedAppText("vesc.board_angle.\(direction)")
     }
 
     var body: some View {
