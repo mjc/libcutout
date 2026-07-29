@@ -176,11 +176,11 @@ struct VescRideScreenView: View {
     }
 
     private func controllerTemperatureDetail(for snapshot: VescRideSnapshot) -> String {
-        switch snapshot.controllerTemperatureDetail {
+        switch snapshot.controllerTemperatureReadback {
         case let .available(motorTemperature):
             return localizedAppText(
                 "vesc.motor_temperature.available",
-                temperatureText(motorTemperature),
+                motorTemperature,
                 RideUnits.temperatureUnit
             )
         case .unavailable:

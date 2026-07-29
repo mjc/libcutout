@@ -1629,6 +1629,11 @@ public enum VescControllerTemperatureDetail: Equatable, Hashable, Sendable {
     case unavailable
 }
 
+public enum VescControllerTemperatureReadback: Equatable, Hashable, Sendable {
+    case available(motorTemperature: String)
+    case unavailable
+}
+
 public enum VescRideDashboardSupport: Equatable, Hashable, Sendable {
     case telemetryStale(elapsed: MonotonicMilliseconds)
     case dutyHeadroom(metricValue: PevDashboardMetricValue, progress: Double)
@@ -1880,6 +1885,20 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
 
     public var controllerTemperatureDetail: VescControllerTemperatureDetail {
         motorTemperature.map(VescControllerTemperatureDetail.available) ?? .unavailable
+    }
+
+    public var controllerTemperatureReadback: VescControllerTemperatureReadback {
+        switch controllerTemperatureDetail {
+        case let .available(motorTemperature):
+            .available(
+                motorTemperature: RideUnits.temperatureText(
+                    millicelsius: motorTemperature.value,
+                    fractionDigits: 1
+                )
+            )
+        case .unavailable:
+            .unavailable
+        }
     }
 }
 

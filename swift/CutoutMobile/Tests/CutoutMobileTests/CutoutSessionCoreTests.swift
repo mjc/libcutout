@@ -378,6 +378,21 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testVescRideSnapshotOwnsMotorTemperatureReadbackFormatting() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .refloat,
+            controllerState: .unknown,
+            motorTemperature: temperatureValue(49_000)
+        )
+
+        XCTAssertEqual(
+            snapshot.controllerTemperatureReadback,
+            .available(motorTemperature: "49.0")
+        )
+    }
+
     func testRideHeroReadoutOwnsVescSpeedFreshnessAndSeverity() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
