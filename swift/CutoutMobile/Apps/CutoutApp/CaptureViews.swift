@@ -184,11 +184,7 @@ private struct CaptureLabelControlRow: View {
     }
 
     private var stateText: String {
-        String(
-            localized: isActive ? "capture.label.active" : "capture.label.idle",
-            table: "Localizable",
-            bundle: appLocalizationBundle
-        )
+        localizedAppText(isActive ? "capture.label.active" : "capture.label.idle")
     }
 
     private var actions: some View {

@@ -156,11 +156,7 @@ extension SessionConnectionPhase {
         case .bluetoothPermissionDenied:
             localizedAppText("picker.announcement.bluetooth_permission_denied")
         case .bluetoothUnavailable:
-            String(
-                localized: "picker.announcement.bluetooth_unavailable",
-                table: "Localizable",
-                bundle: appLocalizationBundle
-            )
+            localizedAppText("picker.announcement.bluetooth_unavailable")
         case .connecting(let model):
             localizedAppText("picker.announcement.connecting", model.displayName)
         case .live:
