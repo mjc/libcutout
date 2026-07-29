@@ -44,7 +44,7 @@ struct BmsOverviewLayout: View {
                 )
             }
 
-            if snapshot.balancingSummary != nil {
+            if overviewPresentation.shouldShowBalancingSummary {
                 PevDashboardWideCard(
                     title: localizedAppText("bms.overview.balancing"),
                     metricValue: snapshot.balancingMetricValue,
@@ -52,7 +52,7 @@ struct BmsOverviewLayout: View {
                 )
             }
 
-            if snapshot.faultSummary != nil {
+            if overviewPresentation.shouldShowFaultSummary {
                 PevDashboardWideCard(
                     title: localizedAppText("bms.overview.fault_state"),
                     metricValue: snapshot.faultMetricValue,
@@ -65,8 +65,8 @@ struct BmsOverviewLayout: View {
 
     @ViewBuilder
     private var summaryCard: some View {
-        if let energyProgress = snapshot.energyProgress,
-           snapshot.energyPercent != nil {
+        if overviewPresentation.shouldShowEnergyHero,
+           let energyProgress = snapshot.energyProgress {
             PevDashboardHeroCard(
                 eyebrow: localizedAppText("bms.overview.usable_energy"),
                 metricValue: snapshot.energyMetricValue,

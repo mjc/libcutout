@@ -2342,6 +2342,9 @@ public struct BmsOverviewPresentation: Equatable, Hashable, Sendable {
     public let lowestGroupLabel: String
     public let highestTemperature: Temperature?
     public let highestTemperatureLabel: String
+    public let shouldShowEnergyHero: Bool
+    public let shouldShowBalancingSummary: Bool
+    public let shouldShowFaultSummary: Bool
 }
 
 public struct BmsUnknownTopologyCapturePresentation: Equatable, Hashable, Sendable {
@@ -2688,7 +2691,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             lowestGroupVoltage: lowestGroupVoltage,
             lowestGroupLabel: lowestGroupLabel ?? "",
             highestTemperature: hasTemperatureEvidence ? highestTemperature : nil,
-            highestTemperatureLabel: highestTemperatureLabel ?? ""
+            highestTemperatureLabel: highestTemperatureLabel ?? "",
+            shouldShowEnergyHero: energyPercent != nil,
+            shouldShowBalancingSummary: balancingSummary != nil,
+            shouldShowFaultSummary: faultSummary != nil
         )
     }
 
