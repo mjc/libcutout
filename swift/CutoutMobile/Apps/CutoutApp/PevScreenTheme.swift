@@ -320,7 +320,7 @@ func livePackVoltageDetail(_ detail: TelemetryPackVoltageDetail) -> String {
     case .unavailable:
         localizedAppText("ride.value.unavailable")
     case let .voltageSag(sag):
-        voltageSagDetail(sag)
+        voltageSagDetail(sag.detailReadback)
     case .sagUnavailable:
         localizedAppText("ride.detail.sag_unavailable")
     }
@@ -343,7 +343,7 @@ func chargeEstimateDetail(_ detail: ChargeEstimateDashboardDetail) -> String {
     case let .voltageSag(voltageSag, estimateDetail):
         localizedAppText(
             "ride.charge.detail.with_voltage_sag",
-            voltageSagDetail(voltageSag),
+            voltageSagDetail(voltageSag.detailReadback),
             estimateDetail
         )
     case let .standard(estimateDetail):
@@ -351,17 +351,12 @@ func chargeEstimateDetail(_ detail: ChargeEstimateDashboardDetail) -> String {
     }
 }
 
-func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {
-    let voltage = RideUnits.voltageText(
-        millivolts: abs(sag.deltaMillivolts),
-        fractionDigits: 1
-    )
-    let current = RideUnits.currentText(milliamps: abs(sag.loadCurrent.value))
+func voltageSagDetail(_ readback: ChargeVoltageSagReadback) -> String {
     return localizedAppText(
         "ride.sag.detail",
-        voltage,
-        current,
-        Int64(sag.effectiveResistanceMilliohms)
+        readback.voltage,
+        readback.current,
+        Int64(readback.effectiveResistanceMilliohms)
     )
 }
 

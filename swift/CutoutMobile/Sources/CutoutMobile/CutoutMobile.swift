@@ -746,6 +746,29 @@ public struct ChargeVoltageSagEstimate: Equatable, Hashable, Sendable {
         self.calculatedAt = MonotonicMilliseconds(dto.calculatedAt.milliseconds)
         self.validUntil = MonotonicMilliseconds(dto.validUntil.milliseconds)
     }
+
+    public var detailReadback: ChargeVoltageSagReadback {
+        ChargeVoltageSagReadback(
+            voltage: RideUnits.voltageText(
+                millivolts: abs(Int64(deltaMillivolts)),
+                fractionDigits: 1
+            ),
+            current: RideUnits.currentText(milliamps: abs(Int64(loadCurrent.value))),
+            effectiveResistanceMilliohms: effectiveResistanceMilliohms
+        )
+    }
+}
+
+public struct ChargeVoltageSagReadback: Equatable, Hashable, Sendable {
+    public let voltage: String
+    public let current: String
+    public let effectiveResistanceMilliohms: UInt32
+
+    public init(voltage: String, current: String, effectiveResistanceMilliohms: UInt32) {
+        self.voltage = voltage
+        self.current = current
+        self.effectiveResistanceMilliohms = effectiveResistanceMilliohms
+    }
 }
 
 public enum ChargeEstimateDashboardDetail: Equatable, Hashable, Sendable {
