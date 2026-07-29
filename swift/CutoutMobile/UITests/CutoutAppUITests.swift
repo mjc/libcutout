@@ -11,7 +11,6 @@ final class CutoutAppUITests: XCTestCase {
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
         app.launchArguments = launchArguments
-        app.launchEnvironment["CUTOUT_UI_TEST_FIXTURE"] = fixtureEnvironmentValue
         app.launch()
     }
 
@@ -1019,10 +1018,6 @@ final class CutoutAppUITests: XCTestCase {
         return arguments
     }
 
-    private var fixtureEnvironmentValue: String {
-        fixture.environmentValue
-    }
-
     private var isLandscapeTest: Bool {
         name.contains("InLandscape")
     }
@@ -1056,7 +1051,11 @@ final class CutoutAppUITests: XCTestCase {
             return .vesc
         }
 
-        var environmentValue: String {
+        var launchArguments: [String] {
+            ["-CUTOUT_UI_TEST_FIXTURE", value]
+        }
+
+        private var value: String {
             switch self {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
@@ -1069,22 +1068,6 @@ final class CutoutAppUITests: XCTestCase {
             case .vescReconnect: "vesc-reconnect"
             case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
-            }
-        }
-
-        var launchArguments: [String] {
-            switch self {
-            case .unknownDevice: ["--ui-test-unknown-device"]
-            case .unknownDeviceFinishFailure: ["--ui-test-unknown-device-finish-failure"]
-            case .euc: ["--ui-test-euc"]
-            case .eucNoBms: ["--ui-test-euc-no-bms"]
-            case .vesc: ["--ui-test-vesc"]
-            case .vescPending: ["--ui-test-vesc-pending"]
-            case .vescStale: ["--ui-test-vesc-stale"]
-            case .vescFailure: ["--ui-test-vesc-failure"]
-            case .vescReconnect: ["--ui-test-vesc-reconnect"]
-            case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
-            case .vescLiveActivityAuto: ["--ui-test-live-activity-auto"]
             }
         }
     }

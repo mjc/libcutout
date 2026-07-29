@@ -574,7 +574,6 @@ final class CutoutAppModel {
         #if DEBUG
         CutoutUITestSessionFixture.resolve(
             persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
-            environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
             arguments: CommandLine.arguments
         )
         #else
@@ -848,42 +847,17 @@ enum CutoutUITestSessionFixture {
     }
 
     init?(arguments: [String]) {
-        if let value = Self.standardLaunchArgumentValue(arguments), let fixture = Self(value: value) {
-            self = fixture
-        } else if arguments.contains("--ui-test-live-activity-auto") {
-            self = .autoVescLiveActivity
-        } else if arguments.contains("--ui-test-unknown-device-finish-failure") {
-            self = .unknownDeviceFinishFailure
-        } else if arguments.contains("--ui-test-unknown-device") {
-            self = .unknownDevice
-        } else if arguments.contains("--ui-test-vesc-pending") {
-            self = .pendingVesc
-        } else if arguments.contains("--ui-test-vesc-stale") {
-            self = .staleVesc
-        } else if arguments.contains("--ui-test-vesc-failure") {
-            self = .failedVesc
-        } else if arguments.contains("--ui-test-vesc-reconnect") {
-            self = .reconnectingVesc
-        } else if arguments.contains("--ui-test-euc-no-bms") {
-            self = .eucNoBms
-        } else if arguments.contains("--ui-test-euc") {
-            self = .euc
-        } else if arguments.contains("--ui-test-live-activity") {
-            self = .vescLiveActivity
-        } else if arguments.contains("--ui-test-vesc") {
-            self = .vesc
-        } else {
+        guard let value = Self.standardLaunchArgumentValue(arguments), let fixture = Self(value: value) else {
             return nil
         }
+        self = fixture
     }
 
     static func resolve(
         persistedValue: String?,
-        environmentValue: String?,
         arguments: [String]
     ) -> Self? {
-        Self(value: environmentValue)
-            ?? Self(arguments: arguments)
+        Self(arguments: arguments)
             ?? Self(value: persistedValue)
     }
 

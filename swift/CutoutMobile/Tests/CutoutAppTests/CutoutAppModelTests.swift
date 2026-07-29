@@ -917,22 +917,33 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(model.liveActivityError)
     }
 
-    func testExplicitUIFixtureOverridesPersistentFixture() {
+    func testLaunchArgumentFixtureOverridesPersistentFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: "vesc-live-activity-auto",
-            environmentValue: "vesc",
-            arguments: ["--ui-test-euc"]
+            arguments: ["-CUTOUT_UI_TEST_FIXTURE", "euc"]
         )
 
         XCTAssertFalse(fixture?.startsLive ?? true)
-        XCTAssertFalse(fixture?.isEuc ?? true)
+        XCTAssertTrue(fixture?.isEuc ?? false)
     }
 
     func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,
-            environmentValue: nil,
             arguments: ["-CUTOUT_UI_TEST_FIXTURE", "euc"]
+        )
+
+        XCTAssertTrue(fixture?.isEuc ?? false)
+    }
+
+    func testStandardUIFixtureLaunchArgumentSurvivesRightToLeftSystemArguments() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: nil,
+            arguments: [
+                "-CUTOUT_UI_TEST_FIXTURE", "euc",
+                "-AppleLanguages", "(ar)",
+                "-AppleLocale", "ar_SA",
+            ]
         )
 
         XCTAssertTrue(fixture?.isEuc ?? false)
