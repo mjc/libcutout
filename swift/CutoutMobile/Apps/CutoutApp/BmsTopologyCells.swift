@@ -72,7 +72,7 @@ struct BmsGroupCell: View {
                 }
                 .font(.subheadline)
                 .foregroundStyle(PevColors.muted)
-                Text(bmsGroupVoltageMetricValue(group).displayText)
+                Text(group.voltageMetricValue.displayText)
                     .font(.title3.weight(.black))
                     .monospacedDigit()
             }
@@ -117,7 +117,7 @@ struct BmsStripCell: View {
                 }
                 .font(.caption2)
                 .foregroundStyle(PevColors.muted)
-                Text(bmsGroupVoltageMetricValue(group).displayText)
+                Text(group.voltageMetricValue.displayText)
                     .font(.caption.weight(.black))
                     .monospacedDigit()
             }

@@ -2316,6 +2316,14 @@ public struct BmsGroupSnapshot: Equatable, Hashable, Sendable, Identifiable {
 }
 
 public extension BmsGroupSnapshot {
+    var voltageMetricValue: PevDashboardMetricValue {
+        bmsVoltageMetricValue(voltage)
+    }
+
+    var temperatureMetricValue: PevDashboardMetricValue {
+        bmsTemperatureMetricValue(temperature)
+    }
+
     var resistanceMetricValue: PevDashboardMetricValue {
         guard let resistance else { return .unavailable }
         let text = RideUnits.decimalString(Double(resistance.value), fractionDigits: 0)
@@ -3072,10 +3080,6 @@ private func bmsMetricValue<Value>(
     guard let value else { return .unavailable }
     let text = format(value)
     return .available(display: text, accessibility: text)
-}
-
-public func bmsGroupVoltageMetricValue(_ group: BmsGroupSnapshot?) -> PevDashboardMetricValue {
-    bmsVoltageMetricValue(group?.voltage)
 }
 
 public func bmsVoltageMetricValue(_ voltage: Voltage?) -> PevDashboardMetricValue {

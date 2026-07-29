@@ -175,7 +175,7 @@ struct BmsDetailLayout: View {
                         .foregroundStyle(PevColors.muted)
                         .accessibilityHeading(.h2)
                         .accessibilityIdentifier("bms.detail.selected-group")
-                    Text(bmsGroupVoltageMetricValue(selectedGroup).displayText)
+                    Text(selectedGroup.voltageMetricValue.displayText)
                         .font(.largeTitle.weight(.black))
                         .monospacedDigit()
                         .fixedSize(horizontal: false, vertical: true)
@@ -193,7 +193,7 @@ struct BmsDetailLayout: View {
                     ) {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.detail.temperature"),
-                            metricValue: bmsTemperatureMetricValue(selectedGroup.temperature),
+                            metricValue: selectedGroup.temperatureMetricValue,
                             unit: RideUnits.temperatureUnit,
                             detail: ""
                         )

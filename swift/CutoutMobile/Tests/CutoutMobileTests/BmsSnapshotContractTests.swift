@@ -190,9 +190,9 @@ final class BmsSnapshotContractTests: XCTestCase {
     }
 
     func testSharedBmsMetricFormattersKeepUnavailableAndZeroDistinct() {
-        XCTAssertEqual(bmsGroupVoltageMetricValue(nil), .unavailable)
+        XCTAssertEqual(BmsGroupSnapshot(index: 7).voltageMetricValue, .unavailable)
         XCTAssertEqual(
-            bmsGroupVoltageMetricValue(BmsGroupSnapshot(index: 7, voltage: Voltage(value: 4_036))),
+            BmsGroupSnapshot(index: 7, voltage: Voltage(value: 4_036)).voltageMetricValue,
             .available(display: "4.036", accessibility: "4.036")
         )
         XCTAssertEqual(
@@ -210,6 +210,7 @@ final class BmsSnapshotContractTests: XCTestCase {
             index: 7,
             label: "left pack",
             voltage: Voltage(value: 4_071),
+            temperature: Temperature(value: 34_900),
             isBalancing: true,
             alertLevel: .warning,
             detail: "sagging under load"
@@ -221,6 +222,14 @@ final class BmsSnapshotContractTests: XCTestCase {
             "4.071 volts, warning, balancing, and sagging under load"
         )
         XCTAssertEqual(group.detailSelectionAccessibilityHint, "Show available details for this cell group")
+        XCTAssertEqual(
+            group.voltageMetricValue,
+            .available(display: "4.071", accessibility: "4.071")
+        )
+        XCTAssertEqual(
+            group.temperatureMetricValue,
+            .available(display: "34.9", accessibility: "34.9")
+        )
 
         let unavailable = BmsGroupSnapshot(index: 8, alertLevel: .unknown)
         XCTAssertEqual(unavailable.accessibilityLabel, "Cell group 8")
