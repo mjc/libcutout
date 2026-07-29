@@ -625,6 +625,24 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
+            return
+        }
+
+        let warning = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "Telemetry stale")
+        ).firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            (warning.value as? String)?.hasPrefix("Last update ") == true,
+            "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
+        )
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
+    }
+
     func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -875,6 +893,7 @@ final class CutoutAppUITests: XCTestCase {
         case euc
         case eucNoBms
         case vesc
+        case vescStale
         case vescFailure
         case vescLiveActivity
         case vescLiveActivityAuto
@@ -885,6 +904,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
+            if testName.contains("StaleTelemetry") { return .vescStale }
             if testName.localizedCaseInsensitiveContains("EucNoBms") { return .eucNoBms }
             if testName.localizedCaseInsensitiveContains("Euc") { return .euc }
             return .vesc
@@ -897,6 +917,7 @@ final class CutoutAppUITests: XCTestCase {
             case .euc: "euc"
             case .eucNoBms: "euc-no-bms"
             case .vesc: "vesc"
+            case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"
             case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
@@ -910,6 +931,7 @@ final class CutoutAppUITests: XCTestCase {
             case .euc: ["--ui-test-euc"]
             case .eucNoBms: ["--ui-test-euc-no-bms"]
             case .vesc: ["--ui-test-vesc"]
+            case .vescStale: ["--ui-test-vesc-stale"]
             case .vescFailure: ["--ui-test-vesc-failure"]
             case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
             case .vescLiveActivityAuto: ["--ui-test-live-activity-auto"]

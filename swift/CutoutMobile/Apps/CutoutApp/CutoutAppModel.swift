@@ -830,6 +830,7 @@ enum CutoutUITestSessionFixture {
     case unknownDevice
     case unknownDeviceFinishFailure
     case vesc
+    case staleVesc
     case failedVesc
     case euc
     case eucNoBms
@@ -841,6 +842,7 @@ enum CutoutUITestSessionFixture {
         case "unknown-device": self = .unknownDevice
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
         case "vesc": self = .vesc
+        case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
         case "euc": self = .euc
         case "euc-no-bms": self = .eucNoBms
@@ -859,6 +861,8 @@ enum CutoutUITestSessionFixture {
             self = .unknownDeviceFinishFailure
         } else if arguments.contains("--ui-test-unknown-device") {
             self = .unknownDevice
+        } else if arguments.contains("--ui-test-vesc-stale") {
+            self = .staleVesc
         } else if arguments.contains("--ui-test-vesc-failure") {
             self = .failedVesc
         } else if arguments.contains("--ui-test-euc-no-bms") {
@@ -916,7 +920,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .vesc, .failedVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .vesc, .staleVesc, .failedVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -931,6 +935,7 @@ enum CutoutUITestSessionFixture {
 
     var startsLive: Bool { self == .autoVescLiveActivity }
     var failsConnection: Bool { self == .failedVesc }
+    var emitsStaleTelemetry: Bool { self == .staleVesc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool { self == .euc || self == .eucNoBms }
 }
@@ -1069,8 +1074,15 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
                 onBmsSnapshotChange?(eucBmsSnapshot)
             }
         } else {
+            let telemetryTimestamp = if fixture.emitsStaleTelemetry {
+                MonotonicMilliseconds(
+                    now.rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
+                )
+            } else {
+                now
+            }
             let telemetry = TelemetrySnapshot(
-                at: now,
+                at: telemetryTimestamp,
                 speed: Speed(value: 8_000),
                 speedSource: .reported,
                 speedQuality: .known,
@@ -1085,7 +1097,7 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
                 speed: SpeedReadout(snapshot: telemetry),
                 telemetry: telemetry,
                 notificationCount: 1,
-                lastUpdate: now
+                lastUpdate: telemetryTimestamp
             ))
         }
         onPhaseChange?(.live)
