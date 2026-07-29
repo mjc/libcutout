@@ -371,6 +371,18 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testTelemetryThermalReadbackOwnsSensorFormatting() {
+        let snapshot = TelemetrySnapshot(
+            controllerTemperature: temperatureValue(54_000),
+            motorTemperature: temperatureValue(49_000)
+        )
+
+        XCTAssertEqual(
+            snapshot.thermalReadback,
+            .controllerMotor(controller: "54", motor: "49")
+        )
+    }
+
     func testVescVehicleKindDoesNotImplySubProtocol() {
         let snapshot = VescRideSnapshot(
             title: "VESC Bike",

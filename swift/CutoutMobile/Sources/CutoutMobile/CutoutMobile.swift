@@ -280,7 +280,7 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let rawTelemetry: RawTelemetryReadback?
     public let veteranProtocolModelId: UInt16?
 
-    private init(
+    fileprivate init(
         kind: SessionActionKind,
         channel: Data,
         bytes: Data,
@@ -1317,6 +1317,14 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         return .available(display: text, accessibility: text)
     }
 
+    public var thermalReadback: TelemetryThermalReadback {
+        TelemetryThermalReadback(
+            controller: controllerTemperature,
+            motor: motorTemperature,
+            battery: batteryTemperature
+        )
+    }
+
     public var powerPresentation: TelemetryPowerPresentation {
         if let voltage, let batteryCurrent, batteryCurrent.value != 0 {
             return .calculatedPackCurrent(
@@ -1328,6 +1336,50 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         }
         return .unavailable
     }
+}
+
+public enum TelemetryThermalReadback: Equatable, Hashable, Sendable {
+    case controller(String)
+    case motor(String)
+    case battery(String)
+    case controllerMotor(controller: String, motor: String)
+    case controllerBattery(controller: String, battery: String)
+    case motorBattery(motor: String, battery: String)
+    case all(controller: String, motor: String, battery: String)
+    case unavailable
+
+    fileprivate init(
+        controller: Temperature?,
+        motor: Temperature?,
+        battery: Temperature?
+    ) {
+        let controller = controller.map(telemetryTemperatureText)
+        let motor = motor.map(telemetryTemperatureText)
+        let battery = battery.map(telemetryTemperatureText)
+
+        switch (controller, motor, battery) {
+        case let (.some(controller), .some(motor), .some(battery)):
+            self = .all(controller: controller, motor: motor, battery: battery)
+        case let (.some(controller), .some(motor), nil):
+            self = .controllerMotor(controller: controller, motor: motor)
+        case let (.some(controller), nil, .some(battery)):
+            self = .controllerBattery(controller: controller, battery: battery)
+        case let (nil, .some(motor), .some(battery)):
+            self = .motorBattery(motor: motor, battery: battery)
+        case let (.some(controller), nil, nil):
+            self = .controller(controller)
+        case let (nil, .some(motor), nil):
+            self = .motor(motor)
+        case let (nil, nil, .some(battery)):
+            self = .battery(battery)
+        case (nil, nil, nil):
+            self = .unavailable
+        }
+    }
+}
+
+private func telemetryTemperatureText(_ temperature: Temperature) -> String {
+    RideUnits.temperatureText(millicelsius: temperature.value, fractionDigits: 0)
 }
 
 public enum FootpadContactState: Equatable, Hashable, Sendable {

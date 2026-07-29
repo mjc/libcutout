@@ -414,19 +414,10 @@ func liveThermalValue(telemetry: TelemetrySnapshot) -> PevDashboardMetricValue {
 }
 
 func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
-    let controller = telemetry.controllerTemperature.map {
-        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
-    }
-    let motor = telemetry.motorTemperature.map {
-        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
-    }
-    let battery = telemetry.batteryTemperature.map {
-        RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 0)
-    }
     let unit = RideUnits.temperatureUnit
 
-    switch (controller, motor, battery) {
-    case let (.some(controller), .some(motor), .some(battery)):
+    switch telemetry.thermalReadback {
+    case let .all(controller, motor, battery):
         return localizedAppText(
             "ride.thermal.all",
             controller,
@@ -436,19 +427,19 @@ func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
             battery,
             unit
         )
-    case let (.some(controller), .some(motor), nil):
+    case let .controllerMotor(controller, motor):
         return localizedAppText("ride.thermal.controller_motor", controller, unit, motor, unit)
-    case let (.some(controller), nil, .some(battery)):
+    case let .controllerBattery(controller, battery):
         return localizedAppText("ride.thermal.controller_battery", controller, unit, battery, unit)
-    case let (nil, .some(motor), .some(battery)):
+    case let .motorBattery(motor, battery):
         return localizedAppText("ride.thermal.motor_battery", motor, unit, battery, unit)
-    case let (.some(controller), nil, nil):
+    case let .controller(controller):
         return localizedAppText("ride.thermal.controller", controller, unit)
-    case let (nil, .some(motor), nil):
+    case let .motor(motor):
         return localizedAppText("ride.thermal.motor", motor, unit)
-    case let (nil, nil, .some(battery)):
+    case let .battery(battery):
         return localizedAppText("ride.thermal.battery", battery, unit)
-    case (nil, nil, nil):
+    case .unavailable:
         return localizedAppText("ride.detail.typed_telemetry")
     }
 }
