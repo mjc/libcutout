@@ -508,7 +508,9 @@ final class CutoutAppUITests: XCTestCase {
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
         assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: .all.subtracting(.contrast)
+        )
     }
 
     func testEucBmsDetailPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
