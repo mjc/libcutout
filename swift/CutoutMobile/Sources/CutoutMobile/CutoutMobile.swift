@@ -2425,6 +2425,11 @@ public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
         let text = RideUnits.speedText(millimetersPerSecond: speed)
         return .available(display: text, accessibility: text)
     }
+
+    public var speedUnit: String {
+        guard speed.millimetersPerSecond != nil else { return "" }
+        return RideUnits.speedUnit
+    }
 }
 
 public enum BmsTopologyConfidence: Equatable, Hashable, Sendable {

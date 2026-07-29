@@ -112,7 +112,7 @@ func eucGpsSpeedTile(
         kind: .gpsSpeed,
         label: localizedAppText("euc.metric.gps_speed"),
         metricValue: readback.speedMetricValue,
-        unit: readback.speed.millimetersPerSecond == nil ? "" : RideUnits.speedUnit,
+        unit: readback.speedUnit,
         detail: readback.detail(at: now),
         accent: readback.freshness(at: now) == .fresh ? .cyan : .yellow
     )

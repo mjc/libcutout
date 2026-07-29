@@ -20,6 +20,7 @@ final class PhoneLocationReadbackTests: XCTestCase {
         )
 
         XCTAssertEqual(readback.speed.millimetersPerSecond, 2_500)
+        XCTAssertEqual(readback.speedUnit, RideUnits.speedUnit)
         XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(11_999)), .fresh)
         XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(12_000)), .fresh)
         XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(12_001)), .stale)
@@ -31,6 +32,7 @@ final class PhoneLocationReadbackTests: XCTestCase {
 
         XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(10_001)), .unavailable)
         XCTAssertEqual(readback.speed.displayValue, "--")
+        XCTAssertEqual(readback.speedUnit, "")
         XCTAssertEqual(readback.detail(at: MonotonicMilliseconds(10_001)), "GPS unavailable")
     }
 
