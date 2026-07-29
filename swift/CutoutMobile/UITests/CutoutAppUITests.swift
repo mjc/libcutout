@@ -797,7 +797,7 @@ final class CutoutAppUITests: XCTestCase {
                 "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
             )
         }
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
