@@ -134,7 +134,7 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
     private var section: some View {
         Text(sectionTitle)
             .font(.subheadline.weight(.semibold))
-            .foregroundStyle(PevColors.muted)
+            .foregroundStyle(PevColors.primaryText)
     }
 }
 
@@ -150,6 +150,6 @@ struct PevDashboardBrand: View {
     var body: some View {
         Text("CutOut")
             .font(.headline.weight(.bold))
-            .foregroundStyle(PevColors.brand)
+            .foregroundStyle(PevColors.primaryText)
     }
 }

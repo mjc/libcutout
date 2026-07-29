@@ -364,10 +364,18 @@ final class CutoutAppUITests: XCTestCase {
             advancedCapture.swipeUp()
         }
         XCTAssertTrue(recordButton.isHittable)
+
+        for _ in 0..<6 where !captureKind.isHittable {
+            advancedCapture.swipeDown()
+        }
+        XCTAssertTrue(captureKind.isHittable)
         // XCTest misreports the system-owned NavigationStack toolbar's native
         // Cancel/Done controls as Dynamic Type failures. The dedicated keyboard
         // test below proves their dismissal path at Accessibility XXXL.
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .dynamicType])
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: .dynamicType,
+            ignoringSystemToolbarContrastWarning: true
+        )
     }
 
     func testAdvancedCaptureKeyboardWorkflowRemainsReachableAtAccessibilityDynamicType() throws {
@@ -1257,7 +1265,8 @@ final class CutoutAppUITests: XCTestCase {
 
     private func performVisibleLayoutAccessibilityAudit(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        ignoringNilElementTextRepresentationWarning: Bool = false
+        ignoringNilElementTextRepresentationWarning: Bool = false,
+        ignoringSystemToolbarContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
@@ -1272,6 +1281,11 @@ final class CutoutAppUITests: XCTestCase {
                 // after multiple launch-argument changes without identifying
                 // an element. The captured AX hierarchy has all rendered text
                 // represented; real element-based findings remain failures.
+                return true
+            }
+            if ignoringSystemToolbarContrastWarning,
+               issue.auditType == .contrast,
+               issue.element?.identifier == "device-picker.capture-kind.done" {
                 return true
             }
             return false
