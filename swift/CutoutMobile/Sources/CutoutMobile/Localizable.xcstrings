@@ -85,6 +85,30 @@
       "comment" : "BMS topology label when no live BMS readback exists.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live BMS readback unavailable" } } }
     },
+    "bms.mode.balance_view" : {
+      "comment" : "BMS display mode label for the balancing view.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "balance view" } } }
+    },
+    "bms.mode.faults" : {
+      "comment" : "BMS display mode label for faults.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "faults" } } }
+    },
+    "bms.mode.overview" : {
+      "comment" : "BMS display mode label for the overview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "overview" } } }
+    },
+    "bms.mode.raw_table" : {
+      "comment" : "BMS display mode label for the raw data table.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "raw table" } } }
+    },
+    "bms.mode.strip" : {
+      "comment" : "BMS display mode label for the compact strip view.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "strip" } } }
+    },
+    "bms.mode.temperatures" : {
+      "comment" : "BMS display mode label for temperatures.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "temps" } } }
+    },
     "bms.secondary.no_live_bms" : {
       "comment" : "BMS secondary value when no live BMS is present.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "no live BMS" } } }

@@ -234,12 +234,12 @@ public enum PevBmsMode: String, Identifiable, Equatable, Hashable, Sendable {
 
     public var title: String {
         switch self {
-        case .balanceView: "balance view"
-        case .temperatures: "temps"
-        case .faults: "faults"
-        case .overview: "overview"
-        case .strip: "strip"
-        case .rawTable: "raw table"
+        case .balanceView: pevLocalizedText("bms.mode.balance_view")
+        case .temperatures: pevLocalizedText("bms.mode.temperatures")
+        case .faults: pevLocalizedText("bms.mode.faults")
+        case .overview: pevLocalizedText("bms.mode.overview")
+        case .strip: pevLocalizedText("bms.mode.strip")
+        case .rawTable: pevLocalizedText("bms.mode.raw_table")
         }
     }
 }

@@ -91,6 +91,15 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("bms.subtitle.controller_estimate", "6S pack"), "6S pack · controller-only estimate")
     }
 
+    func testBmsDisplayModeTitlesResolveFromThePackageCatalog() {
+        XCTAssertEqual(PevBmsMode.balanceView.title, pevLocalizedText("bms.mode.balance_view"))
+        XCTAssertEqual(PevBmsMode.temperatures.title, pevLocalizedText("bms.mode.temperatures"))
+        XCTAssertEqual(PevBmsMode.faults.title, pevLocalizedText("bms.mode.faults"))
+        XCTAssertEqual(PevBmsMode.overview.title, pevLocalizedText("bms.mode.overview"))
+        XCTAssertEqual(PevBmsMode.strip.title, pevLocalizedText("bms.mode.strip"))
+        XCTAssertEqual(PevBmsMode.rawTable.title, pevLocalizedText("bms.mode.raw_table"))
+    }
+
     func testChargeEstimatePresentationResolvesFromThePackageCatalog() {
         XCTAssertEqual(pevLocalizedText("charge.estimate.value.collecting"), "estimating")
         XCTAssertEqual(
