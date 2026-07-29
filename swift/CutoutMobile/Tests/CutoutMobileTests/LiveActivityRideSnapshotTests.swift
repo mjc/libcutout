@@ -690,6 +690,39 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         XCTAssertFalse(PevLiveActivityCompactPwmBar.shouldPulse(severity: .critical, reduceMotion: true))
     }
 
+    func testCompactIslandPwmBarRequiresVescAndTypedPwmProgress() {
+        let telemetryWithPwm = TelemetrySnapshot(
+            at: MonotonicMilliseconds(1_000),
+            speed: Speed(value: 12_000),
+            operatingState: .riding,
+            pwm: DutyCycle(permille: 500)
+        )
+        let vescWithoutPwm = LiveActivityRideSnapshot(
+            identity: .device("VESC BLE UART"),
+            glyph: .floatwheelAtom,
+            rideState: liveRideState(
+                speed: 12_000,
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    speed: Speed(value: 12_000),
+                    operatingState: .riding
+                )
+            ),
+            now: MonotonicMilliseconds(1_100)
+        )
+        let eucWithPwm = LiveActivityRideSnapshot(
+            identity: .device("Aero"),
+            glyph: .electricUnicycle,
+            rideState: liveRideState(speed: 12_000, telemetry: telemetryWithPwm),
+            now: MonotonicMilliseconds(1_100)
+        )
+
+        XCTAssertEqual(vescWithoutPwm.pwm.state, .unavailable)
+        XCTAssertFalse(vescWithoutPwm.showsCompactPwmBar)
+        XCTAssertNotNil(eucWithPwm.pwm.progressValue)
+        XCTAssertFalse(eucWithPwm.showsCompactPwmBar)
+    }
+
     func testSpeedGaugeProgressComesFromTypedNumericState() {
         let values: [(LiveActivityRideValue, Double?)] = [
             (.available(label: "Speed", value: "not parsed", unit: "mph", normalizedProgress: 0.5, source: .liveTelemetry), 0.5),
