@@ -67,7 +67,7 @@ final class CutoutAppUITests: XCTestCase {
         let useButton = app.buttons["device-picker.use.ui-test-vesc"]
 
         XCTAssertTrue(useButton.waitForExistence(timeout: 5))
-        XCTAssertEqual(useButton.label, "Use VESC, device 1234")
+        XCTAssertEqual(useButton.label, "Use Refloat VESC, device VESC")
         XCTAssertGreaterThanOrEqual(useButton.frame.height, 92)
     }
 
@@ -449,6 +449,23 @@ final class CutoutAppUITests: XCTestCase {
             usesLocalizedText: true,
             auditExclusions: .contrast
         )
+    }
+
+    func testVescReconnectKeepsRideAccessible() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard let rideScreen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let retrying = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Retrying connection")
+        ).firstMatch
+        XCTAssertTrue(retrying.waitForExistence(timeout: 5))
+        XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.vesc.screenIdentifier)
+        XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
     private func assertFailedVescConnectionAccessibility(
@@ -949,6 +966,7 @@ final class CutoutAppUITests: XCTestCase {
         case vescPending
         case vescStale
         case vescFailure
+        case vescReconnect
         case vescLiveActivity
         case vescLiveActivityAuto
 
@@ -958,6 +976,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
+            if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
             if testName.contains("StaleTelemetry") { return .vescStale }
             if testName.localizedCaseInsensitiveContains("EucNoBms") { return .eucNoBms }
@@ -975,6 +994,7 @@ final class CutoutAppUITests: XCTestCase {
             case .vescPending: "vesc-pending"
             case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"
+            case .vescReconnect: "vesc-reconnect"
             case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
             }
@@ -990,6 +1010,7 @@ final class CutoutAppUITests: XCTestCase {
             case .vescPending: ["--ui-test-vesc-pending"]
             case .vescStale: ["--ui-test-vesc-stale"]
             case .vescFailure: ["--ui-test-vesc-failure"]
+            case .vescReconnect: ["--ui-test-vesc-reconnect"]
             case .vescLiveActivity: ["--ui-test-vesc", "--ui-test-live-activity"]
             case .vescLiveActivityAuto: ["--ui-test-live-activity-auto"]
             }

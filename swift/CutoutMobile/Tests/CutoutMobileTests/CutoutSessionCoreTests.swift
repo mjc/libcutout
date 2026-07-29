@@ -195,6 +195,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(core.displayState.speed.millimetersPerSecond)
     }
 
+    func testScriptedSessionPublishesReconnectAndReturnsLive() {
+        let retry = expectation(description: "scripted session schedules reconnect")
+        let live = expectation(description: "scripted session returns live")
+        live.expectedFulfillmentCount = 2
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                reconnectsAfterFirstLive: true,
+                reconnectDelayMilliseconds: 0,
+                connectionDelayMilliseconds: 0
+            )
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+        core.onReconnectScheduled = { _ in retry.fulfill() }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        wait(for: [retry, live], timeout: 3)
+        XCTAssertEqual(core.phase, .live)
+    }
+
     func testRecordOnlyMissingCandidateReturnsFalse() {
         let core = CutoutSessionCore()
 

@@ -17,12 +17,17 @@ struct VescRideScreenView: View {
     }
 
     private var subtitle: String {
+        if phase != .live {
+            return connectionStatusText ?? phase.displayText
+        }
         if let liveSnapshot {
             return vescRideSubtitle(liveSnapshot)
         }
-        return phase == .live
-            ? localizedAppText("vesc.subtitle.telemetry_pending")
-            : connectionStatusText ?? phase.displayText
+        return localizedAppText("vesc.subtitle.telemetry_pending")
+    }
+
+    private var statusTone: PevDashboardStatusPillTone {
+        phase == .live ? .vescRide : .warning
     }
 
     private var speedReadout: PevRideHeroReadout {
@@ -173,7 +178,7 @@ struct VescRideScreenView: View {
             heroStyle: .vescOnewheel,
             title: title,
             subtitle: subtitle,
-            statusTone: .vescRide,
+            statusTone: statusTone,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
             speedCaption: localizedAppText("vesc.speed.caption"),

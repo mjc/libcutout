@@ -168,6 +168,9 @@ public struct CutoutSessionTestScript {
     public let startsLive: Bool
     public let failsConnection: Bool
     public let emitsLateLiveAfterFailure: Bool
+    public let reconnectsAfterFirstLive: Bool
+    public let reconnectAfterLiveMilliseconds: UInt64
+    public let reconnectDelayMilliseconds: UInt64
     public let emitsStaleTelemetry: Bool
     public let flushCaptureSucceeds: Bool
     public let connectionDelayMilliseconds: UInt64
@@ -179,6 +182,9 @@ public struct CutoutSessionTestScript {
         startsLive: Bool = false,
         failsConnection: Bool = false,
         emitsLateLiveAfterFailure: Bool = false,
+        reconnectsAfterFirstLive: Bool = false,
+        reconnectAfterLiveMilliseconds: UInt64 = 0,
+        reconnectDelayMilliseconds: UInt64 = 1_000,
         emitsStaleTelemetry: Bool = false,
         flushCaptureSucceeds: Bool = true,
         connectionDelayMilliseconds: UInt64 = 1_000
@@ -189,6 +195,9 @@ public struct CutoutSessionTestScript {
         self.startsLive = startsLive
         self.failsConnection = failsConnection
         self.emitsLateLiveAfterFailure = emitsLateLiveAfterFailure
+        self.reconnectsAfterFirstLive = reconnectsAfterFirstLive
+        self.reconnectAfterLiveMilliseconds = reconnectAfterLiveMilliseconds
+        self.reconnectDelayMilliseconds = reconnectDelayMilliseconds
         self.emitsStaleTelemetry = emitsStaleTelemetry
         self.flushCaptureSucceeds = flushCaptureSucceeds
         self.connectionDelayMilliseconds = connectionDelayMilliseconds
@@ -254,6 +263,7 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
     private var testScriptWorkItem: DispatchWorkItem?
+    private var testScriptDidReconnect = false
 #endif
     private lazy var locationManager: CLLocationManager = {
         let manager = CLLocationManager()
@@ -449,6 +459,7 @@ public final class CutoutSessionCore: NSObject {
     private func start(testScript: CutoutSessionTestScript) {
         onBleQueue {
             testScriptWorkItem?.cancel()
+            testScriptDidReconnect = false
             displayState = RideDisplayState()
             publishDisplayState()
             scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
@@ -528,6 +539,44 @@ public final class CutoutSessionCore: NSObject {
         applyNotificationStep(
             CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
             receivedAt: receivedAt
+        )
+        scheduleTestReconnectIfNeeded(testScript)
+    }
+
+    private func scheduleTestReconnectIfNeeded(_ testScript: CutoutSessionTestScript) {
+        guard testScript.reconnectsAfterFirstLive, !testScriptDidReconnect else { return }
+        testScriptDidReconnect = true
+        let reconnect = DispatchWorkItem { [weak self] in
+            self?.onBleQueue {
+                guard let self else { return }
+                self.setPhase(.discoveringServices)
+                self.publishOnMain {
+                    self.onReconnectScheduled?(
+                        SessionConnectionRetry(
+                            platformIdentifier: testScript.candidate.platformIdentifier,
+                            attempt: 1,
+                            deadline: self.clock.now(),
+                            failure: .connectFailed("deterministic reconnect")
+                        )
+                    )
+                }
+                let resume = DispatchWorkItem { [weak self] in
+                    self?.onBleQueue {
+                        self?.setPhase(.subscribing)
+                        self?.emit(testScript: testScript)
+                    }
+                }
+                self.testScriptWorkItem = resume
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectDelayMilliseconds)),
+                    execute: resume
+                )
+            }
+        }
+        testScriptWorkItem = reconnect
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectAfterLiveMilliseconds)),
+            execute: reconnect
         )
     }
 #endif

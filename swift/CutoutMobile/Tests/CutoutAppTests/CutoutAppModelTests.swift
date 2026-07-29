@@ -363,6 +363,21 @@ final class CutoutAppModelTests: XCTestCase {
         driver.onPhaseChange?(.live)
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
 
+        driver.onReconnectScheduled?(retry)
+
+        XCTAssertEqual(
+            model.connectionState,
+            .retrying(
+                ConnectionSelection(
+                    platformIdentifier: row.id,
+                    title: row.title,
+                    route: .vescOnewheel
+                ),
+                retry: retry
+            )
+        )
+        XCTAssertEqual(model.connectionStatusText, "Retrying connection…")
+
         driver.onPhaseChange?(.failed(.connectFailed("timed out")))
         XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .returnToPicker)
     }

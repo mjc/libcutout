@@ -563,10 +563,10 @@ final class CutoutAppModel {
     }
 
     private func handleReconnectScheduled(_ retry: SessionConnectionRetry) {
-        guard
-            case let .connecting(selection, _) = connectionState,
-            selection.platformIdentifier == retry.platformIdentifier
+        guard let selection = connectionState.selection,
+              selection.platformIdentifier == retry.platformIdentifier
         else { return }
+        if case .failed = connectionState { return }
         connectionState = .retrying(selection, retry: retry)
     }
 
@@ -833,6 +833,7 @@ enum CutoutUITestSessionFixture {
     case pendingVesc
     case staleVesc
     case failedVesc
+    case reconnectingVesc
     case euc
     case eucNoBms
     case vescLiveActivity
@@ -846,6 +847,7 @@ enum CutoutUITestSessionFixture {
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
+        case "vesc-reconnect": self = .reconnectingVesc
         case "euc": self = .euc
         case "euc-no-bms": self = .eucNoBms
         case "vesc-live-activity": self = .vescLiveActivity
@@ -869,6 +871,8 @@ enum CutoutUITestSessionFixture {
             self = .staleVesc
         } else if arguments.contains("--ui-test-vesc-failure") {
             self = .failedVesc
+        } else if arguments.contains("--ui-test-vesc-reconnect") {
+            self = .reconnectingVesc
         } else if arguments.contains("--ui-test-euc-no-bms") {
             self = .eucNoBms
         } else if arguments.contains("--ui-test-euc") {
@@ -924,7 +928,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .vesc, .pendingVesc, .staleVesc, .failedVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -939,6 +943,7 @@ enum CutoutUITestSessionFixture {
 
     var startsLive: Bool { self == .autoVescLiveActivity }
     var failsConnection: Bool { self == .failedVesc }
+    var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
     var emitsStaleTelemetry: Bool { self == .staleVesc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
@@ -952,6 +957,9 @@ enum CutoutUITestSessionFixture {
             startsLive: startsLive,
             failsConnection: failsConnection,
             emitsLateLiveAfterFailure: failsConnection,
+            reconnectsAfterFirstLive: reconnectsAfterFirstLive,
+            reconnectAfterLiveMilliseconds: reconnectsAfterFirstLive ? 1_500 : 0,
+            reconnectDelayMilliseconds: reconnectsAfterFirstLive ? 5_000 : 0,
             emitsStaleTelemetry: emitsStaleTelemetry,
             flushCaptureSucceeds: flushCaptureSucceeds,
             connectionDelayMilliseconds: startsLive ? 0 : (failsConnection ? 3_000 : 1_000)
