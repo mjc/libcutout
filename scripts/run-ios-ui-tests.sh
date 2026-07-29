@@ -46,7 +46,7 @@ if [[ "$destination" == platform=iOS,* ]]; then
     CODE_SIGNING_REQUIRED=YES
     CODE_SIGN_STYLE=Automatic
     CODE_SIGN_IDENTITY="Apple Development"
-    DEVELOPMENT_TEAM="${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
+    DEVELOPMENT_TEAM="$(cutout_ios_development_team)"
   )
 fi
 xcodebuild_args+=("$@")

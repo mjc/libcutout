@@ -14,6 +14,10 @@ cutout_use_xcode_developer_dir() {
   unset SDKROOT
 }
 
+cutout_ios_development_team() {
+  printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
+}
+
 cutout_xcode_auth_args() {
   if [[ -n "${CUTOUT_APPSTORE_AUTH_KEY_PATH:-}" ]]; then
     printf '%s\0' \
@@ -102,16 +106,10 @@ cutout_build_ios_device_app_bundle() {
   destination="${CUTOUT_IOS_DEVICE_DESTINATION:-platform=iOS,id=$device_udid}"
   derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-signed}"
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
-  development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
+  development_team="$(cutout_ios_development_team)"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
   cutout_use_xcode_developer_dir
-
-  if [[ -z "$development_team" ]]; then
-    echo "CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone signing" >&2
-    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/run-ios-app-on-phone.sh" >&2
-    return 1
-  fi
 
   rm -rf "$product"
 
@@ -155,16 +153,10 @@ cutout_archive_ios_release_testing_app() {
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"
-  development_team="${CUTOUT_IOS_DEVELOPMENT_TEAM:-}"
+  development_team="$(cutout_ios_development_team)"
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
   cutout_use_xcode_developer_dir
-
-  if [[ -z "$development_team" ]]; then
-    echo "CUTOUT_IOS_DEVELOPMENT_TEAM is required for ad hoc export" >&2
-    echo "Set CUTOUT_IOS_DEVELOPMENT_TEAM and optionally CUTOUT_IOS_APP_BUNDLE_ID, then rerun scripts/export-ios-ad-hoc.sh" >&2
-    return 1
-  fi
 
   if [[ -n "${CUTOUT_APPSTORE_AUTH_KEY_PATH:-}" ]]; then
     if [[ -z "${CUTOUT_APPSTORE_AUTH_KEY_ID:-}" || -z "${CUTOUT_APPSTORE_AUTH_KEY_ISSUER_ID:-}" ]]; then
