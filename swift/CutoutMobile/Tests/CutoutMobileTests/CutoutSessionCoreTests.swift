@@ -362,6 +362,22 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testVescRideSnapshotOwnsBoardAngleReadbackFormatting() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .refloat,
+            controllerState: .unknown,
+            boardAngle: angleValue(-18_000),
+            balanceAngle: angleValue(500)
+        )
+
+        XCTAssertEqual(
+            snapshot.boardAngleReadback,
+            .available(orientation: .noseDown, balanceAngle: "0.5")
+        )
+    }
+
     func testRideHeroReadoutOwnsVescSpeedFreshnessAndSeverity() {
         let snapshot = VescRideSnapshot(
             title: "VESC",

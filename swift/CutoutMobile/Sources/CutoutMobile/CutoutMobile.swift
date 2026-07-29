@@ -1619,6 +1619,11 @@ public enum VescBoardAngleDetail: Equatable, Hashable, Sendable {
     case unavailable
 }
 
+public enum VescBoardAngleReadback: Equatable, Hashable, Sendable {
+    case available(orientation: VescBoardOrientation, balanceAngle: String?)
+    case unavailable
+}
+
 public enum VescControllerTemperatureDetail: Equatable, Hashable, Sendable {
     case available(motorTemperature: Temperature)
     case unavailable
@@ -1859,6 +1864,18 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             orientation = .level
         }
         return .available(orientation: orientation, balanceAngle: balanceAngle)
+    }
+
+    public var boardAngleReadback: VescBoardAngleReadback {
+        switch boardAngleDetail {
+        case let .available(orientation, balanceAngle):
+            .available(
+                orientation: orientation,
+                balanceAngle: balanceAngle.map { RideUnits.angleText(millidegrees: $0.value) }
+            )
+        case .unavailable:
+            .unavailable
+        }
     }
 
     public var controllerTemperatureDetail: VescControllerTemperatureDetail {

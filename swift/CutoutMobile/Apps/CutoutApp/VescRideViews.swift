@@ -156,7 +156,7 @@ struct VescRideScreenView: View {
 
     private var boardAngleDetail: String? {
         guard let liveSnapshot else { return nil }
-        switch liveSnapshot.boardAngleDetail {
+        switch liveSnapshot.boardAngleReadback {
         case let .available(orientation, balanceAngle):
             let direction = switch orientation {
             case .noseDown: "nose_down"
@@ -166,7 +166,7 @@ struct VescRideScreenView: View {
             if let balanceAngle {
                 return localizedAppText(
                     "vesc.board_angle.\(direction)_with_balance",
-                    angleText(balanceAngle)
+                    balanceAngle
                 )
             }
             return localizedAppText("vesc.board_angle.\(direction)")
