@@ -353,6 +353,9 @@ final class CutoutAppUITests: XCTestCase {
         ).firstMatch
 
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        captureKind.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["device-picker.capture-kind.done"].tap()
         XCTAssertTrue(captureKind.isHittable)
         for _ in 0..<6 where !recordButton.isHittable {
             advancedCapture.swipeUp()
@@ -369,6 +372,9 @@ final class CutoutAppUITests: XCTestCase {
         ).firstMatch
 
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        captureKind.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        app.buttons["device-picker.capture-kind.done"].tap()
         XCTAssertTrue(captureKind.isHittable)
         for _ in 0..<6 where !recordButton.isHittable {
             advancedCapture.swipeUp()
