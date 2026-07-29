@@ -264,7 +264,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCapturePassesAccessibilityAuditInRightToLeftLayout() throws {
-        try assertCaptureAccessibility(excluding: .contrast)
+        try assertCaptureAccessibility()
     }
 
     func testCapturePassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
@@ -1171,6 +1171,11 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(lastAnnotationInitialLabel.isEmpty)
         lastAnnotation.tap()
         XCTAssertNotEqual(lastAnnotation.label, lastAnnotationInitialLabel)
+
+        for _ in 0..<6 where !stopCapture.isHittable {
+            screen.swipeDown()
+        }
+        XCTAssertTrue(stopCapture.isHittable)
         try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
