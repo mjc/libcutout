@@ -459,6 +459,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescReconnectAccessibility()
     }
 
+    func testVescReconnectKeepsRideAccessibleInLandscapeAtAccessibilityDynamicType() throws {
+        try assertVescReconnectAccessibility()
+    }
+
     func testVescReconnectKeepsRideAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertVescReconnectAccessibility(usesLocalizedText: true)
     }
