@@ -131,10 +131,7 @@ func liveDashboardTiles(from state: EucRideScreenState, telemetry: TelemetrySnap
             label: localizedAppText("ride.metric.pack"),
             metricValue: telemetry.packVoltageMetricValue,
             unit: RideUnits.voltageUnit,
-            detail: telemetry.voltage == nil
-                ? localizedAppText("ride.value.unavailable")
-                : telemetry.chargeEstimate?.voltageSag.map(voltageSagDetail)
-                    ?? localizedAppText("ride.detail.sag_unavailable"),
+            detail: livePackVoltageDetail(telemetry.packVoltageDetail),
             accent: .cyan
         ),
         livePowerTile(from: telemetry),
@@ -316,6 +313,17 @@ func vescRideSubtitle(_ snapshot: VescRideSnapshot) -> String {
         return vescVehicleKindText(snapshot.vehicleKind)
     }
     return vescOperatingStateText(snapshot)
+}
+
+func livePackVoltageDetail(_ detail: TelemetryPackVoltageDetail) -> String {
+    switch detail {
+    case .unavailable:
+        localizedAppText("ride.value.unavailable")
+    case let .voltageSag(sag):
+        voltageSagDetail(sag)
+    case .sagUnavailable:
+        localizedAppText("ride.detail.sag_unavailable")
+    }
 }
 
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {

@@ -1174,6 +1174,12 @@ private func telemetryPowerFractionDigits<T: BinaryInteger>(fromMilliwatts value
     abs(Int64(value)) < 1_000_000 ? 2 : 1
 }
 
+public enum TelemetryPackVoltageDetail: Equatable, Hashable, Sendable {
+    case unavailable
+    case voltageSag(ChargeVoltageSagEstimate)
+    case sagUnavailable
+}
+
 public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let at: MonotonicMilliseconds?
     public let speed: Speed?
@@ -1295,6 +1301,12 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         guard let voltage else { return .unavailable }
         let text = RideUnits.voltageText(millivolts: voltage.value, fractionDigits: 1)
         return .available(display: text, accessibility: text)
+    }
+
+    public var packVoltageDetail: TelemetryPackVoltageDetail {
+        guard voltage != nil else { return .unavailable }
+        return chargeEstimate?.voltageSag.map(TelemetryPackVoltageDetail.voltageSag)
+            ?? .sagUnavailable
     }
 
     public var thermalMetricValue: PevDashboardMetricValue {

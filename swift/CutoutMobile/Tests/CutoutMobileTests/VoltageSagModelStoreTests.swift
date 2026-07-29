@@ -79,5 +79,18 @@ final class VoltageSagModelStoreTests: XCTestCase {
         }
         XCTAssertEqual(sag.deltaMillivolts, -1_250)
         XCTAssertEqual(estimateDetail, "estimating charge time · 0 samples")
+
+        XCTAssertEqual(TelemetrySnapshot().packVoltageDetail, .unavailable)
+        XCTAssertEqual(
+            TelemetrySnapshot(voltage: Voltage(value: 84_000)).packVoltageDetail,
+            .sagUnavailable
+        )
+        guard case let .voltageSag(packSag) = TelemetrySnapshot(
+            voltage: Voltage(value: 84_000),
+            chargeEstimate: state
+        ).packVoltageDetail else {
+            return XCTFail("expected the source-owned pack voltage sag detail")
+        }
+        XCTAssertEqual(packSag, sag)
     }
 }
