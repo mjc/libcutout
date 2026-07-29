@@ -24,36 +24,20 @@ enum CaptureStatus: Equatable {
         case let .saved(fileName):
             localizedAppText("capture.status.saved", fileName)
         case .failed:
-            String(localized: "capture.announcement.failed", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("capture.announcement.failed")
         }
     }
 
     var accessibilityAnnouncement: String? {
         switch self {
         case let .labelStarted(label, _, _):
-            String(
-                format: String(
-                    localized: "capture.announcement.label_started",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                ),
-                locale: .current,
-                label
-            )
+            localizedAppText("capture.announcement.label_started", label)
         case let .labelStopped(label, _, _):
-            String(
-                format: String(
-                    localized: "capture.announcement.label_stopped",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                ),
-                locale: .current,
-                label
-            )
+            localizedAppText("capture.announcement.label_stopped", label)
         case .saved:
-            String(localized: "capture.announcement.saved", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("capture.announcement.saved")
         case .failed:
-            String(localized: "capture.announcement.failed", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("capture.announcement.failed")
         case .recordingLocally, .recording:
             nil
         }

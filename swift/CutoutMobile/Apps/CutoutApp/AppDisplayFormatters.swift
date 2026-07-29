@@ -162,27 +162,11 @@ extension SessionConnectionPhase {
                 bundle: appLocalizationBundle
             )
         case .connecting(let model):
-            String(
-                format: String(
-                    localized: "picker.announcement.connecting",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                ),
-                locale: .current,
-                model.displayName
-            )
+            localizedAppText("picker.announcement.connecting", model.displayName)
         case .live:
-            String(localized: "picker.announcement.connected", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("picker.announcement.connected")
         case .failed(let failure):
-            String(
-                format: String(
-                    localized: "picker.announcement.connection_failed",
-                    table: "Localizable",
-                    bundle: appLocalizationBundle
-                ),
-                locale: .current,
-                failure.displayText
-            )
+            localizedAppText("picker.announcement.connection_failed", failure.displayText)
         }
     }
 }
@@ -191,11 +175,11 @@ extension LiveActivityRideLifecycleError {
     var accessibilityAnnouncement: String {
         switch self {
         case .authorizationDenied:
-            String(localized: "live_activity.error.authorization_denied", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("live_activity.error.authorization_denied")
         case .requestFailed:
-            String(localized: "live_activity.error.request_failed", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("live_activity.error.request_failed")
         case .activityUnavailable:
-            String(localized: "live_activity.error.unavailable", table: "Localizable", bundle: appLocalizationBundle)
+            localizedAppText("live_activity.error.unavailable")
         }
     }
 }
