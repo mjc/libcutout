@@ -830,6 +830,7 @@ enum CutoutUITestSessionFixture {
     case unknownDevice
     case unknownDeviceFinishFailure
     case vesc
+    case pendingVesc
     case staleVesc
     case failedVesc
     case euc
@@ -842,6 +843,7 @@ enum CutoutUITestSessionFixture {
         case "unknown-device": self = .unknownDevice
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
         case "vesc": self = .vesc
+        case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
         case "euc": self = .euc
@@ -861,6 +863,8 @@ enum CutoutUITestSessionFixture {
             self = .unknownDeviceFinishFailure
         } else if arguments.contains("--ui-test-unknown-device") {
             self = .unknownDevice
+        } else if arguments.contains("--ui-test-vesc-pending") {
+            self = .pendingVesc
         } else if arguments.contains("--ui-test-vesc-stale") {
             self = .staleVesc
         } else if arguments.contains("--ui-test-vesc-failure") {
@@ -920,7 +924,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .vesc, .staleVesc, .failedVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .vesc, .pendingVesc, .staleVesc, .failedVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -935,6 +939,7 @@ enum CutoutUITestSessionFixture {
 
     var startsLive: Bool { self == .autoVescLiveActivity }
     var failsConnection: Bool { self == .failedVesc }
+    var emitsPendingTelemetry: Bool { self == .pendingVesc }
     var emitsStaleTelemetry: Bool { self == .staleVesc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool { self == .euc || self == .eucNoBms }
@@ -1050,6 +1055,11 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
         if fixture.startsLive {
             protocolIdentityCandidate = fixture.candidate
             onProtocolIdentityCandidateChange?(fixture.candidate)
+        }
+
+        if fixture.emitsPendingTelemetry {
+            onPhaseChange?(.live)
+            return
         }
 
         if fixture.isEuc {

@@ -213,6 +213,7 @@ struct VescRideScreenView: View {
                     detail: localizedAppText("vesc.telemetry_pending.detail"),
                     tone: .vesc
                 )
+                    .accessibilityIdentifier("vesc.warning.telemetry-pending")
                     .padding(.top, 12)
             }
 
