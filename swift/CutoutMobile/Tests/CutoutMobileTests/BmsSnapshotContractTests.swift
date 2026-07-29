@@ -491,8 +491,17 @@ final class BmsSnapshotContractTests: XCTestCase {
         let overview = snapshot.overviewPresentation
         XCTAssertEqual(overview.averageGroupVoltage, Voltage(value: 4_080))
         XCTAssertEqual(overview.lowestGroupVoltage, Voltage(value: 4_071))
+        XCTAssertEqual(
+            overview.averageGroupMetricValue,
+            .available(display: "4.080", accessibility: "4.080")
+        )
+        XCTAssertEqual(
+            overview.lowestGroupMetricValue,
+            .available(display: "4.071", accessibility: "4.071")
+        )
         XCTAssertEqual(overview.lowestGroupLabel, "group 17")
         XCTAssertNil(overview.highestTemperature)
+        XCTAssertNil(overview.highestTemperatureMetricValue)
         XCTAssertEqual(overview.highestTemperatureLabel, "")
         XCTAssertFalse(overview.shouldShowEnergyHero)
         XCTAssertFalse(overview.shouldShowBalancingSummary)
@@ -515,6 +524,10 @@ final class BmsSnapshotContractTests: XCTestCase {
             highestTemperatureLabel: "right pack"
         ).overviewPresentation
         XCTAssertEqual(temperatureReadings.highestTemperature, Temperature(value: 37_800))
+        XCTAssertEqual(
+            temperatureReadings.highestTemperatureMetricValue,
+            .available(display: "37.8", accessibility: "37.8")
+        )
         XCTAssertEqual(temperatureReadings.highestTemperatureLabel, "right pack")
 
         let cardStates = BmsSnapshot(

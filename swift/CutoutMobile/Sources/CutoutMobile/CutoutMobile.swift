@@ -2375,6 +2375,18 @@ public struct BmsOverviewPresentation: Equatable, Hashable, Sendable {
     public let shouldShowEnergyHero: Bool
     public let shouldShowBalancingSummary: Bool
     public let shouldShowFaultSummary: Bool
+
+    public var averageGroupMetricValue: PevDashboardMetricValue? {
+        averageGroupVoltage.map(bmsVoltageMetricValue)
+    }
+
+    public var lowestGroupMetricValue: PevDashboardMetricValue? {
+        lowestGroupVoltage.map(bmsVoltageMetricValue)
+    }
+
+    public var highestTemperatureMetricValue: PevDashboardMetricValue? {
+        highestTemperature.map(bmsTemperatureMetricValue)
+    }
 }
 
 public struct BmsUnknownTopologyCapturePresentation: Equatable, Hashable, Sendable {

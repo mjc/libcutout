@@ -10,24 +10,24 @@ struct BmsOverviewLayout: View {
         VStack(alignment: .leading, spacing: 14) {
             summaryCard
 
-            if overviewPresentation.averageGroupVoltage != nil || overviewPresentation.lowestGroupVoltage != nil {
+            if overviewPresentation.averageGroupMetricValue != nil || overviewPresentation.lowestGroupMetricValue != nil {
                 PevDashboardGrid(
                     adaptiveMinimumColumnWidth: 140,
                     columnSpacing: 14,
                     spacing: 14
                 ) {
-                    if let averageGroupVoltage = overviewPresentation.averageGroupVoltage {
+                    if let averageGroupMetricValue = overviewPresentation.averageGroupMetricValue {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.average_group"),
-                            metricValue: bmsVoltageMetricValue(averageGroupVoltage),
+                            metricValue: averageGroupMetricValue,
                             unit: RideUnits.voltageUnit,
                             detail: ""
                         )
                     }
-                    if let lowestGroupVoltage = overviewPresentation.lowestGroupVoltage {
+                    if let lowestGroupMetricValue = overviewPresentation.lowestGroupMetricValue {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.lowest_group"),
-                            metricValue: bmsVoltageMetricValue(lowestGroupVoltage),
+                            metricValue: lowestGroupMetricValue,
                             unit: RideUnits.voltageUnit,
                             detail: overviewPresentation.lowestGroupLabel
                         )
@@ -35,10 +35,10 @@ struct BmsOverviewLayout: View {
                 }
             }
 
-            if let highestTemperature = overviewPresentation.highestTemperature {
+            if let highestTemperatureMetricValue = overviewPresentation.highestTemperatureMetricValue {
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.overview.highest_temperature"),
-                    metricValue: bmsTemperatureMetricValue(highestTemperature),
+                    metricValue: highestTemperatureMetricValue,
                     unit: RideUnits.temperatureUnit,
                     detail: overviewPresentation.highestTemperatureLabel
                 )
