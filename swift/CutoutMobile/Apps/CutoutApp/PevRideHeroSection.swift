@@ -11,158 +11,28 @@ enum PevRideHeroStyle {
 
 }
 
-enum PevRideMetricProvenance: Equatable {
-    case vehicleTelemetry
-
-    var accessibilityText: String {
-        switch self {
-        case .vehicleTelemetry: localizedAppText("ride.hero.provenance.vehicle_telemetry")
-        }
-    }
-}
-
-enum PevRideMetricSeverity: Equatable {
-    case nominal
-    case caution
-    case critical
-    case unavailable
-
-    init(_ severity: EucRideWarningSeverity) {
-        switch severity {
-        case .normal: self = .nominal
-        case .caution, .reduceAcceleration: self = .caution
-        case .limpHome, .failed: self = .critical
-        case .unavailable: self = .unavailable
-        }
-    }
-
-    init(_ warning: VescRideWarning) {
-        switch warning {
-        case .none: self = .nominal
-        case .pushbackSoon: self = .caution
-        case .unknown: self = .unavailable
-        }
-    }
-
-    var accessibilityText: String {
-        switch self {
-        case .nominal: localizedAppText("ride.hero.severity.nominal")
-        case .caution: localizedAppText("ride.hero.severity.caution")
-        case .critical: localizedAppText("ride.hero.severity.critical")
-        case .unavailable: localizedAppText("ride.hero.severity.unavailable")
-        }
-    }
-}
-
-enum PevRideHeroReadout: Equatable {
-    case available(
-        value: String,
-        unit: String,
-        provenance: PevRideMetricProvenance,
-        freshness: EucRideUpdateFreshness,
-        severity: PevRideMetricSeverity
-    )
-    case unavailable(
-        provenance: PevRideMetricProvenance,
-        freshness: EucRideUpdateFreshness,
-        severity: PevRideMetricSeverity
-    )
-
-    var displayValue: String {
-        switch self {
-        case .available(let value, _, _, _, _): value
-        case .unavailable: localizedAppText("ride.hero.value.unavailable")
-        }
-    }
-
-    var displayUnit: String {
-        switch self {
-        case .available(_, let unit, _, _, _): unit
-        case .unavailable: ""
-        }
-    }
-
+extension RideHeroReadout {
     var accessibilityValue: String {
         switch self {
-        case .available(let value, let unit, let provenance, let freshness, let severity):
+        case .available(let value, let unit, let freshness, let severity):
             localizedAppText(
                 "ride.hero.accessibility.available",
                 value,
                 unit,
                 localizedAppText("ride.hero.value.available"),
-                provenance.accessibilityText,
+                localizedAppText("ride.hero.provenance.vehicle_telemetry"),
                 freshness.accessibilityText,
                 severity.accessibilityText
             )
-        case .unavailable(let provenance, let freshness, let severity):
+        case .unavailable(let freshness, let severity):
             localizedAppText(
                 "ride.hero.accessibility.unavailable",
                 localizedAppText("ride.hero.value.unavailable_accessibility"),
-                provenance.accessibilityText,
+                localizedAppText("ride.hero.provenance.vehicle_telemetry"),
                 freshness.accessibilityText,
                 severity.accessibilityText
             )
         }
-    }
-
-    var isAvailable: Bool {
-        if case .available = self { true } else { false }
-    }
-
-    static func euc(
-        state: EucRideScreenState?,
-        now: MonotonicMilliseconds
-    ) -> Self {
-        let freshness = state?.updateAge(
-            at: now,
-            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
-        ).freshness ?? .unavailable
-        let severity = PevRideMetricSeverity(
-            state?.warningState(
-                at: now,
-                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
-            ).severity ?? .unavailable
-        )
-        guard let state, state.telemetry?.speed != nil else {
-            return .unavailable(
-                provenance: .vehicleTelemetry,
-                freshness: freshness,
-                severity: severity
-            )
-        }
-        return .available(
-            value: state.speedText,
-            unit: state.speedUnit,
-            provenance: .vehicleTelemetry,
-            freshness: freshness,
-            severity: severity
-        )
-    }
-
-    static func vesc(
-        snapshot: VescRideSnapshot?,
-        now: MonotonicMilliseconds
-    ) -> Self {
-        let freshness = snapshot?.updateAge(
-            at: now,
-            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
-        ).freshness ?? .unavailable
-        let severity = PevRideMetricSeverity(snapshot?.warning ?? .unknown)
-        guard let boardSpeed = snapshot?.boardSpeed else {
-            return .unavailable(
-                provenance: .vehicleTelemetry,
-                freshness: freshness,
-                severity: severity
-            )
-        }
-        let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
-        return .available(
-            value: readout.displayValue,
-            unit: readout.displayUnit,
-            provenance: .vehicleTelemetry,
-            freshness: freshness,
-            severity: severity
-        )
     }
 }
 
@@ -172,6 +42,17 @@ private extension EucRideUpdateFreshness {
         case .fresh: localizedAppText("ride.hero.freshness.fresh")
         case .stale: localizedAppText("ride.hero.freshness.stale")
         case .unavailable: localizedAppText("ride.hero.freshness.unavailable")
+        }
+    }
+}
+
+private extension RideHeroSeverity {
+    var accessibilityText: String {
+        switch self {
+        case .nominal: localizedAppText("ride.hero.severity.nominal")
+        case .caution: localizedAppText("ride.hero.severity.caution")
+        case .critical: localizedAppText("ride.hero.severity.critical")
+        case .unavailable: localizedAppText("ride.hero.severity.unavailable")
         }
     }
 }
@@ -187,7 +68,7 @@ struct PevRideHeroSection: View {
     let subtitle: String
     let statusTone: PevDashboardStatusPillTone
     let captureStatusText: String?
-    let speedReadout: PevRideHeroReadout
+    let speedReadout: RideHeroReadout
     let speedCaption: String
 
     var body: some View {
@@ -248,12 +129,12 @@ struct PevRideHeroSection: View {
 
     @ViewBuilder
     private var speed: some View {
-        if speedReadout.isAvailable {
-            Text(speedReadout.displayValue)
+        if let displayValue = speedReadout.displayValue {
+            Text(displayValue)
                 .font(speedFont)
                 .monospacedDigit()
         } else {
-            Text(speedReadout.displayValue)
+            Text(localizedAppText("ride.hero.value.unavailable"))
                 .font(.title2.weight(.semibold))
         }
     }
@@ -273,8 +154,8 @@ struct PevRideHeroSection: View {
 
     @ViewBuilder
     private var unit: some View {
-        if !speedReadout.displayUnit.isEmpty {
-            Text(speedReadout.displayUnit)
+        if let unit = speedReadout.displayUnit, !unit.isEmpty {
+            Text(unit)
                 .font(unitFont)
                 .foregroundStyle(PevColors.muted)
         }

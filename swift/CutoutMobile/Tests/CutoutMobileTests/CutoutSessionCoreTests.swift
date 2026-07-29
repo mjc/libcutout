@@ -346,6 +346,31 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
     }
 
+    func testRideHeroReadoutOwnsVescSpeedFreshnessAndSeverity() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .refloat,
+            controllerState: .unknown,
+            warning: .pushbackSoon,
+            boardSpeed: speedValue(19_000),
+            lastUpdate: MonotonicMilliseconds(1_000)
+        )
+
+        XCTAssertEqual(
+            RideHeroReadout.vesc(
+                snapshot: snapshot,
+                now: MonotonicMilliseconds(4_000)
+            ),
+            .available(
+                value: "42.5",
+                unit: "mph",
+                freshness: .stale,
+                severity: .caution
+            )
+        )
+    }
+
     func testVescVehicleKindDoesNotImplySubProtocol() {
         let snapshot = VescRideSnapshot(
             title: "VESC Bike",

@@ -1818,6 +1818,103 @@ public extension VescRideSnapshot {
     }
 }
 
+public enum RideHeroSeverity: Equatable, Hashable, Sendable {
+    case nominal
+    case caution
+    case critical
+    case unavailable
+}
+
+public enum RideHeroReadout: Equatable, Hashable, Sendable {
+    case available(
+        value: String,
+        unit: String,
+        freshness: EucRideUpdateFreshness,
+        severity: RideHeroSeverity
+    )
+    case unavailable(
+        freshness: EucRideUpdateFreshness,
+        severity: RideHeroSeverity
+    )
+
+    public var displayValue: String? {
+        guard case let .available(value, _, _, _) = self else { return nil }
+        return value
+    }
+
+    public var displayUnit: String? {
+        guard case let .available(_, unit, _, _) = self else { return nil }
+        return unit
+    }
+
+    public var isAvailable: Bool {
+        if case .available = self { true } else { false }
+    }
+
+    public static func euc(
+        state: EucRideScreenState?,
+        now: MonotonicMilliseconds
+    ) -> Self {
+        let freshness = state?.updateAge(
+            at: now,
+            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+        ).freshness ?? .unavailable
+        let severity = rideHeroSeverity(
+            state?.warningState(
+                at: now,
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+            ).severity ?? .unavailable
+        )
+        guard let state, state.telemetry?.speed != nil else {
+            return .unavailable(freshness: freshness, severity: severity)
+        }
+        return .available(
+            value: state.speedText,
+            unit: state.speedUnit,
+            freshness: freshness,
+            severity: severity
+        )
+    }
+
+    public static func vesc(
+        snapshot: VescRideSnapshot?,
+        now: MonotonicMilliseconds
+    ) -> Self {
+        let freshness = snapshot?.updateAge(
+            at: now,
+            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+        ).freshness ?? .unavailable
+        let severity = rideHeroSeverity(snapshot?.warning ?? .unknown)
+        guard let boardSpeed = snapshot?.boardSpeed else {
+            return .unavailable(freshness: freshness, severity: severity)
+        }
+        let readout = SpeedReadout(millimetersPerSecond: boardSpeed.value)
+        return .available(
+            value: readout.displayValue,
+            unit: readout.displayUnit,
+            freshness: freshness,
+            severity: severity
+        )
+    }
+}
+
+private func rideHeroSeverity(_ severity: EucRideWarningSeverity) -> RideHeroSeverity {
+    switch severity {
+    case .normal: .nominal
+    case .caution, .reduceAcceleration: .caution
+    case .limpHome, .failed: .critical
+    case .unavailable: .unavailable
+    }
+}
+
+private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
+    switch warning {
+    case .none: .nominal
+    case .pushbackSoon: .caution
+    case .unknown: .unavailable
+    }
+}
+
 private let dutyHeadroomIdleDeadbandPermille = 20
 
 private func dutyHeadroomPermille(from dutyCycle: DutyCycle) -> Int {

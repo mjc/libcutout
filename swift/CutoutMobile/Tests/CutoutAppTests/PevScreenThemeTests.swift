@@ -590,23 +590,21 @@ final class PevScreenThemeTests: XCTestCase {
     }
 
     func testRideHeroReadoutSharesExplicitAvailabilitySemantics() {
-        let unavailable = PevRideHeroReadout.unavailable(
-            provenance: .vehicleTelemetry,
+        let unavailable = RideHeroReadout.unavailable(
             freshness: .stale,
             severity: .caution
         )
-        XCTAssertEqual(unavailable.displayValue, "Unavailable")
-        XCTAssertEqual(unavailable.displayUnit, "")
+        XCTAssertNil(unavailable.displayValue)
+        XCTAssertNil(unavailable.displayUnit)
         XCTAssertEqual(
             unavailable.accessibilityValue,
             "unavailable, vehicle telemetry, stale, caution"
         )
         XCTAssertFalse(unavailable.isAvailable)
 
-        let available = PevRideHeroReadout.available(
+        let available = RideHeroReadout.available(
             value: "19",
             unit: "mph",
-            provenance: .vehicleTelemetry,
             freshness: .fresh,
             severity: .nominal
         )
@@ -627,7 +625,7 @@ final class PevScreenThemeTests: XCTestCase {
             )
         )
 
-        let readout = PevRideHeroReadout.euc(
+        let readout = RideHeroReadout.euc(
             state: state,
             now: MonotonicMilliseconds(1_500)
         )
@@ -650,7 +648,7 @@ final class PevScreenThemeTests: XCTestCase {
             lastUpdate: MonotonicMilliseconds(1_000)
         )
 
-        let readout = PevRideHeroReadout.vesc(
+        let readout = RideHeroReadout.vesc(
             snapshot: snapshot,
             now: MonotonicMilliseconds(4_000)
         )

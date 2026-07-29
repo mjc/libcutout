@@ -9,7 +9,7 @@ struct EucRideScreenView: View {
     let captureStatusText: String?
     let phoneLocationReadback: PhoneLocationReadback
 
-    private var speedReadout: PevRideHeroReadout {
+    private var speedReadout: RideHeroReadout {
         .euc(state: rideState, now: now)
     }
 

@@ -30,7 +30,7 @@ struct VescRideScreenView: View {
         phase == .live ? .vescRide : .warning
     }
 
-    private var speedReadout: PevRideHeroReadout {
+    private var speedReadout: RideHeroReadout {
         .vesc(snapshot: liveSnapshot, now: now)
     }
 

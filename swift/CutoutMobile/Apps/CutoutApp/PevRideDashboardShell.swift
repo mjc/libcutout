@@ -8,7 +8,7 @@ struct PevRideDashboardShell<Content: View>: View {
     let subtitle: String
     let statusTone: PevDashboardStatusPillTone
     let captureStatusText: String?
-    let speedReadout: PevRideHeroReadout
+    let speedReadout: RideHeroReadout
     let speedCaption: String
     let allowsVerticalScroll: Bool
     let content: Content
@@ -20,7 +20,7 @@ struct PevRideDashboardShell<Content: View>: View {
         subtitle: String,
         statusTone: PevDashboardStatusPillTone,
         captureStatusText: String?,
-        speedReadout: PevRideHeroReadout,
+        speedReadout: RideHeroReadout,
         speedCaption: String,
         allowsVerticalScroll: Bool = true,
         @ViewBuilder content: () -> Content
