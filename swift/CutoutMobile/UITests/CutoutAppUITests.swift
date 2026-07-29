@@ -626,6 +626,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+        try assertVescStaleTelemetryAccessibility()
+    }
+
+    func testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
+        try assertVescStaleTelemetryAccessibility()
+    }
+
+    private func assertVescStaleTelemetryAccessibility() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
