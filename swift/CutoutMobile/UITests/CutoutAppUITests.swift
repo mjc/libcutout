@@ -676,6 +676,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
+    func testEucUnknownTopologyPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        try assertEucUnknownTopologySurface()
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         try assertEucBmsAccessibility(excluding: [])
     }
@@ -1046,6 +1050,7 @@ final class CutoutAppUITests: XCTestCase {
         case euc
         case eucReconnect
         case eucNoBms
+        case eucUnknownTopology
         case vesc
         case vescPending
         case vescStale
@@ -1065,6 +1070,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("PendingTelemetry") { return .vescPending }
             if testName.contains("StaleTelemetry") { return .vescStale }
             if testName.localizedCaseInsensitiveContains("EucNoBms") { return .eucNoBms }
+            if testName.localizedCaseInsensitiveContains("EucUnknownTopology") { return .eucUnknownTopology }
             if testName.localizedCaseInsensitiveContains("Euc") { return .euc }
             return .vesc
         }
@@ -1080,6 +1086,7 @@ final class CutoutAppUITests: XCTestCase {
             case .euc: "euc"
             case .eucReconnect: "euc-reconnect"
             case .eucNoBms: "euc-no-bms"
+            case .eucUnknownTopology: "euc-unknown-topology"
             case .vesc: "vesc"
             case .vescPending: "vesc-pending"
             case .vescStale: "vesc-stale"
@@ -1355,6 +1362,16 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
         XCTAssertFalse(warning.label.isEmpty)
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+    }
+
+    private func assertEucUnknownTopologySurface() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsUnknownTopology"))
+        defer { disconnectIfConnected() }
+
+        let captureFlow = bmsScreen.descendants(matching: .any)["bms.unknown.capture-flow"]
+        XCTAssertTrue(captureFlow.waitForExistence(timeout: 5))
+        XCTAssertFalse(captureFlow.label.isEmpty)
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
     }
 
     @discardableResult

@@ -827,6 +827,7 @@ enum CutoutUITestSessionFixture {
     case euc
     case reconnectingEuc
     case eucNoBms
+    case eucUnknownTopology
     case vescLiveActivity
     case autoVescLiveActivity
 
@@ -842,6 +843,7 @@ enum CutoutUITestSessionFixture {
         case "euc": self = .euc
         case "euc-reconnect": self = .reconnectingEuc
         case "euc-no-bms": self = .eucNoBms
+        case "euc-unknown-topology": self = .eucUnknownTopology
         case "vesc-live-activity": self = .vescLiveActivity
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
         default: return nil
@@ -882,7 +884,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .euc, .reconnectingEuc, .eucNoBms:
+        case .euc, .reconnectingEuc, .eucNoBms, .eucUnknownTopology:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -914,13 +916,23 @@ enum CutoutUITestSessionFixture {
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
     var emitsStaleTelemetry: Bool { self == .staleVesc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
-    var isEuc: Bool { self == .euc || self == .reconnectingEuc || self == .eucNoBms }
+    var isEuc: Bool {
+        self == .euc || self == .reconnectingEuc || self == .eucNoBms || self == .eucUnknownTopology
+    }
+
+    private var testBmsSnapshot: BmsSnapshot? {
+        switch self {
+        case .euc: eucBmsSnapshot
+        case .eucUnknownTopology: eucUnknownTopologyBmsSnapshot
+        default: nil
+        }
+    }
 
     var testScript: CutoutSessionTestScript {
         CutoutSessionTestScript(
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
-            bmsSnapshot: self == .euc ? eucBmsSnapshot : nil,
+            bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
             failsConnection: failsConnection,
             emitsLateLiveAfterFailure: failsConnection,
@@ -1002,6 +1014,25 @@ enum CutoutUITestSessionFixture {
                     alertLevel: .nominal
                 )
             ]
+        )
+    }
+
+    private var eucUnknownTopologyBmsSnapshot: BmsSnapshot {
+        BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "topology unverified",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            ),
+            voltage: Voltage(value: 82_000),
+            faultSummary: "BMS found, map unknown",
+            faultDetail: "Awaiting a verified topology.",
+            faults: [BmsFault(code: "0x0040", label: "needs decoder", level: .warning)],
+            captureActionTitle: "Record unsupported pack",
+            captureActionState: "disabled for launch"
         )
     }
 }

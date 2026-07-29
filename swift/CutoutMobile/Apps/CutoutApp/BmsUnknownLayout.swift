@@ -19,10 +19,9 @@ struct BmsUnknownLayout: View {
             )
 
             PevDashboardGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: 14),
-                    GridItem(.flexible(), spacing: 14),
-                ],
+                adaptiveMinimumColumnWidth: 140,
+                accessibilityMinimumColumnWidth: 280,
+                columnSpacing: 14,
                 spacing: 14
             ) {
                 PevDashboardMetricTile(
