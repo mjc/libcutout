@@ -10,13 +10,13 @@ struct BmsOverviewLayout: View {
         VStack(alignment: .leading, spacing: 14) {
             summaryCard
 
-            if hasCellVoltageEvidence {
+            if overviewPresentation.averageGroupVoltage != nil || overviewPresentation.lowestGroupVoltage != nil {
                 PevDashboardGrid(
                     adaptiveMinimumColumnWidth: 140,
                     columnSpacing: 14,
                     spacing: 14
                 ) {
-                    if let averageGroupVoltage {
+                    if let averageGroupVoltage = overviewPresentation.averageGroupVoltage {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.average_group"),
                             metricValue: bmsVoltageMetricValue(averageGroupVoltage),
@@ -24,23 +24,23 @@ struct BmsOverviewLayout: View {
                             detail: ""
                         )
                     }
-                    if let lowestGroupVoltage {
+                    if let lowestGroupVoltage = overviewPresentation.lowestGroupVoltage {
                         PevDashboardMetricTile(
                             label: localizedAppText("bms.overview.lowest_group"),
                             metricValue: bmsVoltageMetricValue(lowestGroupVoltage),
                             unit: RideUnits.voltageUnit,
-                            detail: snapshot.lowestGroupLabel ?? ""
+                            detail: overviewPresentation.lowestGroupLabel
                         )
                     }
                 }
             }
 
-            if hasTemperatureEvidence {
+            if let highestTemperature = overviewPresentation.highestTemperature {
                 PevDashboardMetricTile(
                     label: localizedAppText("bms.overview.highest_temperature"),
-                    metricValue: bmsTemperatureMetricValue(snapshot.highestTemperature),
+                    metricValue: bmsTemperatureMetricValue(highestTemperature),
                     unit: RideUnits.temperatureUnit,
-                    detail: snapshot.highestTemperatureLabel ?? ""
+                    detail: overviewPresentation.highestTemperatureLabel
                 )
             }
 
@@ -83,27 +83,7 @@ struct BmsOverviewLayout: View {
         }
     }
 
-    private var lowestGroupVoltage: Voltage? {
-        guard let lowestGroupIndex = snapshot.lowestGroupIndex else { return nil }
-        return snapshot.groups.first { $0.index == lowestGroupIndex }?.voltage.flatMap(nonZeroVoltage)
-    }
-
-    private var averageGroupVoltage: Voltage? {
-        guard hasCellVoltageEvidence else { return nil }
-        return snapshot.averageGroupVoltage.flatMap(nonZeroVoltage)
-    }
-
-    private var hasCellVoltageEvidence: Bool {
-        snapshot.groups.contains { group in
-            group.voltage.map { $0.value > 0 } ?? false
-        }
-    }
-
-    private func nonZeroVoltage(_ voltage: Voltage) -> Voltage? {
-        voltage.value > 0 ? voltage : nil
-    }
-
-    private var hasTemperatureEvidence: Bool {
-        snapshot.highestTemperature != nil && (!snapshot.temperatureReadings.isEmpty || snapshot.highestTemperatureLabel != nil)
+    private var overviewPresentation: BmsOverviewPresentation {
+        snapshot.overviewPresentation
     }
 }

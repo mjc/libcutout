@@ -487,6 +487,32 @@ final class BmsSnapshotContractTests: XCTestCase {
 
         XCTAssertEqual(snapshot.averageGroupVoltage, Voltage(value: 4_080))
         XCTAssertEqual(snapshot.lowestGroupLabel, "group 17")
+
+        let overview = snapshot.overviewPresentation
+        XCTAssertEqual(overview.averageGroupVoltage, Voltage(value: 4_080))
+        XCTAssertEqual(overview.lowestGroupVoltage, Voltage(value: 4_071))
+        XCTAssertEqual(overview.lowestGroupLabel, "group 17")
+        XCTAssertNil(overview.highestTemperature)
+        XCTAssertEqual(overview.highestTemperatureLabel, "")
+
+        let zeroReadings = BmsSnapshot(
+            topology: snapshot.topology,
+            lowestGroupIndex: 17,
+            highestTemperature: Temperature(value: 0),
+            groups: [BmsGroupSnapshot(index: 17, voltage: Voltage(value: 0))]
+        ).overviewPresentation
+        XCTAssertNil(zeroReadings.averageGroupVoltage)
+        XCTAssertNil(zeroReadings.lowestGroupVoltage)
+        XCTAssertNil(zeroReadings.highestTemperature)
+
+        let temperatureReadings = BmsSnapshot(
+            topology: snapshot.topology,
+            highestTemperature: Temperature(value: 37_800),
+            temperatureReadings: [Temperature(value: 37_800)],
+            highestTemperatureLabel: "right pack"
+        ).overviewPresentation
+        XCTAssertEqual(temperatureReadings.highestTemperature, Temperature(value: 37_800))
+        XCTAssertEqual(temperatureReadings.highestTemperatureLabel, "right pack")
     }
 
     func testSnapshotExposesCellMapHelpersForFlaggedGroups() {

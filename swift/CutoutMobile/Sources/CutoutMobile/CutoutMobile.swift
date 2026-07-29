@@ -2306,6 +2306,14 @@ public enum BmsNoDataTextRow: Hashable, Sendable, Identifiable {
     }
 }
 
+public struct BmsOverviewPresentation: Equatable, Hashable, Sendable {
+    public let averageGroupVoltage: Voltage?
+    public let lowestGroupVoltage: Voltage?
+    public let lowestGroupLabel: String
+    public let highestTemperature: Temperature?
+    public let highestTemperatureLabel: String
+}
+
 public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let availability: ReadbackAvailability
     public let topology: BmsTopology
@@ -2624,6 +2632,28 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
 
     public var lowestGroupLabel: String? {
         lowestGroupIndex.map { pevLocalizedText("bms.cell_map.group_label", Int64($0)) }
+    }
+
+    public var overviewPresentation: BmsOverviewPresentation {
+        let hasCellVoltageEvidence = groups.contains { group in
+            group.voltage.map { $0.value > 0 } ?? false
+        }
+        let averageGroupVoltage = hasCellVoltageEvidence
+            ? self.averageGroupVoltage.flatMap { $0.value > 0 ? $0 : nil }
+            : nil
+        let lowestGroupVoltage = lowestGroupIndex
+            .flatMap { index in groups.first { $0.index == index }?.voltage }
+            .flatMap { $0.value > 0 ? $0 : nil }
+        let hasTemperatureEvidence = highestTemperature != nil
+            && (!temperatureReadings.isEmpty || highestTemperatureLabel != nil)
+
+        return BmsOverviewPresentation(
+            averageGroupVoltage: averageGroupVoltage,
+            lowestGroupVoltage: lowestGroupVoltage,
+            lowestGroupLabel: lowestGroupLabel ?? "",
+            highestTemperature: hasTemperatureEvidence ? highestTemperature : nil,
+            highestTemperatureLabel: highestTemperatureLabel ?? ""
+        )
     }
 
     public var cellMapVisibilitySummary: String {
