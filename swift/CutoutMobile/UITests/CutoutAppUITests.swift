@@ -485,11 +485,13 @@ final class CutoutAppUITests: XCTestCase {
             )
             XCTAssertEqual(XCTWaiter.wait(for: [retrying], timeout: 5), .completed)
             XCTAssertNotEqual(status.label, "Retrying connection…")
+            XCTAssertFalse((status.value as? String)?.isEmpty ?? true)
         } else {
             let retrying = app.descendants(matching: .any).matching(
                 NSPredicate(format: "label CONTAINS %@", "Retrying connection")
             ).firstMatch
             XCTAssertTrue(retrying.waitForExistence(timeout: 5))
+            XCTAssertEqual(retrying.value as? String, "warning")
         }
         XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.vesc.screenIdentifier)
         XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
