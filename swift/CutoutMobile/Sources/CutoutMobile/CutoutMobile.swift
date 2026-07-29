@@ -748,6 +748,16 @@ public struct ChargeVoltageSagEstimate: Equatable, Hashable, Sendable {
     }
 }
 
+public enum ChargeEstimateDashboardDetail: Equatable, Hashable, Sendable {
+    case standard(String)
+    case voltageSag(ChargeVoltageSagEstimate, estimateDetail: String)
+}
+
+public struct ChargeEstimateDashboardPresentation: Equatable, Hashable, Sendable {
+    public let metricValue: PevDashboardMetricValue
+    public let detail: ChargeEstimateDashboardDetail
+}
+
 public struct ChargeTimeEstimate: Equatable, Hashable, Sendable {
     public let lower: ChargeEstimateDuration
     public let expected: ChargeEstimateDuration
@@ -851,6 +861,14 @@ public struct ChargeEstimateState: Equatable, Hashable, Sendable {
         case .failed:
             return pevLocalizedText("charge.estimate.detail.failed")
         }
+    }
+
+    public var dashboardPresentation: ChargeEstimateDashboardPresentation {
+        ChargeEstimateDashboardPresentation(
+            metricValue: kind.dashboardMetricValue(display: displayValue),
+            detail: voltageSag.map { .voltageSag($0, estimateDetail: displayDetail) }
+                ?? .standard(displayDetail)
+        )
     }
 }
 

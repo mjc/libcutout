@@ -68,5 +68,16 @@ final class VoltageSagModelStoreTests: XCTestCase {
             try XCTUnwrap(state.voltageSag).loadCurrentVerification,
             VerificationState.hardwareVerified
         )
+
+        let presentation = state.dashboardPresentation
+        XCTAssertEqual(
+            presentation.metricValue,
+            .status(display: "estimating", accessibility: "estimating")
+        )
+        guard case let .voltageSag(sag, estimateDetail) = presentation.detail else {
+            return XCTFail("expected the source-owned voltage-sag detail")
+        }
+        XCTAssertEqual(sag.deltaMillivolts, -1_250)
+        XCTAssertEqual(estimateDetail, "estimating charge time · 0 samples")
     }
 }

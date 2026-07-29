@@ -319,24 +319,28 @@ func vescRideSubtitle(_ snapshot: VescRideSnapshot) -> String {
 }
 
 func chargeEstimateTile(from state: EucRideScreenState) -> PevDashboardTile {
-    let estimate = state.chargeEstimate
-    let detail = if let voltageSag = estimate.voltageSag {
-        localizedAppText(
-            "ride.charge.detail.with_voltage_sag",
-            voltageSagDetail(voltageSag),
-            estimate.displayDetail
-        )
-    } else {
-        estimate.displayDetail
-    }
+    let presentation = state.chargeEstimate.dashboardPresentation
     return PevDashboardTile(
         kind: .chargeEstimate,
         label: localizedAppText("ride.metric.charge"),
-        metricValue: estimate.kind.dashboardMetricValue(display: estimate.displayValue),
+        metricValue: presentation.metricValue,
         unit: "",
-        detail: detail,
+        detail: chargeEstimateDetail(presentation.detail),
         accent: .green
     )
+}
+
+func chargeEstimateDetail(_ detail: ChargeEstimateDashboardDetail) -> String {
+    switch detail {
+    case let .voltageSag(voltageSag, estimateDetail):
+        localizedAppText(
+            "ride.charge.detail.with_voltage_sag",
+            voltageSagDetail(voltageSag),
+            estimateDetail
+        )
+    case let .standard(estimateDetail):
+        estimateDetail
+    }
 }
 
 func voltageSagDetail(_ sag: ChargeVoltageSagEstimate) -> String {
