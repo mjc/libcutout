@@ -160,6 +160,42 @@ private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
     }
 }
 
+#if DEBUG
+public struct CutoutSessionTestScript {
+    public let candidate: DevicePickerDiscoveryCandidate
+    public let telemetry: TelemetrySnapshot?
+    public let bmsSnapshot: BmsSnapshot?
+    public let startsLive: Bool
+    public let failsConnection: Bool
+    public let emitsLateLiveAfterFailure: Bool
+    public let emitsStaleTelemetry: Bool
+    public let flushCaptureSucceeds: Bool
+    public let connectionDelayMilliseconds: UInt64
+
+    public init(
+        candidate: DevicePickerDiscoveryCandidate,
+        telemetry: TelemetrySnapshot?,
+        bmsSnapshot: BmsSnapshot? = nil,
+        startsLive: Bool = false,
+        failsConnection: Bool = false,
+        emitsLateLiveAfterFailure: Bool = false,
+        emitsStaleTelemetry: Bool = false,
+        flushCaptureSucceeds: Bool = true,
+        connectionDelayMilliseconds: UInt64 = 1_000
+    ) {
+        self.candidate = candidate
+        self.telemetry = telemetry
+        self.bmsSnapshot = bmsSnapshot
+        self.startsLive = startsLive
+        self.failsConnection = failsConnection
+        self.emitsLateLiveAfterFailure = emitsLateLiveAfterFailure
+        self.emitsStaleTelemetry = emitsStaleTelemetry
+        self.flushCaptureSucceeds = flushCaptureSucceeds
+        self.connectionDelayMilliseconds = connectionDelayMilliseconds
+    }
+}
+#endif
+
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
@@ -215,6 +251,10 @@ public final class CutoutSessionCore: NSObject {
     private var lastDisplayPublication: MonotonicMilliseconds?
     private let phoneLocationState = MobilePhoneLocationState()
     private var didRequestAlwaysLocationAuthorization = false
+#if DEBUG
+    private let testScript: CutoutSessionTestScript?
+    private var testScriptWorkItem: DispatchWorkItem?
+#endif
     private lazy var locationManager: CLLocationManager = {
         let manager = CLLocationManager()
         manager.delegate = self
@@ -228,15 +268,34 @@ public final class CutoutSessionCore: NSObject {
         self.init(clock: MonotonicClock())
     }
 
+#if DEBUG
+    public convenience init(testScript: CutoutSessionTestScript) {
+        self.init(clock: MonotonicClock(), testScript: testScript)
+    }
+
+    init(clock: MonotonicClock, testScript: CutoutSessionTestScript? = nil) {
+        self.clock = clock
+        self.testScript = testScript
+        super.init()
+        bleQueue.setSpecific(key: bleQueueKey, value: ())
+    }
+#else
     init(clock: MonotonicClock) {
         self.clock = clock
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
+#endif
 
     public func start() {
+#if DEBUG
+        if let testScript {
+            start(testScript: testScript)
+            return
+        }
+#endif
         startLocationUpdates()
-        onBleQueue {
+        return onBleQueue {
             guard central == nil else {
                 return
             }
@@ -256,7 +315,12 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func pair(platformIdentifier: String) -> Bool {
-        onBleQueue {
+#if DEBUG
+        if let testScript {
+            return onBleQueue { pair(testScript: testScript, platformIdentifier: platformIdentifier) }
+        }
+#endif
+        return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
             let advertisement = snapshot.advertisement(platformIdentifier: platformIdentifier)
@@ -274,7 +338,14 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
-        onBleQueue {
+#if DEBUG
+        if let testScript {
+            return onBleQueue {
+                pair(testScript: testScript, platformIdentifier: platformIdentifier, model: model)
+            }
+        }
+#endif
+        return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
             return connectIfReady(
@@ -288,7 +359,22 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func recordOnly(platformIdentifier: String, note: String? = nil, annotations: [String] = []) -> Bool {
-        onBleQueue {
+#if DEBUG
+        if let testScript {
+            guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
+            let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
+            publishCaptureEvent(.started(fileURL: fileURL))
+            publishCaptureEvent(.progress(CaptureProgress(
+                elapsedMilliseconds: 63_000,
+                notificationCount: 42,
+                fileSizeBytes: 12_288,
+                queuedMessageCount: 0,
+                writerError: nil
+            )))
+            return true
+        }
+#endif
+        return onBleQueue {
             let identifier = CoreBluetoothPeripheralIdentifier(platformIdentifier)
             let snapshot = rustSessionState.selectDiscoveredPlatform(platformIdentifier: platformIdentifier)
             guard
@@ -315,7 +401,12 @@ public final class CutoutSessionCore: NSObject {
     }
 
     public func flushCapture() -> Bool {
-        onBleQueue {
+#if DEBUG
+        if let testScript {
+            return testScript.flushCaptureSucceeds
+        }
+#endif
+        return onBleQueue {
             captureBuilder?.flushWriter() ?? false
         }
     }
@@ -354,7 +445,98 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+#if DEBUG
+    private func start(testScript: CutoutSessionTestScript) {
+        onBleQueue {
+            testScriptWorkItem?.cancel()
+            displayState = RideDisplayState()
+            publishDisplayState()
+            scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
+            publishScanState()
+            setPhase(.scanning)
+            if testScript.startsLive {
+                _ = pair(testScript: testScript, platformIdentifier: testScript.candidate.platformIdentifier)
+            }
+        }
+    }
+
+    private func pair(
+        testScript: CutoutSessionTestScript,
+        platformIdentifier: String,
+        model: ElectricUnicycleModel? = nil
+    ) -> Bool {
+        guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
+        guard case let .supported(route, candidateModel) = testScript.candidate.support else { return false }
+        let selectedModel = model ?? candidateModel
+        if route == .electricUnicycle, selectedModel == nil {
+            return false
+        }
+
+        self.selectedRoute = route
+        self.selectedModel = selectedModel
+        testScriptWorkItem?.cancel()
+        setPhase(.discoveringServices)
+        setPhase(.subscribing)
+        let work = DispatchWorkItem { [weak self] in
+            self?.onBleQueue {
+                self?.finish(testScript: testScript)
+            }
+        }
+        testScriptWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: testScript.connectionDelayMilliseconds)),
+            execute: work
+        )
+        return true
+    }
+
+    private func finish(testScript: CutoutSessionTestScript) {
+        if testScript.failsConnection {
+            setPhase(.failed(.connectFailed("deterministic fixture")))
+            guard testScript.emitsLateLiveAfterFailure else { return }
+            let work = DispatchWorkItem { [weak self] in
+                self?.onBleQueue {
+                    self?.emit(testScript: testScript)
+                }
+            }
+            testScriptWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500), execute: work)
+            return
+        }
+        emit(testScript: testScript)
+    }
+
+    private func emit(testScript: CutoutSessionTestScript) {
+        if testScript.startsLive {
+            protocolIdentityCandidate = testScript.candidate
+            publishProtocolIdentityCandidate()
+        }
+        guard let telemetry = testScript.telemetry else {
+            setPhase(.live)
+            return
+        }
+        let receivedAt = if testScript.emitsStaleTelemetry {
+            MonotonicMilliseconds(
+                clock.now().rawValue > RideTelemetryFreshnessPolicy.staleAfter.rawValue
+                    ? clock.now().rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
+                    : 0
+            )
+        } else {
+            clock.now()
+        }
+        let actions = testScript.bmsSnapshot.map { [SessionAction.withBmsSnapshot($0)] } ?? []
+        applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
+            receivedAt: receivedAt
+        )
+    }
+#endif
+
     private func disconnectAndScanOnBleQueue() {
+#if DEBUG
+        testScriptWorkItem?.cancel()
+        testScriptWorkItem = nil
+#endif
         suppressReconnect = true
         cancelPendingReconnect()
         isRecordOnly = false
@@ -381,7 +563,15 @@ public final class CutoutSessionCore: NSObject {
         peripheral = nil
         advertisement = nil
 
+        #if DEBUG
+        if let testScript {
+            scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
+        } else {
+            scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
+        }
+        #else
         scanState = DevicePickerScanState(status: .scanning, discoverySnapshot: rustSessionState.discoverySnapshot())
+        #endif
         publishScanState()
         setPhase(.scanning)
         central?.scanForPeripherals(withServices: nil)

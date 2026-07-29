@@ -573,7 +573,7 @@ final class CutoutAppModel {
     private static func makeSessionDriver() -> any CutoutSessionDriving {
         #if DEBUG
         if let fixture = uiTestFixture {
-            return CutoutUITestSessionDriver(fixture: fixture)
+            return CutoutSessionCore(testScript: fixture.testScript)
         }
         #endif
         return CutoutSessionCore()
@@ -943,128 +943,24 @@ enum CutoutUITestSessionFixture {
     var emitsStaleTelemetry: Bool { self == .staleVesc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool { self == .euc || self == .eucNoBms }
-}
 
-@MainActor
-private final class CutoutUITestSessionDriver: CutoutSessionDriving {
-    var onDisplayStateChange: ((RideDisplayState) -> Void)?
-    var onPhaseChange: ((SessionConnectionPhase) -> Void)?
-    var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
-    var onCaptureEvent: ((CaptureEvent) -> Void)?
-    var onScanStateChange: ((DevicePickerScanState) -> Void)?
-    var onSettingsReadbackChange: ((SettingsReadback?) -> Void)?
-    var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
-    var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
-    var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
-    var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
-    private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
-
-    private let fixture: CutoutUITestSessionFixture
-    private var connectionTask: Task<Void, Never>?
-
-    init(fixture: CutoutUITestSessionFixture) {
-        self.fixture = fixture
+    var testScript: CutoutSessionTestScript {
+        CutoutSessionTestScript(
+            candidate: candidate,
+            telemetry: emitsPendingTelemetry ? nil : telemetry,
+            bmsSnapshot: self == .euc ? eucBmsSnapshot : nil,
+            startsLive: startsLive,
+            failsConnection: failsConnection,
+            emitsLateLiveAfterFailure: failsConnection,
+            emitsStaleTelemetry: emitsStaleTelemetry,
+            flushCaptureSucceeds: flushCaptureSucceeds,
+            connectionDelayMilliseconds: startsLive ? 0 : (failsConnection ? 3_000 : 1_000)
+        )
     }
 
-    deinit {
-        connectionTask?.cancel()
-    }
-
-    func start() {
-        connectionTask?.cancel()
-        onDisplayStateChange?(RideDisplayState())
-        if fixture.startsLive {
-            emitLiveState()
-            return
-        }
-        onScanStateChange?(DevicePickerScanState(status: .idle, rows: [fixture.candidate.pickerRow]))
-        onPhaseChange?(.scanning)
-    }
-
-    func pair(platformIdentifier: String) -> Bool {
-        guard platformIdentifier == fixture.candidate.platformIdentifier else { return false }
-        connectionTask?.cancel()
-        onPhaseChange?(.discoveringServices)
-        onPhaseChange?(.subscribing)
-        connectionTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await Task.sleep(for: .milliseconds(self.fixture.failsConnection ? 3_000 : 1_000))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            if self.fixture.failsConnection {
-                self.onPhaseChange?(.failed(.connectFailed("deterministic fixture")))
-                do {
-                    try await Task.sleep(for: .milliseconds(500))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                self.emitLiveState()
-            } else {
-                self.emitLiveState()
-            }
-        }
-        return true
-    }
-
-    func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool {
-        pair(platformIdentifier: platformIdentifier)
-    }
-
-    func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool {
-        guard platformIdentifier == fixture.candidate.platformIdentifier else { return false }
-        let captureEvent = onCaptureEvent
-        DispatchQueue.main.async {
-            let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
-            captureEvent?(.started(fileURL: fileURL))
-            captureEvent?(.progress(CaptureProgress(
-                elapsedMilliseconds: 63_000,
-                notificationCount: 42,
-                fileSizeBytes: 12_288,
-                queuedMessageCount: 0,
-                writerError: nil
-            )))
-        }
-        return true
-    }
-
-    func annotateCapture(label: String) {}
-
-    func annotateCapture(key: String, value: String) {}
-
-    func flushCapture() -> Bool { fixture.flushCaptureSucceeds }
-
-    func disconnectAndScan() {
-        connectionTask?.cancel()
-        protocolIdentityCandidate = nil
-        onProtocolIdentityCandidateChange?(nil)
-        onDisplayStateChange?(RideDisplayState())
-        onScanStateChange?(DevicePickerScanState(status: .idle, rows: [fixture.candidate.pickerRow]))
-        onPhaseChange?(.scanning)
-    }
-
-    func now() -> MonotonicMilliseconds {
-        MonotonicMilliseconds(UInt64(ProcessInfo.processInfo.systemUptime * 1_000))
-    }
-
-    private func emitLiveState() {
-        let now = now()
-        if fixture.startsLive {
-            protocolIdentityCandidate = fixture.candidate
-            onProtocolIdentityCandidateChange?(fixture.candidate)
-        }
-
-        if fixture.emitsPendingTelemetry {
-            onPhaseChange?(.live)
-            return
-        }
-
-        if fixture.isEuc {
-            let telemetry = TelemetrySnapshot(
-                at: now,
+    private var telemetry: TelemetrySnapshot {
+        if isEuc {
+            return TelemetrySnapshot(
                 speed: Speed(value: 12_000),
                 speedSource: .reported,
                 speedQuality: .known,
@@ -1074,43 +970,18 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
                 controllerTemperature: Temperature(value: 31_000),
                 batteryLevelReported: BatteryLevel(value: 64)
             )
-            onDisplayStateChange?(RideDisplayState(
-                speed: SpeedReadout(snapshot: telemetry),
-                telemetry: telemetry,
-                notificationCount: 1,
-                lastUpdate: now
-            ))
-            if fixture == .euc {
-                onBmsSnapshotChange?(eucBmsSnapshot)
-            }
-        } else {
-            let telemetryTimestamp = if fixture.emitsStaleTelemetry {
-                MonotonicMilliseconds(
-                    now.rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
-                )
-            } else {
-                now
-            }
-            let telemetry = TelemetrySnapshot(
-                at: telemetryTimestamp,
-                speed: Speed(value: 8_000),
-                speedSource: .reported,
-                speedQuality: .known,
-                operatingState: .riding,
-                voltage: Voltage(value: 50_400),
-                batteryCurrent: BatteryCurrent(value: 12_000),
-                controllerTemperature: Temperature(value: 32_000),
-                pwm: DutyCycle(permille: 230),
-                batteryLevelReported: BatteryLevel(value: 72)
-            )
-            onDisplayStateChange?(RideDisplayState(
-                speed: SpeedReadout(snapshot: telemetry),
-                telemetry: telemetry,
-                notificationCount: 1,
-                lastUpdate: telemetryTimestamp
-            ))
         }
-        onPhaseChange?(.live)
+        return TelemetrySnapshot(
+            speed: Speed(value: 8_000),
+            speedSource: .reported,
+            speedQuality: .known,
+            operatingState: .riding,
+            voltage: Voltage(value: 50_400),
+            batteryCurrent: BatteryCurrent(value: 12_000),
+            controllerTemperature: Temperature(value: 32_000),
+            pwm: DutyCycle(permille: 230),
+            batteryLevelReported: BatteryLevel(value: 72)
+        )
     }
 
     private var eucBmsSnapshot: BmsSnapshot {
@@ -1159,4 +1030,5 @@ private final class CutoutUITestSessionDriver: CutoutSessionDriving {
         )
     }
 }
+
 #endif

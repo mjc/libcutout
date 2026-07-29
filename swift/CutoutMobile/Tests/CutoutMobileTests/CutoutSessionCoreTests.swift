@@ -145,6 +145,56 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
+    func testScriptedSessionUsesTheCorePublicationPath() {
+        let live = expectation(description: "scripted session reaches live")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                connectionDelayMilliseconds: 0
+            )
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        wait(for: [live], timeout: 1)
+        XCTAssertEqual(core.phase, .live)
+        XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
+    }
+
+    func testExplicitDisconnectCancelsTheScriptedLateLiveCallback() {
+        let live = expectation(description: "late scripted callback is ignored")
+        live.isInverted = true
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                connectionDelayMilliseconds: 50
+            )
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        core.disconnectAndScan()
+
+        wait(for: [live], timeout: 0.2)
+        XCTAssertEqual(core.phase, .scanning)
+        XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
+        XCTAssertNil(core.displayState.speed.millimetersPerSecond)
+    }
+
     func testRecordOnlyMissingCandidateReturnsFalse() {
         let core = CutoutSessionCore()
 
@@ -2177,6 +2227,18 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                 SessionDebugRow(label: "Notifications", value: "7"),
                 SessionDebugRow(label: "Last update", value: "9876 ms"),
             ]
+        )
+    }
+
+    private var scriptedVescCandidate: DevicePickerDiscoveryCandidate {
+        DevicePickerDiscoveryCandidate(
+            platformIdentifier: "scripted-vesc",
+            displayName: "Scripted VESC",
+            productCategory: "VESC Onewheel",
+            evidence: "test script",
+            detail: "core callback fixture",
+            support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
+            symbolName: "circle.hexagongrid.circle"
         )
     }
 }
