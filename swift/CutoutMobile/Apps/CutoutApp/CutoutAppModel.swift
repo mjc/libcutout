@@ -223,6 +223,13 @@ final class CutoutAppModel {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
 
+    var eucRidePresentationState: EucRideScreenState? {
+        guard selectedRideTitle != nil || phase != .starting || displayState.notificationCount != 0 else {
+            return nil
+        }
+        return rideState
+    }
+
     var vescRideSnapshot: VescRideSnapshot? {
         VescRideSnapshot(displayState: displayState, title: selectedRideTitle)
     }

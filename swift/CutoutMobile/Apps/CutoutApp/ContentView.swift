@@ -259,9 +259,7 @@ private struct EucRideRouteView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             EucRideScreenView(
-                rideState: model.selectedRideTitle == nil && model.phase == .starting && model.displayState.notificationCount == 0
-                    ? nil
-                    : model.rideState,
+                rideState: model.eucRidePresentationState,
                 rideTitle: model.selectedRideTitle,
                 now: model.currentMonotonicTime,
                 captureStatusText: model.captureStatusText,

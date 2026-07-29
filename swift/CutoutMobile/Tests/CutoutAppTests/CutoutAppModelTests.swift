@@ -50,6 +50,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testEucRidePresentationStateOwnsInitialStateVisibility() {
+        let row = DevicePickerRow(
+            id: "euc-1234",
+            title: "EUC",
+            subtitle: "Electric unicycle",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .electricUnicycle
+        )
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: [row]))
+
+        XCTAssertNil(model.eucRidePresentationState)
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+
+        XCTAssertEqual(model.eucRidePresentationState?.phase, .discoveringServices)
+    }
+
+    @MainActor
     func testSupportedPickerActionStartsTheSelectedConnection() {
         let store = DevicePickerSelectionStore()
         store.clear()
