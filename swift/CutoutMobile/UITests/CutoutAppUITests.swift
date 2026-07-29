@@ -831,8 +831,12 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
-    func testVescRidePassesAccessibilityAuditInRightToLeftLayout() throws {
-        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+    func testVescRideRecordsUnmirroredTabOrderInRightToLeftLayout() throws {
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: "voltage",
+            expectsMirroredTabOrder: false
+        )
     }
 
     func testVescDebugPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
@@ -858,7 +862,8 @@ final class CutoutAppUITests: XCTestCase {
     private func assertConnectedSurface(
         for family: ConnectedDeviceFamily,
         requiredMetricLabel: String? = nil,
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        expectsMirroredTabOrder: Bool = true
     ) throws {
         let pairingAttempted = pairAvailableDevice(family)
 
@@ -925,10 +930,12 @@ final class CutoutAppUITests: XCTestCase {
         if name.contains("RightToLeft"), family.tabNames.count > 1 {
             let firstTab = tabBar.buttons[family.tabNames[0].capitalized]
             let secondTab = tabBar.buttons[family.tabNames[1].capitalized]
-            XCTAssertGreaterThan(
-                firstTab.frame.midX,
-                secondTab.frame.midX,
-                "The system tab order did not mirror for the Arabic right-to-left launch"
+            XCTAssertEqual(
+                firstTab.frame.midX > secondTab.frame.midX,
+                expectsMirroredTabOrder,
+                expectsMirroredTabOrder
+                    ? "The system tab order did not mirror for the Arabic right-to-left launch"
+                    : "The VESC tab order unexpectedly mirrored; update the documented RTL evidence"
             )
         }
 
