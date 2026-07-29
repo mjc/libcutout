@@ -96,26 +96,6 @@ private func pickerScanStatusTitle(_ scanState: DevicePickerScanState?) -> Strin
     }
 }
 
-func percentText(_ value: BatteryLevel) -> String {
-    localizedAppText("ride.value.percent", RideUnits.percentText(value.value))
-}
-
-func voltageText(_ value: Voltage) -> String {
-    RideUnits.voltageText(millivolts: value.value)
-}
-
-func currentText(_ value: BatteryCurrent) -> String {
-    RideUnits.currentText(milliamps: value.value)
-}
-
-func angleText(_ value: CutoutMobile.Angle) -> String {
-    RideUnits.angleText(millidegrees: value.value)
-}
-
-func temperatureText(_ value: Temperature) -> String {
-    RideUnits.temperatureText(millicelsius: value.value, fractionDigits: 1)
-}
-
 extension PevScreen {
     var displaySubtitle: String {
         subtitle.replacingOccurrences(of: " - ", with: " · ")
