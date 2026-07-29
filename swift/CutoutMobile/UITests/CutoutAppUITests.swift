@@ -222,6 +222,18 @@ final class CutoutAppUITests: XCTestCase {
         try assertProductionPickerAccessibility(excluding: .contrast)
     }
 
+    func testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        let useButton = app.buttons["device-picker.use.ui-test-vesc"]
+
+        XCTAssertTrue(useButton.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(
+            useButton.label,
+            "Use Refloat VESC, device VESC",
+            "The pseudolocalized launch did not expand catalog-backed picker copy"
+        )
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
@@ -685,6 +697,9 @@ final class CutoutAppUITests: XCTestCase {
             }
             if name.contains("IncreasedContrast") {
                 arguments += ["-UIAccessibilityDarkerSystemColorsEnabled", "YES"]
+            }
+            if name.contains("Pseudolocalized") {
+                arguments += ["-NSDoubleLocalizedStrings", "YES"]
             }
             if name.contains("RightToLeft") {
                 arguments += [
