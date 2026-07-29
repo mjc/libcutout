@@ -345,6 +345,19 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
     }
 
+    func testAdvancedCaptureCancelReturnsToPickerAtAccessibilityDynamicType() {
+        let advancedCapture = openAdvancedCapture()
+        let cancelCapture = app.buttons["device-picker.capture-kind.cancel"]
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+
+        XCTAssertTrue(cancelCapture.waitForExistence(timeout: 5))
+        XCTAssertTrue(cancelCapture.isHittable)
+        cancelCapture.tap()
+
+        XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+    }
+
     func testAdvancedCaptureControlsRemainReachableInRightToLeftLayout() throws {
         let advancedCapture = openAdvancedCapture()
         let captureKind = app.textFields["device-picker.capture-kind"]
