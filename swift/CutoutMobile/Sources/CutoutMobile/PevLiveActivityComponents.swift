@@ -34,17 +34,17 @@ public struct PevLiveActivityValueCell: View {
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 .textCase(compact ? .uppercase : nil)
 
-            HStack(alignment: .firstTextBaseline, spacing: compact ? 3 : 4) {
-                Text(value.displayValue)
-                    .font(compact ? .system(size: compactValueSize, weight: .semibold, design: .rounded) : .headline.weight(.semibold))
-                    .foregroundStyle(value.state == .available ? availableValueColor : PevLiveActivityPalette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let unit = value.unit {
-                    Text(unit)
-                        .font(compact ? .system(size: compactUnitSize, weight: .semibold) : .caption.weight(.semibold))
-                        .foregroundStyle(PevLiveActivityPalette.secondaryText)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline, spacing: compact ? 3 : 4) {
+                    valueText
+                    if let unit = value.unit {
+                        Text(unit)
+                            .font(compact ? .system(size: compactUnitSize, weight: .semibold) : .caption.weight(.semibold))
+                            .foregroundStyle(PevLiveActivityPalette.secondaryText)
+                    }
                 }
+
+                valueText
             }
 
             if showsStateText {
@@ -71,5 +71,12 @@ public struct PevLiveActivityValueCell: View {
 
     private var availableValueColor: Color {
         showsStateText ? PevLiveActivityPalette.primaryText : tint
+    }
+
+    private var valueText: some View {
+        Text(value.displayValue)
+            .font(compact ? .system(size: compactValueSize, weight: .semibold, design: .rounded) : .headline.weight(.semibold))
+            .foregroundStyle(value.state == .available ? availableValueColor : PevLiveActivityPalette.secondaryText)
+            .lineLimit(1)
     }
 }

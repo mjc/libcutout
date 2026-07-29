@@ -102,7 +102,6 @@ public struct PevLiveActivityHeader: View {
                 .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
             Circle()
                 .fill(snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                 .frame(width: 7, height: 7)
@@ -149,7 +148,6 @@ public struct PevLiveActivitySpeedGauge: View {
                 Text(speed.displayValue)
                     .font(.system(size: diameter * 0.35 * speedScale, weight: .bold, design: .rounded))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
                 if let unit = speed.unit {
                     Text(unit)
                         .font(.system(size: diameter * 0.13 * unitScale, weight: .medium))
@@ -187,22 +185,9 @@ public struct PevLiveActivityCompactPwmBar: View {
                 Capsule()
                     .fill(PevLiveActivityPalette.track)
                 pwmFill(width: proxy.size.width, pwm: pwm, severity: severity)
-                HStack(spacing: 3) {
-                    Text(speed.displayValue)
-                        .font(.caption.weight(.bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                    if let unit = speed.unit {
-                        Text(unit)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                    }
-                    if severity == .critical {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.caption2.weight(.bold))
-                            .accessibilityHidden(true)
-                    }
+                ViewThatFits(in: .horizontal) {
+                    compactSpeedLabel(speed: speed, severity: severity, includesUnit: true)
+                    compactSpeedLabel(speed: speed, severity: severity, includesUnit: false)
                 }
                 .foregroundStyle(PevLiveActivityPalette.primaryText)
             }
@@ -215,6 +200,29 @@ public struct PevLiveActivityCompactPwmBar: View {
                 .compactMap { $0 }
                 .joined(separator: ", ")
         )
+    }
+
+    @ViewBuilder
+    private func compactSpeedLabel(
+        speed: LiveActivityRideValue,
+        severity: LiveActivityRidePwmSeverity,
+        includesUnit: Bool
+    ) -> some View {
+        HStack(spacing: 3) {
+            Text(speed.displayValue)
+                .font(.caption.weight(.bold))
+                .lineLimit(1)
+            if includesUnit, let unit = speed.unit {
+                Text(unit)
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+            }
+            if severity == .critical {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.bold))
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     @ViewBuilder
@@ -359,12 +367,10 @@ public struct PevLiveActivityFooterChip: View {
                 .accessibilityHidden(true)
             Text(value.displayValue)
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
                 .foregroundStyle(value.state == .available ? PevLiveActivityPalette.primaryText : PevLiveActivityPalette.secondaryText)
             if let unit = value.unit {
                 Text(unit)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.75)
                     .foregroundStyle(PevLiveActivityPalette.secondaryText)
             }
         }

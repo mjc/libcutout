@@ -42,7 +42,6 @@ private struct CutoutRideLiveActivityWidget: Widget {
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(PevLiveActivityPalette.secondaryText)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.75)
                         Circle()
                             .fill(context.presentationSnapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                             .frame(width: 6, height: 6)
