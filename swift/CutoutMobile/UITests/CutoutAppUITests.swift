@@ -514,6 +514,24 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
     }
 
+    func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        XCTAssertTrue(screen.exists)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.ride"].exists)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.debug"].exists)
+
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
