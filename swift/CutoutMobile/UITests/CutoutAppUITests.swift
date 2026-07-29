@@ -452,6 +452,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescReconnectKeepsRideAccessible() throws {
+        try assertVescReconnectAccessibility()
+    }
+
+    func testVescReconnectKeepsRideAccessibleAtAccessibilityDynamicType() throws {
+        try assertVescReconnectAccessibility()
+    }
+
+    private func assertVescReconnectAccessibility() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let rideScreen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
