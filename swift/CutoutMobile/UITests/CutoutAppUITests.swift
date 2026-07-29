@@ -545,15 +545,16 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
         let connecting = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label BEGINSWITH %@", "Connecting"),
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
         let connectingLabel = connectionStatus.label
+        picker.swipeDown()
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
-        let picker = app.descendants(matching: .any)["device-picker.screen"]
         let failed = XCTNSPredicateExpectation(
             predicate: usesLocalizedText
                 ? NSPredicate(format: "label != %@", connectingLabel)
@@ -564,6 +565,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(connectionStatus.label.isEmpty)
+        picker.swipeDown()
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
         let lateRide = app.descendants(matching: .any)["dashboard.screen.vescRide"]
@@ -593,6 +595,7 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failedAgain], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
+        picker.swipeDown()
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
 
     }
