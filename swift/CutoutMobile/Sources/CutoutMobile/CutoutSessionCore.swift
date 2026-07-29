@@ -1421,10 +1421,6 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
         captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
-        guard isAllowedReadOnlyWrite(channel: channel, bytes: bytes) else {
-            setPhase(.failed(.skippedReadOnlyWrite))
-            return
-        }
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
             return
@@ -1503,39 +1499,6 @@ extension CutoutSessionCore {
         default:
             false
         }
-    }
-
-    func isAllowedReadOnlyWrite(channel: BluetoothUuid, bytes: Data) -> Bool {
-        isReadOnlyBegodeProbeWrite(channel: channel, bytes: bytes)
-            || isReadOnlyVescRequest(channel: channel, bytes: bytes)
-    }
-
-    func isReadOnlyVescRequest(channel: BluetoothUuid, bytes: Data) -> Bool {
-        channel == .vescNordicUartWrite
-            && (
-                bytes == Data([0x02, 0x01, 0x04, 0x40, 0x84, 0x03])
-                    || isReadOnlyRefloatRequest(bytes: bytes)
-            )
-    }
-
-    func isReadOnlyRefloatRequest(bytes: Data) -> Bool {
-        guard bytes.count >= 7,
-              bytes.first == 0x02,
-              bytes.last == 0x03,
-              Int(bytes[bytes.index(after: bytes.startIndex)]) + 5 == bytes.count
-        else {
-            return false
-        }
-        let payloadStart = bytes.index(bytes.startIndex, offsetBy: 2)
-        let payloadLength = Int(bytes[bytes.index(after: bytes.startIndex)])
-        guard payloadLength >= 3,
-              bytes[payloadStart] == 36,
-              bytes[bytes.index(after: payloadStart)] == 101
-        else {
-            return false
-        }
-        let command = bytes[bytes.index(payloadStart, offsetBy: 2)]
-        return command == 31 || command == 32
     }
 
     func observeDetectionNotification(channel: BluetoothUuid, bytes: Data) {

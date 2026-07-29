@@ -3576,7 +3576,6 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     case characteristicDiscoveryFailed(String)
     case notificationFailed(String)
     case notificationIngestFailed(String)
-    case skippedReadOnlyWrite
 
     public var displayText: String {
         switch self {
@@ -3596,8 +3595,6 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
             pevLocalizedText("euc.failure.notification", message)
         case .notificationIngestFailed(let message):
             pevLocalizedText("euc.failure.notification_ingest", message)
-        case .skippedReadOnlyWrite:
-            pevLocalizedText("euc.failure.read_only_write_skipped")
         }
     }
 }

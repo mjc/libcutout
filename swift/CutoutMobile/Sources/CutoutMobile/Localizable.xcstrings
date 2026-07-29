@@ -353,10 +353,6 @@
       "comment" : "Connection failure. The placeholder is the telemetry notification processing error description.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Notification ingest failed: %@" } } }
     },
-    "euc.failure.read_only_write_skipped" : {
-      "comment" : "Connection status when a write is intentionally skipped for a read-only device session.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Read-only MVP skipped a write operation" } } }
-    },
     "euc.failure.service_discovery" : {
       "comment" : "Connection failure. The placeholder is the platform's service-discovery error description.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Service discovery failed: %@" } } }

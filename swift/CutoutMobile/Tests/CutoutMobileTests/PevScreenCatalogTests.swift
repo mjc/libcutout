@@ -123,10 +123,6 @@ final class PevScreenCatalogTests: XCTestCase {
             pevLocalizedText("euc.failure.notification_ingest", "link dropped"),
             "Notification ingest failed: link dropped"
         )
-        XCTAssertEqual(
-            pevLocalizedText("euc.failure.read_only_write_skipped"),
-            "Read-only MVP skipped a write operation"
-        )
         XCTAssertEqual(pevLocalizedText("euc.warning.connection_failed"), "Connection failed")
         XCTAssertEqual(pevLocalizedText("euc.warning.reduce_acceleration"), "Reduce acceleration")
         XCTAssertEqual(pevLocalizedText("euc.warning.low_pwm_headroom"), "PWM headroom is low while riding")

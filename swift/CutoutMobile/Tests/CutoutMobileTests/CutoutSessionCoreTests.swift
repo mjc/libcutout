@@ -1297,6 +1297,17 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
     }
 
+    func testVescRealtimeTelemetryRequestDoesNotUseReadOnlyWriteGuard() {
+        let core = CutoutSessionCore()
+
+        core.writeWithoutResponse(
+            channel: .vescNordicUartWrite,
+            bytes: Data([0x02, 0x01, 0x0e, 0xe1, 0xce, 0x03])
+        )
+
+        XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
+    }
+
     func testFalconLinkUpPlansBegodeIdentityProbeWrites() throws {
         let runner = CoreBluetoothSessionRunner(
             session: try .electricUnicycle(model: .falcon),
@@ -1316,21 +1327,21 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
     }
 
-    func testUnrelatedWriteStillUsesSkippedWriteGuard() {
+    func testUnrelatedWriteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 
         core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data([0x01]))
 
-        XCTAssertEqual(core.phase, .failed(.skippedReadOnlyWrite))
+        XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertFalse(core.records.contains("begode_probe_write=model"))
     }
 
-    func testMultiBytePayloadStartingWithProbeByteStillUsesSkippedWriteGuard() {
+    func testMultiBytePayloadStartingWithProbeByteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 
         core.writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("NAME".utf8))
 
-        XCTAssertEqual(core.phase, .failed(.skippedReadOnlyWrite))
+        XCTAssertEqual(core.phase, .failed(.missingWriteChannel))
         XCTAssertFalse(core.records.contains("begode_probe_write=model"))
     }
 
