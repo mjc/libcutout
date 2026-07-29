@@ -268,6 +268,27 @@ public struct PevBmsContent: Equatable, Hashable, Sendable {
         self.modes = modes
     }
 
+    public static var unavailable: Self {
+        let snapshot = BmsSnapshot(
+            availability: .unavailable,
+            topology: BmsTopology(
+                layoutLabel: pevLocalizedText("bms.layout.no_live_readback"),
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 0,
+                bmsCount: 0,
+                confidence: .unverified
+            )
+        )
+        return Self(
+            kind: .noData,
+            snapshot: snapshot,
+            chips: [
+                PevBmsChip(id: .availability, title: pevLocalizedText("bms.chip.no_live_bms"), accent: .yellow),
+            ]
+        )
+    }
+
     public func resolved(with liveSnapshot: BmsSnapshot, preferredScreenID: PevScreenID) -> Self {
         Self.live(with: liveSnapshot, preferredScreenID: preferredScreenID)
     }
@@ -891,6 +912,10 @@ public struct PevScreen: Equatable, Hashable, Sendable, Identifiable {
         self.bmsContent = bmsContent
     }
 
+    public var bmsContentOrUnavailable: PevBmsContent {
+        bmsContent ?? .unavailable
+    }
+
     public func resolvedBmsContent(liveSnapshot: BmsSnapshot?) -> PevBmsContent? {
         guard let bmsContent else {
             return nil
@@ -953,30 +978,14 @@ public struct PevScreenCatalog: Equatable, Hashable, Sendable {
     }
 
     private static func noLiveBmsReadbackScreen() -> PevScreen {
-        let snapshot = BmsSnapshot(
-            availability: .unavailable,
-            topology: BmsTopology(
-                layoutLabel: pevLocalizedText("bms.layout.no_live_readback"),
-                seriesGroupCount: nil,
-                parallelCount: nil,
-                packCount: 0,
-                bmsCount: 0,
-                confidence: .unverified
-            )
-        )
+        let content = PevBmsContent.unavailable
 
         return PevScreen(
             id: .bmsNoData,
             title: pevLocalizedText("bms.title.battery"),
             subtitle: pevLocalizedText("bms.layout.no_live_readback"),
             secondaryValue: pevLocalizedText("bms.secondary.no_live_bms"),
-            bmsContent: PevBmsContent(
-                kind: .noData,
-                snapshot: snapshot,
-                chips: [
-                    PevBmsChip(id: .availability, title: pevLocalizedText("bms.chip.no_live_bms"), accent: .yellow),
-                ]
-            ),
+            bmsContent: content,
         )
     }
 

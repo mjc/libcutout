@@ -10,19 +10,7 @@ struct BmsScreenView: View {
     let showCellMap: () -> Void
 
     private var content: PevBmsContent {
-        screen.bmsContent ?? PevBmsContent(
-            kind: .unknownTopology,
-            snapshot: BmsSnapshot(
-                topology: BmsTopology(
-                    layoutLabel: "missing data",
-                    seriesGroupCount: nil,
-                    parallelCount: nil,
-                    packCount: 0,
-                    bmsCount: 0,
-                    confidence: .unverified
-                )
-            )
-        )
+        screen.bmsContentOrUnavailable
     }
 
     var body: some View {

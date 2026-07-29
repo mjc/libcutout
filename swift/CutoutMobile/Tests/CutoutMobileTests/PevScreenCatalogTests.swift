@@ -62,6 +62,22 @@ final class PevScreenCatalogTests: XCTestCase {
         })
     }
 
+    func testScreenWithoutBmsContentUsesTheLocalizedUnavailableBmsPresentation() {
+        let screen = PevScreen(
+            id: .bmsUnknownTopology,
+            title: "BMS",
+            subtitle: "Unavailable",
+            secondaryValue: "Unavailable"
+        )
+
+        let content = screen.bmsContentOrUnavailable
+
+        XCTAssertEqual(content.kind, .noData)
+        XCTAssertEqual(content.snapshot.availability, .unavailable)
+        XCTAssertEqual(content.snapshot.topology.layoutLabel, "Live BMS readback unavailable")
+        XCTAssertEqual(content.chips.map(\.title), ["no live BMS"])
+    }
+
     func testBmsAndDashboardMetadataResolveFromThePackageCatalog() {
         let catalog = PevScreenCatalog.live
 
