@@ -444,17 +444,17 @@ final class BmsSnapshotContractTests: XCTestCase {
                     metricValue: .status(display: "hardware verified", accessibility: "hardware verified"),
                     role: .transportMetadata
                 ),
-                SessionDebugRow(id: "charge", label: "charge", value: "72%"),
-                SessionDebugRow(id: "voltage", label: "voltage", value: "81.6"),
-                SessionDebugRow(id: "current", label: "current", value: "-12.4"),
-                SessionDebugRow(id: "bms-current-0", label: "bms current 0", value: "-8.1"),
-                SessionDebugRow(id: "bms-current-1", label: "bms current 1", value: "-4.3"),
-                SessionDebugRow(id: "high-group", label: "high group", value: "4.089"),
-                SessionDebugRow(id: "low-group", label: "low group", value: "4.071"),
-                SessionDebugRow(id: "delta", label: "delta", value: "18"),
-                SessionDebugRow(id: "lowest-group", label: "lowest group", value: "17"),
-                SessionDebugRow(id: "temperature", label: "temperature", value: "37.8"),
-                SessionDebugRow(id: "temperature-sensors", label: "temperature sensors", value: "2"),
+                availableDebugRow(id: "charge", label: "charge", value: "72%"),
+                availableDebugRow(id: "voltage", label: "voltage", value: "81.6"),
+                availableDebugRow(id: "current", label: "current", value: "-12.4"),
+                availableDebugRow(id: "bms-current-0", label: "bms current 0", value: "-8.1"),
+                availableDebugRow(id: "bms-current-1", label: "bms current 1", value: "-4.3"),
+                availableDebugRow(id: "high-group", label: "high group", value: "4.089"),
+                availableDebugRow(id: "low-group", label: "low group", value: "4.071"),
+                availableDebugRow(id: "delta", label: "delta", value: "18"),
+                availableDebugRow(id: "lowest-group", label: "lowest group", value: "17"),
+                availableDebugRow(id: "temperature", label: "temperature", value: "37.8"),
+                availableDebugRow(id: "temperature-sensors", label: "temperature sensors", value: "2"),
                 SessionDebugRow(
                     id: "topology",
                     label: "topology",
@@ -696,4 +696,12 @@ final class BmsSnapshotContractTests: XCTestCase {
             "BMS temperature, faults, and cutout reason",
         ])
     }
+}
+
+private func availableDebugRow(id: String, label: String, value: String) -> SessionDebugRow {
+    SessionDebugRow(
+        id: id,
+        label: label,
+        metricValue: .available(display: value, accessibility: value)
+    )
 }

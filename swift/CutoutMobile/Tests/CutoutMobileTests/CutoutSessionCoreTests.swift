@@ -2253,8 +2253,16 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(
             displayState.debugRows,
             [
-                SessionDebugRow(label: "Notifications", value: "7"),
-                SessionDebugRow(label: "Last update", value: "9876 ms"),
+                SessionDebugRow(
+                    id: "Notifications",
+                    label: "Notifications",
+                    metricValue: .status(display: "7", accessibility: "7")
+                ),
+                SessionDebugRow(
+                    id: "Last update",
+                    label: "Last update",
+                    metricValue: .status(display: "9876 ms", accessibility: "9876 ms")
+                ),
             ]
         )
     }

@@ -2964,23 +2964,6 @@ public struct SessionDebugRow: Equatable, Hashable, Sendable {
         self.role = role
     }
 
-    public init(
-        id: String,
-        label: String,
-        value: String,
-        role: SessionDebugRowRole = .data
-    ) {
-        self.init(
-            id: id,
-            label: label,
-            metricValue: .available(display: value, accessibility: value),
-            role: role
-        )
-    }
-
-    public init(label: String, value: String, role: SessionDebugRowRole = .data) {
-        self.init(id: label, label: label, value: value, role: role)
-    }
 }
 
 public extension ReadbackAvailability {
@@ -3033,8 +3016,19 @@ public struct RideDisplayState: Equatable, Hashable, Sendable {
 
     public var debugRows: [SessionDebugRow] {
         [
-            SessionDebugRow(label: "Notifications", value: "\(notificationCount)"),
-            SessionDebugRow(label: "Last update", value: lastUpdateText),
+            SessionDebugRow(
+                id: "Notifications",
+                label: "Notifications",
+                metricValue: .status(
+                    display: "\(notificationCount)",
+                    accessibility: "\(notificationCount)"
+                )
+            ),
+            SessionDebugRow(
+                id: "Last update",
+                label: "Last update",
+                metricValue: .status(display: lastUpdateText, accessibility: lastUpdateText)
+            ),
         ]
     }
 
