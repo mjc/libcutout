@@ -8,21 +8,8 @@ public struct PevDashboardProgressBar: View {
     let height: CGFloat
 
     var clampedProgress: Double? {
-        progress.map { max(0, min(1, $0)) }
-    }
-
-    public init(
-        label: String,
-        value: String,
-        progress: Double,
-        track: Color = PevDashboardColors.cardFill,
-        height: CGFloat = 17
-    ) {
-        self.label = label
-        metricValue = .available(display: value, accessibility: value)
-        self.progress = progress
-        self.track = track
-        self.height = height
+        guard case .available = metricValue else { return nil }
+        return progress.map { max(0, min(1, $0)) }
     }
 
     public init(

@@ -110,6 +110,23 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(bar.metricValue.accessibilityText, "unavailable")
     }
 
+    func testProgressSemanticsRejectsAFillForNonNumericMetricState() {
+        let values: [PevDashboardMetricValue] = [
+            .unavailable,
+            .status(display: "Not applicable", accessibility: "Not applicable"),
+        ]
+
+        for metricValue in values {
+            let bar = PevDashboardProgressBar(
+                label: "Headroom",
+                metricValue: metricValue,
+                progress: 0.77
+            )
+
+            XCTAssertNil(bar.clampedProgress)
+        }
+    }
+
     func testProgressCardUsesTheSameTypedUnavailableState() {
         let card = PevDashboardProgressCard(
             label: "Headroom",
@@ -313,7 +330,7 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     private func makeProgressBar(progress: Double) -> PevDashboardProgressBar {
         PevDashboardProgressBar(
             label: "Headroom",
-            value: "42 percent",
+            metricValue: .available(display: "42 percent", accessibility: "42 percent"),
             progress: progress
         )
     }
