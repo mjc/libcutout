@@ -404,10 +404,6 @@ func powerFlowDetail(_ direction: PowerFlowDirection?, fallback: String) -> Stri
     }
 }
 
-func liveThermalValue(telemetry: TelemetrySnapshot) -> PevDashboardMetricValue {
-    telemetry.thermalMetricValue
-}
-
 func liveThermalDetail(telemetry: TelemetrySnapshot) -> String {
     let unit = RideUnits.temperatureUnit
 
