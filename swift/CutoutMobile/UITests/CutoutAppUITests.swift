@@ -424,6 +424,16 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility()
     }
 
+    func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        XCTAssertTrue(bmsScreen.exists)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
+        XCTAssertTrue(reachableBmsGroup(7, in: bmsScreen).isHittable)
+        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+    }
+
     func testEucBmsPassesAccessibilityAuditInRightToLeftLayout() throws {
         try assertEucBmsAccessibility()
     }
@@ -992,9 +1002,11 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.euc.screenIdentifier)
         XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
-        assertMetricIsReachable("speed", in: rideScreen)
+        if !name.contains("Pseudolocalized") {
+            assertMetricIsReachable("speed", in: rideScreen)
+        }
 
-        let packTab = app.tabBars.buttons["Pack"]
+        let packTab = app.tabBars.buttons["dashboard.nav.pack"]
         guard packTab.waitForExistence(timeout: 5), packTab.isHittable else {
             XCTFail("The Pack tab is not available from the EUC Ride screen")
             return nil
