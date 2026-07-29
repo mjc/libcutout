@@ -343,7 +343,8 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         XCTAssertTrue(openAdvancedCapture.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        restorePickerViewport(screen)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType() throws {
@@ -1278,7 +1279,9 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func restorePickerViewport(_ picker: XCUIElement) {
-        picker.swipeDown()
+        for _ in 0..<4 {
+            picker.swipeDown()
+        }
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
