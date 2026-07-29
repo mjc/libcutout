@@ -843,6 +843,35 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testBmsSnapshotOwnsNoDataPresentationFacts() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "test pack",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .verified
+            ),
+            voltage: Voltage(value: 84_000),
+            current: BatteryCurrent(value: 12_400)
+        )
+
+        let presentation = snapshot.noDataPresentation(rideState: nil)
+
+        XCTAssertEqual(presentation.controllerEstimateDetail, .recentSag)
+        XCTAssertEqual(presentation.controllerConfidence, .medium)
+        XCTAssertEqual(
+            presentation.packVoltageMetricValue,
+            .available(display: "84.0", accessibility: "84.0")
+        )
+        XCTAssertEqual(
+            presentation.loadMetricValue,
+            .available(display: "12", accessibility: "12")
+        )
+        XCTAssertEqual(presentation.rideSagMetricValue, .unavailable)
+    }
+
     func testBmsVoltageUsesTypedUnavailableMetricValue() {
         let voltage: Voltage? = nil
         XCTAssertEqual(bmsVoltageMetricValue(voltage), .unavailable)

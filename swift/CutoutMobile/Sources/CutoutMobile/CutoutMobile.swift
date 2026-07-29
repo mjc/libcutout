@@ -3244,6 +3244,46 @@ public enum ControllerOnlyEstimateDetail: Equatable, Hashable, Sendable {
     case unavailable
 }
 
+public struct BmsNoDataPresentation: Equatable, Hashable, Sendable {
+    public let controllerEstimateMetricValue: PevDashboardMetricValue
+    public let controllerEstimateDetail: ControllerOnlyEstimateDetail
+    public let controllerConfidence: ControllerOnlyEstimateConfidence
+    public let packVoltageMetricValue: PevDashboardMetricValue
+    public let rideSagMetricValue: PevDashboardMetricValue
+    public let loadMetricValue: PevDashboardMetricValue
+
+    public init(snapshot: BmsSnapshot, rideState: EucRideScreenState?) {
+        let fallbackEstimateDetail: ControllerOnlyEstimateDetail
+        let fallbackConfidence: ControllerOnlyEstimateConfidence
+        if snapshot.voltage != nil, snapshot.current != nil {
+            fallbackEstimateDetail = .recentSag
+            fallbackConfidence = .medium
+        } else if snapshot.voltage != nil {
+            fallbackEstimateDetail = .voltageCurve
+            fallbackConfidence = .low
+        } else {
+            fallbackEstimateDetail = .unavailable
+            fallbackConfidence = snapshot.energyPercent == nil ? .unknown : .low
+        }
+
+        let telemetry = rideState?.telemetry
+        controllerEstimateMetricValue = snapshot.noDataPackEstimateMetricValue(
+            controllerEstimatePercent: rideState?.controllerOnlyEstimatePercent
+        )
+        controllerEstimateDetail = rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail
+        controllerConfidence = rideState?.controllerOnlyConfidence ?? fallbackConfidence
+        packVoltageMetricValue = bmsPackVoltageMetricValue(telemetry?.voltage ?? snapshot.voltage)
+        rideSagMetricValue = bmsVoltageSagMetricValue(rideState?.voltageSag)
+        loadMetricValue = bmsBatteryCurrentMetricValue(telemetry?.batteryCurrent ?? snapshot.current)
+    }
+}
+
+public extension BmsSnapshot {
+    func noDataPresentation(rideState: EucRideScreenState?) -> BmsNoDataPresentation {
+        BmsNoDataPresentation(snapshot: self, rideState: rideState)
+    }
+}
+
 public struct EucRideScreenState: Equatable, Hashable, Sendable {
     private static let reduceAccelerationPwmHeadroomThreshold = 250
 

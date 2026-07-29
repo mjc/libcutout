@@ -8,13 +8,11 @@ struct BmsNoDataLayout: View {
     let liveSnapshot: BmsSnapshot?
 
     private var snapshot: BmsSnapshot { content.snapshot }
-    private var controllerEstimateMetricValue: PevDashboardMetricValue {
-        snapshot.noDataPackEstimateMetricValue(
-            controllerEstimatePercent: rideState?.controllerOnlyEstimatePercent
-        )
+    private var presentation: BmsNoDataPresentation {
+        snapshot.noDataPresentation(rideState: rideState)
     }
     private var controllerEstimateDetail: String {
-        switch rideState?.controllerOnlyEstimateDetail ?? fallbackEstimateDetail {
+        switch presentation.controllerEstimateDetail {
         case .recentSag:
             localizedAppText("bms.no_data.estimate_detail.recent_sag")
         case .voltageCurve:
@@ -23,11 +21,8 @@ struct BmsNoDataLayout: View {
             localizedAppText("bms.no_data.estimate_detail.unavailable")
         }
     }
-    private var controllerConfidence: ControllerOnlyEstimateConfidence {
-        rideState?.controllerOnlyConfidence ?? fallbackConfidence
-    }
     private var controllerConfidenceTitle: String {
-        switch controllerConfidence {
+        switch presentation.controllerConfidence {
         case .medium:
             localizedAppText("bms.no_data.confidence.medium")
         case .low:
@@ -37,45 +32,12 @@ struct BmsNoDataLayout: View {
         }
     }
     private var controllerConfidenceDetail: String {
-        switch controllerConfidence {
+        switch presentation.controllerConfidence {
         case .medium, .low:
             localizedAppText("bms.no_data.confidence_detail.not_cell_safe")
         case .unknown:
             localizedAppText("bms.no_data.confidence_detail.telemetry_unavailable")
         }
-    }
-    private var packVoltage: Voltage? {
-        rideState?.telemetry?.voltage ?? snapshot.voltage
-    }
-    private var packCurrent: BatteryCurrent? {
-        rideState?.telemetry?.batteryCurrent ?? snapshot.current
-    }
-    private var packVoltageMetricValue: PevDashboardMetricValue {
-        bmsPackVoltageMetricValue(packVoltage)
-    }
-    private var rideSagMetricValue: PevDashboardMetricValue {
-        bmsVoltageSagMetricValue(rideState?.voltageSag)
-    }
-    private var loadMetricValue: PevDashboardMetricValue {
-        bmsBatteryCurrentMetricValue(packCurrent)
-    }
-    private var fallbackEstimateDetail: ControllerOnlyEstimateDetail {
-        if snapshot.voltage != nil, snapshot.current != nil {
-            return .recentSag
-        }
-        if snapshot.voltage != nil {
-            return .voltageCurve
-        }
-        return .unavailable
-    }
-    private var fallbackConfidence: ControllerOnlyEstimateConfidence {
-        if snapshot.voltage != nil, snapshot.current != nil {
-            return .medium
-        }
-        if snapshot.voltage != nil || snapshot.energyPercent != nil {
-            return .low
-        }
-        return .unknown
     }
 
     var body: some View {
@@ -87,16 +49,16 @@ struct BmsNoDataLayout: View {
                     BmsNoDataWarningCard(snapshot: snapshot)
 
                     BmsNoDataPackEstimateCard(
-                        metricValue: controllerEstimateMetricValue,
+                        metricValue: presentation.controllerEstimateMetricValue,
                         detail: controllerEstimateDetail,
                         confidenceTitle: controllerConfidenceTitle,
                         confidenceDetail: controllerConfidenceDetail
                     )
 
                     BmsNoDataTelemetryCard(
-                        voltageMetricValue: packVoltageMetricValue,
-                        rideSagMetricValue: rideSagMetricValue,
-                        loadMetricValue: loadMetricValue
+                        voltageMetricValue: presentation.packVoltageMetricValue,
+                        rideSagMetricValue: presentation.rideSagMetricValue,
+                        loadMetricValue: presentation.loadMetricValue
                     )
 
                     BmsNoDataUnknownsCard(rows: snapshot.noDataUnknownRows)
