@@ -135,7 +135,13 @@ final class CutoutAppUITests: XCTestCase {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
     }
 
-    private func assertFinishCaptureFailureKeepsCaptureScreenAccessible() throws {
+    func testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible(usesLocalizedText: true)
+    }
+
+    private func assertFinishCaptureFailureKeepsCaptureScreenAccessible(
+        usesLocalizedText: Bool = false
+    ) throws {
         enterCapture()
 
         let finish = app.buttons["capture.stop"]
@@ -143,17 +149,26 @@ final class CutoutAppUITests: XCTestCase {
         let status = app.descendants(matching: .any)["capture.status"]
 
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        let initialStatus = status.label
         finish.tap()
 
         let failure = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "Capture failed"),
+            predicate: usesLocalizedText
+                ? NSPredicate(format: "label != %@ AND label != %@", initialStatus, "")
+                : NSPredicate(format: "label == %@", "Capture failed"),
             object: status
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failure], timeout: 5), .completed)
+        if usesLocalizedText {
+            XCTAssertNotEqual(status.label, "Capture failed")
+        }
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
         XCTAssertTrue(capture.isHittable)
         XCTAssertTrue(finish.exists)
-        XCTAssertEqual(status.label, "Capture failed")
+        if !usesLocalizedText {
+            XCTAssertEqual(status.label, "Capture failed")
+        }
         try performVisibleLayoutAccessibilityAudit()
     }
 
