@@ -825,6 +825,7 @@ enum CutoutUITestSessionFixture {
     case failedVesc
     case reconnectingVesc
     case euc
+    case reconnectingEuc
     case eucNoBms
     case vescLiveActivity
     case autoVescLiveActivity
@@ -839,6 +840,7 @@ enum CutoutUITestSessionFixture {
         case "vesc-failure": self = .failedVesc
         case "vesc-reconnect": self = .reconnectingVesc
         case "euc": self = .euc
+        case "euc-reconnect": self = .reconnectingEuc
         case "euc-no-bms": self = .eucNoBms
         case "vesc-live-activity": self = .vescLiveActivity
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
@@ -880,7 +882,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .euc, .eucNoBms:
+        case .euc, .reconnectingEuc, .eucNoBms:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -908,11 +910,11 @@ enum CutoutUITestSessionFixture {
 
     var startsLive: Bool { self == .autoVescLiveActivity }
     var failsConnection: Bool { self == .failedVesc }
-    var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc }
+    var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
     var emitsStaleTelemetry: Bool { self == .staleVesc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
-    var isEuc: Bool { self == .euc || self == .eucNoBms }
+    var isEuc: Bool { self == .euc || self == .reconnectingEuc || self == .eucNoBms }
 
     var testScript: CutoutSessionTestScript {
         CutoutSessionTestScript(

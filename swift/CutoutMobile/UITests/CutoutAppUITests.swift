@@ -484,25 +484,33 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescReconnectKeepsRideAccessible() throws {
-        try assertVescReconnectAccessibility()
+        try assertReconnectAccessibility(for: .vesc)
     }
 
     func testVescReconnectKeepsRideAccessibleAtAccessibilityDynamicType() throws {
-        try assertVescReconnectAccessibility()
+        try assertReconnectAccessibility(for: .vesc)
     }
 
     func testVescReconnectKeepsRideAccessibleInLandscapeAtAccessibilityDynamicType() throws {
-        try assertVescReconnectAccessibility()
+        try assertReconnectAccessibility(for: .vesc)
     }
 
     func testVescReconnectKeepsRideAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
-        try assertVescReconnectAccessibility(usesLocalizedText: true)
+        try assertReconnectAccessibility(for: .vesc, usesLocalizedText: true)
     }
 
-    private func assertVescReconnectAccessibility(usesLocalizedText: Bool = false) throws {
-        XCTAssertTrue(pairAvailableDevice(.vesc))
+    func testEucReconnectKeepsRideRoute() throws {
+        try assertReconnectAccessibility(for: .euc, performsAccessibilityAudit: false)
+    }
+
+    private func assertReconnectAccessibility(
+        for family: ConnectedDeviceFamily,
+        usesLocalizedText: Bool = false,
+        performsAccessibilityAudit: Bool = true
+    ) throws {
+        XCTAssertTrue(pairAvailableDevice(family))
         guard let rideScreen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            XCTFail("The deterministic \(family.name) fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
@@ -525,9 +533,11 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(retrying.waitForExistence(timeout: 5))
             XCTAssertEqual(retrying.value as? String, "warning")
         }
-        XCTAssertEqual(rideScreen.identifier, ConnectedDeviceFamily.vesc.screenIdentifier)
+        XCTAssertEqual(rideScreen.identifier, family.screenIdentifier)
         XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        if performsAccessibilityAudit {
+            try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        }
     }
 
     private func assertFailedVescConnectionAccessibility(
@@ -1036,6 +1046,7 @@ final class CutoutAppUITests: XCTestCase {
         case unknownDevice
         case unknownDeviceFinishFailure
         case euc
+        case eucReconnect
         case eucNoBms
         case vesc
         case vescPending
@@ -1051,6 +1062,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
+            if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
             if testName.contains("StaleTelemetry") { return .vescStale }
@@ -1068,6 +1080,7 @@ final class CutoutAppUITests: XCTestCase {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
             case .euc: "euc"
+            case .eucReconnect: "euc-reconnect"
             case .eucNoBms: "euc-no-bms"
             case .vesc: "vesc"
             case .vescPending: "vesc-pending"

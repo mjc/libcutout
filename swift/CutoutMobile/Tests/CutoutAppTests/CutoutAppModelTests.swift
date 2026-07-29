@@ -948,6 +948,13 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertTrue(fixture?.isEuc ?? false)
     }
+
+    func testEucReconnectFixtureKeepsTheEucRoute() {
+        let fixture = CutoutUITestSessionFixture(value: "euc-reconnect")
+
+        XCTAssertTrue(fixture?.isEuc ?? false)
+        XCTAssertTrue(fixture?.reconnectsAfterFirstLive ?? false)
+    }
 }
 
 private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
