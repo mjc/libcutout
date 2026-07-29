@@ -346,6 +346,22 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
     }
 
+    func testVescRideSnapshotOwnsBatteryReadbackFormatting() {
+        let snapshot = VescRideSnapshot(
+            title: "VESC",
+            vehicleKind: .float,
+            subProtocol: .refloat,
+            controllerState: .unknown,
+            batteryLevelReported: batteryLevelValue(72),
+            batteryCurrent: batteryCurrentValue(38_000)
+        )
+
+        XCTAssertEqual(
+            snapshot.batteryReadback,
+            .reported(level: "72", current: "38.0")
+        )
+    }
+
     func testRideHeroReadoutOwnsVescSpeedFreshnessAndSeverity() {
         let snapshot = VescRideSnapshot(
             title: "VESC",

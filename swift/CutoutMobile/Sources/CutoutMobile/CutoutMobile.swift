@@ -1597,6 +1597,12 @@ public enum VescBatteryDetail: Equatable, Hashable, Sendable {
     case unavailable(current: BatteryCurrent?)
 }
 
+public enum VescBatteryReadback: Equatable, Hashable, Sendable {
+    case reported(level: String, current: String?)
+    case estimated(level: String, current: String?)
+    case unavailable(current: String?)
+}
+
 public enum VescMotorCurrentDetail: Equatable, Hashable, Sendable {
     case available(powerFlow: PowerFlowDirection?)
     case unavailable
@@ -1819,6 +1825,23 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             return .estimated(level: batteryLevelEstimated, current: batteryCurrent)
         }
         return .unavailable(current: batteryCurrent)
+    }
+
+    public var batteryReadback: VescBatteryReadback {
+        switch batteryDetail {
+        case let .reported(level, current):
+            .reported(
+                level: RideUnits.percentText(level.value),
+                current: current.map { RideUnits.currentText(milliamps: $0.value) }
+            )
+        case let .estimated(level, current):
+            .estimated(
+                level: RideUnits.percentText(level.value),
+                current: current.map { RideUnits.currentText(milliamps: $0.value) }
+            )
+        case let .unavailable(current):
+            .unavailable(current: current.map { RideUnits.currentText(milliamps: $0.value) })
+        }
     }
 
     public var motorCurrentDetail: VescMotorCurrentDetail {

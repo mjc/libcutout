@@ -62,36 +62,38 @@ struct VescRideScreenView: View {
 
     private var batteryDetail: String {
         guard let liveSnapshot else { return "" }
-        switch liveSnapshot.batteryDetail {
+        switch liveSnapshot.batteryReadback {
         case let .reported(level, current):
+            let level = localizedAppText("ride.value.percent", level)
             if let current {
                 return localizedAppText(
                     "vesc.battery_detail.reported_current",
-                    percentText(level),
-                    currentText(current)
+                    level,
+                    current
                 )
             }
             return localizedAppText(
                 "vesc.battery_detail.reported_unavailable",
-                percentText(level)
+                level
             )
         case let .estimated(level, current):
+            let level = localizedAppText("ride.value.percent", level)
             if let current {
                 return localizedAppText(
                     "vesc.battery_detail.estimated_current",
-                    percentText(level),
-                    currentText(current)
+                    level,
+                    current
                 )
             }
             return localizedAppText(
                 "vesc.battery_detail.estimated_unavailable",
-                percentText(level)
+                level
             )
         case let .unavailable(current):
             if let current {
                 return localizedAppText(
                     "vesc.battery_detail.unavailable_current",
-                    currentText(current)
+                    current
                 )
             }
             return localizedAppText("vesc.battery_detail.unavailable_unavailable")
