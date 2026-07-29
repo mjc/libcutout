@@ -147,6 +147,35 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testEucRideStateOwnsTheStrictStaleTelemetryBoundary() {
+        let state = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(lastUpdate: MonotonicMilliseconds(1_000))
+        )
+
+        XCTAssertEqual(
+            state.updateAge(
+                at: MonotonicMilliseconds(2_999),
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+            ).freshness,
+            .fresh
+        )
+        XCTAssertEqual(
+            state.updateAge(
+                at: MonotonicMilliseconds(3_000),
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+            ).freshness,
+            .fresh
+        )
+        XCTAssertEqual(
+            state.updateAge(
+                at: MonotonicMilliseconds(3_001),
+                staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+            ).freshness,
+            .stale
+        )
+    }
+
     func testEucRideAppPresentationUsesTheAppCatalog() {
         XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
         XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")
