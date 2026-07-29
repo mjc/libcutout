@@ -263,6 +263,7 @@ private struct EucRideRouteView: View {
                 rideTitle: model.selectedRideTitle,
                 now: model.currentMonotonicTime,
                 captureStatusText: model.captureStatusText,
+                connectionStatusText: model.connectionStatusText,
                 phoneLocationReadback: model.phoneLocationReadback
             )
             .accessibilityElement(children: .contain)

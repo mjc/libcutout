@@ -574,7 +574,7 @@ final class CutoutAppModel {
         #if DEBUG
         CutoutUITestSessionFixture.resolve(
             persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
-            arguments: CommandLine.arguments
+            arguments: ProcessInfo.processInfo.arguments
         )
         #else
         nil

@@ -7,6 +7,7 @@ struct EucRideScreenView: View {
     let rideTitle: String?
     let now: MonotonicMilliseconds
     let captureStatusText: String?
+    let connectionStatusText: String
     let phoneLocationReadback: PhoneLocationReadback
 
     private var speedReadout: RideHeroReadout {
@@ -14,7 +15,8 @@ struct EucRideScreenView: View {
     }
 
     private var phaseText: String {
-        rideState?.statusText ?? localizedAppText("euc.ride.connecting")
+        guard rideState?.phase == .live else { return connectionStatusText }
+        return rideState?.statusText ?? connectionStatusText
     }
 
     private var titleText: String {
@@ -23,6 +25,10 @@ struct EucRideScreenView: View {
 
     private var sectionTitle: String {
         PevScreenCatalog.live.screen(id: .eucRide)!.title
+    }
+
+    private var statusTone: PevDashboardStatusPillTone {
+        rideState?.phase == .live ? .eucRide : .warning
     }
 
     private var warningCard: PevWarningCard? {
@@ -60,7 +66,7 @@ struct EucRideScreenView: View {
             heroStyle: .electricUnicycle,
             title: titleText,
             subtitle: phaseText,
-            statusTone: .eucRide,
+            statusTone: statusTone,
             captureStatusText: captureStatusText,
             speedReadout: speedReadout,
             speedCaption: localizedAppText("euc.speed.caption"),
