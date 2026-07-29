@@ -516,7 +516,12 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
         assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        // The dedicated Accessibility-XXXL route below validates both Dynamic
+        // Type and clipping after the grid changes to one wide column. Xcode's
+        // default-size audit instead predicts those failures from compact cells.
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: [.contrast, .dynamicType, .textClipped]
+        )
     }
 
     func testEucRideAndBmsPassAccessibilityAuditAtAccessibilityDynamicType() throws {

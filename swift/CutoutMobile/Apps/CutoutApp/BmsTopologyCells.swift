@@ -7,6 +7,24 @@ func bmsGroupAccessibilityValue(_ value: String, isHighlighted: Bool) -> String 
         : value
 }
 
+private extension View {
+    func bmsGroupAccessibility(
+        _ group: BmsGroupSnapshot,
+        isHighlighted: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        accessibilityRepresentation {
+            Button(group.accessibilityLabel, action: action)
+                .font(.body)
+                .accessibilityValue(
+                    bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
+                )
+                .accessibilityHint(group.detailSelectionAccessibilityHint)
+                .accessibilityIdentifier("bms.group.\(group.index)")
+        }
+    }
+}
+
 struct BmsChip: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -39,6 +57,8 @@ struct BmsChip: View {
 }
 
 struct BmsGroupCell: View {
+    @ScaledMetric(relativeTo: .title3) private var minimumHeight = 70.0
+
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
     let action: () -> Void
@@ -57,8 +77,9 @@ struct BmsGroupCell: View {
                     .monospacedDigit()
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 70)
+            .frame(minHeight: minimumHeight)
             .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
+            .accessibilityHidden(true)
             .overlay(alignment: .topTrailing) {
                 if isHighlighted {
                     Image(systemName: "scope")
@@ -69,12 +90,7 @@ struct BmsGroupCell: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(group.accessibilityLabel)
-        .accessibilityValue(
-            bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
-        )
-        .accessibilityHint(group.detailSelectionAccessibilityHint)
-        .accessibilityIdentifier("bms.group.\(group.index)")
+        .bmsGroupAccessibility(group, isHighlighted: isHighlighted, action: action)
     }
 
     private var strokeColor: Color {
@@ -86,6 +102,8 @@ struct BmsGroupCell: View {
 }
 
 struct BmsStripCell: View {
+    @ScaledMetric(relativeTo: .caption) private var minimumHeight = 60.0
+
     let group: BmsGroupSnapshot
     let isHighlighted: Bool
     let action: () -> Void
@@ -103,8 +121,9 @@ struct BmsStripCell: View {
                     .font(.caption.weight(.black))
                     .monospacedDigit()
             }
-            .frame(maxWidth: .infinity, minHeight: 60)
+            .frame(maxWidth: .infinity, minHeight: minimumHeight)
             .background(PevDashboardCardBackground(cornerRadius: 8, stroke: strokeColor, lineWidth: 1.2))
+            .accessibilityHidden(true)
             .overlay(alignment: .topTrailing) {
                 if isHighlighted {
                     Image(systemName: "scope")
@@ -115,12 +134,7 @@ struct BmsStripCell: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(group.accessibilityLabel)
-        .accessibilityValue(
-            bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
-        )
-        .accessibilityHint(group.detailSelectionAccessibilityHint)
-        .accessibilityIdentifier("bms.group.\(group.index)")
+        .bmsGroupAccessibility(group, isHighlighted: isHighlighted, action: action)
     }
 
     private var strokeColor: Color {
@@ -169,6 +183,8 @@ struct BmsAlertIndicator: View {
 }
 
 struct BmsGroupIndexCell: View {
+    @ScaledMetric(relativeTo: .body) private var minimumHeight = 44.0
+
     let group: BmsGroupSnapshot
     let isSelected: Bool
     let action: () -> Void
@@ -179,7 +195,7 @@ struct BmsGroupIndexCell: View {
                 .font(.body)
                 .foregroundStyle(PevColors.muted)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
+                .frame(minHeight: minimumHeight)
                 .background(PevDashboardCardBackground(cornerRadius: 8, stroke: isSelected ? PevColors.orange : PevColors.green, lineWidth: 1.2))
                 .overlay(alignment: .topTrailing) {
                     if isSelected {
@@ -200,13 +216,21 @@ struct BmsGroupIndexCell: View {
 }
 
 struct BmsModeChip: View {
+    @ScaledMetric(relativeTo: .body) private var minimumHeight = 44.0
+
     let title: String
 
     var body: some View {
-        Text(title)
-            .font(.body.weight(.bold))
-            .foregroundStyle(PevColors.primaryText)
-            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        HStack {
+            Text(title)
+                .font(.body.weight(.bold))
+                .foregroundStyle(PevColors.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityHidden(true)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
+        .accessibilityRepresentation { Text(title).font(.body) }
     }
 }
 
@@ -216,6 +240,7 @@ struct BmsModeGrid: View {
     var body: some View {
         PevDashboardGrid(
             adaptiveMinimumColumnWidth: 100,
+            accessibilityMinimumColumnWidth: 280,
             columnSpacing: 10,
             spacing: 10
         ) {
