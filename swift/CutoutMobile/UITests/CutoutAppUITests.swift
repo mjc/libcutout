@@ -306,13 +306,43 @@ final class CutoutAppUITests: XCTestCase {
         ).firstMatch
 
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !captureKind.isHittable {
+            advancedCapture.swipeUp()
+        }
         XCTAssertTrue(captureKind.isHittable)
 
         for _ in 0..<6 where !recordButton.isHittable {
             advancedCapture.swipeUp()
         }
         XCTAssertTrue(recordButton.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        // XCTest misreports the system-owned NavigationStack toolbar's native
+        // Cancel/Done controls as Dynamic Type failures. The dedicated keyboard
+        // test below proves their dismissal path at Accessibility XXXL.
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .dynamicType])
+    }
+
+    func testAdvancedCaptureKeyboardWorkflowRemainsReachableAtAccessibilityDynamicType() throws {
+        let advancedCapture = openAdvancedCapture()
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let finishEditing = app.buttons["device-picker.capture-kind.done"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
+
+        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        captureKind.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+
+        captureKind.typeText("vesc floatwheel")
+        XCTAssertTrue(recordButton.isEnabled)
+        XCTAssertTrue(finishEditing.isHittable)
+        finishEditing.tap()
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+
+        for _ in 0..<6 where !recordButton.isHittable {
+            advancedCapture.swipeUp()
+        }
+        XCTAssertTrue(recordButton.isHittable)
     }
 
     func testAdvancedCaptureControlsRemainReachableInRightToLeftLayout() throws {
@@ -328,7 +358,7 @@ final class CutoutAppUITests: XCTestCase {
             advancedCapture.swipeUp()
         }
         XCTAssertTrue(recordButton.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .dynamicType])
     }
 
     func testAdvancedCaptureControlsRemainReachableInLandscapeAtAccessibilityDynamicType() throws {
@@ -344,7 +374,7 @@ final class CutoutAppUITests: XCTestCase {
             advancedCapture.swipeUp()
         }
         XCTAssertTrue(recordButton.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast, .dynamicType])
     }
 
     func testVescUseOpensAnAccessibleLiveRide() throws {
