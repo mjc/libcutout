@@ -14,19 +14,17 @@ assert_equal() {
   fi
 }
 
-logs="$tmp/Logs/Test"
-old_result="$logs/Test-Old.xcresult"
-current_result="$logs/Test-Current.xcresult"
-marker="$tmp/current-run"
-mkdir -p "$old_result" "$current_result"
-touch "$old_result/Info.plist" "$current_result/Info.plist" "$marker"
-touch -t 202001010000 "$old_result"
-touch -t 202101010000 "$marker"
-touch -t 202201010000 "$current_result"
+first_result="$(cutout_create_ios_ui_test_result_bundle "$tmp/derived-data")"
+second_result="$(cutout_create_ios_ui_test_result_bundle "$tmp/derived-data")"
 
-assert_equal \
-  "$current_result" \
-  "$(cutout_latest_complete_xcresult_since "$logs" "$marker")"
+if [[ "$first_result" == "$second_result" ]]; then
+  echo "expected each UI test invocation to own a distinct result bundle" >&2
+  exit 1
+fi
+if [[ -e "$first_result" || -e "$second_result" ]]; then
+  echo "xcodebuild result bundle paths must not exist before the run" >&2
+  exit 1
+fi
 
-rm -rf "$current_result"
-assert_equal "" "$(cutout_latest_complete_xcresult_since "$logs" "$marker")"
+assert_equal "Result.xcresult" "$(basename "$first_result")"
+assert_equal "$tmp/derived-data/TestResults" "$(dirname "$(dirname "$first_result")")"
