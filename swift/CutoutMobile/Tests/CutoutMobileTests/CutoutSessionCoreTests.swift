@@ -180,6 +180,28 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
+        let unavailable = expectation(description: "scripted session becomes unavailable")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                startsBluetoothUnavailable: true
+            )
+        )
+        core.onPhaseChange = { phase in
+            if phase == .bluetoothUnavailable(rawState: 4) {
+                unavailable.fulfill()
+            }
+        }
+
+        core.start()
+
+        wait(for: [unavailable], timeout: 1)
+        XCTAssertEqual(core.phase, .bluetoothUnavailable(rawState: 4))
+        XCTAssertEqual(core.scanState, .bluetoothUnavailable)
+    }
+
     func testExplicitDisconnectCancelsTheScriptedLateLiveCallback() {
         let live = expectation(description: "late scripted callback is ignored")
         live.isInverted = true
