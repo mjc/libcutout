@@ -710,6 +710,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucUnknownTopologySurface()
     }
 
+    func testEucUnknownTopologyPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+        try assertEucUnknownTopologySurface(auditExclusions: [])
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         try assertEucBmsAccessibility(excluding: [])
     }
@@ -1473,14 +1477,16 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
-    private func assertEucUnknownTopologySurface() throws {
+    private func assertEucUnknownTopologySurface(
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
+    ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsUnknownTopology"))
         defer { disconnectIfConnected() }
 
         let captureFlow = bmsScreen.descendants(matching: .any)["bms.unknown.capture-flow"]
         XCTAssertTrue(captureFlow.waitForExistence(timeout: 5))
         XCTAssertFalse(captureFlow.label.isEmpty)
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
     @discardableResult
