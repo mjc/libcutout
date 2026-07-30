@@ -1792,6 +1792,26 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertTrue(core.records.contains("begode_probe_missing=imu"))
     }
 
+    func testBegodeProbeResponsesExpireOnlyAfterMonotonicDeadline() {
+        var now = MonotonicMilliseconds(1_000)
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { now }))
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+
+        now = MonotonicMilliseconds(2_999)
+        core.expireOutstandingBegodeProbeResponses()
+        XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
+
+        now = MonotonicMilliseconds(3_000)
+        core.expireOutstandingBegodeProbeResponses()
+        XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
+
+        now = MonotonicMilliseconds(3_001)
+        core.expireOutstandingBegodeProbeResponses()
+        XCTAssertTrue(core.records.contains("begode_probe_missing=model"))
+    }
+
     func testAnsweredBegodeProbeIsNotLabeledMissing() {
         let core = CutoutSessionCore()
         let channel = BluetoothUuid.bluetooth16(0xffe1)
