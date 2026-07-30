@@ -913,6 +913,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescDebugSurface(auditExclusions: [])
     }
 
+    func testVescDebugPassesAccessibilityAuditWithIncreasedContrastAtAccessibilityDynamicType() throws {
+        try assertVescDebugSurface(auditExclusions: [])
+    }
+
     func testVescDebugPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
         try assertVescDebugSurface()
     }
