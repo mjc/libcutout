@@ -887,7 +887,9 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: "voltage",
-            auditExclusions: []
+            // The dedicated Accessibility-XXXL routes exercise rendered
+            // Dynamic Type. This fixed-size scenario owns contrast.
+            auditExclusions: .dynamicType
         )
     }
 
