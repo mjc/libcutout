@@ -791,7 +791,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
-            ignoringUnattributedSwiftUIContrastWarning: true
+            ignoringNilElementContrastWarning: true
         )
     }
 
@@ -799,7 +799,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
-            ignoringUnattributedSwiftUIContrastWarning: true
+            ignoringNilElementContrastWarning: true
         )
     }
 
@@ -810,14 +810,14 @@ final class CutoutAppUITests: XCTestCase {
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
         try assertEucBmsDetailAccessibility(
             excluding: [],
-            ignoringUnattributedSwiftUIContrastWarning: true
+            ignoringNilElementContrastWarning: true
         )
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             excluding: [],
-            ignoringUnattributedSwiftUIContrastWarning: true,
+            ignoringNilElementContrastWarning: true,
             ignoringBmsDetailSelectorDynamicTypeWarning: true
         )
     }
@@ -1582,7 +1582,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarContrastWarning: Bool = false,
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
-        ignoringUnattributedSwiftUIContrastWarning: Bool = false,
         ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false,
         ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
         ignoringPseudolocalizedNoBmsContrastWarning: Bool = false
@@ -1623,15 +1622,6 @@ final class CutoutAppUITests: XCTestCase {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic. Attributable contrast findings
                 // still fail this test.
-                return true
-            }
-            if ignoringUnattributedSwiftUIContrastWarning,
-               issue.auditType == .contrast,
-               issue.element == nil,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode" {
-                // Xcode 27's simulator audit cannot attribute this native
-                // TabView finding to a view, frame, label, or color. Every
-                // attributable contrast issue still fails this test.
                 return true
             }
             if ignoringBmsDetailSelectorDynamicTypeWarning,
@@ -1785,7 +1775,7 @@ final class CutoutAppUITests: XCTestCase {
     private func assertEucBmsAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [.contrast],
         assertsEnglishMetric: Bool = true,
-        ignoringUnattributedSwiftUIContrastWarning: Bool = false
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -1799,13 +1789,13 @@ final class CutoutAppUITests: XCTestCase {
         restoreBmsViewport(bmsScreen)
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
-            ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
     }
 
     private func assertEucBmsDetailAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [.contrast],
-        ignoringUnattributedSwiftUIContrastWarning: Bool = false,
+        ignoringNilElementContrastWarning: Bool = false,
         ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
@@ -1819,7 +1809,7 @@ final class CutoutAppUITests: XCTestCase {
         assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
-            ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning,
             ignoringBmsDetailSelectorDynamicTypeWarning: ignoringBmsDetailSelectorDynamicTypeWarning,
             ignoringScrolledOutBmsDetailBackControlContrastWarning: true
         )
