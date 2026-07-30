@@ -22,27 +22,20 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --build-only)
-      if [[ "$mode" != "test" ]]; then
-        echo "--build-only and --no-build cannot be combined" >&2
-        exit 1
-      fi
       mode="build-for-testing"
       shift
       ;;
     --no-build)
-      if [[ "$mode" != "test" ]]; then
-        echo "--build-only and --no-build cannot be combined" >&2
-        exit 1
-      fi
-      mode="test-without-building"
-      shift
+      echo "--no-build is unsupported; incremental build-for-testing is required" >&2
+      exit 2
       ;;
     *) break ;;
   esac
 done
 
-if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" && "$mode" == "test" ]]; then
-  mode="test-without-building"
+if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
+  echo "CUTOUT_IOS_UI_TEST_SKIP_BUILD is unsupported; incremental build-for-testing is required" >&2
+  exit 2
 fi
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
@@ -95,11 +88,9 @@ else
   ui_test_run_timeout=1800
 fi
 
-if [[ "$mode" != "test-without-building" ]]; then
-  /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
-fi
+/usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
 
-if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
+if [[ "$mode" == "test" ]]; then
   result_bundle="$(cutout_create_ios_ui_test_result_bundle "$derived_data")"
   test_status=0
   if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
