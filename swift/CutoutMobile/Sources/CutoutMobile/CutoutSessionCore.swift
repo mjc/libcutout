@@ -266,8 +266,6 @@ public final class CutoutSessionCore: NSObject {
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private let deviceDetectionSession: DeviceDetectionSession
-    private var begodeProbeResponseStartedAt:
-        [DeviceDetectionPendingProbe: MonotonicMilliseconds] = [:]
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
     private var pendingDisplayStateQueuedAt: MonotonicMilliseconds?
@@ -1733,16 +1731,16 @@ extension CutoutSessionCore {
         }
         switch bytes.first {
         case UInt8(ascii: "N")?:
-            _ = deviceDetectionSession.observeBegodeNameProbe()
-            trackBegodeProbeResponse(.begodeName)
+            _ = deviceDetectionSession.observeBegodeNameProbe(at: clock.now())
+            scheduleBegodeProbeExpiry()
             annotateDetection("begode_probe_write=model")
         case UInt8(ascii: "V")?:
-            _ = deviceDetectionSession.observeBegodeFirmwareProbe()
-            trackBegodeProbeResponse(.begodeFirmware)
+            _ = deviceDetectionSession.observeBegodeFirmwareProbe(at: clock.now())
+            scheduleBegodeProbeExpiry()
             annotateDetection("begode_probe_write=firmware")
         case UInt8(ascii: "M")?:
-            _ = deviceDetectionSession.observeBegodeImuProbe()
-            trackBegodeProbeResponse(.begodeImu)
+            _ = deviceDetectionSession.observeBegodeImuProbe(at: clock.now())
+            scheduleBegodeProbeExpiry()
             annotateDetection("begode_probe_write=imu")
         default:
             break
@@ -1767,16 +1765,14 @@ extension CutoutSessionCore {
         }
         let previous = deviceDetectionSession.resolution
         let current = deviceDetectionSession.observeNotification(bytes: bytes)
+        scheduleBegodeProbeExpiry()
         if current.modelBanner != nil, current.modelBanner != previous.modelBanner {
-            finishBegodeProbeResponse(.begodeName)
             annotateDetection("begode_probe_response=model")
         }
         if current.firmwareBanner != nil, current.firmwareBanner != previous.firmwareBanner {
-            finishBegodeProbeResponse(.begodeFirmware)
             annotateDetection("begode_probe_response=firmware")
         }
         if current.imuBanner != nil, current.imuBanner != previous.imuBanner {
-            finishBegodeProbeResponse(.begodeImu)
             annotateDetection("begode_probe_response=imu")
         }
         publishDetectionIdentityCandidate(current)
@@ -1788,81 +1784,61 @@ extension CutoutSessionCore {
         }
         switch malformedProbeResponse {
         case .begodeName:
-            finishBegodeProbeResponse(.begodeName)
             annotateDetection("begode_probe_malformed=model")
         case .begodeFirmware:
-            finishBegodeProbeResponse(.begodeFirmware)
             annotateDetection("begode_probe_malformed=firmware")
         case .begodeImu:
-            finishBegodeProbeResponse(.begodeImu)
             annotateDetection("begode_probe_malformed=imu")
         }
     }
 
     func expireOutstandingBegodeProbeResponses() {
         onBleQueue {
-            let now = clock.now()
-            let expired = Set(begodeProbeResponseStartedAt.compactMap { probe, startedAt in
-                now.elapsed(since: startedAt).rawValue > BegodeProbeResponsePolicy.timeoutAfter.rawValue
-                    ? probe
-                    : nil
-            })
-            markBegodeProbeResponsesMissing(expired)
+            let expired = deviceDetectionSession.expireBegodeProbeResponses(
+                at: clock.now(),
+                timeout: BegodeProbeResponsePolicy.timeoutAfter
+            )
+            publishMissingBegodeProbeResponses(expired)
             scheduleBegodeProbeExpiry()
         }
     }
 
     func markOutstandingBegodeProbeResponsesMissing() {
-        markBegodeProbeResponsesMissing(Set(begodeProbeResponseStartedAt.keys))
+        let missing = deviceDetectionSession.markBegodeProbeResponsesMissing()
+        publishMissingBegodeProbeResponses(missing)
         clearPendingBegodeProbeResponses()
     }
 
-    private func markBegodeProbeResponsesMissing(_ probes: Set<DeviceDetectionPendingProbe>) {
+    private func publishMissingBegodeProbeResponses(_ probes: [DeviceDetectionPendingProbe]) {
         for (probe, label) in [
             (DeviceDetectionPendingProbe.begodeName, "model"),
             (.begodeFirmware, "firmware"),
             (.begodeImu, "imu"),
         ] where probes.contains(probe) {
-            let current = switch probe {
-            case .begodeName:
-                deviceDetectionSession.observeBegodeNameProbeTimeout()
-            case .begodeFirmware:
-                deviceDetectionSession.observeBegodeFirmwareProbeTimeout()
-            case .begodeImu:
-                deviceDetectionSession.observeBegodeImuProbeTimeout()
-            }
             annotateDetection("begode_probe_missing=\(label)")
-            publishDetectionIdentityCandidate(current)
-            begodeProbeResponseStartedAt.removeValue(forKey: probe)
         }
-    }
-
-    private func trackBegodeProbeResponse(_ probe: DeviceDetectionPendingProbe) {
-        begodeProbeResponseStartedAt[probe] = clock.now()
-        scheduleBegodeProbeExpiry()
-    }
-
-    private func finishBegodeProbeResponse(_ probe: DeviceDetectionPendingProbe) {
-        begodeProbeResponseStartedAt.removeValue(forKey: probe)
-        scheduleBegodeProbeExpiry()
+        guard !probes.isEmpty else {
+            return
+        }
+        publishDetectionIdentityCandidate(deviceDetectionSession.resolution)
     }
 
     private func clearPendingBegodeProbeResponses() {
         begodeProbeExpiryWorkItem?.cancel()
         begodeProbeExpiryWorkItem = nil
-        begodeProbeResponseStartedAt.removeAll()
     }
 
     private func scheduleBegodeProbeExpiry() {
         begodeProbeExpiryWorkItem?.cancel()
-        guard let startedAt = begodeProbeResponseStartedAt.values.min(by: { $0.rawValue < $1.rawValue }) else {
+        guard let deadline = deviceDetectionSession.nextBegodeProbeExpiry(
+            timeout: BegodeProbeResponsePolicy.timeoutAfter
+        ) else {
             begodeProbeExpiryWorkItem = nil
             return
         }
 
-        let elapsed = clock.now().elapsed(since: startedAt).rawValue
-        let timeout = BegodeProbeResponsePolicy.timeoutAfter.rawValue
-        let delay = elapsed > timeout ? 0 : timeout - elapsed + 1
+        let now = clock.now().rawValue
+        let delay = deadline.rawValue > now ? deadline.rawValue - now : 0
         let work = DispatchWorkItem { [weak self] in
             self?.expireOutstandingBegodeProbeResponses()
         }

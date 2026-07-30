@@ -1823,6 +1823,24 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
     }
 
+    func testAnsweredBegodeProbeDoesNotHideOtherMissingResponses() {
+        var now = MonotonicMilliseconds(1_000)
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { now }))
+        let channel = BluetoothUuid.bluetooth16(0xffe1)
+
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("N".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("V".utf8))
+        core.observeDetectionProbeWrite(channel: channel, bytes: Data("M".utf8))
+        core.observeDetectionNotification(channel: channel, bytes: Data("NAME=Falcon".utf8))
+
+        now = MonotonicMilliseconds(3_003)
+        core.expireOutstandingBegodeProbeResponses()
+
+        XCTAssertFalse(core.records.contains("begode_probe_missing=model"))
+        XCTAssertTrue(core.records.contains("begode_probe_missing=firmware"))
+        XCTAssertTrue(core.records.contains("begode_probe_missing=imu"))
+    }
+
     func testProtocolIdentityCandidatePrefersSelectedAdvertisement() {
         let core = CutoutSessionCore()
         core.observeAdvertisement(

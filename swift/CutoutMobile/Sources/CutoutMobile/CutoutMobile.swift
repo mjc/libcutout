@@ -221,12 +221,24 @@ public final class DeviceDetectionSession {
         DeviceDetectionResolution(inner.observeBegodeNameProbe())
     }
 
+    func observeBegodeNameProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeNameProbeAt(startedAtMs: startedAt.rawValue))
+    }
+
     public func observeBegodeFirmwareProbe() -> DeviceDetectionResolution {
         DeviceDetectionResolution(inner.observeBegodeFirmwareProbe())
     }
 
+    func observeBegodeFirmwareProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeFirmwareProbeAt(startedAtMs: startedAt.rawValue))
+    }
+
     public func observeBegodeImuProbe() -> DeviceDetectionResolution {
         DeviceDetectionResolution(inner.observeBegodeImuProbe())
+    }
+
+    func observeBegodeImuProbe(at startedAt: MonotonicMilliseconds) -> DeviceDetectionResolution {
+        DeviceDetectionResolution(inner.observeBegodeImuProbeAt(startedAtMs: startedAt.rawValue))
     }
 
     public func observeBegodeNameProbeTimeout() -> DeviceDetectionResolution {
@@ -243,6 +255,22 @@ public final class DeviceDetectionSession {
 
     public var resolution: DeviceDetectionResolution {
         DeviceDetectionResolution(inner.resolution())
+    }
+
+    func expireBegodeProbeResponses(
+        at now: MonotonicMilliseconds,
+        timeout: MonotonicMilliseconds
+    ) -> [DeviceDetectionPendingProbe] {
+        inner.expireBegodeProbeResponses(nowMs: now.rawValue, timeoutMs: timeout.rawValue)
+            .map(DeviceDetectionPendingProbe.init)
+    }
+
+    func markBegodeProbeResponsesMissing() -> [DeviceDetectionPendingProbe] {
+        inner.markBegodeProbeResponsesMissing().map(DeviceDetectionPendingProbe.init)
+    }
+
+    func nextBegodeProbeExpiry(timeout: MonotonicMilliseconds) -> MonotonicMilliseconds? {
+        inner.nextBegodeProbeExpiry(timeoutMs: timeout.rawValue).map(MonotonicMilliseconds.init)
     }
 
     func reset() {
