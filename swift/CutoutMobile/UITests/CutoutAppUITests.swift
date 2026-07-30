@@ -773,7 +773,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(bmsScreen.exists)
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
         XCTAssertTrue(reachableBmsGroup(7, in: bmsScreen).isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit(
+            ignoringNilElementContrastWarning: true
+        )
     }
 
     func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
