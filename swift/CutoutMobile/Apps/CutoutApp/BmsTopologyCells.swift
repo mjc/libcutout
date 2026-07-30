@@ -43,8 +43,6 @@ struct BmsChip: View {
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(chipBackground)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(title)
     }
 
     @ViewBuilder
@@ -220,16 +218,11 @@ struct BmsModeChip: View {
     let title: String
 
     var body: some View {
-        HStack {
-            Text(title)
-                .font(.body.weight(.bold))
-                .foregroundStyle(PevColors.primaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityHidden(true)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
-        .accessibilityRepresentation { Text(title).font(.body) }
+        Text(title)
+            .font(.body.weight(.bold))
+            .foregroundStyle(PevColors.primaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
     }
 }
 

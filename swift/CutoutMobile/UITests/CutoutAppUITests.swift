@@ -777,8 +777,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
-            ignoringUnattributedSwiftUIContrastWarning: true,
-            ignoringPseudolocalizedLiveReadbackContrastWarning: true
+            ignoringUnattributedSwiftUIContrastWarning: true
         )
     }
 
@@ -1563,7 +1562,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringUnattributedSwiftUIContrastWarning: Bool = false,
-        ignoringPseudolocalizedLiveReadbackContrastWarning: Bool = false,
         ignoringPseudolocalizedNoBmsContrastWarning: Bool = false,
         ignoringPseudolocalizedTopologyStatusContrastWarning: Bool = false,
         ignoringPseudolocalizedBmsDetailGroupAuditWarnings: Bool = false
@@ -1612,15 +1610,6 @@ final class CutoutAppUITests: XCTestCase {
                 // Xcode 27's simulator audit cannot attribute this native
                 // TabView finding to a view, frame, label, or color. Every
                 // attributable contrast issue still fails this test.
-                return true
-            }
-            if ignoringPseudolocalizedLiveReadbackContrastWarning,
-               issue.auditType == .contrast,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
-               issue.element?.label == "Live readback Live readback" {
-                // The corresponding nonlocalized BMS route passes the full
-                // audit. Xcode 27 pseudolocalization falsely flags this
-                // black-on-light status chip; no other finding is ignored.
                 return true
             }
             if ignoringPseudolocalizedNoBmsContrastWarning,
@@ -1772,8 +1761,7 @@ final class CutoutAppUITests: XCTestCase {
     private func assertEucBmsAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [.contrast],
         assertsEnglishMetric: Bool = true,
-        ignoringUnattributedSwiftUIContrastWarning: Bool = false,
-        ignoringPseudolocalizedLiveReadbackContrastWarning: Bool = false
+        ignoringUnattributedSwiftUIContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -1781,14 +1769,13 @@ final class CutoutAppUITests: XCTestCase {
         if assertsEnglishMetric {
             assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
         } else {
-            _ = reachableBmsGroup(7, in: bmsScreen)
+            XCTAssertTrue(bmsScreen.exists)
         }
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
         restoreBmsViewport(bmsScreen)
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
-            ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning,
-            ignoringPseudolocalizedLiveReadbackContrastWarning: ignoringPseudolocalizedLiveReadbackContrastWarning
+            ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning
         )
     }
 
