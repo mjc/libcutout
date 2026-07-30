@@ -995,9 +995,16 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescPendingTelemetryAccessibility(usesLocalizedText: true)
     }
 
-    private func assertVescPendingTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
+    func testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
+        try assertVescPendingTelemetryAccessibility(scrollsBeforeAudit: true)
+    }
+
+    private func assertVescPendingTelemetryAccessibility(
+        usesLocalizedText: Bool = false,
+        scrollsBeforeAudit: Bool = false
+    ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
-        guard connectedScreen(timeout: 20) != nil else {
+        guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic pending VESC fixture did not open its Ride screen")
             return
         }
@@ -1017,6 +1024,9 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertEqual(warning.value as? String, "Waiting for live values.")
             XCTAssertTrue(status.label.contains("Telemetry pending"))
             XCTAssertEqual(status.value as? String, "warning")
+        }
+        if scrollsBeforeAudit {
+            screen.swipeUp()
         }
         try performVisibleLayoutAccessibilityAudit()
     }
