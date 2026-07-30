@@ -14,9 +14,12 @@ struct EucRideScreenView: View {
         .euc(state: rideState, now: now)
     }
 
-    private var phaseText: String {
+    var phaseText: String {
         guard rideState?.phase == .live else { return connectionStatusText }
-        return rideState?.statusText ?? connectionStatusText
+        guard let warningState, warningState.severity != .normal else {
+            return rideState?.statusText ?? connectionStatusText
+        }
+        return warningState.title
     }
 
     private var titleText: String {
@@ -27,8 +30,12 @@ struct EucRideScreenView: View {
         PevScreenCatalog.live.screen(id: .eucRide)!.title
     }
 
-    private var statusTone: PevDashboardStatusPillTone {
-        rideState?.phase == .live ? .eucRide : .warning
+    var statusTone: PevDashboardStatusPillTone {
+        guard rideState?.phase == .live,
+              let warningState,
+              warningState.severity == .normal
+        else { return .warning }
+        return .eucRide
     }
 
     private var warningCard: PevWarningCard? {
@@ -90,6 +97,7 @@ struct EucRideScreenView: View {
                     fill: PevColors.warningFill,
                     stroke: PevColors.warningStroke
                 )
+                    .accessibilityIdentifier("euc.warning")
                     .padding(.top, 14)
             }
 

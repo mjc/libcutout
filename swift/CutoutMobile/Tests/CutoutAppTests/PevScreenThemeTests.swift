@@ -268,6 +268,31 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testEucHeroUsesTheTypedStaleWarningState() {
+        let state = EucRideScreenState(
+            phase: .live,
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(1_000),
+                    operatingState: .riding
+                )
+            )
+        )
+        let view = EucRideScreenView(
+            rideState: state,
+            rideTitle: "EUC",
+            now: MonotonicMilliseconds(3_001),
+            captureStatusText: nil,
+            connectionStatusText: "Connected",
+            phoneLocationReadback: PhoneLocationReadback(
+                snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
+            )
+        )
+
+        XCTAssertEqual(view.phaseText, "Telemetry stale")
+        XCTAssertEqual(view.statusTone, PevDashboardStatusPillTone.warning)
+    }
+
     func testEucRideAppPresentationUsesTheAppCatalog() {
         XCTAssertEqual(PevScreenCatalog.live.screen(id: .eucRide)?.title, "EUC ride")
         XCTAssertEqual(localizedAppText("euc.ride.connecting"), "Connecting")

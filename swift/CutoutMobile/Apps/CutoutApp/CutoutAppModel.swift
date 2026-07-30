@@ -825,6 +825,7 @@ enum CutoutUITestSessionFixture {
     case failedVesc
     case reconnectingVesc
     case euc
+    case staleEuc
     case reconnectingEuc
     case eucNoBms
     case eucUnknownTopology
@@ -841,6 +842,7 @@ enum CutoutUITestSessionFixture {
         case "vesc-failure": self = .failedVesc
         case "vesc-reconnect": self = .reconnectingVesc
         case "euc": self = .euc
+        case "euc-stale": self = .staleEuc
         case "euc-reconnect": self = .reconnectingEuc
         case "euc-no-bms": self = .eucNoBms
         case "euc-unknown-topology": self = .eucUnknownTopology
@@ -884,7 +886,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .euc, .reconnectingEuc, .eucNoBms, .eucUnknownTopology:
+        case .euc, .staleEuc, .reconnectingEuc, .eucNoBms, .eucUnknownTopology:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -914,10 +916,10 @@ enum CutoutUITestSessionFixture {
     var failsConnection: Bool { self == .failedVesc }
     var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
-    var emitsStaleTelemetry: Bool { self == .staleVesc }
+    var emitsStaleTelemetry: Bool { self == .staleVesc || self == .staleEuc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool {
-        self == .euc || self == .reconnectingEuc || self == .eucNoBms || self == .eucUnknownTopology
+        self == .euc || self == .staleEuc || self == .reconnectingEuc || self == .eucNoBms || self == .eucUnknownTopology
     }
 
     private var testBmsSnapshot: BmsSnapshot? {

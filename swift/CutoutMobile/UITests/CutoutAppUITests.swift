@@ -72,6 +72,7 @@ final class CutoutAppUITests: XCTestCase {
 
     func testEucFixtureSelectionIgnoresXCTestSelectorCase() {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCBmsDetailPassesAccessibilityAudit"), .euc)
+        XCTAssertEqual(Fixture.testFixture(for: "testEucStaleTelemetryIsAnAccessibleWarning"), .eucStale)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCNoBmsSurfacePassesAccessibilityAudit"), .eucNoBms)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
     }
@@ -851,6 +852,24 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
+    func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic stale EUC fixture did not open its Ride screen")
+            return
+        }
+
+        let warning = app.descendants(matching: .any)["euc.warning"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertEqual(warning.label, "Telemetry stale")
+        XCTAssertTrue((warning.value as? String)?.hasPrefix("Last update ") == true)
+
+        let status = app.descendants(matching: .any)["ride.hero.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("Telemetry stale"))
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
@@ -1201,6 +1220,7 @@ final class CutoutAppUITests: XCTestCase {
         case unknownDevice
         case unknownDeviceFinishFailure
         case euc
+        case eucStale
         case eucReconnect
         case eucNoBms
         case eucUnknownTopology
@@ -1218,6 +1238,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
+            if testName.localizedCaseInsensitiveContains("EucStaleTelemetry") { return .eucStale }
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
@@ -1237,6 +1258,7 @@ final class CutoutAppUITests: XCTestCase {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
             case .euc: "euc"
+            case .eucStale: "euc-stale"
             case .eucReconnect: "euc-reconnect"
             case .eucNoBms: "euc-no-bms"
             case .eucUnknownTopology: "euc-unknown-topology"
