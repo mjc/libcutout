@@ -10,19 +10,16 @@ func bmsGroupAccessibilityValue(_ value: String, isHighlighted: Bool) -> String 
 private extension View {
     func bmsGroupAccessibility(
         _ group: BmsGroupSnapshot,
-        isHighlighted: Bool,
-        action: @escaping () -> Void
+        isHighlighted: Bool
     ) -> some View {
-        accessibilityRepresentation {
-            Button(group.accessibilityLabel, action: action)
-                .font(.body)
-                .accessibilityValue(
-                    bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
-                )
-                .accessibilityHint(group.detailSelectionAccessibilityHint)
-                .accessibilityIdentifier("bms.group.\(group.index)")
-                .accessibilityAddTraits(isHighlighted ? .isSelected : [])
-        }
+        accessibilityElement(children: .combine)
+            .accessibilityLabel(group.accessibilityLabel)
+            .accessibilityValue(
+                bmsGroupAccessibilityValue(group.accessibilityValue, isHighlighted: isHighlighted)
+            )
+            .accessibilityHint(group.detailSelectionAccessibilityHint)
+            .accessibilityIdentifier("bms.group.\(group.index)")
+            .accessibilityAddTraits(isHighlighted ? .isSelected : [])
     }
 }
 
@@ -87,7 +84,6 @@ struct BmsGroupCell: View {
             .frame(maxWidth: .infinity)
             .frame(minHeight: minimumHeight)
             .background(PevDashboardCardBackground(cornerRadius: 10, stroke: strokeColor, lineWidth: 1.2))
-            .accessibilityHidden(true)
             .overlay(alignment: .topTrailing) {
                 if isHighlighted {
                     Image(systemName: "scope")
@@ -98,7 +94,7 @@ struct BmsGroupCell: View {
             }
         }
         .buttonStyle(.plain)
-        .bmsGroupAccessibility(group, isHighlighted: isHighlighted, action: action)
+        .bmsGroupAccessibility(group, isHighlighted: isHighlighted)
     }
 
     private var strokeColor: Color {
@@ -131,7 +127,6 @@ struct BmsStripCell: View {
             }
             .frame(maxWidth: .infinity, minHeight: minimumHeight)
             .background(PevDashboardCardBackground(cornerRadius: 8, stroke: strokeColor, lineWidth: 1.2))
-            .accessibilityHidden(true)
             .overlay(alignment: .topTrailing) {
                 if isHighlighted {
                     Image(systemName: "scope")
@@ -142,7 +137,7 @@ struct BmsStripCell: View {
             }
         }
         .buttonStyle(.plain)
-        .bmsGroupAccessibility(group, isHighlighted: isHighlighted, action: action)
+        .bmsGroupAccessibility(group, isHighlighted: isHighlighted)
     }
 
     private var strokeColor: Color {
@@ -215,7 +210,7 @@ struct BmsGroupIndexCell: View {
                 }
         }
         .buttonStyle(.plain)
-        .bmsGroupAccessibility(group, isHighlighted: isSelected, action: action)
+        .bmsGroupAccessibility(group, isHighlighted: isSelected)
     }
 }
 

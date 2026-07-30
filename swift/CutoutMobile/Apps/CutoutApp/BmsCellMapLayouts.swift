@@ -2,6 +2,8 @@ import CutoutMobile
 import SwiftUI
 
 struct BmsInlineLayout: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let content: PevBmsContent
     let showGroupDetail: (Int) -> Void
 
@@ -15,20 +17,7 @@ struct BmsInlineLayout: View {
                 detail: snapshot.topology.layoutLabel
             )
 
-            PevDashboardGrid(
-                adaptiveMinimumColumnWidth: 96,
-                accessibilityMinimumColumnWidth: 240,
-                columnSpacing: 12,
-                spacing: 14
-            ) {
-                ForEach(snapshot.groups) { group in
-                    BmsGroupCell(
-                        group: group,
-                        isHighlighted: content.highlightedGroupIndices.contains(group.index),
-                        action: { showGroupDetail(group.index) }
-                    )
-                }
-            }
+            groupGrid
 
             PevDashboardWideCard(
                 title: localizedAppText("bms.inline.range_of_interest"),
@@ -41,6 +30,35 @@ struct BmsInlineLayout: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var groupGrid: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 14) {
+                groupCells
+            }
+        } else {
+            PevDashboardGrid(
+                adaptiveMinimumColumnWidth: 96,
+                accessibilityMinimumColumnWidth: 240,
+                columnSpacing: 12,
+                spacing: 14
+            ) {
+                groupCells
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var groupCells: some View {
+        ForEach(snapshot.groups) { group in
+            BmsGroupCell(
+                group: group,
+                isHighlighted: content.highlightedGroupIndices.contains(group.index),
+                action: { showGroupDetail(group.index) }
+            )
         }
     }
 }
