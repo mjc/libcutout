@@ -52,7 +52,7 @@ public struct PevDashboardProgressBar: View {
             }
             .frame(height: height)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(metricValue.accessibilityText)
     }
