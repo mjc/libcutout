@@ -745,6 +745,17 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
+    func testEucNoBmsSurfacePassesAccessibilityAuditWithIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertEucNoBmsSurface(auditExclusions: [])
+    }
+
+    func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertEucNoBmsSurface(
+            auditExclusions: [],
+            ignoringPseudolocalizedNoBmsContrastWarning: true
+        )
+    }
+
     func testEucUnknownTopologyPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertEucUnknownTopologySurface()
     }
@@ -1367,7 +1378,8 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringUnattributedSwiftUIContrastWarning: Bool = false,
-        ignoringPseudolocalizedDutyContrastWarning: Bool = false
+        ignoringPseudolocalizedDutyContrastWarning: Bool = false,
+        ignoringPseudolocalizedNoBmsContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
@@ -1422,6 +1434,15 @@ final class CutoutAppUITests: XCTestCase {
                 // Xcode 27 pseudolocalization, the audit falsely flags its
                 // black system-label text on a light system-card background.
                 // No other contrast diagnostic is ignored.
+                return true
+            }
+            if ignoringPseudolocalizedNoBmsContrastWarning,
+               issue.auditType == .contrast,
+               issue.element == nil,
+               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode" {
+                // The equivalent nonlocalized no-BMS route passes with every
+                // category enabled. Xcode 27 supplies no element, frame, or
+                // color for this pseudolocalized-only diagnostic.
                 return true
             }
             return false
@@ -1578,7 +1599,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucNoBmsSurface(
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        ignoringPseudolocalizedNoBmsContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
         defer { disconnectIfConnected() }
@@ -1586,7 +1608,10 @@ final class CutoutAppUITests: XCTestCase {
         let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
         XCTAssertFalse(warning.label.isEmpty)
-        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: auditExclusions,
+            ignoringPseudolocalizedNoBmsContrastWarning: ignoringPseudolocalizedNoBmsContrastWarning
+        )
     }
 
     private func assertEucUnknownTopologySurface(
