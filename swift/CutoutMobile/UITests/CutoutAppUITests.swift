@@ -757,7 +757,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
+        _ = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
         defer { disconnectIfConnected() }
 
         let energyHero = app.progressIndicators["bms.energy.hero"]
@@ -1590,6 +1590,7 @@ final class CutoutAppUITests: XCTestCase {
         ignoringNilElementContrastWarning: Bool = false,
         ignoringUnattributedSwiftUIContrastWarning: Bool = false,
         ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false,
+        ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
         ignoringPseudolocalizedNoBmsContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
@@ -1598,13 +1599,6 @@ final class CutoutAppUITests: XCTestCase {
         try app.performAccessibilityAudit(for: auditTypes) { issue in
             let elementDescription = issue.element?.debugDescription ?? "No element"
             print("Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)")
-            if let element = issue.element,
-               !self.app.frame.contains(element.frame) {
-                // This helper audits the current viewport. XCTest reports
-                // contrast for text while its background is clipped at the
-                // viewport edge; that is not a rendered contrast failure.
-                return true
-            }
             if ignoringNilElementTextRepresentationWarning,
                issue.element == nil,
                issue.detailedDescription.contains("text that should be represented using the accessibility API") {
@@ -1653,6 +1647,17 @@ final class CutoutAppUITests: XCTestCase {
                 // in real Buttons. Xcode 27 misattributes their expanded
                 // visual children despite the button's typed semantics; every
                 // other Dynamic Type finding remains fatal.
+                return true
+            }
+            if ignoringScrolledOutBmsDetailBackControlContrastWarning,
+               issue.auditType == .contrast,
+               let element = issue.element,
+               elementDescription.contains("identifier: 'bms.detail.back'"),
+               !self.app.frame.contains(element.frame) {
+                // The selected-detail audit intentionally scrolls this control
+                // above the viewport before auditing the selected data. XCTest
+                // cannot determine contrast for its clipped child text; visible
+                // and all other contrast findings remain fatal.
                 return true
             }
             if ignoringPseudolocalizedNoBmsContrastWarning,
@@ -1820,7 +1825,8 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
             ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning,
-            ignoringBmsDetailSelectorDynamicTypeWarning: ignoringBmsDetailSelectorDynamicTypeWarning
+            ignoringBmsDetailSelectorDynamicTypeWarning: ignoringBmsDetailSelectorDynamicTypeWarning,
+            ignoringScrolledOutBmsDetailBackControlContrastWarning: true
         )
     }
 
