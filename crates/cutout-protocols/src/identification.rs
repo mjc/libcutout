@@ -1,10 +1,14 @@
 use std::{borrow::Borrow, str};
 
+use arrayvec::ArrayVec;
 use bytes::Bytes;
 pub use cutout_core::{
     AdvertisedName, ModelBanner, PendingProbe, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
 };
-use cutout_core::{CutoutSessionState, GattFingerprint, ModelRegistryEntry, ProtocolFamily};
+use cutout_core::{
+    CutoutSessionState, Duration, GattFingerprint, ModelRegistryEntry, MonotonicTimestamp,
+    ProtocolFamily,
+};
 
 use crate::{
     BegodeBanner, BegodeBannerParse, BegodeFrame, BegodeFrameParseResult, BegodeFrameReassembler,
@@ -370,13 +374,26 @@ impl DeviceDetectionSession {
                     }
                     _ => None,
                 };
-                if matches!(
+                let model_response = matches!(
                     decision.banner_model,
                     IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
-                ) || decision.firmware_banner
-                    || decision.imu_banner
-                {
-                    state.identity_mut().pending_probe = None;
+                );
+                if model_response {
+                    state
+                        .identity_mut()
+                        .observe_probe_response(PendingProbe::BegodeName);
+                }
+                if decision.firmware_banner {
+                    state
+                        .identity_mut()
+                        .observe_probe_response(PendingProbe::BegodeFirmware);
+                }
+                if decision.imu_banner {
+                    state
+                        .identity_mut()
+                        .observe_probe_response(PendingProbe::BegodeImu);
+                }
+                if model_response || decision.firmware_banner || decision.imu_banner {
                     state.identity_mut().missing_probe_response = None;
                 }
                 state.identity_mut().malformed_probe_response =
@@ -413,17 +430,56 @@ impl DeviceDetectionSession {
                 }
             }
             DeviceDetectionEvent::ProbeWrite { probe } => {
-                state.identity_mut().pending_probe = Some(probe);
+                state
+                    .identity_mut()
+                    .observe_probe_write(probe, MonotonicTimestamp::default());
             }
             DeviceDetectionEvent::ProbeTimeout { probe } => {
-                if state.identity().pending_probe == Some(probe) {
-                    state.identity_mut().pending_probe = None;
-                    state.identity_mut().missing_probe_response = Some(probe);
-                }
+                let _ = state.identity_mut().observe_probe_timeout(probe);
             }
         }
 
         self.resolution(state)
+    }
+
+    /// Records one probe write with its host-supplied monotonic timestamp.
+    #[must_use]
+    pub fn observe_probe_write_at(
+        &mut self,
+        state: &mut CutoutSessionState,
+        probe: PendingProbe,
+        started_at: MonotonicTimestamp,
+    ) -> DeviceDetectionResolution {
+        state.identity_mut().observe_probe_write(probe, started_at);
+        self.resolution(state)
+    }
+
+    /// Expires every outstanding probe older than the supplied timeout.
+    pub fn expire_pending_probes(
+        &mut self,
+        state: &mut CutoutSessionState,
+        now: MonotonicTimestamp,
+        timeout: Duration,
+    ) -> ArrayVec<PendingProbe, 3> {
+        state.identity_mut().expire_pending_probes(now, timeout)
+    }
+
+    /// Marks every outstanding probe as missing.
+    pub fn mark_pending_probes_missing(
+        &mut self,
+        state: &mut CutoutSessionState,
+    ) -> ArrayVec<PendingProbe, 3> {
+        state.identity_mut().mark_pending_probes_missing()
+    }
+
+    /// Returns the next strict probe-expiration deadline.
+    #[must_use]
+    pub fn next_probe_expiry(
+        &self,
+        state: &CutoutSessionState,
+        timeout: Duration,
+    ) -> Option<MonotonicTimestamp> {
+        state.identity().next_probe_expiry(timeout)
     }
 
     /// Returns a detection resolution derived from the Rust-owned session root.
@@ -1762,11 +1818,8 @@ mod tests {
             },
         );
 
-        let expired = detector.expire_pending_probes(
-            &mut root,
-            MonotonicTimestamp::new(3_003),
-            timeout,
-        );
+        let expired =
+            detector.expire_pending_probes(&mut root, MonotonicTimestamp::new(3_003), timeout);
 
         assert_eq!(
             expired.as_slice(),

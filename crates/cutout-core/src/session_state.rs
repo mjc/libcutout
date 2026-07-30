@@ -2,9 +2,10 @@
 
 use crate::{
     BatteryPageMetadata, BatteryPagePayload, BatteryReadback, DeviceEvent, FirmwareInfo,
-    GattFingerprint, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
-    SessionOutput, TelemetryDelta, TelemetrySnapshot,
+    GattFingerprint, MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback,
+    ReadOnlyResponse, SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
+use arrayvec::ArrayVec;
 use bytes::Bytes;
 
 /// Rust-owned durable state for one `CutOut` mobile/device session.
@@ -158,8 +159,7 @@ pub struct DeviceIdentityState {
     /// Strong wire evidence reported incompatible protocol families.
     pub protocol_conflict: bool,
 
-    /// Probe currently awaiting a matching response.
-    pub pending_probe: Option<PendingProbe>,
+    pending_probe_started_at: [Option<MonotonicTimestamp>; PendingProbe::COUNT],
 
     /// Latest probe that did not produce a matching response.
     pub missing_probe_response: Option<PendingProbe>,
@@ -169,6 +169,71 @@ pub struct DeviceIdentityState {
 }
 
 impl DeviceIdentityState {
+    /// Records an identity probe and the monotonic time at which it was written.
+    pub fn observe_probe_write(&mut self, probe: PendingProbe, started_at: MonotonicTimestamp) {
+        self.pending_probe_started_at[probe.index()] = Some(started_at);
+    }
+
+    /// Clears one probe after its matching response arrives.
+    pub fn observe_probe_response(&mut self, probe: PendingProbe) {
+        self.pending_probe_started_at[probe.index()] = None;
+    }
+
+    /// Marks one pending probe as missing.
+    pub fn observe_probe_timeout(&mut self, probe: PendingProbe) -> bool {
+        if self.pending_probe_started_at[probe.index()]
+            .take()
+            .is_none()
+        {
+            return false;
+        }
+        self.missing_probe_response = Some(probe);
+        true
+    }
+
+    /// Expires every probe strictly older than the response timeout.
+    pub fn expire_pending_probes(
+        &mut self,
+        now: MonotonicTimestamp,
+        timeout: crate::Duration,
+    ) -> ArrayVec<PendingProbe, { PendingProbe::COUNT }> {
+        let mut expired = ArrayVec::new();
+        for probe in PendingProbe::ALL {
+            let Some(started_at) = self.pending_probe_started_at[probe.index()] else {
+                continue;
+            };
+            if now.saturating_duration_since(started_at) > timeout {
+                let _ = self.observe_probe_timeout(probe);
+                expired.push(probe);
+            }
+        }
+        expired
+    }
+
+    /// Marks every outstanding probe as missing.
+    pub fn mark_pending_probes_missing(
+        &mut self,
+    ) -> ArrayVec<PendingProbe, { PendingProbe::COUNT }> {
+        let mut missing = ArrayVec::new();
+        for probe in PendingProbe::ALL {
+            if self.observe_probe_timeout(probe) {
+                missing.push(probe);
+            }
+        }
+        missing
+    }
+
+    /// Returns the next strict probe-expiration deadline.
+    #[must_use]
+    pub fn next_probe_expiry(&self, timeout: crate::Duration) -> Option<MonotonicTimestamp> {
+        let delay = crate::Duration::from_milliseconds(timeout.as_milliseconds().saturating_add(1));
+        self.pending_probe_started_at
+            .iter()
+            .flatten()
+            .map(|started_at| started_at.saturating_add_duration(delay))
+            .min()
+    }
+
     fn apply_update(&mut self, update: DeviceIdentityUpdate) {
         self.protocol_family = self.protocol_family.or(update.protocol_family);
         self.model = self.model.take().or(update.model);
@@ -283,6 +348,19 @@ pub enum PendingProbe {
 
     /// Begode `M` probe awaiting an IMU response.
     BegodeImu,
+}
+
+impl PendingProbe {
+    const ALL: [Self; 3] = [Self::BegodeName, Self::BegodeFirmware, Self::BegodeImu];
+    const COUNT: usize = Self::ALL.len();
+
+    const fn index(self) -> usize {
+        match self {
+            Self::BegodeName => 0,
+            Self::BegodeFirmware => 1,
+            Self::BegodeImu => 2,
+        }
+    }
 }
 
 /// Partial identity evidence update.
@@ -656,7 +734,9 @@ mod tests {
         state.select_discovered_platform("peripheral-a".to_owned());
         state.identity.protocol_family = Some(ProtocolFamily::BegodeGotway);
         state.identity.model = Some("Falcon".to_owned());
-        state.identity.pending_probe = Some(PendingProbe::BegodeName);
+        state
+            .identity
+            .observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(42));
 
         state.reset_device_identity();
 
@@ -667,7 +747,12 @@ mod tests {
         );
         assert_eq!(state.identity().protocol_family, None);
         assert_eq!(state.identity().model, None);
-        assert_eq!(state.identity().pending_probe, None);
+        assert_eq!(
+            state
+                .identity()
+                .next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
+            None
+        );
     }
 
     #[test]
