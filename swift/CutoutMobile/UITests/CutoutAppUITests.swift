@@ -835,6 +835,14 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastAtAccessibilityDynamicType() throws {
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: nil,
+            auditExclusions: []
+        )
+    }
+
     func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
         try assertVescDutyHeadroomAccessibility()
     }
@@ -981,15 +989,15 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["dashboard.top.navigation"].exists)
 
         for tab in family.tabNames {
-            let element = tabBar.buttons[tab.capitalized]
+            let element = tabBar.buttons["dashboard.nav.\(tab)"]
             XCTAssertTrue(element.exists)
             XCTAssertTrue(element.isHittable)
             XCTAssertEqual(element.isSelected, tab == "ride")
         }
 
         if name.contains("RightToLeft"), family.tabNames.count > 1 {
-            let firstTab = tabBar.buttons[family.tabNames[0].capitalized]
-            let secondTab = tabBar.buttons[family.tabNames[1].capitalized]
+            let firstTab = tabBar.buttons["dashboard.nav.\(family.tabNames[0])"]
+            let secondTab = tabBar.buttons["dashboard.nav.\(family.tabNames[1])"]
             XCTAssertEqual(
                 firstTab.frame.midX > secondTab.frame.midX,
                 expectsMirroredTabOrder,
@@ -1000,7 +1008,7 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         for unavailableTab in family.unavailableTabNames {
-            XCTAssertFalse(tabBar.buttons[unavailableTab.capitalized].exists)
+            XCTAssertFalse(tabBar.buttons["dashboard.nav.\(unavailableTab)"].exists)
         }
 
         if let requiredMetricLabel {
