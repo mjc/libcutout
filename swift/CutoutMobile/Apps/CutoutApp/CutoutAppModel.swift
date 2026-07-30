@@ -824,9 +824,11 @@ enum CutoutUITestSessionFixture {
     case staleVesc
     case failedVesc
     case reconnectingVesc
+    case connectingVesc
     case euc
     case staleEuc
     case reconnectingEuc
+    case connectingEuc
     case eucOverview
     case eucNoBms
     case eucUnknownTopology
@@ -842,9 +844,11 @@ enum CutoutUITestSessionFixture {
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
         case "vesc-reconnect": self = .reconnectingVesc
+        case "vesc-connecting": self = .connectingVesc
         case "euc": self = .euc
         case "euc-stale": self = .staleEuc
         case "euc-reconnect": self = .reconnectingEuc
+        case "euc-connecting": self = .connectingEuc
         case "euc-overview": self = .eucOverview
         case "euc-no-bms": self = .eucNoBms
         case "euc-unknown-topology": self = .eucUnknownTopology
@@ -888,7 +892,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .euc, .staleEuc, .reconnectingEuc, .eucOverview, .eucNoBms, .eucUnknownTopology:
+        case .euc, .staleEuc, .reconnectingEuc, .connectingEuc, .eucOverview, .eucNoBms, .eucUnknownTopology:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -901,7 +905,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -924,6 +928,7 @@ enum CutoutUITestSessionFixture {
         self == .euc
             || self == .staleEuc
             || self == .reconnectingEuc
+            || self == .connectingEuc
             || self == .eucOverview
             || self == .eucNoBms
             || self == .eucUnknownTopology
@@ -951,8 +956,15 @@ enum CutoutUITestSessionFixture {
             reconnectDelayMilliseconds: reconnectsAfterFirstLive ? 5_000 : 0,
             emitsStaleTelemetry: emitsStaleTelemetry,
             flushCaptureSucceeds: flushCaptureSucceeds,
-            connectionDelayMilliseconds: startsLive ? 0 : (failsConnection ? 3_000 : 1_000)
+            connectionDelayMilliseconds: startsLive ? 0 : (failsConnection ? 3_000 : connectingDelayMilliseconds)
         )
+    }
+
+    private var connectingDelayMilliseconds: UInt64 {
+        switch self {
+        case .connectingVesc, .connectingEuc: 5_000
+        default: 1_000
+        }
     }
 
     private var telemetry: TelemetrySnapshot {

@@ -276,6 +276,38 @@ final class CutoutAppUITests: XCTestCase {
         assertUseDisconnectCycles(for: .euc)
     }
 
+    func testVescUseShowsConnectingBeforeRide() {
+        assertUseShowsConnectingBeforeRide(for: .vesc)
+    }
+
+    func testEucUseShowsConnectingBeforeRide() {
+        assertUseShowsConnectingBeforeRide(for: .euc)
+    }
+
+    private func assertUseShowsConnectingBeforeRide(for family: ConnectedDeviceFamily) {
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
+
+        XCTAssertTrue(pairAvailableDevice(family))
+
+        let connecting = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label BEGINSWITH %@", "Connecting"),
+            object: connectionStatus
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [connecting], timeout: 3),
+            .completed,
+            "Use for \(family.name) did not expose the Connecting state"
+        )
+
+        let ride = app.descendants(matching: .any)[family.screenIdentifier]
+        XCTAssertFalse(ride.exists, "\(family.name) opened Ride before showing Connecting")
+        XCTAssertTrue(ride.waitForExistence(timeout: 20))
+
+        app.buttons["dashboard.disconnect"].tap()
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+    }
+
     private func assertUseDisconnectCycles(for family: ConnectedDeviceFamily) {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         let ride = app.descendants(matching: .any)[family.screenIdentifier]
@@ -1409,6 +1441,8 @@ final class CutoutAppUITests: XCTestCase {
         case vescStale
         case vescFailure
         case vescReconnect
+        case vescConnecting
+        case eucConnecting
         case vescLiveActivity
         case vescLiveActivityAuto
 
@@ -1418,6 +1452,8 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
+            if testName.localizedCaseInsensitiveContains("EucUseShowsConnecting") { return .eucConnecting }
+            if testName.contains("UseShowsConnecting") { return .vescConnecting }
             if testName.localizedCaseInsensitiveContains("EucStaleTelemetry") { return .eucStale }
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
@@ -1449,6 +1485,8 @@ final class CutoutAppUITests: XCTestCase {
             case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"
             case .vescReconnect: "vesc-reconnect"
+            case .vescConnecting: "vesc-connecting"
+            case .eucConnecting: "euc-connecting"
             case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
             }
