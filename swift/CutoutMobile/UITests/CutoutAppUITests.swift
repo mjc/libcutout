@@ -882,8 +882,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         if usesLocalizedText {
             XCTAssertFalse(status.label.isEmpty)
+            XCTAssertFalse((status.value as? String ?? "").isEmpty)
         } else {
             XCTAssertTrue(status.label.contains("Telemetry stale"))
+            XCTAssertEqual(status.value as? String, "warning")
         }
         try performVisibleLayoutAccessibilityAudit()
     }
@@ -902,6 +904,7 @@ final class CutoutAppUITests: XCTestCase {
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertTrue(status.label.contains("Telemetry pending"))
+        XCTAssertEqual(status.value as? String, "warning")
         try performVisibleLayoutAccessibilityAudit()
     }
 
@@ -921,9 +924,11 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertFalse(warning.label.isEmpty)
             XCTAssertFalse((warning.value as? String ?? "").isEmpty)
             XCTAssertFalse(status.label.isEmpty)
+            XCTAssertFalse((status.value as? String ?? "").isEmpty)
         } else {
             XCTAssertEqual(warning.label, "Telemetry stale")
             XCTAssertTrue(status.label.contains("Telemetry stale"))
+            XCTAssertEqual(status.value as? String, "warning")
             XCTAssertTrue(
                 (warning.value as? String)?.hasPrefix("Last update ") == true,
                 "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
