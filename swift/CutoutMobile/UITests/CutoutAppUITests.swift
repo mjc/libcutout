@@ -898,6 +898,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+        try assertVescPendingTelemetryAccessibility()
+    }
+
+    func testVescPendingTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertVescPendingTelemetryAccessibility(usesLocalizedText: true)
+    }
+
+    private func assertVescPendingTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic pending VESC fixture did not open its Ride screen")
@@ -906,12 +914,20 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["vesc.warning.telemetry-pending"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertEqual(warning.label, "Telemetry pending")
-        XCTAssertEqual(warning.value as? String, "Waiting for live values.")
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
-        XCTAssertTrue(status.label.contains("Telemetry pending"))
-        XCTAssertEqual(status.value as? String, "warning")
+        if usesLocalizedText {
+            XCTAssertNotEqual(warning.label, "Telemetry pending")
+            XCTAssertFalse(warning.label.isEmpty)
+            XCTAssertFalse((warning.value as? String ?? "").isEmpty)
+            XCTAssertFalse(status.label.isEmpty)
+            XCTAssertFalse((status.value as? String ?? "").isEmpty)
+        } else {
+            XCTAssertEqual(warning.label, "Telemetry pending")
+            XCTAssertEqual(warning.value as? String, "Waiting for live values.")
+            XCTAssertTrue(status.label.contains("Telemetry pending"))
+            XCTAssertEqual(status.value as? String, "warning")
+        }
         try performVisibleLayoutAccessibilityAudit()
     }
 
