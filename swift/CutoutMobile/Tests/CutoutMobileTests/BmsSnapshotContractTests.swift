@@ -141,6 +141,10 @@ final class BmsSnapshotContractTests: XCTestCase {
         let replaced = retained.mergingBmsPage(correctedEnergy)
         XCTAssertEqual(replaced.energyPercent, BatteryLevel(value: 67))
         XCTAssertEqual(replaced.energyPercentSource, .reported)
+
+        let cursorless = replaced.withoutPageCursor()
+        XCTAssertEqual(cursorless.energyPercent, BatteryLevel(value: 67))
+        XCTAssertEqual(cursorless.energyPercentSource, .reported)
     }
 
     func testCellMapSummaryMetricValuesKeepStatusDistinctFromAvailableData() {
