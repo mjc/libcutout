@@ -333,20 +333,8 @@ final class CutoutAppUITests: XCTestCase {
         try assertProductionPickerAccessibility()
     }
 
-    func testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
-        let useButton = app.buttons["device-picker.use.ui-test-vesc"]
-
-        XCTAssertTrue(useButton.waitForExistence(timeout: 5))
-        XCTAssertNotEqual(
-            useButton.label,
-            "Use Refloat VESC, device VESC",
-            "The pseudolocalized launch did not expand catalog-backed picker copy"
-        )
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
-    }
-
     func testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertProductionPickerAccessibility()
+        try assertProductionPickerAccessibility(assertsPseudolocalizedCopy: true)
     }
 
     func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
@@ -1449,10 +1437,20 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertProductionPickerAccessibility(
-        excluding excluded: XCUIAccessibilityAuditType = []
+        excluding excluded: XCUIAccessibilityAuditType = [],
+        assertsPseudolocalizedCopy: Bool = false
     ) throws {
         let screen = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(screen.waitForExistence(timeout: 5))
+        if assertsPseudolocalizedCopy {
+            let useButton = app.buttons["device-picker.use.ui-test-vesc"]
+            XCTAssertTrue(useButton.waitForExistence(timeout: 5))
+            XCTAssertNotEqual(
+                useButton.label,
+                "Use Refloat VESC, device VESC",
+                "The pseudolocalized launch did not expand catalog-backed picker copy"
+            )
+        }
         try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
