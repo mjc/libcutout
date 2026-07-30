@@ -1713,7 +1713,7 @@ final class CutoutAppUITests: XCTestCase {
             scrollTarget.swipeDown()
         }
 
-        XCTAssertTrue(group.waitForExistence(timeout: 5))
+        XCTAssertTrue(group.waitForExistence(timeout: 5), bmsScreen.debugDescription)
         XCTAssertEqual(group.elementType, .button)
         XCTAssertTrue(group.isHittable, bmsScreen.debugDescription)
         return group
