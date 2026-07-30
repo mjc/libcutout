@@ -2378,11 +2378,7 @@ public struct SpeedReadout: Equatable, Hashable, Sendable {
     }
 }
 
-public enum PhoneLocationFreshness: String, Equatable, Hashable, Sendable {
-    case unavailable
-    case fresh
-    case stale
-}
+public typealias PhoneLocationFreshness = EucRideUpdateFreshness
 
 public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
     public let speed: SpeedReadout
@@ -2402,11 +2398,7 @@ public struct PhoneLocationReadback: Equatable, Hashable, Sendable {
         at now: MonotonicMilliseconds,
         staleAfter: MonotonicMilliseconds = RideTelemetryFreshnessPolicy.staleAfter
     ) -> PhoneLocationFreshness {
-        guard speed.millimetersPerSecond != nil, let receivedAt else {
-            return .unavailable
-        }
-        let elapsed = now.rawValue >= receivedAt.rawValue ? now.rawValue - receivedAt.rawValue : 0
-        return elapsed <= staleAfter.rawValue ? .fresh : .stale
+        rideUpdateAge(updatedAt: receivedAt, at: now, staleAfter: staleAfter).freshness
     }
 
     public func detail(at now: MonotonicMilliseconds) -> String {

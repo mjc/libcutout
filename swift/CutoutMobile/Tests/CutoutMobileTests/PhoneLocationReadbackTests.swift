@@ -27,6 +27,21 @@ final class PhoneLocationReadbackTests: XCTestCase {
         XCTAssertEqual(readback.detail(at: MonotonicMilliseconds(12_001)), "stale GPS")
     }
 
+    func testGpsFreshnessUsesTheSharedRideUpdateAgeType() {
+        let readback = PhoneLocationReadback(
+            snapshot: snapshot(sampleTime: 10_000, speed: 2_500),
+            receivedAt: MonotonicMilliseconds(10_000)
+        )
+
+        let age = rideUpdateAge(
+            updatedAt: MonotonicMilliseconds(10_000),
+            at: MonotonicMilliseconds(12_001),
+            staleAfter: RideTelemetryFreshnessPolicy.staleAfter
+        )
+
+        XCTAssertEqual(readback.freshness(at: MonotonicMilliseconds(12_001)), age.freshness)
+    }
+
     func testMissingRustGpsSpeedIsExplicitlyUnavailable() {
         let readback = PhoneLocationReadback(snapshot: snapshot(sampleTime: 10_000, speed: nil))
 
