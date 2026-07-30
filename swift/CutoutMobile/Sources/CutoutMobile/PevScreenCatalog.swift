@@ -418,7 +418,7 @@ private extension PevBmsScreenKind {
         case .unknownTopology:
             return [
                 PevBmsChip(id: .dataStatus, title: pevLocalizedText("bms.chip.partial_data"), accent: .orange),
-                PevBmsChip(id: .topologyStatus, title: pevLocalizedText("bms.chip.topology_unverified"), accent: .green),
+                PevBmsChip(id: .topologyStatus, title: pevLocalizedText("bms.chip.topology_unverified"), accent: .orange),
             ]
         case .noData:
             return [

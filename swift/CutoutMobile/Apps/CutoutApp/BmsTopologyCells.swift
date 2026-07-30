@@ -42,6 +42,8 @@ struct BmsChip: View {
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(chipBackground)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
     }
 
     @ViewBuilder

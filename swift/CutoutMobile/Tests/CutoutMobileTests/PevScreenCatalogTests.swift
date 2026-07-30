@@ -392,6 +392,24 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(presented.bmsContent?.modes.map(\.title), ["balance view"])
     }
 
+    func testUnknownTopologyUsesCautionChips() {
+        let snapshot = BmsSnapshot(
+            topology: BmsTopology(
+                layoutLabel: "topology unverified",
+                seriesGroupCount: nil,
+                parallelCount: nil,
+                packCount: 1,
+                bmsCount: 1,
+                confidence: .unverified
+            )
+        )
+
+        let presented = PevScreenCatalog.live.presentedBmsScreen(liveBmsSnapshot: snapshot)
+
+        XCTAssertEqual(presented.id, .bmsUnknownTopology)
+        XCTAssertEqual(presented.bmsContent?.chips.map(\.accent), [.orange, .orange])
+    }
+
     func testBmsPresentationIdentityDoesNotDependOnOrder() {
         let chips = [
             PevBmsChip(id: .topology, title: "Same label", accent: .yellow),

@@ -55,25 +55,39 @@ struct BmsUnknownLayout: View {
                     .font(.headline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityHeading(.h2)
+                    .accessibilityHidden(true)
                 Text(capturePresentation.title)
                     .font(.title2.weight(.black))
+                    .accessibilityHidden(true)
                 Text(capturePresentation.detail)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(PevColors.muted)
+                    .accessibilityHidden(true)
                 Text(capturePresentation.state)
                     .font(.headline)
                     .foregroundStyle(PevColors.primaryText.opacity(0.82))
                     .padding(.horizontal, 18)
                     .frame(minHeight: 44)
                     .background(Capsule().fill(PevColors.muted.opacity(0.33)))
+                    .accessibilityHidden(true)
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PevDashboardCardBackground(cornerRadius: 24))
-            .accessibilityElement(children: .combine)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(captureFlowAccessibilityLabel)
             .accessibilityIdentifier("bms.unknown.capture-flow")
         }
+    }
+
+    private var captureFlowAccessibilityLabel: String {
+        [
+            localizedAppText("bms.unknown.next_capture_flow"),
+            capturePresentation.title,
+            capturePresentation.detail,
+            capturePresentation.state,
+        ].formatted(.list(type: .and))
     }
 
 }
