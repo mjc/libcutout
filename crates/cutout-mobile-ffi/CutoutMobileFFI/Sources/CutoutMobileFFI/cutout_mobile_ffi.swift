@@ -828,6 +828,21 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
     func discoverySnapshot()  -> DiscoverySnapshot
 
     /**
+     * Expires pending Begode probes strictly older than the response timeout.
+     */
+    func expireBegodeProbeResponses(nowMs: UInt64, timeoutMs: UInt64)  -> [MobilePendingProbeDto]
+
+    /**
+     * Marks every pending Begode probe as missing.
+     */
+    func markBegodeProbeResponsesMissing()  -> [MobilePendingProbeDto]
+
+    /**
+     * Returns the next strict Begode probe-expiration deadline.
+     */
+    func nextBegodeProbeExpiry(timeoutMs: UInt64)  -> UInt64?
+
+    /**
      * Observes raw advertisement-name bytes from the mobile BLE stack.
      */
     func observeAdvertisement(name: Data?)  -> DeviceDetectionResolutionRecord
@@ -836,6 +851,11 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * Records that the caller issued a Begode `V` firmware probe.
      */
     func observeBegodeFirmwareProbe()  -> DeviceDetectionResolutionRecord
+
+    /**
+     * Records a Begode `V` firmware probe with its monotonic write time.
+     */
+    func observeBegodeFirmwareProbeAt(startedAtMs: UInt64)  -> DeviceDetectionResolutionRecord
 
     /**
      * Records that the Begode `V` firmware probe did not produce a matching response.
@@ -848,6 +868,11 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
     func observeBegodeImuProbe()  -> DeviceDetectionResolutionRecord
 
     /**
+     * Records a Begode `M` IMU probe with its monotonic write time.
+     */
+    func observeBegodeImuProbeAt(startedAtMs: UInt64)  -> DeviceDetectionResolutionRecord
+
+    /**
      * Records that the Begode `M` IMU probe did not produce a matching response.
      */
     func observeBegodeImuProbeTimeout()  -> DeviceDetectionResolutionRecord
@@ -856,6 +881,11 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * Records that the caller issued a Begode `N` name probe.
      */
     func observeBegodeNameProbe()  -> DeviceDetectionResolutionRecord
+
+    /**
+     * Records a Begode `N` name probe with its monotonic write time.
+     */
+    func observeBegodeNameProbeAt(startedAtMs: UInt64)  -> DeviceDetectionResolutionRecord
 
     /**
      * Records that the Begode `N` name probe did not produce a matching response.
@@ -971,6 +1001,42 @@ open func discoverySnapshot() -> DiscoverySnapshot  {
 }
 
     /**
+     * Expires pending Begode probes strictly older than the response timeout.
+     */
+open func expireBegodeProbeResponses(nowMs: UInt64, timeoutMs: UInt64) -> [MobilePendingProbeDto]  {
+    return try!  FfiConverterSequenceTypeMobilePendingProbeDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_expire_begode_probe_responses(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(nowMs),
+        FfiConverterUInt64.lower(timeoutMs),$0
+    )
+})
+}
+
+    /**
+     * Marks every pending Begode probe as missing.
+     */
+open func markBegodeProbeResponsesMissing() -> [MobilePendingProbeDto]  {
+    return try!  FfiConverterSequenceTypeMobilePendingProbeDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_mark_begode_probe_responses_missing(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the next strict Begode probe-expiration deadline.
+     */
+open func nextBegodeProbeExpiry(timeoutMs: UInt64) -> UInt64?  {
+    return try!  FfiConverterOptionUInt64.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_next_begode_probe_expiry(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(timeoutMs),$0
+    )
+})
+}
+
+    /**
      * Observes raw advertisement-name bytes from the mobile BLE stack.
      */
 open func observeAdvertisement(name: Data?) -> DeviceDetectionResolutionRecord  {
@@ -989,6 +1055,18 @@ open func observeBegodeFirmwareProbe() -> DeviceDetectionResolutionRecord  {
     return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_observe_begode_firmware_probe(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Records a Begode `V` firmware probe with its monotonic write time.
+     */
+open func observeBegodeFirmwareProbeAt(startedAtMs: UInt64) -> DeviceDetectionResolutionRecord  {
+    return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_observe_begode_firmware_probe_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(startedAtMs),$0
     )
 })
 }
@@ -1016,6 +1094,18 @@ open func observeBegodeImuProbe() -> DeviceDetectionResolutionRecord  {
 }
 
     /**
+     * Records a Begode `M` IMU probe with its monotonic write time.
+     */
+open func observeBegodeImuProbeAt(startedAtMs: UInt64) -> DeviceDetectionResolutionRecord  {
+    return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_observe_begode_imu_probe_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(startedAtMs),$0
+    )
+})
+}
+
+    /**
      * Records that the Begode `M` IMU probe did not produce a matching response.
      */
 open func observeBegodeImuProbeTimeout() -> DeviceDetectionResolutionRecord  {
@@ -1033,6 +1123,18 @@ open func observeBegodeNameProbe() -> DeviceDetectionResolutionRecord  {
     return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_observe_begode_name_probe(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Records a Begode `N` name probe with its monotonic write time.
+     */
+open func observeBegodeNameProbeAt(startedAtMs: UInt64) -> DeviceDetectionResolutionRecord  {
+    return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_observe_begode_name_probe_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(startedAtMs),$0
     )
 })
 }
@@ -14106,6 +14208,30 @@ fileprivate struct FfiConverterOptionInt32: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
     typealias SwiftType = Bool?
 
@@ -15675,6 +15801,31 @@ fileprivate struct FfiConverterSequenceTypeMobileGattRoleDto: FfiConverterRustBu
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobilePendingProbeDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobilePendingProbeDto]
+
+    public static func write(_ value: [MobilePendingProbeDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobilePendingProbeDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobilePendingProbeDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobilePendingProbeDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobilePendingProbeDto.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
  * Ambiguous picker candidate that requires user confirmation before routing.
  */
@@ -15836,10 +15987,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_discovery_snapshot() != 452) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_expire_begode_probe_responses() != 6) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_mark_begode_probe_responses_missing() != 35052) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_next_begode_probe_expiry() != 20496) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_advertisement() != 27343) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_firmware_probe() != 42122) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_firmware_probe_at() != 853) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_firmware_probe_timeout() != 14659) {
@@ -15848,10 +16011,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_imu_probe() != 2045) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_imu_probe_at() != 10624) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_imu_probe_timeout() != 12129) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_name_probe() != 60469) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_name_probe_at() != 60631) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_begode_name_probe_timeout() != 15254) {
