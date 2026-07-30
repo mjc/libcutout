@@ -334,10 +334,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
-        try assertProductionPickerAccessibility(
-            excluding: .contrast,
-            assertsPseudolocalizedCopy: true
-        )
+        try assertProductionPickerAccessibility(assertsPseudolocalizedCopy: true)
     }
 
     func testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
