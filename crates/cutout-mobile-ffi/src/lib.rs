@@ -6629,6 +6629,26 @@ mod tests {
     }
 
     #[test]
+    fn mobile_probe_correlation_expires_only_unanswered_probes() {
+        let session = CutoutSessionStateHandle::new();
+        let _ = session.observe_begode_name_probe_at(1_000);
+        let _ = session.observe_begode_firmware_probe_at(1_001);
+        let _ = session.observe_begode_imu_probe_at(1_002);
+        let _ = session.observe_notification(b"NAME=Falcon".to_vec());
+
+        let expired = session.expire_begode_probe_responses(3_003, 2_000);
+
+        assert_eq!(
+            expired,
+            vec![
+                MobilePendingProbeDto::BegodeFirmware,
+                MobilePendingProbeDto::BegodeImu
+            ]
+        );
+        assert_eq!(session.next_begode_probe_expiry(2_000), None);
+    }
+
+    #[test]
     fn mobile_device_detection_session_exposes_malformed_begode_probe_response() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
