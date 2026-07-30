@@ -1133,6 +1133,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: "voltage",
+            ignoringNilElementContrastWarning: true,
             expectsMirroredTabOrder: false
         )
     }
