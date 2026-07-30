@@ -1739,7 +1739,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private func reachableCaptureAnnotation(_ id: String, in screen: XCUIElement) -> XCUIElement {
         let annotation = app.buttons["capture.label.\(id).action"]
-        scrollElementIntoReachability(annotation, in: screen, maxScrolls: 6)
+        scrollElementIntoReachability(annotation, in: screen, maxScrolls: 20)
 
         XCTAssertTrue(annotation.waitForExistence(timeout: 5))
         XCTAssertTrue(annotation.isHittable, screen.debugDescription)
@@ -1755,11 +1755,11 @@ final class CutoutAppUITests: XCTestCase {
         let scrollTarget = scrollView.exists ? scrollView : screen
 
         for index in 0..<maxScrolls where !element.exists || !element.isHittable {
-            let startY = index < maxScrolls / 2 ? 0.62 : 0.28
-            let endY = index < maxScrolls / 2 ? 0.28 : 0.62
-            let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
-            let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY))
-            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            if index < maxScrolls / 2 {
+                scrollTarget.swipeUp()
+            } else {
+                scrollTarget.swipeDown()
+            }
         }
     }
 
