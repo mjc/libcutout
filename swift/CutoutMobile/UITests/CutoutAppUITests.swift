@@ -271,6 +271,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertCaptureAccessibility()
     }
 
+    func testCapturePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertCaptureAccessibility(exercisesLabels: false)
+    }
+
     func testProductionPickerPassesAccessibilityAudit() throws {
         try assertProductionPickerAccessibility()
     }
@@ -1194,13 +1198,12 @@ final class CutoutAppUITests: XCTestCase {
         captureKind.typeText("custom vesc")
         finishEditing.tap()
 
-        XCTAssertTrue(recordButton.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertEqual(recordButton.elementType, .button)
-
-        for _ in 0..<6 where !recordButton.isHittable {
+        for _ in 0..<6 where !recordButton.exists || !recordButton.isHittable {
             advancedCapture.swipeUp()
         }
 
+        XCTAssertTrue(recordButton.exists, app.debugDescription)
+        XCTAssertEqual(recordButton.elementType, .button)
         XCTAssertTrue(recordButton.isHittable)
         recordButton.tap()
         XCTAssertTrue(app.descendants(matching: .any)["capture.screen"].waitForExistence(timeout: 5))
@@ -1215,7 +1218,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertCaptureAccessibility(
-        excluding excluded: XCUIAccessibilityAuditType = []
+        excluding excluded: XCUIAccessibilityAuditType = [],
+        exercisesLabels: Bool = true
     ) throws {
         enterCapture()
 
@@ -1229,6 +1233,10 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
+        guard exercisesLabels else {
+            try performVisibleLayoutAccessibilityAudit(excluding: excluded)
+            return
+        }
         let firstAnnotation = reachableCaptureAnnotation("ride", in: screen)
         XCTAssertTrue(firstAnnotation.isHittable)
         let firstAnnotationInitialLabel = firstAnnotation.label
@@ -1244,9 +1252,7 @@ final class CutoutAppUITests: XCTestCase {
         lastAnnotation.tap()
         XCTAssertNotEqual(lastAnnotation.label, lastAnnotationInitialLabel)
 
-        for _ in 0..<6 where !stopCapture.isHittable {
-            screen.swipeDown()
-        }
+        restoreCaptureViewport(screen)
         XCTAssertTrue(stopCapture.isHittable)
         try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
@@ -1470,15 +1476,27 @@ final class CutoutAppUITests: XCTestCase {
 
     private func reachableCaptureAnnotation(_ id: String, in screen: XCUIElement) -> XCUIElement {
         let annotation = app.buttons["capture.label.\(id).action"]
+        let scrollView = screen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : screen
 
-        for _ in 0..<12 where !annotation.exists || !annotation.isHittable {
-            let scrollView = screen.scrollViews.firstMatch
-            (scrollView.exists ? scrollView : screen).swipeUp()
+        for _ in 0..<6 where !annotation.exists || !annotation.isHittable {
+            scrollTarget.swipeUp()
+        }
+        for _ in 0..<6 where !annotation.exists || !annotation.isHittable {
+            scrollTarget.swipeDown()
         }
 
         XCTAssertTrue(annotation.waitForExistence(timeout: 5))
         XCTAssertTrue(annotation.isHittable, screen.debugDescription)
         return annotation
+    }
+
+    private func restoreCaptureViewport(_ screen: XCUIElement) {
+        let scrollView = screen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : screen
+        for _ in 0..<6 {
+            scrollTarget.swipeDown()
+        }
     }
 
     private func assertEucBmsAccessibility(

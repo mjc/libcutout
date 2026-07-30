@@ -93,12 +93,14 @@ struct CaptureRecordingScreen: View {
         Button(role: .destructive, action: finishCapture) {
             Text("capture.stop")
                 .font(.callout.weight(.bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(.black)
+                .padding(.horizontal, 16)
                 .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
-            .disabled(isFinishing)
-            .accessibilityIdentifier("capture.stop")
+        .background(Capsule().fill(CaptureActionButtonTone.finish.tint))
+        .disabled(isFinishing)
+        .accessibilityIdentifier("capture.stop")
     }
 }
 
