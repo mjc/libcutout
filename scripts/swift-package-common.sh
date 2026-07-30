@@ -18,18 +18,6 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
-cutout_ios_ui_test_derived_data() {
-  local root destination
-  root="$1"
-  destination="$2"
-
-  if [[ "$destination" == platform=iOS,* ]]; then
-    printf '%s\n' "${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-tests}"
-  else
-    printf '%s\n' "${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-${CUTOUT_IOS_SIMULATOR_DERIVED_DATA:-$root/target/xcode-simulator-tests}}"
-  fi
-}
-
 cutout_latest_complete_xcresult_since() {
   local logs marker
   logs="$1"

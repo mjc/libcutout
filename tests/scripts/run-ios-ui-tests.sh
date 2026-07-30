@@ -7,9 +7,6 @@ source "$root/scripts/swift-package-common.sh"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/cutout-ui-test-runner.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
-export CUTOUT_IOS_SIMULATOR_DERIVED_DATA="$tmp/simulator"
-export CUTOUT_IOS_DEVICE_DERIVED_DATA="$tmp/device"
-
 assert_equal() {
   if [[ "$1" != "$2" ]]; then
     echo "expected '$1', got '$2'" >&2
@@ -17,14 +14,7 @@ assert_equal() {
   fi
 }
 
-assert_equal \
-  "$tmp/simulator" \
-  "$(cutout_ios_ui_test_derived_data "$root" "platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest")"
-assert_equal \
-  "$tmp/device" \
-  "$(cutout_ios_ui_test_derived_data "$root" "platform=iOS,id=physical-device")"
-
-logs="$tmp/device/Logs/Test"
+logs="$tmp/Logs/Test"
 old_result="$logs/Test-Old.xcresult"
 current_result="$logs/Test-Current.xcresult"
 marker="$tmp/current-run"
