@@ -71,6 +71,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testBluetoothUnavailablePickerDoesNotOfferUseOrRide() throws {
+        try assertBluetoothUnavailablePicker()
+    }
+
+    func testBluetoothUnavailablePickerDoesNotOfferUseOrRideInRightToLeftLayout() throws {
+        try assertBluetoothUnavailablePicker()
+    }
+
+    private func assertBluetoothUnavailablePicker() throws {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         let status = app.descendants(matching: .any)["device-picker.connection-status"]
 
