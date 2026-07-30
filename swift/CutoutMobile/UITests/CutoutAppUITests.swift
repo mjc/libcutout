@@ -951,10 +951,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility(
-            usesLocalizedText: true,
-            ignoringNilElementContrastWarning: true
-        )
+        try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
