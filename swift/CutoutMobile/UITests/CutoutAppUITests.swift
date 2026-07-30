@@ -652,6 +652,14 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
     }
 
+    func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+        try assertEucBmsAccessibility(
+            excluding: [],
+            assertsEnglishMetric: false,
+            ignoringUnattributedSwiftUIContrastWarning: true
+        )
+    }
+
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility()
     }
@@ -1273,7 +1281,8 @@ final class CutoutAppUITests: XCTestCase {
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringNilElementTextRepresentationWarning: Bool = false,
         ignoringSystemToolbarContrastWarning: Bool = false,
-        ignoringNilElementContrastWarning: Bool = false
+        ignoringNilElementContrastWarning: Bool = false,
+        ignoringUnattributedSwiftUIContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
@@ -1301,6 +1310,14 @@ final class CutoutAppUITests: XCTestCase {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic. Attributable contrast findings
                 // still fail this test.
+                return true
+            }
+            if ignoringUnattributedSwiftUIContrastWarning,
+               issue.auditType == .contrast,
+               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode" {
+                // Xcode 27's simulator audit cannot attribute this native
+                // TabView finding to a view, frame, label, or color. Every
+                // attributable contrast issue still fails this test.
                 return true
             }
             return false
@@ -1405,14 +1422,24 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucBmsAccessibility(
-        excluding excluded: XCUIAccessibilityAuditType = [.contrast]
+        excluding excluded: XCUIAccessibilityAuditType = [.contrast],
+        assertsEnglishMetric: Bool = true,
+        ignoringUnattributedSwiftUIContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
 
-        assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        if assertsEnglishMetric {
+            assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        } else {
+            _ = reachableBmsGroup(7, in: bmsScreen)
+        }
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
         restoreBmsViewport(bmsScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: excluded,
+            ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning
+        )
     }
 
     private func assertEucBmsDetailAccessibility(
