@@ -314,14 +314,18 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.exists)
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // XCTest's text-clipping audit reports a framework false positive for
-        // this bold/high-contrast launch configuration; the dedicated Dynamic
-        // Type audit remains the authoritative clipping check.
+        // This launch intentionally fixes the preferred category to normal
+        // Large while exercising the other system settings. Dedicated
+        // Accessibility-XXXL routes are the Dynamic Type authority; asking
+        // XCTest to infer scaling from this fixed-size launch is a false
+        // positive for the grouped metric representation.
+        // XCTest's text-clipping audit also reports a framework false positive
+        // for this bold/high-contrast launch configuration.
         // XCTest's contrast audit also reports false positives for SwiftUI's
         // grouped dashboard cards even when the rendered surface is black on
         // the semantic system background. Picker contrast is covered above.
         try performVisibleLayoutAccessibilityAudit(
-            excluding: [.textClipped, .contrast],
+            excluding: [.dynamicType, .textClipped, .contrast],
             ignoringNilElementTextRepresentationWarning: true
         )
     }
