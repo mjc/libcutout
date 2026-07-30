@@ -1283,7 +1283,11 @@ public final class CutoutSessionCore: NSObject {
         guard let captureStartedAt else {
             return 0
         }
-        return clock.now().elapsed(since: captureStartedAt).rawValue
+        return captureElapsedMilliseconds(since: captureStartedAt)
+    }
+
+    func captureElapsedMilliseconds(since captureStartedAt: MonotonicMilliseconds) -> UInt64 {
+        clock.now().elapsed(since: captureStartedAt).rawValue
     }
 
     private func captureProgress() -> CaptureProgress {

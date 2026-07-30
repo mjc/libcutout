@@ -27,6 +27,20 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testCaptureElapsedTimeUsesTheInjectedMonotonicClockAtExactBoundaries() {
+        var now = MonotonicMilliseconds(2_999)
+        let core = CutoutSessionCore(clock: MonotonicClock { now })
+        let startedAt = MonotonicMilliseconds(1_000)
+
+        XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 1_999)
+
+        now = MonotonicMilliseconds(3_000)
+        XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_000)
+
+        now = MonotonicMilliseconds(3_001)
+        XCTAssertEqual(core.captureElapsedMilliseconds(since: startedAt), 2_001)
+    }
+
     func testConnectionReconnectPolicyBoundsJitteredBackoff() {
         XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 1, jitter: 0), 200)
         XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 2, jitter: 0.5), 500)
