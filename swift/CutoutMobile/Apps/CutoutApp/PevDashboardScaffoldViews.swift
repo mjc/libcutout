@@ -58,6 +58,8 @@ struct PevDashboardScaffold<Content: View>: View {
 }
 
 struct PevAppShell<Content: View>: View {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     let sectionTitle: String
     let disconnect: () -> Void
     let content: Content
@@ -93,6 +95,7 @@ struct PevAppShell<Content: View>: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .padding(.top, verticalSizeClass == .compact ? 8 : 0)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(PevColors.pageBackground)
     }

@@ -207,19 +207,47 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(softPedals.label, "Stop Pedals soft")
     }
 
-    func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
+    func testDisconnectKeepsSavedDeviceUntilExplicitForget() throws {
+        let forget = try disconnectAndRequireSavedDevice()
+        forget.tap()
+        XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
+    }
+
+    func testDisconnectKeepsSavedDeviceAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        let forget = try disconnectAndRequireSavedDevice()
+        try performVisibleLayoutAccessibilityAudit()
+        forget.tap()
+        XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
+    }
+
+    private func disconnectAndRequireSavedDevice() throws -> XCUIElement {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
         let disconnect = app.buttons["dashboard.disconnect"]
         XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
-        XCTAssertEqual(disconnect.label, "Disconnect")
+        XCTAssertEqual(disconnect.elementType, .button)
+        XCTAssertTrue(disconnect.isHittable)
+        if name.contains("Pseudolocalized") {
+            XCTAssertFalse(disconnect.label.isEmpty)
+            XCTAssertNotEqual(disconnect.label, "Disconnect")
+        } else {
+            XCTAssertEqual(disconnect.label, "Disconnect")
+        }
         disconnect.tap()
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            picker.waitForExistence(timeout: 5),
+            "Disconnect did not return to the picker:\n\(app.debugDescription)"
+        )
         let forget = app.buttons["device-picker.forget-saved-device"]
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
-        XCTAssertEqual(forget.label, "Forget saved device")
+        if name.contains("Pseudolocalized") {
+            XCTAssertFalse(forget.label.isEmpty)
+            XCTAssertNotEqual(forget.label, "Forget saved device")
+        } else {
+            XCTAssertEqual(forget.label, "Forget saved device")
+        }
         XCTAssertTrue(forget.isHittable)
 
         let dashboard = app.descendants(matching: .any).matching(
@@ -232,8 +260,7 @@ final class CutoutAppUITests: XCTestCase {
         reconnect.isInverted = true
         wait(for: [reconnect], timeout: 2)
 
-        forget.tap()
-        XCTAssertTrue(forget.waitForNonExistence(timeout: 5))
+        return forget
     }
 
     func testVescUseDisconnectCycleKeepsOneNativeRideRoute() {
