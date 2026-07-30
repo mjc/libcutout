@@ -936,6 +936,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.isEuc ?? false)
     }
 
+    func testStandardUIFixtureLaunchArgumentSelectsEucOverviewFixture() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: nil,
+            arguments: ["-CUTOUT_UI_TEST_FIXTURE", "euc-overview"]
+        )
+
+        XCTAssertEqual(fixture, .eucOverview)
+        XCTAssertTrue(fixture?.isEuc ?? false)
+    }
+
     func testStandardUIFixtureLaunchArgumentSurvivesRightToLeftSystemArguments() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,

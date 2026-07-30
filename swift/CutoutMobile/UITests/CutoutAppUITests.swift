@@ -72,6 +72,7 @@ final class CutoutAppUITests: XCTestCase {
 
     func testEucFixtureSelectionIgnoresXCTestSelectorCase() {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCBmsDetailPassesAccessibilityAudit"), .euc)
+        XCTAssertEqual(Fixture.testFixture(for: "testEucBmsOverviewPassesAccessibilityAudit"), .eucOverview)
         XCTAssertEqual(Fixture.testFixture(for: "testEucStaleTelemetryIsAnAccessibleWarning"), .eucStale)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCNoBmsSurfacePassesAccessibilityAudit"), .eucNoBms)
         XCTAssertEqual(Fixture.testFixture(for: "testEUCReconnectKeepsRideRoute"), .eucReconnect)
@@ -755,6 +756,18 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility()
     }
 
+    func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
+        defer { disconnectIfConnected() }
+
+        let energyHero = app.progressIndicators["bms.energy.hero"]
+        XCTAssertTrue(energyHero.waitForExistence(timeout: 5))
+        XCTAssertTrue(energyHero.isHittable)
+        XCTAssertEqual(energyHero.label, "Usable energy")
+        XCTAssertEqual(energyHero.value as? String, "64% and 20S4P test pack")
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -1345,6 +1358,7 @@ final class CutoutAppUITests: XCTestCase {
         case euc
         case eucStale
         case eucReconnect
+        case eucOverview
         case eucNoBms
         case eucUnknownTopology
         case vesc
@@ -1366,6 +1380,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
             if testName.contains("StaleTelemetry") { return .vescStale }
+            if testName.localizedCaseInsensitiveContains("EucBmsOverview") { return .eucOverview }
             if testName.localizedCaseInsensitiveContains("EucNoBms") { return .eucNoBms }
             if testName.localizedCaseInsensitiveContains("EucUnknownTopology") { return .eucUnknownTopology }
             if testName.localizedCaseInsensitiveContains("Euc") { return .euc }
@@ -1383,6 +1398,7 @@ final class CutoutAppUITests: XCTestCase {
             case .euc: "euc"
             case .eucStale: "euc-stale"
             case .eucReconnect: "euc-reconnect"
+            case .eucOverview: "euc-overview"
             case .eucNoBms: "euc-no-bms"
             case .eucUnknownTopology: "euc-unknown-topology"
             case .vesc: "vesc"

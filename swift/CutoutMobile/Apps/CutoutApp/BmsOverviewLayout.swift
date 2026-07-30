@@ -74,6 +74,7 @@ struct BmsOverviewLayout: View {
                 detail: energyHero.detail,
                 progress: energyHero.progress
             )
+            .accessibilityIdentifier("bms.energy.hero")
         } else {
             PevDashboardWideCard(
                 title: localizedAppText("bms.overview.pack_telemetry"),

@@ -827,6 +827,7 @@ enum CutoutUITestSessionFixture {
     case euc
     case staleEuc
     case reconnectingEuc
+    case eucOverview
     case eucNoBms
     case eucUnknownTopology
     case vescLiveActivity
@@ -844,6 +845,7 @@ enum CutoutUITestSessionFixture {
         case "euc": self = .euc
         case "euc-stale": self = .staleEuc
         case "euc-reconnect": self = .reconnectingEuc
+        case "euc-overview": self = .eucOverview
         case "euc-no-bms": self = .eucNoBms
         case "euc-unknown-topology": self = .eucUnknownTopology
         case "vesc-live-activity": self = .vescLiveActivity
@@ -886,7 +888,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .euc, .staleEuc, .reconnectingEuc, .eucNoBms, .eucUnknownTopology:
+        case .euc, .staleEuc, .reconnectingEuc, .eucOverview, .eucNoBms, .eucUnknownTopology:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -919,12 +921,18 @@ enum CutoutUITestSessionFixture {
     var emitsStaleTelemetry: Bool { self == .staleVesc || self == .staleEuc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool {
-        self == .euc || self == .staleEuc || self == .reconnectingEuc || self == .eucNoBms || self == .eucUnknownTopology
+        self == .euc
+            || self == .staleEuc
+            || self == .reconnectingEuc
+            || self == .eucOverview
+            || self == .eucNoBms
+            || self == .eucUnknownTopology
     }
 
     private var testBmsSnapshot: BmsSnapshot? {
         switch self {
         case .euc: eucBmsSnapshot
+        case .eucOverview: eucBmsOverviewSnapshot
         case .eucUnknownTopology: eucUnknownTopologyBmsSnapshot
         default: nil
         }
@@ -974,6 +982,32 @@ enum CutoutUITestSessionFixture {
     }
 
     private var eucBmsSnapshot: BmsSnapshot {
+        makeEucBmsSnapshot(groups: [
+            BmsGroupSnapshot(
+                index: 7,
+                label: "right pack group 7",
+                voltage: Voltage(value: 4_036),
+                temperature: Temperature(value: 38_000),
+                isBalancing: true,
+                alertLevel: .warning,
+                detail: "lowest group"
+            ),
+            BmsGroupSnapshot(
+                index: 12,
+                label: "right pack group 12",
+                voltage: Voltage(value: 4_060),
+                temperature: Temperature(value: 34_000),
+                isBalancing: true,
+                alertLevel: .nominal
+            )
+        ])
+    }
+
+    private var eucBmsOverviewSnapshot: BmsSnapshot {
+        makeEucBmsSnapshot(groups: [])
+    }
+
+    private func makeEucBmsSnapshot(groups: [BmsGroupSnapshot]) -> BmsSnapshot {
         BmsSnapshot(
             topology: BmsTopology(
                 layoutLabel: "20S4P test pack",
@@ -997,25 +1031,7 @@ enum CutoutUITestSessionFixture {
             balancingDetail: "groups 7 and 12",
             faultSummary: "no active faults",
             faultDetail: "last fault unavailable",
-            groups: [
-                BmsGroupSnapshot(
-                    index: 7,
-                    label: "right pack group 7",
-                    voltage: Voltage(value: 4_036),
-                    temperature: Temperature(value: 38_000),
-                    isBalancing: true,
-                    alertLevel: .warning,
-                    detail: "lowest group"
-                ),
-                BmsGroupSnapshot(
-                    index: 12,
-                    label: "right pack group 12",
-                    voltage: Voltage(value: 4_060),
-                    temperature: Temperature(value: 34_000),
-                    isBalancing: true,
-                    alertLevel: .nominal
-                )
-            ]
+            groups: groups
         )
     }
 
