@@ -113,6 +113,36 @@ final class BmsSnapshotContractTests: XCTestCase {
         )
     }
 
+    func testBmsPageMergeRetainsAndReplacesEnergyProvenanceWithItsValue() {
+        let topology = BmsTopology(
+            layoutLabel: "test pack",
+            seriesGroupCount: nil,
+            parallelCount: nil,
+            packCount: 1,
+            bmsCount: 1,
+            confidence: .verified
+        )
+        let initial = BmsSnapshot(
+            topology: topology,
+            energyPercent: BatteryLevel(value: 64),
+            energyPercentSource: .estimated
+        )
+        let otherPage = BmsSnapshot(topology: topology, voltage: Voltage(value: 81_600))
+        let correctedEnergy = BmsSnapshot(
+            topology: topology,
+            energyPercent: BatteryLevel(value: 67),
+            energyPercentSource: .reported
+        )
+
+        let retained = initial.mergingBmsPage(otherPage)
+        XCTAssertEqual(retained.energyPercent, BatteryLevel(value: 64))
+        XCTAssertEqual(retained.energyPercentSource, .estimated)
+
+        let replaced = retained.mergingBmsPage(correctedEnergy)
+        XCTAssertEqual(replaced.energyPercent, BatteryLevel(value: 67))
+        XCTAssertEqual(replaced.energyPercentSource, .reported)
+    }
+
     func testCellMapSummaryMetricValuesKeepStatusDistinctFromAvailableData() {
         let topology = BmsTopology(
             layoutLabel: "test pack",
