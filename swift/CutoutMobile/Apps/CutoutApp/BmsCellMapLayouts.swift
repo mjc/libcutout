@@ -128,7 +128,7 @@ private struct BmsDisplayModesCard<Details: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: spacing) {
-            Text("bms.display_modes")
+            Text(localizedAppText("bms.display_modes"))
                 .font(.headline)
                 .foregroundStyle(PevColors.muted)
                 .accessibilityHeading(.h2)

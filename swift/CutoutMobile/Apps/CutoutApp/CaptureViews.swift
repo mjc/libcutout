@@ -91,7 +91,7 @@ struct CaptureRecordingScreen: View {
 
     private var stopCaptureButton: some View {
         Button(role: .destructive, action: finishCapture) {
-            Text("capture.stop")
+            Text(localizedAppText("capture.stop"))
                 .font(.callout.weight(.bold))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 16)
