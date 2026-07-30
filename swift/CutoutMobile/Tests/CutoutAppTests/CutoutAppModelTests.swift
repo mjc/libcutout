@@ -949,6 +949,22 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.isEuc ?? false)
     }
 
+    func testPseudolocalizedStaleVescFixtureUsesTheDeterministicCoreScript() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: nil,
+            arguments: [
+                "-CUTOUT_UI_TEST_FIXTURE", "vesc-stale",
+                "-NSDoubleLocalizedStrings", "YES",
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            ]
+        )
+
+        XCTAssertEqual(fixture?.candidate.platformIdentifier, "ui-test-vesc")
+        XCTAssertTrue(fixture?.emitsStaleTelemetry ?? false)
+        XCTAssertFalse(fixture?.emitsPendingTelemetry ?? true)
+        XCTAssertFalse(fixture?.startsLive ?? true)
+    }
+
     func testEucReconnectFixtureKeepsTheEucRoute() {
         let fixture = CutoutUITestSessionFixture(value: "euc-reconnect")
 
