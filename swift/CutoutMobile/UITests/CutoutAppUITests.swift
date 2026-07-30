@@ -629,6 +629,7 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(app.descendants(matching: .any)["bms.diagnostics"].exists)
         assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        restoreBmsViewport(bmsScreen)
         // The dedicated Accessibility-XXXL route below validates both Dynamic
         // Type and clipping after the grid changes to one wide column. Xcode's
         // default-size audit instead predicts those failures from compact cells.
@@ -707,6 +708,10 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
+        try assertEucBmsAccessibility(excluding: [])
+    }
+
+    func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrastAtAccessibilityDynamicType() throws {
         try assertEucBmsAccessibility(excluding: [])
     }
 
@@ -1352,6 +1357,14 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureKind.isHittable)
     }
 
+    private func restoreBmsViewport(_ bmsScreen: XCUIElement) {
+        let scrollView = bmsScreen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : bmsScreen
+        for _ in 0..<4 {
+            scrollTarget.swipeDown()
+        }
+    }
+
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
         let screen = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH %@", "dashboard.screen.")
@@ -1432,6 +1445,7 @@ final class CutoutAppUITests: XCTestCase {
         defer { disconnectIfConnected() }
 
         assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
+        restoreBmsViewport(bmsScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
