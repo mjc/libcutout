@@ -864,6 +864,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucUnknownTopologySurface(auditExclusions: [])
     }
 
+    func testEucUnknownTopologyPassesAccessibilityAuditInRightToLeftLayout() throws {
+        try assertEucUnknownTopologySurface()
+    }
+
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
         try assertEucBmsAccessibility(excluding: [])
     }
