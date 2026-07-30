@@ -1090,7 +1090,9 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
-        try assertVescDutyHeadroomAccessibility()
+        try assertVescDutyHeadroomAccessibility(
+            ignoringNilElementContrastWarning: true
+        )
     }
 
     func testVescDutyHeadroomSpeaksPercentWithIncreasedContrastAtAccessibilityDynamicType() throws {
@@ -1101,7 +1103,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertVescDutyHeadroomAccessibility(
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        auditExclusions: XCUIAccessibilityAuditType = [],
         ignoringNilElementContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
