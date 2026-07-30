@@ -853,6 +853,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+        try assertEucStaleTelemetryAccessibility()
+    }
+
+    func testEucStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertEucStaleTelemetryAccessibility(usesLocalizedText: true)
+    }
+
+    private func assertEucStaleTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic stale EUC fixture did not open its Ride screen")
@@ -861,12 +869,22 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["euc.warning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertEqual(warning.label, "Telemetry stale")
-        XCTAssertTrue((warning.value as? String)?.hasPrefix("Last update ") == true)
+        if usesLocalizedText {
+            XCTAssertNotEqual(warning.label, "Telemetry stale")
+            XCTAssertFalse(warning.label.isEmpty)
+            XCTAssertFalse((warning.value as? String ?? "").isEmpty)
+        } else {
+            XCTAssertEqual(warning.label, "Telemetry stale")
+            XCTAssertTrue((warning.value as? String)?.hasPrefix("Last update ") == true)
+        }
 
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
-        XCTAssertTrue(status.label.contains("Telemetry stale"))
+        if usesLocalizedText {
+            XCTAssertFalse(status.label.isEmpty)
+        } else {
+            XCTAssertTrue(status.label.contains("Telemetry stale"))
+        }
         try performVisibleLayoutAccessibilityAudit()
     }
 
