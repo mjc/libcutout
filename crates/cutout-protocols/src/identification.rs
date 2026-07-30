@@ -998,8 +998,8 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        Capabilities, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry, ProtocolFamily,
-        VerificationStatus,
+        Capabilities, Duration, GattChannel, GattFingerprint, GattRoles, ModelRegistryEntry,
+        MonotonicTimestamp, ProtocolFamily, VerificationStatus,
     };
 
     use crate::{
@@ -1731,6 +1731,50 @@ mod tests {
         assert_eq!(
             update.model_banner.as_ref().map(ModelBanner::as_bytes),
             Some(&b"Falcon\0"[..])
+        );
+    }
+
+    #[test]
+    fn queued_probe_responses_are_correlated_independently() {
+        let mut root = cutout_core::CutoutSessionState::default();
+        let mut detector = ProtocolDetectionSession::new();
+        let timeout = Duration::from_milliseconds(2_000);
+
+        let _ = detector.observe_probe_write_at(
+            &mut root,
+            PendingProbe::BegodeName,
+            MonotonicTimestamp::new(1_000),
+        );
+        let _ = detector.observe_probe_write_at(
+            &mut root,
+            PendingProbe::BegodeFirmware,
+            MonotonicTimestamp::new(1_001),
+        );
+        let _ = detector.observe_probe_write_at(
+            &mut root,
+            PendingProbe::BegodeImu,
+            MonotonicTimestamp::new(1_002),
+        );
+        let _ = detector.observe(
+            &mut root,
+            DeviceDetectionEvent::Notification {
+                bytes: b"NAME=Falcon",
+            },
+        );
+
+        let expired = detector.expire_pending_probes(
+            &mut root,
+            MonotonicTimestamp::new(3_003),
+            timeout,
+        );
+
+        assert_eq!(
+            expired.as_slice(),
+            &[PendingProbe::BegodeFirmware, PendingProbe::BegodeImu]
+        );
+        assert_eq!(
+            detector.resolution(&root).missing_probe_response,
+            Some(PendingProbe::BegodeImu)
         );
     }
 
