@@ -664,6 +664,13 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsDetailAccessibility()
     }
 
+    func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
+        try assertEucBmsDetailAccessibility(
+            excluding: [],
+            ignoringUnattributedSwiftUIContrastWarning: true
+        )
+    }
+
     func testEucBmsPassesAccessibilityAuditInRightToLeftLayout() throws {
         try assertEucBmsAccessibility()
     }
@@ -1451,7 +1458,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucBmsDetailAccessibility(
-        excluding excluded: XCUIAccessibilityAuditType = [.contrast]
+        excluding excluded: XCUIAccessibilityAuditType = [.contrast],
+        ignoringUnattributedSwiftUIContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -1462,7 +1470,10 @@ final class CutoutAppUITests: XCTestCase {
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
         assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: excluded,
+            ignoringUnattributedSwiftUIContrastWarning: ignoringUnattributedSwiftUIContrastWarning
+        )
     }
 
     private func assertEucNoBmsSurface(
