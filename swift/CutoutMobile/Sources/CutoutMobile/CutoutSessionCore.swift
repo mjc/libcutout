@@ -559,14 +559,15 @@ public final class CutoutSessionCore: NSObject {
             setPhase(.live)
             return
         }
+        let now = clock.now()
         let receivedAt = if testScript.emitsStaleTelemetry {
             MonotonicMilliseconds(
-                clock.now().rawValue > RideTelemetryFreshnessPolicy.staleAfter.rawValue
-                    ? clock.now().rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
+                now.rawValue > RideTelemetryFreshnessPolicy.staleAfter.rawValue
+                    ? now.rawValue - RideTelemetryFreshnessPolicy.staleAfter.rawValue - 1
                     : 0
             )
         } else {
-            clock.now()
+            now
         }
         let actions = testScript.bmsSnapshot.map { [SessionAction.withBmsSnapshot($0)] } ?? []
         applyNotificationStep(

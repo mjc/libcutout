@@ -3588,9 +3588,9 @@ public func rideUpdateAge(
         return EucRideUpdateAge(elapsed: nil, freshness: .unavailable)
     }
 
-    let elapsed = now.rawValue >= updatedAt.rawValue ? now.rawValue - updatedAt.rawValue : 0
-    let freshness: EucRideUpdateFreshness = elapsed > staleThreshold.rawValue ? .stale : .fresh
-    return EucRideUpdateAge(elapsed: MonotonicMilliseconds(elapsed), freshness: freshness)
+    let elapsed = now.elapsed(since: updatedAt)
+    let freshness: EucRideUpdateFreshness = elapsed.rawValue > staleThreshold.rawValue ? .stale : .fresh
+    return EucRideUpdateAge(elapsed: elapsed, freshness: freshness)
 }
 
 public enum EucRideWarningSeverity: Equatable, Hashable, Sendable {
