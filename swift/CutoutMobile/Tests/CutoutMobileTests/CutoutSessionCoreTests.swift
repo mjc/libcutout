@@ -181,16 +181,36 @@ final class CutoutSessionCoreTests: XCTestCase {
     }
 
     func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
+        assertScriptedInitialBluetoothState(
+            .unavailable,
+            phase: .bluetoothUnavailable(rawState: 4),
+            scanState: .bluetoothUnavailable
+        )
+    }
+
+    func testScriptedBluetoothPermissionDeniedSessionPublishesNoPickerRows() {
+        assertScriptedInitialBluetoothState(
+            .permissionDenied,
+            phase: .bluetoothPermissionDenied,
+            scanState: .permissionDenied
+        )
+    }
+
+    private func assertScriptedInitialBluetoothState(
+        _ initialBluetoothState: CutoutSessionTestInitialBluetoothState,
+        phase expectedPhase: SessionConnectionPhase,
+        scanState expectedScanState: DevicePickerScanState
+    ) {
         let unavailable = expectation(description: "scripted session becomes unavailable")
         let core = CutoutSessionCore(
             testScript: CutoutSessionTestScript(
                 candidate: scriptedVescCandidate,
                 telemetry: nil,
-                startsBluetoothUnavailable: true
+                initialBluetoothState: initialBluetoothState
             )
         )
         core.onPhaseChange = { phase in
-            if phase == .bluetoothUnavailable(rawState: 4) {
+            if phase == expectedPhase {
                 unavailable.fulfill()
             }
         }
@@ -198,8 +218,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.start()
 
         wait(for: [unavailable], timeout: 1)
-        XCTAssertEqual(core.phase, .bluetoothUnavailable(rawState: 4))
-        XCTAssertEqual(core.scanState, .bluetoothUnavailable)
+        XCTAssertEqual(core.phase, expectedPhase)
+        XCTAssertEqual(core.scanState, expectedScanState)
     }
 
     func testExplicitDisconnectCancelsTheScriptedLateLiveCallback() {

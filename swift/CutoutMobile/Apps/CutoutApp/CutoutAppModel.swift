@@ -820,6 +820,7 @@ enum CutoutUITestSessionFixture {
     case unknownDevice
     case unknownDeviceFinishFailure
     case bluetoothUnavailable
+    case bluetoothPermissionDenied
     case vesc
     case pendingVesc
     case staleVesc
@@ -841,6 +842,7 @@ enum CutoutUITestSessionFixture {
         case "unknown-device": self = .unknownDevice
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
         case "bluetooth-unavailable": self = .bluetoothUnavailable
+        case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
@@ -907,7 +909,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -921,7 +923,13 @@ enum CutoutUITestSessionFixture {
     }
 
     var startsLive: Bool { self == .autoVescLiveActivity }
-    var startsBluetoothUnavailable: Bool { self == .bluetoothUnavailable }
+    var initialBluetoothState: CutoutSessionTestInitialBluetoothState {
+        switch self {
+        case .bluetoothUnavailable: .unavailable
+        case .bluetoothPermissionDenied: .permissionDenied
+        default: .scanning
+        }
+    }
     var failsConnection: Bool { self == .failedVesc }
     var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
@@ -952,7 +960,7 @@ enum CutoutUITestSessionFixture {
             telemetry: emitsPendingTelemetry ? nil : telemetry,
             bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
-            startsBluetoothUnavailable: startsBluetoothUnavailable,
+            initialBluetoothState: initialBluetoothState,
             failsConnection: failsConnection,
             emitsLateLiveAfterFailure: failsConnection,
             reconnectsAfterFirstLive: reconnectsAfterFirstLive,

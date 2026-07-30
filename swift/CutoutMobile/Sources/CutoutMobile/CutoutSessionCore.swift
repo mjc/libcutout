@@ -161,12 +161,18 @@ private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
 }
 
 #if DEBUG
+public enum CutoutSessionTestInitialBluetoothState: Sendable {
+    case scanning
+    case unavailable
+    case permissionDenied
+}
+
 public struct CutoutSessionTestScript {
     public let candidate: DevicePickerDiscoveryCandidate
     public let telemetry: TelemetrySnapshot?
     public let bmsSnapshot: BmsSnapshot?
     public let startsLive: Bool
-    public let startsBluetoothUnavailable: Bool
+    public let initialBluetoothState: CutoutSessionTestInitialBluetoothState
     public let failsConnection: Bool
     public let emitsLateLiveAfterFailure: Bool
     public let reconnectsAfterFirstLive: Bool
@@ -181,7 +187,7 @@ public struct CutoutSessionTestScript {
         telemetry: TelemetrySnapshot?,
         bmsSnapshot: BmsSnapshot? = nil,
         startsLive: Bool = false,
-        startsBluetoothUnavailable: Bool = false,
+        initialBluetoothState: CutoutSessionTestInitialBluetoothState = .scanning,
         failsConnection: Bool = false,
         emitsLateLiveAfterFailure: Bool = false,
         reconnectsAfterFirstLive: Bool = false,
@@ -195,7 +201,7 @@ public struct CutoutSessionTestScript {
         self.telemetry = telemetry
         self.bmsSnapshot = bmsSnapshot
         self.startsLive = startsLive
-        self.startsBluetoothUnavailable = startsBluetoothUnavailable
+        self.initialBluetoothState = initialBluetoothState
         self.failsConnection = failsConnection
         self.emitsLateLiveAfterFailure = emitsLateLiveAfterFailure
         self.reconnectsAfterFirstLive = reconnectsAfterFirstLive
@@ -465,10 +471,18 @@ public final class CutoutSessionCore: NSObject {
             testScriptDidReconnect = false
             displayState = RideDisplayState()
             publishDisplayState()
-            guard !testScript.startsBluetoothUnavailable else {
+            switch testScript.initialBluetoothState {
+            case .scanning:
+                break
+            case .unavailable:
                 scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
                 publishScanState()
                 setPhase(.bluetoothUnavailable(rawState: 4))
+                return
+            case .permissionDenied:
+                scanState = .permissionDenied
+                publishScanState()
+                setPhase(.bluetoothPermissionDenied)
                 return
             }
             scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
