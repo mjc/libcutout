@@ -289,6 +289,42 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.phase, .live)
     }
 
+    func testTransportTerminationUsesTheSharedReconnectTransition() {
+        let scheduler = RecordingReconnectScheduler()
+        let retry = expectation(description: "transport termination schedules retry")
+        var reconnectCount = 0
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 60_000
+            ),
+            reconnectScheduler: scheduler
+        )
+        core.onReconnectScheduled = { scheduled in
+            XCTAssertEqual(scheduled.platformIdentifier, self.scriptedVescCandidate.platformIdentifier)
+            XCTAssertEqual(scheduled.attempt, 1)
+            retry.fulfill()
+        }
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+
+        core.handleTransportTermination(
+            platformIdentifier: scriptedVescCandidate.platformIdentifier,
+            error: nil,
+            reconnect: { reconnectCount += 1 }
+        )
+
+        wait(for: [retry], timeout: 1)
+        XCTAssertEqual(core.phase, .discoveringServices)
+        XCTAssertEqual(reconnectCount, 0)
+
+        scheduler.runAll()
+        XCTAssertEqual(reconnectCount, 1)
+    }
+
     func testRecordOnlyMissingCandidateReturnsFalse() {
         let core = CutoutSessionCore()
 

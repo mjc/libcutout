@@ -259,7 +259,7 @@ public final class CutoutSessionCore: NSObject {
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
-    private let reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
+    private let reconnectController: ConnectionReconnectController
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
@@ -296,12 +296,17 @@ public final class CutoutSessionCore: NSObject {
         self.init(clock: MonotonicClock(), testScript: testScript)
     }
 
-    init(clock: MonotonicClock, testScript: CutoutSessionTestScript? = nil) {
+    init(
+        clock: MonotonicClock,
+        testScript: CutoutSessionTestScript? = nil,
+        reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler()
+    ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.clock = clock
         self.testScript = testScript
+        self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -311,6 +316,7 @@ public final class CutoutSessionCore: NSObject {
         self.rustSessionState = rustSessionState
         self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.clock = clock
+        self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -982,10 +988,43 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func handleDisconnect(from peripheral: CBPeripheral, error: Error?) {
-        record("disconnected=\(peripheral.identifier.uuidString) error=\(String(describing: error))")
         guard self.peripheral?.identifier == peripheral.identifier else {
             return
         }
+        handleTransportTermination(
+            platformIdentifier: peripheral.identifier.uuidString,
+            error: error,
+            reconnect: { [weak self, weak peripheral] in
+                guard let self, let peripheral else { return }
+                self.central?.connect(peripheral)
+            }
+        )
+    }
+
+    func handleTransportTermination(
+        platformIdentifier: String,
+        error: Error?,
+        reconnect: @escaping () -> Void
+    ) {
+        onBleQueue {
+            handleTransportTerminationOnBleQueue(
+                platformIdentifier: platformIdentifier,
+                error: error,
+                reconnect: reconnect
+            )
+        }
+    }
+
+    private func handleTransportTerminationOnBleQueue(
+        platformIdentifier: String,
+        error: Error?,
+        reconnect: @escaping () -> Void
+    ) {
+        record("disconnected=\(platformIdentifier) error=\(String(describing: error))")
+#if DEBUG
+        testScriptWorkItem?.cancel()
+        testScriptWorkItem = nil
+#endif
         markOutstandingBegodeProbeResponsesMissing()
         _ = captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
         let completedCaptureURL = captureFileURL
@@ -1012,22 +1051,28 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 
-        scheduleReconnect(to: peripheral, route: reconnectRoute, error: error)
+        scheduleReconnect(
+            platformIdentifier: platformIdentifier,
+            route: reconnectRoute,
+            error: error,
+            reconnect: reconnect
+        )
     }
 
     private func scheduleReconnect(
-        to peripheral: CBPeripheral,
+        platformIdentifier: String,
         route: DevicePickerConnectionRoute?,
-        error: Error?
+        error: Error?,
+        reconnect: @escaping () -> Void
     ) {
         guard let schedule = reconnectController.schedule(
             jitter: Double.random(in: 0...1),
-            operation: { [weak self, weak peripheral] in
-                guard let self, let peripheral else { return }
+            operation: { [weak self] in
+                guard let self else { return }
                 self.onBleQueue {
                     guard !self.suppressReconnect else { return }
                     self.startCapture(reason: "reconnect", annotations: ["route=\(route?.rawValue ?? "unknown")"])
-                    self.central?.connect(peripheral)
+                    reconnect()
                 }
             }
         ) else {
@@ -1056,7 +1101,7 @@ public final class CutoutSessionCore: NSObject {
         let delay = schedule.delayMilliseconds
         let deadline = MonotonicMilliseconds(now > UInt64.max - delay ? UInt64.max : now + delay)
         let retry = SessionConnectionRetry(
-            platformIdentifier: peripheral.identifier.uuidString,
+            platformIdentifier: platformIdentifier,
             attempt: schedule.attempt,
             deadline: deadline,
             failure: .connectFailed(error.sessionMessage)
