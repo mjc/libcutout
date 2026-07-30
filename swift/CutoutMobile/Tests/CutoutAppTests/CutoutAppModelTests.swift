@@ -936,6 +936,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.isEuc ?? false)
     }
 
+    func testStandardUIFixtureLaunchArgumentSelectsBluetoothPermissionDeniedFixture() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: nil,
+            arguments: ["-CUTOUT_UI_TEST_FIXTURE", "bluetooth-permission-denied"]
+        )
+
+        guard case .permissionDenied? = fixture?.initialBluetoothState else {
+            return XCTFail("expected the permission-denied initial Bluetooth state")
+        }
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucOverviewFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,
