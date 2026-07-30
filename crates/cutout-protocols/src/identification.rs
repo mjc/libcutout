@@ -1,8 +1,10 @@
 use std::{borrow::Borrow, str};
 
-use arrayvec::ArrayVec;
 use bytes::Bytes;
-use cutout_core::{GattFingerprint, ModelRegistryEntry, ProtocolFamily};
+pub use cutout_core::{
+    AdvertisedName, ModelBanner, PendingProbe, ProtocolModelIdentity, ProtocolModelIdentityEvidence,
+};
+use cutout_core::{CutoutSessionState, GattFingerprint, ModelRegistryEntry, ProtocolFamily};
 
 use crate::{
     BegodeBanner, BegodeBannerParse, BegodeFrame, BegodeFrameParseResult, BegodeFrameReassembler,
@@ -121,37 +123,6 @@ impl IdentityEvidence {
     }
 }
 
-/// Model identity decoded from protocol-owned bytes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ProtocolModelIdentity {
-    /// Protocol family that owned and decoded the model id.
-    pub family: ProtocolFamily,
-
-    /// Protocol-native model id.
-    pub model_id: u16,
-}
-
-/// Protocol-owned model identity evidence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProtocolModelIdentityEvidence {
-    /// No protocol model id was present.
-    Missing,
-
-    /// A protocol-owned decoder produced a model id.
-    ModelId(ProtocolModelIdentity),
-
-    /// The bytes looked like protocol identity but were malformed.
-    Malformed,
-}
-
-impl ProtocolModelIdentityEvidence {
-    /// Creates protocol-owned model-id evidence.
-    #[must_use]
-    pub const fn model_id(family: ProtocolFamily, model_id: u16) -> Self {
-        Self::ModelId(ProtocolModelIdentity { family, model_id })
-    }
-}
-
 /// Borrowed evidence collected during staged identity detection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StagedIdentityInput<'a, GattEvidence = &'a [GattFingerprint]> {
@@ -193,66 +164,7 @@ pub struct StagedIdentityResolution {
 /// Caller-owned state machine for incremental device detection.
 #[derive(Clone, Debug)]
 pub struct DeviceDetectionSession {
-    pending_probe: Option<PendingProbe>,
-    resolution: DeviceDetectionResolution,
-    gatt: ArrayVec<GattFingerprint, DETECTION_MAX_GATT_FINGERPRINTS>,
     begode_reassembler: BegodeFrameReassembler,
-}
-
-/// Raw advertised-name bytes retained as device identity provenance.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AdvertisedName(Bytes);
-
-impl AdvertisedName {
-    /// Copies borrowed advertised-name bytes into owned provenance.
-    #[must_use]
-    pub fn copy_from_slice(bytes: &[u8]) -> Self {
-        Self(Bytes::copy_from_slice(bytes))
-    }
-
-    /// Returns the original advertised-name bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-
-    /// Returns the advertised name only when the bytes are valid UTF-8.
-    #[must_use]
-    pub fn get(&self) -> Option<&str> {
-        str::from_utf8(self.as_bytes()).ok()
-    }
-}
-
-/// Raw model-banner bytes retained as probe-response provenance.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ModelBanner(Bytes);
-
-impl ModelBanner {
-    /// Copies borrowed model-banner bytes into owned provenance.
-    #[must_use]
-    pub fn copy_from_slice(bytes: &[u8]) -> Self {
-        Self(Bytes::copy_from_slice(bytes))
-    }
-
-    /// Returns the original model-banner bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-
-    /// Returns the model banner only when the bytes are valid banner text.
-    #[must_use]
-    pub fn get(&self) -> Option<&str> {
-        str::from_utf8(self.as_bytes())
-            .ok()
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-            .filter(|model| {
-                model
-                    .bytes()
-                    .all(|byte| matches!(byte, b'\n' | b'\r' | b'\t' | 0x20..=0x7e))
-            })
-    }
 }
 
 /// Raw firmware-banner bytes retained as probe-response provenance.
@@ -319,19 +231,6 @@ impl ImuBanner {
             | BegodeBannerParse::UnknownText => None,
         }
     }
-}
-
-/// Pending probe state remembered by the detection session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PendingProbe {
-    /// Begode `N` probe awaiting a `NAME...` response.
-    BegodeName,
-
-    /// Begode `V` probe awaiting a firmware/code banner response.
-    BegodeFirmware,
-
-    /// Begode `M` probe awaiting an IMU banner response.
-    BegodeImu,
 }
 
 /// Current protocol-family state for the detection session.
@@ -428,35 +327,30 @@ impl DeviceDetectionSession {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            pending_probe: None,
-            resolution: DeviceDetectionResolution {
-                staged: StagedIdentityResolution::NO_MATCH,
-                protocol: ProtocolFamilyState::Unknown,
-                advertised_name: None,
-                model_banner: None,
-                firmware_banner: None,
-                imu_banner: None,
-                missing_probe_response: None,
-                malformed_probe_response: None,
-            },
-            gatt: ArrayVec::new(),
             begode_reassembler: BegodeFrameReassembler::default(),
         }
     }
 
-    /// Observes one ordered detection event and updates the session state.
+    /// Observes one ordered detection event into the Rust-owned session root.
     #[must_use]
-    pub fn observe(&mut self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolution {
+    pub fn observe(
+        &mut self,
+        state: &mut CutoutSessionState,
+        event: DeviceDetectionEvent<'_>,
+    ) -> DeviceDetectionResolution {
+        let current = self.resolution(state);
         match event {
             DeviceDetectionEvent::Advertisement { name } => {
-                self.resolution.advertised_name = name.map(AdvertisedName::copy_from_slice);
-                self.refresh_resolution(None, None, self.resolution.protocol);
+                state.identity_mut().advertised_name = name.map(AdvertisedName::copy_from_slice);
+                self.refresh_resolution(state, None, None, current.protocol);
             }
             DeviceDetectionEvent::Gatt { gatt } => {
-                self.gatt.clear();
-                self.gatt
+                state.identity_mut().gatt.clear();
+                state
+                    .identity_mut()
+                    .gatt
                     .extend(gatt.iter().copied().take(DETECTION_MAX_GATT_FINGERPRINTS));
-                self.refresh_resolution(None, None, self.resolution.protocol);
+                self.refresh_resolution(state, None, None, current.protocol);
             }
             DeviceDetectionEvent::Notification { bytes } => {
                 let begode_frame = bytes
@@ -469,43 +363,36 @@ impl DeviceDetectionSession {
                 let bytes = begode_frame
                     .as_ref()
                     .map_or(bytes, |frame| frame.as_slice());
-                let decision = NotificationDecision::from_bytes(self.resolution.protocol, bytes);
-                let malformed_model_banner =
-                    match (decision.banner_model, self.resolution.staged.model) {
-                        (IdentityBannerEvidence::Malformed, None) => {
-                            Some(ModelBanner::copy_from_slice(model_banner_bytes(bytes)))
-                        }
-                        _ => None,
-                    };
+                let decision = NotificationDecision::from_bytes(current.protocol, bytes);
+                let malformed_model_banner = match (decision.banner_model, current.staged.model) {
+                    (IdentityBannerEvidence::Malformed, None) => {
+                        Some(ModelBanner::copy_from_slice(model_banner_bytes(bytes)))
+                    }
+                    _ => None,
+                };
                 if matches!(
                     decision.banner_model,
                     IdentityBannerEvidence::Model(_) | IdentityBannerEvidence::Malformed
                 ) || decision.firmware_banner
                     || decision.imu_banner
                 {
-                    self.pending_probe = None;
-                    self.resolution.missing_probe_response = None;
+                    state.identity_mut().pending_probe = None;
+                    state.identity_mut().missing_probe_response = None;
                 }
-                self.resolution.malformed_probe_response =
+                state.identity_mut().malformed_probe_response =
                     match (decision.banner_model, decision.malformed_probe) {
                         (IdentityBannerEvidence::Malformed, probe) => probe,
                         (IdentityBannerEvidence::Model(_), _) => None,
                         (IdentityBannerEvidence::Missing, _) => {
-                            self.resolution.malformed_probe_response
+                            state.identity().malformed_probe_response
                         }
                     };
-                let firmware_banner = decision
-                    .firmware_banner
-                    .then(|| FirmwareBanner::copy_from_slice(bytes));
-                let imu_banner = decision
-                    .imu_banner
-                    .then(|| ImuBanner::copy_from_slice(bytes));
-                let banner_model = match (decision.banner_model, self.resolution.staged.model) {
+                let banner_model = match (decision.banner_model, current.staged.model) {
                     (IdentityBannerEvidence::Malformed, Some(_)) => None,
                     _ => decision.banner_model_update(),
                 };
                 let protocol_model = match (
-                    decision.protocol == self.resolution.protocol,
+                    decision.protocol == current.protocol,
                     decision.protocol_model,
                 ) {
                     (false, ProtocolModelIdentityEvidence::Missing) => {
@@ -514,48 +401,93 @@ impl DeviceDetectionSession {
                     (_, ProtocolModelIdentityEvidence::Missing) => None,
                     (_, protocol_model) => Some(protocol_model),
                 };
-                self.refresh_resolution(banner_model, protocol_model, decision.protocol);
+                self.refresh_resolution(state, banner_model, protocol_model, decision.protocol);
                 if let Some(model_banner) = malformed_model_banner {
-                    self.resolution.model_banner = Some(model_banner);
+                    state.identity_mut().model_banner = Some(model_banner);
                 }
-                if let Some(firmware_banner) = firmware_banner {
-                    self.resolution.firmware_banner = Some(firmware_banner);
+                if decision.firmware_banner {
+                    state.identity_mut().firmware_banner = Some(bytes.to_vec());
                 }
-                if let Some(imu_banner) = imu_banner {
-                    self.resolution.imu_banner = Some(imu_banner);
+                if decision.imu_banner {
+                    state.identity_mut().imu_banner = Some(bytes.to_vec());
                 }
             }
-            DeviceDetectionEvent::ProbeWrite { probe } => self.pending_probe = Some(probe),
+            DeviceDetectionEvent::ProbeWrite { probe } => {
+                state.identity_mut().pending_probe = Some(probe);
+            }
             DeviceDetectionEvent::ProbeTimeout { probe } => {
-                if self.pending_probe == Some(probe) {
-                    self.pending_probe = None;
-                    self.resolution.missing_probe_response = Some(probe);
+                if state.identity().pending_probe == Some(probe) {
+                    state.identity_mut().pending_probe = None;
+                    state.identity_mut().missing_probe_response = Some(probe);
                 }
             }
         }
 
-        self.resolution.clone()
+        self.resolution(state)
     }
 
-    /// Returns the current detection resolution.
+    /// Returns a detection resolution derived from the Rust-owned session root.
     #[must_use]
-    pub fn resolution(&self) -> &DeviceDetectionResolution {
-        &self.resolution
+    pub fn resolution(&self, state: &CutoutSessionState) -> DeviceDetectionResolution {
+        let identity = state.identity();
+        let protocol = protocol_state(identity.protocol_family, identity.protocol_conflict);
+        let input = StagedIdentityInput {
+            advertised_name: identity
+                .advertised_name
+                .as_ref()
+                .and_then(AdvertisedName::get),
+            gatt: identity.gatt.as_slice(),
+            stream_family: protocol.into_classification(),
+            banner_model: identity
+                .model_banner
+                .as_ref()
+                .and_then(ModelBanner::get)
+                .map_or(
+                    IdentityBannerEvidence::Missing,
+                    IdentityBannerEvidence::model,
+                ),
+            protocol_model: identity.protocol_model,
+        };
+        DeviceDetectionResolution {
+            staged: resolve_staged_identity(protocol, &input),
+            protocol,
+            advertised_name: identity.advertised_name.clone(),
+            model_banner: identity.model_banner.clone(),
+            firmware_banner: identity
+                .firmware_banner
+                .as_deref()
+                .map(FirmwareBanner::copy_from_slice),
+            imu_banner: identity
+                .imu_banner
+                .as_deref()
+                .map(ImuBanner::copy_from_slice),
+            missing_probe_response: identity.missing_probe_response,
+            malformed_probe_response: identity.malformed_probe_response,
+        }
     }
 
     fn refresh_resolution(
-        &mut self,
+        &self,
+        state: &mut CutoutSessionState,
         banner_model: Option<IdentityBannerEvidence<'_>>,
         protocol_model: Option<ProtocolModelIdentityEvidence>,
         protocol: ProtocolFamilyState,
-    ) {
-        let advertised_name = self
-            .resolution
+    ) -> DeviceDetectionResolution {
+        let identity = state.identity_mut();
+        identity.protocol_conflict = protocol == ProtocolFamilyState::Conflict;
+        identity.protocol_family = match protocol {
+            ProtocolFamilyState::VeteranLeaperkimNosfet => {
+                Some(ProtocolFamily::VeteranLeaperkimNosfet)
+            }
+            ProtocolFamilyState::BegodeGotway => Some(ProtocolFamily::BegodeGotway),
+            ProtocolFamilyState::Unknown | ProtocolFamilyState::Conflict => None,
+        };
+        let advertised_name = identity
             .advertised_name
             .as_ref()
             .and_then(AdvertisedName::get);
         let banner_model = banner_model.unwrap_or_else(|| {
-            self.resolution
+            identity
                 .model_banner
                 .as_ref()
                 .and_then(ModelBanner::get)
@@ -564,42 +496,57 @@ impl DeviceDetectionSession {
                     IdentityBannerEvidence::model,
                 )
         });
-        let protocol_model = protocol_model.unwrap_or(self.resolution.staged.protocol_model);
+        let protocol_model = protocol_model.unwrap_or(identity.protocol_model);
+        identity.protocol_model = protocol_model;
         let input = StagedIdentityInput {
             advertised_name,
-            gatt: self.gatt.as_slice(),
+            gatt: identity.gatt.as_slice(),
             stream_family: protocol.into_classification(),
             banner_model,
             protocol_model,
         };
-        let staged = match protocol {
-            ProtocolFamilyState::Conflict => StagedIdentityResolution {
-                model: None,
-                outcome: StagedIdentityOutcome::Conflict,
-                confidence: IdentityConfidence::NoMatch,
-                evidence: IdentityEvidence::empty().with_passive_family_match(),
-                protocol_model: ProtocolModelIdentityEvidence::Missing,
-            },
-            ProtocolFamilyState::Unknown
-            | ProtocolFamilyState::VeteranLeaperkimNosfet
-            | ProtocolFamilyState::BegodeGotway => identify_known_model(&input),
+        let staged = resolve_staged_identity(protocol, &input);
+        identity.model = staged.model.map(|model| model.model.as_str().to_owned());
+        identity.model_banner = match banner_model {
+            IdentityBannerEvidence::Model(model) => {
+                Some(ModelBanner::copy_from_slice(model.model.as_bytes()))
+            }
+            IdentityBannerEvidence::Missing => identity.model_banner.clone(),
+            IdentityBannerEvidence::Malformed => None,
         };
-        self.resolution = DeviceDetectionResolution {
-            staged,
-            protocol,
-            advertised_name: self.resolution.advertised_name.clone(),
-            model_banner: match banner_model {
-                IdentityBannerEvidence::Model(model) => {
-                    Some(ModelBanner::copy_from_slice(model.model.as_bytes()))
-                }
-                IdentityBannerEvidence::Missing => self.resolution.model_banner.clone(),
-                IdentityBannerEvidence::Malformed => None,
-            },
-            firmware_banner: self.resolution.firmware_banner.clone(),
-            imu_banner: self.resolution.imu_banner.clone(),
-            missing_probe_response: self.resolution.missing_probe_response,
-            malformed_probe_response: self.resolution.malformed_probe_response,
-        };
+        self.resolution(state)
+    }
+}
+
+fn protocol_state(
+    protocol_family: Option<ProtocolFamily>,
+    protocol_conflict: bool,
+) -> ProtocolFamilyState {
+    if protocol_conflict {
+        return ProtocolFamilyState::Conflict;
+    }
+    match protocol_family {
+        Some(ProtocolFamily::VeteranLeaperkimNosfet) => ProtocolFamilyState::VeteranLeaperkimNosfet,
+        Some(ProtocolFamily::BegodeGotway) => ProtocolFamilyState::BegodeGotway,
+        Some(ProtocolFamily::Vesc) | None => ProtocolFamilyState::Unknown,
+    }
+}
+
+fn resolve_staged_identity(
+    protocol: ProtocolFamilyState,
+    input: &StagedIdentityInput<'_>,
+) -> StagedIdentityResolution {
+    match protocol {
+        ProtocolFamilyState::Conflict => StagedIdentityResolution {
+            model: None,
+            outcome: StagedIdentityOutcome::Conflict,
+            confidence: IdentityConfidence::NoMatch,
+            evidence: IdentityEvidence::empty().with_passive_family_match(),
+            protocol_model: ProtocolModelIdentityEvidence::Missing,
+        },
+        ProtocolFamilyState::Unknown
+        | ProtocolFamilyState::VeteranLeaperkimNosfet
+        | ProtocolFamilyState::BegodeGotway => identify_known_model(input),
     }
 }
 
@@ -1057,7 +1004,8 @@ mod tests {
 
     use crate::{
         BEGODE_DATA_CHANNEL, BEGODE_FALCON_REGISTRY_ENTRY, BEGODE_SERVICE_CHANNEL,
-        DeviceDetectionEvent, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+        DeviceDetectionEvent, DeviceDetectionResolution,
+        DeviceDetectionSession as ProtocolDetectionSession, DeviceFamily, IdentityBannerEvidence,
         IdentityConfidence, IdentityEvidence, ModelBanner, NOSFET_AERO_REGISTRY_ENTRY,
         PendingProbe, ProtocolFamilyClassification, ProtocolModelIdentityEvidence,
         StagedIdentityInput, StagedIdentityOutcome, identify_known_model, identify_model,
@@ -1081,6 +1029,34 @@ mod tests {
     const NO_GATT: [GattFingerprint; 0] = [];
     const BEGODE_LIVE_A_FRAME: [u8; 24] =
         hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
+
+    struct DeviceDetectionSession {
+        root: cutout_core::CutoutSessionState,
+        detector: ProtocolDetectionSession,
+        resolution: DeviceDetectionResolution,
+    }
+
+    impl DeviceDetectionSession {
+        fn new() -> Self {
+            let root = cutout_core::CutoutSessionState::default();
+            let detector = ProtocolDetectionSession::new();
+            let resolution = detector.resolution(&root);
+            Self {
+                root,
+                detector,
+                resolution,
+            }
+        }
+
+        fn observe(&mut self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolution {
+            self.resolution = self.detector.observe(&mut self.root, event);
+            self.resolution.clone()
+        }
+
+        fn resolution(&self) -> &DeviceDetectionResolution {
+            &self.resolution
+        }
+    }
 
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
@@ -1452,7 +1428,7 @@ mod tests {
     #[test]
     fn root_owned_detection_session_retains_ordered_identity_evidence() {
         let mut root = cutout_core::CutoutSessionState::default();
-        let mut session = DeviceDetectionSession::new();
+        let mut session = ProtocolDetectionSession::new();
 
         let _ = session.observe(
             &mut root,

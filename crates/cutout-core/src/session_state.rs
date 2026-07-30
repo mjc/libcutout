@@ -2,9 +2,10 @@
 
 use crate::{
     BatteryPageMetadata, BatteryPagePayload, BatteryReadback, DeviceEvent, FirmwareInfo,
-    ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse, SessionOutput,
-    TelemetryDelta, TelemetrySnapshot,
+    GattFingerprint, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
+    SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
+use bytes::Bytes;
 
 /// Rust-owned durable state for one `CutOut` mobile/device session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -24,6 +25,12 @@ impl CutoutSessionState {
     #[must_use]
     pub const fn identity(&self) -> &DeviceIdentityState {
         &self.identity
+    }
+
+    /// Returns mutable identity state to protocol decoders that contribute ordered evidence.
+    #[must_use]
+    pub const fn identity_mut(&mut self) -> &mut DeviceIdentityState {
+        &mut self.identity
     }
 
     /// Returns the current discovery facts without cloning the whole root.
@@ -120,6 +127,36 @@ pub struct DeviceIdentityState {
 
     /// Firmware or protocol version readback, when reported.
     pub firmware: Option<FirmwareInfo>,
+
+    /// Latest raw advertisement name retained as identity provenance.
+    pub advertised_name: Option<AdvertisedName>,
+
+    /// Current GATT fingerprint evidence.
+    pub gatt: Vec<GattFingerprint>,
+
+    /// Latest raw model banner retained as identity provenance.
+    pub model_banner: Option<ModelBanner>,
+
+    /// Latest raw firmware banner retained as identity provenance.
+    pub firmware_banner: Option<Vec<u8>>,
+
+    /// Latest raw IMU banner retained as identity provenance.
+    pub imu_banner: Option<Vec<u8>>,
+
+    /// Protocol-owned model identity evidence.
+    pub protocol_model: ProtocolModelIdentityEvidence,
+
+    /// Strong wire evidence reported incompatible protocol families.
+    pub protocol_conflict: bool,
+
+    /// Probe currently awaiting a matching response.
+    pub pending_probe: Option<PendingProbe>,
+
+    /// Latest probe that did not produce a matching response.
+    pub missing_probe_response: Option<PendingProbe>,
+
+    /// Latest probe that produced malformed identity evidence.
+    pub malformed_probe_response: Option<PendingProbe>,
 }
 
 impl DeviceIdentityState {
@@ -136,6 +173,107 @@ impl DeviceIdentityState {
     fn select_discovered_platform(&mut self, platform_identifier: String) {
         self.discovery.select_platform(platform_identifier);
     }
+}
+
+/// Raw advertised-name bytes retained as device identity provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdvertisedName(Bytes);
+
+impl AdvertisedName {
+    /// Copies borrowed advertised-name bytes into owned provenance.
+    #[must_use]
+    pub fn copy_from_slice(bytes: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Returns the original advertised-name bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+
+    /// Returns the advertised name only when the bytes are valid UTF-8.
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        core::str::from_utf8(self.as_bytes()).ok()
+    }
+}
+
+/// Raw model-banner bytes retained as device identity provenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelBanner(Bytes);
+
+impl ModelBanner {
+    /// Copies borrowed model-banner bytes into owned provenance.
+    #[must_use]
+    pub fn copy_from_slice(bytes: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(bytes))
+    }
+
+    /// Returns the original model-banner bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+
+    /// Returns the model banner only when the bytes are valid banner text.
+    #[must_use]
+    pub fn get(&self) -> Option<&str> {
+        core::str::from_utf8(self.as_bytes())
+            .ok()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .filter(|model| {
+                model
+                    .bytes()
+                    .all(|byte| matches!(byte, b'\n' | b'\r' | b'\t' | 0x20..=0x7e))
+            })
+    }
+}
+
+/// Protocol-native model identity decoded from protocol-owned bytes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProtocolModelIdentity {
+    /// Protocol family that owned and decoded the model id.
+    pub family: ProtocolFamily,
+
+    /// Protocol-native model id.
+    pub model_id: u16,
+}
+
+/// Protocol-owned model identity evidence.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ProtocolModelIdentityEvidence {
+    /// No protocol model id was present.
+    #[default]
+    Missing,
+
+    /// A protocol-owned decoder produced a model id.
+    ModelId(ProtocolModelIdentity),
+
+    /// The bytes looked like protocol identity but were malformed.
+    Malformed,
+}
+
+impl ProtocolModelIdentityEvidence {
+    /// Creates protocol-owned model-id evidence.
+    #[must_use]
+    pub const fn model_id(family: ProtocolFamily, model_id: u16) -> Self {
+        Self::ModelId(ProtocolModelIdentity { family, model_id })
+    }
+}
+
+/// Identity probe correlation state retained by the Rust session root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PendingProbe {
+    /// Begode `N` probe awaiting a model/name response.
+    BegodeName,
+
+    /// Begode `V` probe awaiting a firmware response.
+    BegodeFirmware,
+
+    /// Begode `M` probe awaiting an IMU response.
+    BegodeImu,
 }
 
 /// Partial identity evidence update.

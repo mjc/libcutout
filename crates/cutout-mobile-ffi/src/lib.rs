@@ -322,7 +322,13 @@ pub struct DiscoverySnapshot {
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
-    inner: Mutex<CutoutSessionState>,
+    inner: Mutex<MobileSessionState>,
+}
+
+#[derive(Debug, Default)]
+struct MobileSessionState {
+    state: CutoutSessionState,
+    detector: DeviceDetectionSession,
 }
 
 impl DiscoveryObservation {
@@ -484,33 +490,33 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(CutoutSessionState::default()),
+            inner: Mutex::new(MobileSessionState::default()),
         })
     }
 
     /// Observes one mobile discovery advertisement.
     pub fn observe_discovery(&self, observation: DiscoveryObservation) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state.observe_discovery(observation.into_core());
-        DiscoverySnapshot::from_state(&state)
+        state.state.observe_discovery(observation.into_core());
+        DiscoverySnapshot::from_state(&state.state)
     }
 
     /// Selects a discovered platform identifier for this session.
     pub fn select_discovered_platform(&self, platform_identifier: String) -> DiscoverySnapshot {
         let mut state = self.lock_inner();
-        state.select_discovered_platform(platform_identifier);
-        DiscoverySnapshot::from_state(&state)
+        state.state.select_discovered_platform(platform_identifier);
+        DiscoverySnapshot::from_state(&state.state)
     }
 
     /// Returns the current discovery snapshot.
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
-        DiscoverySnapshot::from_state(&self.lock_inner())
+        DiscoverySnapshot::from_state(&self.lock_inner().state)
     }
 }
 
 impl CutoutSessionStateHandle {
-    fn lock_inner(&self) -> MutexGuard<'_, CutoutSessionState> {
+    fn lock_inner(&self) -> MutexGuard<'_, MobileSessionState> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -559,23 +565,8 @@ pub enum MobilePendingProbeDto {
     BegodeImu,
 }
 
-/// `UniFFI` handle for a caller-owned device detection session.
-#[derive(Debug, uniffi::Object)]
-pub struct DeviceDetectionSessionHandle {
-    inner: Mutex<DeviceDetectionSession>,
-}
-
 #[uniffi::export]
-impl DeviceDetectionSessionHandle {
-    /// Creates an empty caller-owned device detection session.
-    #[uniffi::constructor]
-    #[must_use]
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(DeviceDetectionSession::new()),
-        })
-    }
-
+impl CutoutSessionStateHandle {
     /// Observes raw advertisement-name bytes from the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
     pub fn observe_advertisement(&self, name: Option<Vec<u8>>) -> DeviceDetectionResolutionRecord {
@@ -648,17 +639,16 @@ impl DeviceDetectionSessionHandle {
 
     /// Returns the current detection resolution.
     pub fn resolution(&self) -> DeviceDetectionResolutionRecord {
-        self.lock_inner().resolution().into()
+        let state = self.lock_inner();
+        state.detector.resolution(&state.state).into()
     }
 }
 
-impl DeviceDetectionSessionHandle {
+impl CutoutSessionStateHandle {
     fn observe(&self, event: DeviceDetectionEvent<'_>) -> DeviceDetectionResolutionRecord {
-        self.lock_inner().observe(event).into()
-    }
-
-    fn lock_inner(&self) -> MutexGuard<'_, DeviceDetectionSession> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+        let mut state = self.lock_inner();
+        let MobileSessionState { state, detector } = &mut *state;
+        detector.observe(state, event).into()
     }
 }
 
@@ -6412,7 +6402,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_preserves_raw_advertisement_bytes() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
 
         let resolution = session.observe_advertisement(Some(vec![b'N', b'F', 0xff]));
 
@@ -6456,7 +6446,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_preserves_begode_model_banner_bytes() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
 
         let resolution = session.observe_notification(b"NAME=Falcon".to_vec());
@@ -6466,7 +6456,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_exposes_fragmented_begode_family_frame() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let frame = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
 
         let partial = session.observe_notification(frame[..20].to_vec());
@@ -6481,7 +6471,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_resolution_projects_veteran_model_id() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let veteran_frame = synthetic_veteran_frame_with_model_id(43);
 
         let resolution = session.observe_notification(veteran_frame.to_vec());
@@ -6572,7 +6562,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_projects_mixed_family_conflict() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let veteran_frame = synthetic_veteran_frame_with_model_id(43);
         let begode_frame = hex_literal::hex!("55aa17750538007602eefb64f4941481000900185a5a5a5a");
         let _ = session.observe_notification(veteran_frame.to_vec());
@@ -6599,7 +6589,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_preserves_begode_firmware_banner_bytes() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_firmware_probe();
 
         let resolution = session.observe_notification(b"GW FALCON 1.0".to_vec());
@@ -6609,7 +6599,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_preserves_begode_imu_banner_bytes() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_imu_probe();
 
         let resolution = session.observe_notification(b"MPU6500".to_vec());
@@ -6619,7 +6609,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_exposes_missing_begode_probe_response() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
 
         let resolution = session.observe_begode_name_probe_timeout();
@@ -6633,7 +6623,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_exposes_malformed_begode_probe_response() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
 
         let resolution = session.observe_notification(b"NAME=Falcon\0".to_vec());
@@ -6648,7 +6638,7 @@ mod tests {
 
     #[test]
     fn mobile_device_detection_session_preserves_malformed_banner_until_valid_probe_response() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let gatt = vec![MobileGattFingerprintDto {
             service: BEGODE_SERVICE_CHANNEL.as_bytes().to_vec(),
             characteristic: BEGODE_DATA_CHANNEL.as_bytes().to_vec(),
@@ -6673,7 +6663,7 @@ mod tests {
 
     #[test]
     fn mobile_discovery_candidate_projects_begode_detection_resolution() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
         let resolution = session.observe_begode_name_probe_timeout();
 
@@ -6702,7 +6692,7 @@ mod tests {
 
     #[test]
     fn mobile_discovery_candidate_rejects_empty_detection_resolution() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let resolution = session.resolution();
 
         let candidate = mobile_discovery_candidate_from_detection_resolution(
@@ -6724,7 +6714,7 @@ mod tests {
 
     #[test]
     fn mobile_discovery_candidate_projects_malformed_begode_detection_resolution() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
         let resolution = session.observe_notification(b"NAME=Falcon\0".to_vec());
 
@@ -6753,7 +6743,7 @@ mod tests {
 
     #[test]
     fn mobile_discovery_candidate_projects_missing_probe_over_stale_model_banner() {
-        let session = DeviceDetectionSessionHandle::new();
+        let session = CutoutSessionStateHandle::new();
         let _ = session.observe_begode_name_probe();
         let _ = session.observe_notification(b"NAME=Falcon".to_vec());
         let _ = session.observe_begode_name_probe();
