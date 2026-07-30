@@ -16,6 +16,9 @@ default-members = [
     "crates/cutout-cli",
 ]
 
+[profile.release]
+strip = "none"
+
 [workspace.package]
 edition = "2024"
 rust-version = "1.85"

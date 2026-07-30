@@ -155,6 +155,8 @@
                 unset NIX_CC NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
                 unset CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
                 unset CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
+                export RUSTC_WRAPPER=""
+                export RUSTC_WORKSPACE_WRAPPER=""
               ''}
               echo "Cutout dev shell"
               echo "  stable: ${devRust.name}"
