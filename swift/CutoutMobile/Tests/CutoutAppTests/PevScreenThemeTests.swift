@@ -872,8 +872,9 @@ final class PevScreenThemeTests: XCTestCase {
 
     @MainActor
     func testBmsChipGlassRespectsReduceTransparency() {
-        XCTAssertTrue(BmsChip.usesGlassEffect(reduceTransparency: false))
-        XCTAssertFalse(BmsChip.usesGlassEffect(reduceTransparency: true))
+        XCTAssertTrue(BmsChip.usesGlassEffect(reduceTransparency: false, increasedContrast: false))
+        XCTAssertFalse(BmsChip.usesGlassEffect(reduceTransparency: true, increasedContrast: false))
+        XCTAssertFalse(BmsChip.usesGlassEffect(reduceTransparency: false, increasedContrast: true))
     }
 
     @MainActor

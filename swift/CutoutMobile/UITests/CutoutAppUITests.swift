@@ -866,10 +866,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucUnknownTopologyPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertEucUnknownTopologySurface(
-            auditExclusions: [],
-            ignoringPseudolocalizedTopologyStatusContrastWarning: true
-        )
+        try assertEucUnknownTopologySurface(auditExclusions: [])
     }
 
     func testEucRideAndBmsPassAccessibilityAuditWithIncreasedContrast() throws {
@@ -1563,7 +1560,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringNilElementContrastWarning: Bool = false,
         ignoringUnattributedSwiftUIContrastWarning: Bool = false,
         ignoringPseudolocalizedNoBmsContrastWarning: Bool = false,
-        ignoringPseudolocalizedTopologyStatusContrastWarning: Bool = false,
         ignoringPseudolocalizedBmsDetailGroupAuditWarnings: Bool = false
     ) throws {
         continueAfterFailure = true
@@ -1619,16 +1615,6 @@ final class CutoutAppUITests: XCTestCase {
                 // The equivalent nonlocalized no-BMS route passes with every
                 // category enabled. Xcode 27 supplies no element, frame, or
                 // color for this pseudolocalized-only diagnostic.
-                return true
-            }
-            if ignoringPseudolocalizedTopologyStatusContrastWarning,
-               issue.auditType == .contrast,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
-               issue.element?.label == "Topology unverified Topology unverified" {
-                // The nonlocalized unknown-topology route passes the complete
-                // audit. In Xcode 27 pseudolocalized landscape simulation,
-                // this otherwise opaque, black-on-light system chip is
-                // misreported. No other contrast diagnostic is ignored.
                 return true
             }
             if ignoringPseudolocalizedBmsDetailGroupAuditWarnings,
@@ -1817,8 +1803,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucUnknownTopologySurface(
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
-        ignoringPseudolocalizedTopologyStatusContrastWarning: Bool = false
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsUnknownTopology"))
         defer { disconnectIfConnected() }
@@ -1827,8 +1812,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureFlow.waitForExistence(timeout: 5))
         XCTAssertFalse(captureFlow.label.isEmpty)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
-            ignoringPseudolocalizedTopologyStatusContrastWarning: ignoringPseudolocalizedTopologyStatusContrastWarning
+            excluding: auditExclusions
         )
     }
 

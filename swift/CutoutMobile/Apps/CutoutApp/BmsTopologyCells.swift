@@ -27,19 +27,21 @@ private extension View {
 }
 
 struct BmsChip: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let title: String
     let accent: PevAccent
 
-    static func usesGlassEffect(reduceTransparency: Bool) -> Bool {
-        !reduceTransparency
+    static func usesGlassEffect(reduceTransparency: Bool, increasedContrast: Bool) -> Bool {
+        !reduceTransparency && !increasedContrast
     }
 
     var body: some View {
         Text(title)
             .font(.callout.weight(.bold))
-            .foregroundStyle(.black.opacity(accent == .green ? 0.82 : 0.92))
+            .foregroundStyle(.black)
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(chipBackground)
@@ -47,7 +49,12 @@ struct BmsChip: View {
 
     @ViewBuilder
     private var chipBackground: some View {
-        if #available(iOS 26, macOS 26, *), Self.usesGlassEffect(reduceTransparency: reduceTransparency) {
+        if dynamicTypeSize.isAccessibilitySize {
+            RoundedRectangle(cornerRadius: 16, style: .continuous).fill(accent.color)
+        } else if #available(iOS 26, macOS 26, *), Self.usesGlassEffect(
+            reduceTransparency: reduceTransparency,
+            increasedContrast: colorSchemeContrast == .increased
+        ) {
             Capsule()
                 .fill(accent.color)
                 .glassEffect(.regular.tint(accent.color.opacity(0.78)), in: .capsule)
