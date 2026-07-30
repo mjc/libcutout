@@ -926,7 +926,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: "voltage",
+            ignoringNilElementContrastWarning: true
+        )
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
@@ -1185,7 +1189,8 @@ final class CutoutAppUITests: XCTestCase {
     private func assertConnectedSurface(
         for family: ConnectedDeviceFamily,
         requiredMetricLabel: String? = nil,
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        auditExclusions: XCUIAccessibilityAuditType = [],
+        ignoringNilElementContrastWarning: Bool = false,
         expectsMirroredTabOrder: Bool = true
     ) throws {
         let pairingAttempted = pairAvailableDevice(family)
@@ -1270,7 +1275,10 @@ final class CutoutAppUITests: XCTestCase {
             assertMetricIsReachable(requiredMetricLabel, in: screen)
         }
 
-        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: auditExclusions,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
     }
 
     private func assertVescDebugSurface(
