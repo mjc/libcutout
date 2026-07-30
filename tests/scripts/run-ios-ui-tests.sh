@@ -14,6 +14,19 @@ assert_equal() {
   fi
 }
 
+mkdir -p "$tmp/derived-data/.run-ios-ui-tests.lock"
+if CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/derived-data" \
+  "$root/scripts/run-ios-ui-tests.sh" --no-build >"$tmp/no-build.log" 2>&1
+then
+  echo "expected --no-build to be rejected" >&2
+  exit 1
+fi
+if ! grep -q "incremental build-for-testing is required" "$tmp/no-build.log"; then
+  cat "$tmp/no-build.log" >&2
+  exit 1
+fi
+rmdir "$tmp/derived-data/.run-ios-ui-tests.lock"
+
 first_result="$(cutout_create_ios_ui_test_result_bundle "$tmp/derived-data")"
 second_result="$(cutout_create_ios_ui_test_result_bundle "$tmp/derived-data")"
 
