@@ -725,27 +725,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
-        _ = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
-        defer { disconnectIfConnected() }
-
-        let energyHero = app.progressIndicators["bms.energy.hero"]
-        XCTAssertTrue(energyHero.waitForExistence(timeout: 5))
-        XCTAssertTrue(energyHero.isHittable)
-        XCTAssertEqual(energyHero.label, "Usable energy")
-        XCTAssertEqual(energyHero.value as? String, "64% and 20S4P test pack")
-        try performVisibleLayoutAccessibilityAudit()
+        try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
     }
 
     func testEucBmsOverviewPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
-        defer { disconnectIfConnected() }
+        try assertEucBmsOverviewAccessibility(scrollsBeforeAudit: true)
+    }
 
-        let energyHero = app.progressIndicators["bms.energy.hero"]
-        XCTAssertTrue(energyHero.waitForExistence(timeout: 5))
-        bmsScreen.swipeUp()
-        XCTAssertFalse(energyHero.label.isEmpty)
-        XCTAssertFalse((energyHero.value as? String ?? "").isEmpty)
-        try performVisibleLayoutAccessibilityAudit()
+    func testEucBmsOverviewPassesAccessibilityAuditInRightToLeftLayout() throws {
+        try assertEucBmsOverviewAccessibility()
     }
 
     func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
@@ -1796,6 +1784,29 @@ final class CutoutAppUITests: XCTestCase {
             excluding: excluded,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
+    }
+
+    private func assertEucBmsOverviewAccessibility(
+        assertsEnglishEnergy: Bool = false,
+        scrollsBeforeAudit: Bool = false
+    ) throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
+        defer { disconnectIfConnected() }
+
+        let energyHero = app.progressIndicators["bms.energy.hero"]
+        XCTAssertTrue(energyHero.waitForExistence(timeout: 5))
+        XCTAssertTrue(energyHero.isHittable)
+        if assertsEnglishEnergy {
+            XCTAssertEqual(energyHero.label, "Usable energy")
+            XCTAssertEqual(energyHero.value as? String, "64% and 20S4P test pack")
+        } else {
+            XCTAssertFalse(energyHero.label.isEmpty)
+            XCTAssertFalse((energyHero.value as? String ?? "").isEmpty)
+        }
+        if scrollsBeforeAudit {
+            bmsScreen.swipeUp()
+        }
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     private func assertEucBmsDetailAccessibility(
