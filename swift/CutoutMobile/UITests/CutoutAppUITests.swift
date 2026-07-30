@@ -871,7 +871,7 @@ final class CutoutAppUITests: XCTestCase {
     func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucNoBmsSurface(
             auditExclusions: [],
-            ignoringPseudolocalizedNoBmsContrastWarning: true
+            ignoringNilElementContrastWarning: true
         )
     }
 
@@ -1583,8 +1583,7 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false,
-        ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
-        ignoringPseudolocalizedNoBmsContrastWarning: Bool = false
+        ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
@@ -1643,15 +1642,6 @@ final class CutoutAppUITests: XCTestCase {
                 // above the viewport before auditing the selected data. XCTest
                 // cannot determine contrast for its clipped child text; visible
                 // and all other contrast findings remain fatal.
-                return true
-            }
-            if ignoringPseudolocalizedNoBmsContrastWarning,
-               issue.auditType == .contrast,
-               issue.element == nil,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode" {
-                // The equivalent nonlocalized no-BMS route passes with every
-                // category enabled. Xcode 27 supplies no element, frame, or
-                // color for this pseudolocalized-only diagnostic.
                 return true
             }
             return false
@@ -1817,7 +1807,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertEucNoBmsSurface(
         auditExclusions: XCUIAccessibilityAuditType = [.contrast],
-        ignoringPseudolocalizedNoBmsContrastWarning: Bool = false
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
         defer { disconnectIfConnected() }
@@ -1827,7 +1817,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(warning.label.isEmpty)
         try performVisibleLayoutAccessibilityAudit(
             excluding: auditExclusions,
-            ignoringPseudolocalizedNoBmsContrastWarning: ignoringPseudolocalizedNoBmsContrastWarning
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
     }
 
