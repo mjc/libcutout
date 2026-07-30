@@ -1282,7 +1282,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertVescDebugSurface(
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        auditExclusions: XCUIAccessibilityAuditType = [],
         requiredMetricLabel: String? = "duty"
     ) throws {
         guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
