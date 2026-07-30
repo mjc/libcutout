@@ -409,12 +409,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
 
         restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
-        // XCTest misreports the system-owned NavigationStack toolbar's native
-        // Cancel/Done controls as Dynamic Type failures. The dedicated keyboard
-        // test below proves their dismissal path at Accessibility XXXL.
         try performVisibleLayoutAccessibilityAudit(
-            excluding: .dynamicType,
-            ignoringSystemToolbarContrastWarning: true
+            ignoringSystemToolbarContrastWarning: true,
+            ignoringSystemToolbarDynamicTypeWarning: true
         )
     }
 
@@ -473,8 +470,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
         restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: .dynamicType,
-            ignoringSystemToolbarContrastWarning: true
+            ignoringSystemToolbarContrastWarning: true,
+            ignoringSystemToolbarDynamicTypeWarning: true
         )
     }
 
@@ -496,8 +493,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
         restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: .dynamicType,
-            ignoringSystemToolbarContrastWarning: true
+            ignoringSystemToolbarContrastWarning: true,
+            ignoringSystemToolbarDynamicTypeWarning: true
         )
     }
 
@@ -1604,7 +1601,7 @@ final class CutoutAppUITests: XCTestCase {
             if ignoringSystemToolbarDynamicTypeWarning,
                issue.auditType == .dynamicType,
                issue.detailedDescription == "User will not be able to change the font size of this SwiftUI.AccessibilityNode",
-               ["Done Done", "Cancel Cancel"].contains(issue.element?.label) {
+               ["Done", "Cancel", "Done Done", "Cancel Cancel"].contains(issue.element?.label) {
                 // These are NavigationStack's native toolbar controls. Their
                 // rendered screens show the system Dynamic Type buttons; all
                 // app-owned Dynamic Type findings remain fatal.
