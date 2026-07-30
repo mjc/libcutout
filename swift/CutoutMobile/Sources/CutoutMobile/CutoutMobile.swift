@@ -2655,6 +2655,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     public let pageKind: String?
     public let pageVerification: VerificationState?
     public let energyPercent: BatteryLevel?
+    public let energyPercentSource: ReadbackSource?
     public let voltage: Voltage?
     public let current: BatteryCurrent?
     public let bmsPackCurrent0: BatteryCurrent?
@@ -2681,6 +2682,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         pageKind: String? = nil,
         pageVerification: VerificationState? = nil,
         energyPercent: BatteryLevel? = nil,
+        energyPercentSource: ReadbackSource? = nil,
         voltage: Voltage? = nil,
         current: BatteryCurrent? = nil,
         bmsPackCurrent0: BatteryCurrent? = nil,
@@ -2707,6 +2709,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
         self.pageKind = hasReadbackData ? pageKind : nil
         self.pageVerification = hasReadbackData ? pageVerification : nil
         self.energyPercent = hasReadbackData ? energyPercent : nil
+        self.energyPercentSource = hasReadbackData && energyPercent != nil ? energyPercentSource : nil
         self.voltage = hasReadbackData ? voltage : nil
         self.current = hasReadbackData ? current : nil
         self.bmsPackCurrent0 = hasReadbackData ? bmsPackCurrent0 : nil
@@ -2735,6 +2738,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             pageKind: dto.pageKind,
             pageVerification: dto.pageVerification.map(VerificationState.init),
             energyPercent: dto.energyPercent?.value,
+            energyPercentSource: dto.energyPercent.map { ReadbackSource($0.source) },
             voltage: dto.voltage?.value,
             current: dto.current?.value,
             bmsPackCurrent0: dto.bmsPackCurrent0?.value,
@@ -2931,6 +2935,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             pageKind: nil,
             pageVerification: update.pageVerification ?? pageVerification,
             energyPercent: update.energyPercent ?? energyPercent,
+            energyPercentSource: update.energyPercent != nil ? update.energyPercentSource : energyPercentSource,
             voltage: update.voltage ?? voltage,
             current: update.current ?? current,
             bmsPackCurrent0: update.bmsPackCurrent0 ?? bmsPackCurrent0,
@@ -3266,6 +3271,7 @@ public extension BmsSnapshot {
             pageKind: nil,
             pageVerification: pageVerification,
             energyPercent: energyPercent,
+            energyPercentSource: energyPercentSource,
             voltage: voltage,
             current: current,
             bmsPackCurrent0: bmsPackCurrent0,
