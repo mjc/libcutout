@@ -96,6 +96,10 @@ struct ConnectionReconnectPolicy {
     }
 }
 
+struct BegodeProbeResponsePolicy {
+    static let timeoutAfter = MonotonicMilliseconds(2_000)
+}
+
 struct ConnectionReconnectSchedule: Equatable {
     let attempt: Int
     let delayMilliseconds: UInt64
@@ -262,7 +266,9 @@ public final class CutoutSessionCore: NSObject {
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private var deviceDetectionSession = DeviceDetectionSession()
-    private var pendingBegodeProbeResponses = Set<DeviceDetectionPendingProbe>()
+    private var begodeProbeResponseStartedAt:
+        [DeviceDetectionPendingProbe: MonotonicMilliseconds] = [:]
+    private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
     private var pendingDisplayStateQueuedAt: MonotonicMilliseconds?
     private var displayPublishWorkItem: DispatchWorkItem?
@@ -618,7 +624,7 @@ public final class CutoutSessionCore: NSObject {
         vescBoardProfile = nil
         liveOwner = nil
         deviceDetectionSession = DeviceDetectionSession()
-        pendingBegodeProbeResponses.removeAll()
+        clearPendingBegodeProbeResponses()
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
         displayState = RideDisplayState()
@@ -988,7 +994,6 @@ public final class CutoutSessionCore: NSObject {
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
-        pendingBegodeProbeResponses.removeAll()
 
         guard !suppressReconnect else {
             suppressReconnect = false
@@ -1723,15 +1728,15 @@ extension CutoutSessionCore {
         switch bytes.first {
         case UInt8(ascii: "N")?:
             _ = deviceDetectionSession.observeBegodeNameProbe()
-            pendingBegodeProbeResponses.insert(.begodeName)
+            trackBegodeProbeResponse(.begodeName)
             annotateDetection("begode_probe_write=model")
         case UInt8(ascii: "V")?:
             _ = deviceDetectionSession.observeBegodeFirmwareProbe()
-            pendingBegodeProbeResponses.insert(.begodeFirmware)
+            trackBegodeProbeResponse(.begodeFirmware)
             annotateDetection("begode_probe_write=firmware")
         case UInt8(ascii: "M")?:
             _ = deviceDetectionSession.observeBegodeImuProbe()
-            pendingBegodeProbeResponses.insert(.begodeImu)
+            trackBegodeProbeResponse(.begodeImu)
             annotateDetection("begode_probe_write=imu")
         default:
             break
@@ -1757,15 +1762,15 @@ extension CutoutSessionCore {
         let previous = deviceDetectionSession.resolution
         let current = deviceDetectionSession.observeNotification(bytes: bytes)
         if current.modelBanner != nil, current.modelBanner != previous.modelBanner {
-            pendingBegodeProbeResponses.remove(.begodeName)
+            finishBegodeProbeResponse(.begodeName)
             annotateDetection("begode_probe_response=model")
         }
         if current.firmwareBanner != nil, current.firmwareBanner != previous.firmwareBanner {
-            pendingBegodeProbeResponses.remove(.begodeFirmware)
+            finishBegodeProbeResponse(.begodeFirmware)
             annotateDetection("begode_probe_response=firmware")
         }
         if current.imuBanner != nil, current.imuBanner != previous.imuBanner {
-            pendingBegodeProbeResponses.remove(.begodeImu)
+            finishBegodeProbeResponse(.begodeImu)
             annotateDetection("begode_probe_response=imu")
         }
         publishDetectionIdentityCandidate(current)
@@ -1777,37 +1782,89 @@ extension CutoutSessionCore {
         }
         switch malformedProbeResponse {
         case .begodeName:
-            pendingBegodeProbeResponses.remove(.begodeName)
+            finishBegodeProbeResponse(.begodeName)
             annotateDetection("begode_probe_malformed=model")
         case .begodeFirmware:
-            pendingBegodeProbeResponses.remove(.begodeFirmware)
+            finishBegodeProbeResponse(.begodeFirmware)
             annotateDetection("begode_probe_malformed=firmware")
         case .begodeImu:
-            pendingBegodeProbeResponses.remove(.begodeImu)
+            finishBegodeProbeResponse(.begodeImu)
             annotateDetection("begode_probe_malformed=imu")
         }
     }
 
+    func expireOutstandingBegodeProbeResponses() {
+        onBleQueue {
+            let now = clock.now()
+            let expired = Set(begodeProbeResponseStartedAt.compactMap { probe, startedAt in
+                now.elapsed(since: startedAt).rawValue > BegodeProbeResponsePolicy.timeoutAfter.rawValue
+                    ? probe
+                    : nil
+            })
+            markBegodeProbeResponsesMissing(expired)
+            scheduleBegodeProbeExpiry()
+        }
+    }
+
     func markOutstandingBegodeProbeResponsesMissing() {
-        [
+        markBegodeProbeResponsesMissing(Set(begodeProbeResponseStartedAt.keys))
+        clearPendingBegodeProbeResponses()
+    }
+
+    private func markBegodeProbeResponsesMissing(_ probes: Set<DeviceDetectionPendingProbe>) {
+        for (probe, label) in [
             (DeviceDetectionPendingProbe.begodeName, "model"),
             (.begodeFirmware, "firmware"),
             (.begodeImu, "imu"),
-        ]
-            .filter { pendingBegodeProbeResponses.contains($0.0) }
-            .forEach { probe, label in
-                let current = switch probe {
-                case .begodeName:
-                    deviceDetectionSession.observeBegodeNameProbeTimeout()
-                case .begodeFirmware:
-                    deviceDetectionSession.observeBegodeFirmwareProbeTimeout()
-                case .begodeImu:
-                    deviceDetectionSession.observeBegodeImuProbeTimeout()
-                }
-                annotateDetection("begode_probe_missing=\(label)")
-                publishDetectionIdentityCandidate(current)
+        ] where probes.contains(probe) {
+            let current = switch probe {
+            case .begodeName:
+                deviceDetectionSession.observeBegodeNameProbeTimeout()
+            case .begodeFirmware:
+                deviceDetectionSession.observeBegodeFirmwareProbeTimeout()
+            case .begodeImu:
+                deviceDetectionSession.observeBegodeImuProbeTimeout()
             }
-        pendingBegodeProbeResponses.removeAll()
+            annotateDetection("begode_probe_missing=\(label)")
+            publishDetectionIdentityCandidate(current)
+            begodeProbeResponseStartedAt.removeValue(forKey: probe)
+        }
+    }
+
+    private func trackBegodeProbeResponse(_ probe: DeviceDetectionPendingProbe) {
+        begodeProbeResponseStartedAt[probe] = clock.now()
+        scheduleBegodeProbeExpiry()
+    }
+
+    private func finishBegodeProbeResponse(_ probe: DeviceDetectionPendingProbe) {
+        begodeProbeResponseStartedAt.removeValue(forKey: probe)
+        scheduleBegodeProbeExpiry()
+    }
+
+    private func clearPendingBegodeProbeResponses() {
+        begodeProbeExpiryWorkItem?.cancel()
+        begodeProbeExpiryWorkItem = nil
+        begodeProbeResponseStartedAt.removeAll()
+    }
+
+    private func scheduleBegodeProbeExpiry() {
+        begodeProbeExpiryWorkItem?.cancel()
+        guard let startedAt = begodeProbeResponseStartedAt.values.min(by: { $0.rawValue < $1.rawValue }) else {
+            begodeProbeExpiryWorkItem = nil
+            return
+        }
+
+        let elapsed = clock.now().elapsed(since: startedAt).rawValue
+        let timeout = BegodeProbeResponsePolicy.timeoutAfter.rawValue
+        let delay = elapsed > timeout ? 0 : timeout - elapsed + 1
+        let work = DispatchWorkItem { [weak self] in
+            self?.expireOutstandingBegodeProbeResponses()
+        }
+        begodeProbeExpiryWorkItem = work
+        bleQueue.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: delay)),
+            execute: work
+        )
     }
 
     func annotateDetection(_ annotation: String) {
