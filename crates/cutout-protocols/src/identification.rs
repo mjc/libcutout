@@ -1450,6 +1450,47 @@ mod tests {
     }
 
     #[test]
+    fn root_owned_detection_session_retains_ordered_identity_evidence() {
+        let mut root = cutout_core::CutoutSessionState::default();
+        let mut session = DeviceDetectionSession::new();
+
+        let _ = session.observe(
+            &mut root,
+            DeviceDetectionEvent::Advertisement {
+                name: Some(b"GotWay_002441"),
+            },
+        );
+        let _ = session.observe(
+            &mut root,
+            DeviceDetectionEvent::ProbeWrite {
+                probe: PendingProbe::BegodeName,
+            },
+        );
+        let resolution = session.observe(
+            &mut root,
+            DeviceDetectionEvent::Notification {
+                bytes: b"NAME:Falcon",
+            },
+        );
+
+        assert_eq!(
+            root.identity()
+                .advertised_name
+                .as_ref()
+                .and_then(|name| name.get()),
+            Some("GotWay_002441")
+        );
+        assert_eq!(
+            root.identity()
+                .model_banner
+                .as_ref()
+                .and_then(ModelBanner::get),
+            Some("Falcon")
+        );
+        assert_eq!(resolution.model_banner, root.identity().model_banner);
+    }
+
+    #[test]
     fn caller_owned_detection_session_records_missing_begode_model_probe_response() {
         let mut session = DeviceDetectionSession::new();
         let _ = session.observe(DeviceDetectionEvent::ProbeWrite {
