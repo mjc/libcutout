@@ -615,7 +615,7 @@ final class CutoutAppUITests: XCTestCase {
     private func assertReconnectAccessibility(
         for family: ConnectedDeviceFamily,
         usesLocalizedText: Bool = false,
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        auditExclusions: XCUIAccessibilityAuditType = [],
         ignoringNilElementContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(family))
