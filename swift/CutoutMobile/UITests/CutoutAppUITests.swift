@@ -1817,7 +1817,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucNoBmsSurface(
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        auditExclusions: XCUIAccessibilityAuditType = [],
         ignoringNilElementContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
