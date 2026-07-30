@@ -768,6 +768,18 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
+    func testEucBmsOverviewPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsOverview"))
+        defer { disconnectIfConnected() }
+
+        let energyHero = app.progressIndicators["bms.energy.hero"]
+        XCTAssertTrue(energyHero.waitForExistence(timeout: 5))
+        bmsScreen.swipeUp()
+        XCTAssertFalse(energyHero.label.isEmpty)
+        XCTAssertFalse((energyHero.value as? String ?? "").isEmpty)
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
