@@ -4985,6 +4985,10 @@ public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
         platformIdentifier: CoreBluetoothPeripheralIdentifier,
         operation: CoreBluetoothPlannedOperation
     )
+    case command(
+        DeviceCommand,
+        at: MonotonicMilliseconds
+    )
     case notification(
         channel: BluetoothUuid,
         byteCount: CoreBluetoothPayloadByteCount,
@@ -5005,15 +5009,16 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let retryCommandOnLinkUp: DeviceCommand?
     private let maximumRetryAttempts: Int
     private let retryDelay: DispatchTimeInterval
+    private let monotonicClock: MonotonicClock
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
-    private var pendingRetryTimestamp: MonotonicMilliseconds?
+    private var retryGeneration: UInt64 = 0
     private var retryAttempts = 0
     private var receivedRealtimeTelemetrySinceLinkUp = false
     private var pendingOperationsAfterSubscription: [CoreBluetoothPlannedOperation] = []
     private var waitingForSubscriptionChannel: BluetoothUuid?
 
-    public init(
+    public convenience init(
         session: CoreBluetoothSession,
         advertisement: CoreBluetoothAdvertisement,
         writeLimit: TransportWriteLimitBytes,
@@ -5022,6 +5027,30 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         maximumRetryAttempts: Int = 3,
         retryDelay: DispatchTimeInterval = .seconds(1),
         executionQueue: DispatchQueue? = nil
+    ) {
+        self.init(
+            session: session,
+            advertisement: advertisement,
+            writeLimit: writeLimit,
+            operationSink: operationSink,
+            retryCommandOnLinkUp: retryCommandOnLinkUp,
+            maximumRetryAttempts: maximumRetryAttempts,
+            retryDelay: retryDelay,
+            executionQueue: executionQueue,
+            monotonicClock: MonotonicClock()
+        )
+    }
+
+    init(
+        session: CoreBluetoothSession,
+        advertisement: CoreBluetoothAdvertisement,
+        writeLimit: TransportWriteLimitBytes,
+        operationSink: CoreBluetoothOperationSink,
+        retryCommandOnLinkUp: DeviceCommand? = nil,
+        maximumRetryAttempts: Int = 3,
+        retryDelay: DispatchTimeInterval = .seconds(1),
+        executionQueue: DispatchQueue? = nil,
+        monotonicClock: MonotonicClock
     ) {
         self.platformIdentifier = advertisement.peripheralIdentifier
         self.runner = CoreBluetoothSessionRunner(
@@ -5039,6 +5068,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         self.retryCommandOnLinkUp = retryCommandOnLinkUp
         self.maximumRetryAttempts = max(0, maximumRetryAttempts)
         self.retryDelay = retryDelay
+        self.monotonicClock = monotonicClock
     }
 
     public var records: [CoreBluetoothLiveRecord] {
@@ -5072,7 +5102,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             if case .subscribe = operation { true } else { false }
         }
         executeAndRecord(writes + subscriptions)
-        scheduleRetryIfNeeded(at: monotonicMilliseconds)
+        scheduleRetryIfNeeded()
         return step
     }
 
@@ -5088,6 +5118,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         _ command: DeviceCommand,
         at monotonicMilliseconds: MonotonicMilliseconds
     ) throws -> CoreBluetoothSessionStep {
+        record(.command(command, at: monotonicMilliseconds))
         let step = try runner.handle(.command(command, at: monotonicMilliseconds))
         executeAndRecord(step.operations)
         return step
@@ -5181,7 +5212,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         recorded.append(value)
     }
 
-    private func scheduleRetryIfNeeded(at monotonicMilliseconds: MonotonicMilliseconds) {
+    private func scheduleRetryIfNeeded() {
         guard
             let retryCommandOnLinkUp,
             retryAttempts < maximumRetryAttempts,
@@ -5189,7 +5220,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         else {
             return
         }
-        pendingRetryTimestamp = monotonicMilliseconds
+        retryGeneration += 1
+        let generation = retryGeneration
         let retry = DispatchWorkItem { [weak self] in
             guard let self else {
                 return
@@ -5197,7 +5229,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             let runRetry = {
                 self.runRetryCommandIfNeeded(
                     retryCommandOnLinkUp,
-                    at: monotonicMilliseconds
+                    generation: generation
                 )
             }
             if let executionQueue = self.executionQueue {
@@ -5212,30 +5244,29 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     private func runRetryCommandIfNeeded(
         _ retryCommandOnLinkUp: DeviceCommand,
-        at monotonicMilliseconds: MonotonicMilliseconds
+        generation: UInt64
     ) {
-        guard pendingRetryTimestamp == monotonicMilliseconds else {
+        guard pendingRetry != nil, retryGeneration == generation else {
             return
         }
         pendingRetry = nil
-        pendingRetryTimestamp = nil
         retryAttempts += 1
         do {
-            _ = try handleCommand(retryCommandOnLinkUp, at: monotonicMilliseconds)
+            _ = try handleCommand(retryCommandOnLinkUp, at: monotonicClock.now())
         } catch {
-            scheduleRetryIfNeeded(at: monotonicMilliseconds)
+            scheduleRetryIfNeeded()
             return
         }
         guard !receivedRealtimeTelemetrySinceLinkUp else {
             return
         }
-        scheduleRetryIfNeeded(at: monotonicMilliseconds)
+        scheduleRetryIfNeeded()
     }
 
     private func cancelPendingRetry() {
         pendingRetry?.cancel()
         pendingRetry = nil
-        pendingRetryTimestamp = nil
+        retryGeneration += 1
     }
 }
 

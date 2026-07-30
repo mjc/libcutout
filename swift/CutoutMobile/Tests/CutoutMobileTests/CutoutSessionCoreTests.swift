@@ -907,6 +907,43 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(sink.writes.prefix(3), sink.writes.suffix(3))
     }
 
+    func testVescLiveOwnerUsesCurrentMonotonicTimeForTelemetryRetry() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: .vescOnewheel(),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-vesc"),
+                localName: "Floatwheel Atom",
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink,
+            retryCommandOnLinkUp: .requestTelemetry,
+            maximumRetryAttempts: 1,
+            retryDelay: .milliseconds(10),
+            monotonicClock: MonotonicClock {
+                MonotonicMilliseconds(41)
+            }
+        )
+
+        _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
+        owner.handleNotificationStateUpdate(
+            channel: .vescNordicUartNotify,
+            isNotifying: true,
+            error: nil
+        )
+
+        let retryFinished = expectation(description: "VESC telemetry retry uses current monotonic time")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(30)) {
+            retryFinished.fulfill()
+        }
+        wait(for: [retryFinished], timeout: 1.0)
+
+        XCTAssertTrue(owner.records.contains(
+            .command(.requestTelemetry, at: MonotonicMilliseconds(41))
+        ))
+    }
+
     func testVescLiveOwnerBoundsTelemetryRetries() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(

@@ -930,7 +930,8 @@ public final class CutoutSessionCore: NSObject {
                 writeLimit: TransportWriteLimitBytes(23),
                 operationSink: self,
                 retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil,
-                executionQueue: bleQueue
+                executionQueue: bleQueue,
+                monotonicClock: clock
             )
             if let chargeEstimateProfile {
                 liveOwner?.configureChargeEstimate(profile: chargeEstimateProfile)
