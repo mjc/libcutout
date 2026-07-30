@@ -123,11 +123,6 @@
         let
           inherit (systemContext system) pkgs devRust;
           nightlyRust = pkgs.rust-bin.nightly.latest.default;
-          darwinHostCargoLinkerVariable =
-            if system == "aarch64-darwin" then
-              "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER"
-            else
-              "CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER";
           cutoutCargoFuzz = pkgs.writeShellScriptBin "cutout-cargo-fuzz" ''
             export PATH="${nightlyRust}/bin:${pkgs.cargo-fuzz}/bin:$PATH"
             exec cargo fuzz "$@"
@@ -158,7 +153,8 @@
                 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
                 unset CC CXX LD AR RANLIB SDKROOT
                 unset NIX_CC NIX_CFLAGS_COMPILE NIX_CXXSTDLIB_COMPILE NIX_LDFLAGS
-                export ${darwinHostCargoLinkerVariable}="${pkgs.stdenv.cc}/bin/clang"
+                unset CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER
+                unset CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER
               ''}
               echo "Cutout dev shell"
               echo "  stable: ${devRust.name}"
