@@ -140,6 +140,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible(usesLocalizedText: true)
     }
 
+    func testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible(usesLocalizedText: true)
+    }
+
     private func assertFinishCaptureFailureKeepsCaptureScreenAccessible(
         usesLocalizedText: Bool = false
     ) throws {
