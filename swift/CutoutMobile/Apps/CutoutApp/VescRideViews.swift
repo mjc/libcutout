@@ -20,14 +20,28 @@ struct VescRideScreenView: View {
         if phase != .live {
             return connectionStatusText ?? phase.displayText
         }
+        switch dashboardSupport {
+        case .telemetryStale:
+            return localizedAppText("vesc.warning.telemetry_stale")
+        case .telemetryPending:
+            return localizedAppText("vesc.subtitle.telemetry_pending")
+        case .dutyHeadroom, .none:
+            break
+        }
         if let liveSnapshot {
             return vescRideSubtitle(liveSnapshot)
         }
-        return localizedAppText("vesc.subtitle.telemetry_pending")
+        return ""
     }
 
     private var statusTone: PevDashboardStatusPillTone {
-        phase == .live ? .vescRide : .warning
+        guard phase == .live else { return .warning }
+        switch dashboardSupport {
+        case .telemetryStale, .telemetryPending:
+            return .warning
+        case .dutyHeadroom, .none:
+            return .vescRide
+        }
     }
 
     private var speedReadout: RideHeroReadout {

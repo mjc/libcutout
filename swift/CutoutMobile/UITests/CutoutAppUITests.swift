@@ -874,12 +874,16 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["vesc.warning.telemetry-stale"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        let status = app.descendants(matching: .any)["ride.hero.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry stale")
             XCTAssertFalse(warning.label.isEmpty)
             XCTAssertFalse((warning.value as? String ?? "").isEmpty)
+            XCTAssertFalse(status.label.isEmpty)
         } else {
             XCTAssertEqual(warning.label, "Telemetry stale")
+            XCTAssertTrue(status.label.contains("Telemetry stale"))
             XCTAssertTrue(
                 (warning.value as? String)?.hasPrefix("Last update ") == true,
                 "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
