@@ -21,6 +21,7 @@ private extension View {
                 )
                 .accessibilityHint(group.detailSelectionAccessibilityHint)
                 .accessibilityIdentifier("bms.group.\(group.index)")
+                .accessibilityAddTraits(isHighlighted ? .isSelected : [])
         }
     }
 }
@@ -209,11 +210,7 @@ struct BmsGroupIndexCell: View {
                 }
         }
         .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(group.accessibilityLabel)
-        .accessibilityValue(group.accessibilityValue)
-        .accessibilityHint(group.detailSelectionAccessibilityHint)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .bmsGroupAccessibility(group, isHighlighted: isSelected, action: action)
     }
 }
 
