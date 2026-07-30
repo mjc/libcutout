@@ -73,6 +73,15 @@ impl CutoutSessionState {
             .select_discovered_platform(platform_identifier);
     }
 
+    /// Clears device-specific identity evidence while preserving the discovery inventory.
+    pub fn reset_device_identity(&mut self) {
+        let discovery = core::mem::take(&mut self.identity.discovery);
+        self.identity = DeviceIdentityState {
+            discovery,
+            ..DeviceIdentityState::default()
+        };
+    }
+
     pub(crate) fn observe_outputs(&mut self, outputs: &[SessionOutput]) {
         for output in outputs {
             self.observe_output(output);
@@ -633,6 +642,32 @@ mod tests {
             Some(ProtocolFamily::BegodeGotway)
         );
         assert_eq!(state.identity().model.as_deref(), Some("Begode Falcon"));
+    }
+
+    #[test]
+    fn identity_reset_preserves_discovery_and_clears_device_evidence() {
+        let mut state = CutoutSessionState::default();
+        state.observe_discovery(discovery_observation(
+            "peripheral-a",
+            b"GotWay_002441",
+            vec![0xffe0],
+            -42,
+        ));
+        state.select_discovered_platform("peripheral-a".to_owned());
+        state.identity.protocol_family = Some(ProtocolFamily::BegodeGotway);
+        state.identity.model = Some("Falcon".to_owned());
+        state.identity.pending_probe = Some(PendingProbe::BegodeName);
+
+        state.reset_device_identity();
+
+        assert_eq!(state.discovery().observations.len(), 1);
+        assert_eq!(
+            state.discovery().selected_platform_identifier.as_deref(),
+            Some("peripheral-a")
+        );
+        assert_eq!(state.identity().protocol_family, None);
+        assert_eq!(state.identity().model, None);
+        assert_eq!(state.identity().pending_probe, None);
     }
 
     #[test]

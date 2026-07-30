@@ -642,6 +642,13 @@ impl CutoutSessionStateHandle {
         let state = self.lock_inner();
         state.detector.resolution(&state.state).into()
     }
+
+    /// Clears device-specific detection state while preserving discovery observations.
+    pub fn reset_device_detection(&self) {
+        let mut state = self.lock_inner();
+        state.state.reset_device_identity();
+        state.detector = DeviceDetectionSession::default();
+    }
 }
 
 impl CutoutSessionStateHandle {
