@@ -27,6 +27,12 @@ stamp="$fake/crates/cutout-mobile-ffi/CutoutMobileFFI/.cutout-source.sha256"
 cutout_swift_ffi_source_fingerprint "$fake" >"$stamp"
 cutout_require_current_swift_ffi "$fake"
 
+if cutout_require_swift_ffi_build_input "$fake" 2>"$tmp/missing.log"; then
+  echo "expected a missing XCFramework slice to fail before the Swift build" >&2
+  exit 1
+fi
+grep -q "missing Swift FFI build input" "$tmp/missing.log"
+
 printf 'pub struct Changed;\n' >>"$fake/crates/cutout-core/src/lib.rs"
 if cutout_require_current_swift_ffi "$fake" 2>"$tmp/stale.log"; then
   echo "expected changed Rust input to invalidate the Swift FFI artifact" >&2
