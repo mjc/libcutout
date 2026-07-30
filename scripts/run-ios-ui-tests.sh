@@ -49,7 +49,6 @@ project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
 derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-$root/target/xcode-ui-tests}"
 lock_directory="$derived_data/.run-ios-ui-tests.lock"
-result_marker=""
 
 mkdir -p "$derived_data"
 if ! mkdir "$lock_directory" 2>/dev/null; then
@@ -57,7 +56,6 @@ if ! mkdir "$lock_directory" 2>/dev/null; then
   exit 1
 fi
 cleanup() {
-  [[ -z "$result_marker" ]] || rm -f "$result_marker"
   rmdir "$lock_directory"
 }
 trap cleanup EXIT
@@ -102,7 +100,7 @@ if [[ "$mode" != "test-without-building" ]]; then
 fi
 
 if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
-  result_marker="$(mktemp "$derived_data/.run-ios-ui-tests-result.XXXXXX")"
+  result_bundle="$(cutout_create_ios_ui_test_result_bundle "$derived_data")"
   test_status=0
   if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
     /usr/bin/xcrun xcodebuild \
@@ -112,6 +110,7 @@ if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
     -test-timeouts-enabled YES \
     -default-test-execution-time-allowance 120 \
     -maximum-test-execution-time-allowance 120 \
+    -resultBundlePath "$result_bundle" \
     test-without-building
   then
     :
@@ -119,15 +118,14 @@ if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
     test_status=$?
   fi
 
-  latest_result_bundle="$(cutout_latest_complete_xcresult_since "$derived_data/Logs/Test" "$result_marker")"
-  if [[ -z "$latest_result_bundle" ]]; then
+  if [[ ! -f "$result_bundle/Info.plist" ]]; then
     echo "iOS UI test failed without a complete .xcresult; do not treat this run as product evidence" >&2
     exit 1
   fi
 
   if [[ "$test_status" -eq 0 ]]; then
     test_count="$(
-      /usr/bin/xcrun xcresulttool get test-results summary --path "$latest_result_bundle" \
+      /usr/bin/xcrun xcresulttool get test-results summary --path "$result_bundle" \
         | /usr/bin/plutil -extract totalTestCount raw -
     )"
     if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then

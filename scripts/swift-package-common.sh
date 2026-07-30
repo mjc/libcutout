@@ -18,18 +18,13 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
-cutout_latest_complete_xcresult_since() {
-  local logs marker
-  logs="$1"
-  marker="$2"
+cutout_create_ios_ui_test_result_bundle() {
+  local derived_data result_directory
+  derived_data="$1"
 
-  [[ -d "$logs" ]] || return 0
-  find "$logs" -maxdepth 1 -type d -name '*.xcresult' -newer "$marker" -print 2>/dev/null \
-    | while IFS= read -r result; do
-        [[ -f "$result/Info.plist" ]] && printf '%s\n' "$result"
-      done \
-    | sort \
-    | tail -1
+  mkdir -p "$derived_data/TestResults"
+  result_directory="$(mktemp -d "$derived_data/TestResults/run.XXXXXX")"
+  printf '%s\n' "$result_directory/Result.xcresult"
 }
 
 cutout_xcode_auth_args() {
