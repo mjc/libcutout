@@ -1066,7 +1066,7 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastAtAccessibilityDynamicType() throws {
