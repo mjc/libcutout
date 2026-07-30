@@ -14,14 +14,35 @@ fi
 cutout_use_xcode_developer_dir
 
 mode="test"
-if [[ "${1:-}" == "--build-only" ]]; then
-  mode="build-for-testing"
-  shift
-elif [[ "${1:-}" == "--no-build" || "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
+clean=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --clean)
+      clean=true
+      shift
+      ;;
+    --build-only)
+      if [[ "$mode" != "test" ]]; then
+        echo "--build-only and --no-build cannot be combined" >&2
+        exit 1
+      fi
+      mode="build-for-testing"
+      shift
+      ;;
+    --no-build)
+      if [[ "$mode" != "test" ]]; then
+        echo "--build-only and --no-build cannot be combined" >&2
+        exit 1
+      fi
+      mode="test-without-building"
+      shift
+      ;;
+    *) break ;;
+  esac
+done
+
+if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" && "$mode" == "test" ]]; then
   mode="test-without-building"
-  if [[ "${1:-}" == "--no-build" ]]; then
-    shift
-  fi
 fi
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
@@ -59,6 +80,10 @@ if [[ "$destination" == platform=iOS,* ]]; then
   )
 fi
 xcodebuild_args+=("$@")
+
+if [[ "$clean" == true ]]; then
+  /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" clean
+fi
 
 if [[ -n "${CUTOUT_IOS_UI_TEST_RUN_TIMEOUT:-}" ]]; then
   ui_test_run_timeout="$CUTOUT_IOS_UI_TEST_RUN_TIMEOUT"
