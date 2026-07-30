@@ -852,6 +852,13 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
+    func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertVescStaleTelemetryAccessibility(
+            usesLocalizedText: true,
+            ignoringNilElementContrastWarning: true
+        )
+    }
+
     func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
@@ -908,7 +915,10 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    private func assertVescStaleTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
+    private func assertVescStaleTelemetryAccessibility(
+        usesLocalizedText: Bool = false,
+        ignoringNilElementContrastWarning: Bool = false
+    ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
@@ -934,7 +944,9 @@ final class CutoutAppUITests: XCTestCase {
                 "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
             )
         }
-        try performVisibleLayoutAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit(
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
     }
 
     func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
