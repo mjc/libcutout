@@ -1595,7 +1595,10 @@ final class CutoutAppUITests: XCTestCase {
             }
             if ignoringSystemToolbarContrastWarning,
                issue.auditType == .contrast,
-               issue.element?.identifier == "device-picker.capture-kind.done" {
+               [
+                "device-picker.capture-kind.done",
+                "device-picker.capture-kind.cancel",
+               ].contains(issue.element?.identifier) {
                 return true
             }
             if ignoringSystemToolbarDynamicTypeWarning,
