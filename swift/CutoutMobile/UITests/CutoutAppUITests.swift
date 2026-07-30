@@ -276,15 +276,15 @@ final class CutoutAppUITests: XCTestCase {
         assertUseDisconnectCycles(for: .euc)
     }
 
-    func testVescUseShowsConnectingBeforeRide() {
-        assertUseShowsConnectingBeforeRide(for: .vesc)
+    func testVescUseShowsConnectingBeforeRide() throws {
+        try assertUseShowsConnectingBeforeRide(for: .vesc)
     }
 
-    func testEucUseShowsConnectingBeforeRide() {
-        assertUseShowsConnectingBeforeRide(for: .euc)
+    func testEucUseShowsConnectingBeforeRide() throws {
+        try assertUseShowsConnectingBeforeRide(for: .euc)
     }
 
-    private func assertUseShowsConnectingBeforeRide(for family: ConnectedDeviceFamily) {
+    private func assertUseShowsConnectingBeforeRide(for family: ConnectedDeviceFamily) throws {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
 
@@ -302,6 +302,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let ride = app.descendants(matching: .any)[family.screenIdentifier]
         XCTAssertFalse(ride.exists, "\(family.name) opened Ride before showing Connecting")
+        try performVisibleLayoutAccessibilityAudit()
         XCTAssertTrue(ride.waitForExistence(timeout: 20))
 
         app.buttons["dashboard.disconnect"].tap()
