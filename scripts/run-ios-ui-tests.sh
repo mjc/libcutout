@@ -73,6 +73,7 @@ if [[ "$mode" != "test-without-building" ]]; then
 fi
 
 if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
+  test_status=0
   if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
     /usr/bin/xcrun xcodebuild \
     "${xcodebuild_args[@]}" \
@@ -83,7 +84,7 @@ if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
     -maximum-test-execution-time-allowance 120 \
     test-without-building
   then
-    exit 0
+    :
   else
     test_status=$?
   fi
@@ -91,6 +92,19 @@ if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
   latest_result_bundle="$(find "$derived_data/Logs/Test" -maxdepth 1 -type d -name '*.xcresult' -print 2>/dev/null | sort | tail -1)"
   if [[ -z "$latest_result_bundle" || ! -f "$latest_result_bundle/Info.plist" ]]; then
     echo "iOS UI test failed without a complete .xcresult; do not treat this run as product evidence" >&2
+    exit 1
   fi
+
+  if [[ "$test_status" -eq 0 ]]; then
+    test_count="$(
+      /usr/bin/xcrun xcresulttool get test-results summary --path "$latest_result_bundle" \
+        | /usr/bin/plutil -extract totalTestCount raw -
+    )"
+    if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then
+      echo "iOS UI test completed without executing a test; refusing to report a green result" >&2
+      exit 1
+    fi
+  fi
+
   exit "$test_status"
 fi
