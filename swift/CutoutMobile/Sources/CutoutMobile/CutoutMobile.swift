@@ -195,10 +195,14 @@ public struct DeviceDetectionGattFingerprint: Equatable, Hashable, Sendable {
 }
 
 public final class DeviceDetectionSession {
-    private let inner: DeviceDetectionSessionHandle
+    private let inner: CutoutSessionStateHandle
 
-    public init() {
-        self.inner = DeviceDetectionSessionHandle()
+    public convenience init() {
+        self.init(sessionState: CutoutSessionStateHandle())
+    }
+
+    init(sessionState: CutoutSessionStateHandle) {
+        self.inner = sessionState
     }
 
     public func observeAdvertisement(name: Data?) -> DeviceDetectionResolution {
@@ -239,6 +243,10 @@ public final class DeviceDetectionSession {
 
     public var resolution: DeviceDetectionResolution {
         DeviceDetectionResolution(inner.resolution())
+    }
+
+    func reset() {
+        inner.resetDeviceDetection()
     }
 }
 

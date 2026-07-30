@@ -218,4 +218,22 @@ final class DeviceDetectionSessionTests: XCTestCase {
 
         XCTAssertEqual(resolution.modelBanner, Data([0x46, 0x61, 0x6c, 0x63, 0x6f, 0x6e, 0x00]))
     }
+
+    func testResetClearsDeviceIdentityEvidence() {
+        let session = DeviceDetectionSession()
+
+        _ = session.observeAdvertisement(name: Data("GotWay_002441".utf8))
+        _ = session.observeBegodeNameProbe()
+        let observed = session.observeNotification(bytes: Data("NAME=Falcon".utf8))
+
+        XCTAssertNotNil(observed.advertisedName)
+        XCTAssertNotNil(observed.modelBanner)
+
+        session.reset()
+
+        XCTAssertNil(session.resolution.advertisedName)
+        XCTAssertNil(session.resolution.modelBanner)
+        XCTAssertNil(session.resolution.protocolFamily)
+        XCTAssertFalse(session.resolution.protocolConflict)
+    }
 }

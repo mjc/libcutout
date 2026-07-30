@@ -245,7 +245,7 @@ public final class CutoutSessionCore: NSObject {
     private let clock: MonotonicClock
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth", qos: .userInitiated)
     private let bleQueueKey = DispatchSpecificKey<Void>()
-    private let rustSessionState = CutoutSessionStateHandle()
+    private let rustSessionState: CutoutSessionStateHandle
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var advertisement: CoreBluetoothAdvertisement?
@@ -265,7 +265,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureBuilder: MobilePevcapCaptureBuilder?
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
-    private var deviceDetectionSession = DeviceDetectionSession()
+    private let deviceDetectionSession: DeviceDetectionSession
     private var begodeProbeResponseStartedAt:
         [DeviceDetectionPendingProbe: MonotonicMilliseconds] = [:]
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
@@ -299,6 +299,9 @@ public final class CutoutSessionCore: NSObject {
     }
 
     init(clock: MonotonicClock, testScript: CutoutSessionTestScript? = nil) {
+        let rustSessionState = CutoutSessionStateHandle()
+        self.rustSessionState = rustSessionState
+        self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.clock = clock
         self.testScript = testScript
         super.init()
@@ -306,6 +309,9 @@ public final class CutoutSessionCore: NSObject {
     }
 #else
     init(clock: MonotonicClock) {
+        let rustSessionState = CutoutSessionStateHandle()
+        self.rustSessionState = rustSessionState
+        self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.clock = clock
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
@@ -623,7 +629,7 @@ public final class CutoutSessionCore: NSObject {
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
-        deviceDetectionSession = DeviceDetectionSession()
+        deviceDetectionSession.reset()
         clearPendingBegodeProbeResponses()
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -834,7 +840,7 @@ public final class CutoutSessionCore: NSObject {
         self.advertisement = advertisement
         selectedModel = model
         selectedRoute = .electricUnicycle
-        deviceDetectionSession = DeviceDetectionSession()
+        deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=electric_unicycle"])
         clearSettingsReadback()
@@ -856,7 +862,7 @@ public final class CutoutSessionCore: NSObject {
         selectedModel = nil
         selectedRoute = nil
         liveOwner = nil
-        deviceDetectionSession = DeviceDetectionSession()
+        deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(
             reason: "record-only",
@@ -883,7 +889,7 @@ public final class CutoutSessionCore: NSObject {
         selectedModel = nil
         selectedRoute = .vescOnewheel
         liveOwner = nil
-        deviceDetectionSession = DeviceDetectionSession()
+        deviceDetectionSession.reset()
         _ = deviceDetectionSession.observeAdvertisement(name: advertisement.localName.map { Data($0.utf8) })
         startCapture(reason: "pair", annotations: ["route=vesc_onewheel"])
         clearSettingsReadback()
