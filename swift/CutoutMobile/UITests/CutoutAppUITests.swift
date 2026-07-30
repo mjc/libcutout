@@ -607,8 +607,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertReconnectAccessibility(
             for: .vesc,
             usesLocalizedText: true,
-            auditExclusions: [],
-            ignoringNilElementContrastWarning: true
+            auditExclusions: []
         )
     }
 
