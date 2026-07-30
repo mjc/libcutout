@@ -2610,13 +2610,21 @@ public enum BmsNoDataTextRow: Hashable, Sendable, Identifiable {
     }
 }
 
+public struct BmsEnergyHeroPresentation: Equatable, Hashable, Sendable {
+    public let metricValue: PevDashboardMetricValue
+    public let unit: String
+    public let accessibilityUnit: String
+    public let detail: String
+    public let progress: Double
+}
+
 public struct BmsOverviewPresentation: Equatable, Hashable, Sendable {
     public let averageGroupVoltage: Voltage?
     public let lowestGroupVoltage: Voltage?
     public let lowestGroupLabel: String
     public let highestTemperature: Temperature?
     public let highestTemperatureLabel: String
-    public let shouldShowEnergyHero: Bool
+    public let energyHero: BmsEnergyHeroPresentation?
     public let shouldShowBalancingSummary: Bool
     public let shouldShowFaultSummary: Bool
 
@@ -2978,7 +2986,19 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             lowestGroupLabel: lowestGroupLabel ?? "",
             highestTemperature: hasTemperatureEvidence ? highestTemperature : nil,
             highestTemperatureLabel: highestTemperatureLabel ?? "",
-            shouldShowEnergyHero: energyPercent != nil,
+            energyHero: energyPercent.map { energy in
+                let metricText = RideUnits.percentText(energy.value)
+                return BmsEnergyHeroPresentation(
+                    metricValue: .available(
+                        display: metricText,
+                        accessibility: metricText + RideUnits.percentUnit
+                    ),
+                    unit: RideUnits.percentUnit,
+                    accessibilityUnit: "",
+                    detail: topology.layoutLabel,
+                    progress: min(max(Double(energy.value) / 100, 0), 1)
+                )
+            },
             shouldShowBalancingSummary: balancingSummary != nil,
             shouldShowFaultSummary: faultSummary != nil
         )

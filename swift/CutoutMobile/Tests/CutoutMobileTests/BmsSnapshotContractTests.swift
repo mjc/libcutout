@@ -512,7 +512,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         XCTAssertNil(overview.highestTemperature)
         XCTAssertNil(overview.highestTemperatureMetricValue)
         XCTAssertEqual(overview.highestTemperatureLabel, "")
-        XCTAssertFalse(overview.shouldShowEnergyHero)
+        XCTAssertNil(overview.energyHero)
         XCTAssertFalse(overview.shouldShowBalancingSummary)
         XCTAssertFalse(overview.shouldShowFaultSummary)
 
@@ -545,7 +545,16 @@ final class BmsSnapshotContractTests: XCTestCase {
             balancingSummary: "idle",
             faultSummary: "no active faults"
         ).overviewPresentation
-        XCTAssertTrue(cardStates.shouldShowEnergyHero)
+        XCTAssertEqual(
+            cardStates.energyHero,
+            BmsEnergyHeroPresentation(
+                metricValue: .available(display: "0", accessibility: "0%"),
+                unit: RideUnits.percentUnit,
+                accessibilityUnit: "",
+                detail: "20S4P split pack",
+                progress: 0
+            )
+        )
         XCTAssertTrue(cardStates.shouldShowBalancingSummary)
         XCTAssertTrue(cardStates.shouldShowFaultSummary)
     }

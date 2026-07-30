@@ -165,6 +165,19 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(card.accessibilityValueText, "unavailable")
     }
 
+    func testHeroCanUseVisualUnitWithoutRepeatingItToVoiceOver() {
+        let card = PevDashboardHeroCard(
+            eyebrow: "Battery",
+            metricValue: .available(display: "72", accessibility: "72%"),
+            unit: "%",
+            accessibilityUnit: "",
+            detail: "split pack",
+            progress: 0.72
+        )
+
+        XCTAssertEqual(card.accessibilityValueText, "72% and split pack")
+    }
+
     func testWideCardWithoutTitleUsesValueAsItsAccessibilityLabel() {
         let card = PevDashboardWideCard(
             title: nil,
