@@ -597,23 +597,41 @@ impl CutoutSessionStateHandle {
 
     /// Records that the caller issued a Begode `N` name probe.
     pub fn observe_begode_name_probe(&self) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::ProbeWrite {
-            probe: PendingProbe::BegodeName,
-        })
+        self.observe_begode_name_probe_at(0)
+    }
+
+    /// Records a Begode `N` name probe with its monotonic write time.
+    pub fn observe_begode_name_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        self.observe_probe_write_at(PendingProbe::BegodeName, started_at_ms)
     }
 
     /// Records that the caller issued a Begode `V` firmware probe.
     pub fn observe_begode_firmware_probe(&self) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::ProbeWrite {
-            probe: PendingProbe::BegodeFirmware,
-        })
+        self.observe_begode_firmware_probe_at(0)
+    }
+
+    /// Records a Begode `V` firmware probe with its monotonic write time.
+    pub fn observe_begode_firmware_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        self.observe_probe_write_at(PendingProbe::BegodeFirmware, started_at_ms)
     }
 
     /// Records that the caller issued a Begode `M` IMU probe.
     pub fn observe_begode_imu_probe(&self) -> DeviceDetectionResolutionRecord {
-        self.observe(DeviceDetectionEvent::ProbeWrite {
-            probe: PendingProbe::BegodeImu,
-        })
+        self.observe_begode_imu_probe_at(0)
+    }
+
+    /// Records a Begode `M` IMU probe with its monotonic write time.
+    pub fn observe_begode_imu_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        self.observe_probe_write_at(PendingProbe::BegodeImu, started_at_ms)
     }
 
     /// Records that the Begode `N` name probe did not produce a matching response.
@@ -637,6 +655,45 @@ impl CutoutSessionStateHandle {
         })
     }
 
+    /// Expires pending Begode probes strictly older than the response timeout.
+    pub fn expire_begode_probe_responses(
+        &self,
+        now_ms: u64,
+        timeout_ms: u64,
+    ) -> Vec<MobilePendingProbeDto> {
+        let mut state = self.lock_inner();
+        let MobileSessionState { state, detector } = &mut *state;
+        detector
+            .expire_pending_probes(
+                state,
+                MonotonicTimestamp::new(now_ms),
+                CoreDuration::from_milliseconds(timeout_ms),
+            )
+            .into_iter()
+            .map(MobilePendingProbeDto::from)
+            .collect()
+    }
+
+    /// Marks every pending Begode probe as missing.
+    pub fn mark_begode_probe_responses_missing(&self) -> Vec<MobilePendingProbeDto> {
+        let mut state = self.lock_inner();
+        let MobileSessionState { state, detector } = &mut *state;
+        detector
+            .mark_pending_probes_missing(state)
+            .into_iter()
+            .map(MobilePendingProbeDto::from)
+            .collect()
+    }
+
+    /// Returns the next strict Begode probe-expiration deadline.
+    pub fn next_begode_probe_expiry(&self, timeout_ms: u64) -> Option<u64> {
+        let state = self.lock_inner();
+        state
+            .detector
+            .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(timeout_ms))
+            .map(MonotonicTimestamp::as_milliseconds)
+    }
+
     /// Returns the current detection resolution.
     pub fn resolution(&self) -> DeviceDetectionResolutionRecord {
         let state = self.lock_inner();
@@ -656,6 +713,18 @@ impl CutoutSessionStateHandle {
         let mut state = self.lock_inner();
         let MobileSessionState { state, detector } = &mut *state;
         detector.observe(state, event).into()
+    }
+
+    fn observe_probe_write_at(
+        &self,
+        probe: PendingProbe,
+        started_at_ms: u64,
+    ) -> DeviceDetectionResolutionRecord {
+        let mut state = self.lock_inner();
+        let MobileSessionState { state, detector } = &mut *state;
+        detector
+            .observe_probe_write_at(state, probe, MonotonicTimestamp::new(started_at_ms))
+            .into()
     }
 }
 
