@@ -70,6 +70,18 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(useButton.frame.height, 92)
     }
 
+    func testBluetoothUnavailablePickerDoesNotOfferUseOrRide() throws {
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        let status = app.descendants(matching: .any)["device-picker.connection-status"]
+
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.label, "Bluetooth unavailable")
+        XCTAssertFalse(app.buttons["device-picker.use.ui-test-vesc"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.eucRide"].exists)
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testEucFixtureSelectionIgnoresXCTestSelectorCase() {
         XCTAssertEqual(Fixture.testFixture(for: "testEUCBmsDetailPassesAccessibilityAudit"), .euc)
         XCTAssertEqual(Fixture.testFixture(for: "testEucBmsOverviewPassesAccessibilityAudit"), .eucOverview)
@@ -1439,6 +1451,7 @@ final class CutoutAppUITests: XCTestCase {
     private enum Fixture {
         case unknownDevice
         case unknownDeviceFinishFailure
+        case bluetoothUnavailable
         case euc
         case eucStale
         case eucReconnect
@@ -1458,6 +1471,7 @@ final class CutoutAppUITests: XCTestCase {
         static func testFixture(for testName: String) -> Self {
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
+            if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
@@ -1483,6 +1497,7 @@ final class CutoutAppUITests: XCTestCase {
             switch self {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
+            case .bluetoothUnavailable: "bluetooth-unavailable"
             case .euc: "euc"
             case .eucStale: "euc-stale"
             case .eucReconnect: "euc-reconnect"

@@ -819,6 +819,7 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 enum CutoutUITestSessionFixture {
     case unknownDevice
     case unknownDeviceFinishFailure
+    case bluetoothUnavailable
     case vesc
     case pendingVesc
     case staleVesc
@@ -839,6 +840,7 @@ enum CutoutUITestSessionFixture {
         switch value {
         case "unknown-device": self = .unknownDevice
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
+        case "bluetooth-unavailable": self = .bluetoothUnavailable
         case "vesc": self = .vesc
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
@@ -905,7 +907,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .bluetoothUnavailable, .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -919,6 +921,7 @@ enum CutoutUITestSessionFixture {
     }
 
     var startsLive: Bool { self == .autoVescLiveActivity }
+    var startsBluetoothUnavailable: Bool { self == .bluetoothUnavailable }
     var failsConnection: Bool { self == .failedVesc }
     var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
@@ -949,6 +952,7 @@ enum CutoutUITestSessionFixture {
             telemetry: emitsPendingTelemetry ? nil : telemetry,
             bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
+            startsBluetoothUnavailable: startsBluetoothUnavailable,
             failsConnection: failsConnection,
             emitsLateLiveAfterFailure: failsConnection,
             reconnectsAfterFirstLive: reconnectsAfterFirstLive,

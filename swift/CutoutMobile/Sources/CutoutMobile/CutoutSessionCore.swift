@@ -166,6 +166,7 @@ public struct CutoutSessionTestScript {
     public let telemetry: TelemetrySnapshot?
     public let bmsSnapshot: BmsSnapshot?
     public let startsLive: Bool
+    public let startsBluetoothUnavailable: Bool
     public let failsConnection: Bool
     public let emitsLateLiveAfterFailure: Bool
     public let reconnectsAfterFirstLive: Bool
@@ -180,6 +181,7 @@ public struct CutoutSessionTestScript {
         telemetry: TelemetrySnapshot?,
         bmsSnapshot: BmsSnapshot? = nil,
         startsLive: Bool = false,
+        startsBluetoothUnavailable: Bool = false,
         failsConnection: Bool = false,
         emitsLateLiveAfterFailure: Bool = false,
         reconnectsAfterFirstLive: Bool = false,
@@ -193,6 +195,7 @@ public struct CutoutSessionTestScript {
         self.telemetry = telemetry
         self.bmsSnapshot = bmsSnapshot
         self.startsLive = startsLive
+        self.startsBluetoothUnavailable = startsBluetoothUnavailable
         self.failsConnection = failsConnection
         self.emitsLateLiveAfterFailure = emitsLateLiveAfterFailure
         self.reconnectsAfterFirstLive = reconnectsAfterFirstLive
@@ -462,6 +465,12 @@ public final class CutoutSessionCore: NSObject {
             testScriptDidReconnect = false
             displayState = RideDisplayState()
             publishDisplayState()
+            guard !testScript.startsBluetoothUnavailable else {
+                scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+                publishScanState()
+                setPhase(.bluetoothUnavailable(rawState: 4))
+                return
+            }
             scanState = DevicePickerScanState(status: .idle, rows: [testScript.candidate.pickerRow])
             publishScanState()
             setPhase(.scanning)
