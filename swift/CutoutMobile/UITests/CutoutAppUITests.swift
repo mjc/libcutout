@@ -535,6 +535,14 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertFailedVescConnectionAccessibility(
+            usesLocalizedText: true,
+            auditExclusions: [],
+            ignoringNilElementContrastWarning: true
+        )
+    }
+
     func testVescReconnectKeepsRideAccessible() throws {
         try assertReconnectAccessibility(for: .vesc)
     }
@@ -618,7 +626,8 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertFailedVescConnectionAccessibility(
         usesLocalizedText: Bool = false,
-        auditExclusions: XCUIAccessibilityAuditType = []
+        auditExclusions: XCUIAccessibilityAuditType = [],
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
@@ -631,7 +640,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
         let connectingLabel = connectionStatus.label
         restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: auditExclusions,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
 
         let failed = XCTNSPredicateExpectation(
             predicate: usesLocalizedText
@@ -644,7 +656,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(connectionStatus.label.isEmpty)
         restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: auditExclusions,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
 
         let lateRide = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         let resurrected = XCTNSPredicateExpectation(
@@ -674,7 +689,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [failedAgain], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
         restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: auditExclusions,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
 
     }
 
