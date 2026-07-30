@@ -653,16 +653,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        let group = reachableBmsGroup(7, in: bmsScreen)
-        group.tap()
-
-        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try assertEucBmsDetailAccessibility()
     }
 
     func testEucBmsPassesAccessibilityAuditInRightToLeftLayout() throws {
@@ -735,57 +726,19 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithIncreasedContrast() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        let group = reachableBmsGroup(7, in: bmsScreen)
-        group.tap()
-
-        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit(
-            excluding: .all.subtracting(.contrast)
-        )
+        try assertEucBmsDetailAccessibility(excluding: .all.subtracting(.contrast))
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithIncreasedContrastAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        let group = reachableBmsGroup(7, in: bmsScreen)
-        group.tap()
-
-        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: [])
+        try assertEucBmsDetailAccessibility(excluding: [])
     }
 
     func testEucBmsDetailPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        let group = reachableBmsGroup(7, in: bmsScreen)
-        group.tap()
-
-        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try assertEucBmsDetailAccessibility()
     }
 
     func testEucBmsDetailPassesAccessibilityAuditInRightToLeftLayout() throws {
-        let bmsScreen = try XCTUnwrap(openEucBmsMap())
-        defer { disconnectIfConnected() }
-
-        let group = reachableBmsGroup(7, in: bmsScreen)
-        group.tap()
-
-        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
-        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
-        try performVisibleLayoutAccessibilityAudit(excluding: .contrast)
+        try assertEucBmsDetailAccessibility()
     }
 
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
@@ -1459,6 +1412,21 @@ final class CutoutAppUITests: XCTestCase {
 
         assertMetricIsReachable("Cell group 7, right pack group 7", in: bmsScreen)
         restoreBmsViewport(bmsScreen)
+        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
+    }
+
+    private func assertEucBmsDetailAccessibility(
+        excluding excluded: XCUIAccessibilityAuditType = [.contrast]
+    ) throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        let group = reachableBmsGroup(7, in: bmsScreen)
+        group.tap()
+
+        let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
+        XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
+        assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
         try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
