@@ -130,9 +130,15 @@ struct PevRideHeroSection: View {
     @ViewBuilder
     private var speed: some View {
         if let displayValue = speedReadout.displayValue {
-            Text(displayValue)
-                .font(speedFont)
-                .monospacedDigit()
+            if dynamicTypeSize.isAccessibilitySize {
+                Text(displayValue)
+                    .font(.largeTitle.weight(.black))
+                    .monospacedDigit()
+            } else {
+                Text(displayValue)
+                    .font(.system(size: speedFontSize, weight: .black))
+                    .monospacedDigit()
+            }
         } else {
             Text(localizedAppText("ride.hero.value.unavailable"))
                 .font(.title2.weight(.semibold))
@@ -146,22 +152,18 @@ struct PevRideHeroSection: View {
         }
     }
 
-    private var speedFont: Font {
-        .system(size: speedFontSize, weight: .black)
-    }
-
     @ViewBuilder
     private var unit: some View {
         if let unit = speedReadout.displayUnit, !unit.isEmpty {
-            Text(unit)
-                .font(unitFont)
-                .foregroundStyle(PevColors.muted)
+            if dynamicTypeSize.isAccessibilitySize {
+                Text(unit)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(PevColors.muted)
+            } else {
+                Text(unit)
+                    .font(.system(size: speedUnitFontSize, weight: .bold))
+                    .foregroundStyle(PevColors.muted)
+            }
         }
-    }
-
-    private var unitFont: Font {
-        dynamicTypeSize.isAccessibilitySize
-            ? .title2.weight(.bold)
-            : .system(size: speedUnitFontSize, weight: .bold)
     }
 }

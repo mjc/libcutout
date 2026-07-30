@@ -240,7 +240,7 @@ public struct PevDashboardStatusPill: View {
         Text(title)
             .font(.system(.callout, design: .default, weight: .black))
             .foregroundStyle(foreground)
-            .fixedSize(horizontal: fixedHorizontal, vertical: false)
+            .fixedSize(horizontal: fixedHorizontal, vertical: true)
             .padding(.horizontal, horizontalPadding)
             .frame(minWidth: width)
             .frame(minHeight: height)
