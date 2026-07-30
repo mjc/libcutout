@@ -47,15 +47,20 @@ fi
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
-derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-${CUTOUT_IOS_SIMULATOR_DERIVED_DATA:-$root/target/xcode-simulator-tests}}"
+derived_data="$(cutout_ios_ui_test_derived_data "$root" "$destination")"
 lock_directory="$derived_data/.run-ios-ui-tests.lock"
+result_marker=""
 
 mkdir -p "$derived_data"
 if ! mkdir "$lock_directory" 2>/dev/null; then
   echo "iOS UI tests are already running for $derived_data" >&2
   exit 1
 fi
-trap 'rmdir "$lock_directory"' EXIT
+cleanup() {
+  [[ -z "$result_marker" ]] || rm -f "$result_marker"
+  rmdir "$lock_directory"
+}
+trap cleanup EXIT
 
 xcodebuild_args=(
   -project "$root/$project"
@@ -65,7 +70,6 @@ xcodebuild_args=(
 )
 
 if [[ "$destination" == platform=iOS,* ]]; then
-  derived_data="${CUTOUT_IOS_DEVICE_DERIVED_DATA:-$root/target/xcode-device-tests}"
   xcodebuild_args=(
     -project "$root/$project"
     -scheme "$scheme"
@@ -98,6 +102,7 @@ if [[ "$mode" != "test-without-building" ]]; then
 fi
 
 if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
+  result_marker="$(mktemp "$derived_data/.run-ios-ui-tests-result.XXXXXX")"
   test_status=0
   if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
     /usr/bin/xcrun xcodebuild \
@@ -114,8 +119,8 @@ if [[ "$mode" == "test" || "$mode" == "test-without-building" ]]; then
     test_status=$?
   fi
 
-  latest_result_bundle="$(find "$derived_data/Logs/Test" -maxdepth 1 -type d -name '*.xcresult' -print 2>/dev/null | sort | tail -1)"
-  if [[ -z "$latest_result_bundle" || ! -f "$latest_result_bundle/Info.plist" ]]; then
+  latest_result_bundle="$(cutout_latest_complete_xcresult_since "$derived_data/Logs/Test" "$result_marker")"
+  if [[ -z "$latest_result_bundle" ]]; then
     echo "iOS UI test failed without a complete .xcresult; do not treat this run as product evidence" >&2
     exit 1
   fi
