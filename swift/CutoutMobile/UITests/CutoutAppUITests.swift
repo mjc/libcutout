@@ -862,6 +862,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
         XCTAssertEqual(warning.label, "Telemetry pending")
         XCTAssertEqual(warning.value as? String, "Waiting for live values.")
+        let status = app.descendants(matching: .any)["ride.hero.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("Telemetry pending"))
         try performVisibleLayoutAccessibilityAudit()
     }
 
