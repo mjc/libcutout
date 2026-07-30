@@ -1833,7 +1833,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucUnknownTopologySurface(
-        auditExclusions: XCUIAccessibilityAuditType = [.contrast]
+        auditExclusions: XCUIAccessibilityAuditType = []
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsUnknownTopology"))
         defer { disconnectIfConnected() }
