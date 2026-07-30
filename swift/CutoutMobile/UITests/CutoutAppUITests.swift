@@ -573,6 +573,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testFailedVescConnectionPassesAccessibilityAuditInRightToLeftLayout() throws {
+        try assertFailedVescConnectionAccessibility()
+    }
+
     func testVescReconnectKeepsRideAccessible() throws {
         try assertReconnectAccessibility(for: .vesc)
     }
