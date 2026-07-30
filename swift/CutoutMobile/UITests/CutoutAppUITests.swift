@@ -1164,8 +1164,7 @@ final class CutoutAppUITests: XCTestCase {
     func testVescDebugPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertVescDebugSurface(
             auditExclusions: [],
-            requiredMetricLabel: nil,
-            ignoringPseudolocalizedDutyContrastWarning: true
+            requiredMetricLabel: nil
         )
     }
 
@@ -1270,8 +1269,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertVescDebugSurface(
         auditExclusions: XCUIAccessibilityAuditType = [.contrast],
-        requiredMetricLabel: String? = "duty",
-        ignoringPseudolocalizedDutyContrastWarning: Bool = false
+        requiredMetricLabel: String? = "duty"
     ) throws {
         guard pairAvailableDevice(.vesc), connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
@@ -1291,8 +1289,7 @@ final class CutoutAppUITests: XCTestCase {
             assertMetricIsReachable(requiredMetricLabel, in: debugScreen)
         }
         try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
-            ignoringPseudolocalizedDutyContrastWarning: ignoringPseudolocalizedDutyContrastWarning
+            excluding: auditExclusions
         )
     }
 
@@ -1567,7 +1564,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringNilElementContrastWarning: Bool = false,
         ignoringUnattributedSwiftUIContrastWarning: Bool = false,
         ignoringPseudolocalizedLiveReadbackContrastWarning: Bool = false,
-        ignoringPseudolocalizedDutyContrastWarning: Bool = false,
         ignoringPseudolocalizedNoBmsContrastWarning: Bool = false,
         ignoringPseudolocalizedTopologyStatusContrastWarning: Bool = false,
         ignoringPseudolocalizedBmsDetailGroupAuditWarnings: Bool = false
@@ -1625,16 +1621,6 @@ final class CutoutAppUITests: XCTestCase {
                 // The corresponding nonlocalized BMS route passes the full
                 // audit. Xcode 27 pseudolocalization falsely flags this
                 // black-on-light status chip; no other finding is ignored.
-                return true
-            }
-            if ignoringPseudolocalizedDutyContrastWarning,
-               issue.auditType == .contrast,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
-               issue.element?.label == "duty duty" {
-                // The unlocalized landscape test passes this same card. With
-                // Xcode 27 pseudolocalization, the audit falsely flags its
-                // black system-label text on a light system-card background.
-                // No other contrast diagnostic is ignored.
                 return true
             }
             if ignoringPseudolocalizedNoBmsContrastWarning,
