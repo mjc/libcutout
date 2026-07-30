@@ -1020,12 +1020,12 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
-        try assertVescPendingTelemetryAccessibility(scrollsBeforeAudit: true)
+        try assertVescPendingTelemetryAccessibility(auditScrolls: 1)
     }
 
     private func assertVescPendingTelemetryAccessibility(
         usesLocalizedText: Bool = false,
-        scrollsBeforeAudit: Bool = false
+        auditScrolls: Int = 0
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -1049,7 +1049,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(status.label.contains("Telemetry pending"))
             XCTAssertEqual(status.value as? String, "warning")
         }
-        if scrollsBeforeAudit {
+        for _ in 0..<auditScrolls {
             screen.swipeUp()
         }
         try performVisibleLayoutAccessibilityAudit()
