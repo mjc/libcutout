@@ -1774,7 +1774,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucBmsAccessibility(
-        excluding excluded: XCUIAccessibilityAuditType = [.contrast],
+        excluding excluded: XCUIAccessibilityAuditType = [],
         assertsEnglishMetric: Bool = true,
         ignoringNilElementContrastWarning: Bool = false
     ) throws {
