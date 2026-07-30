@@ -29,6 +29,7 @@ scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
 derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-${CUTOUT_IOS_SIMULATOR_DERIVED_DATA:-$root/target/xcode-simulator-tests}}"
 lock_directory="$derived_data/.run-ios-ui-tests.lock"
 
+mkdir -p "$derived_data"
 if ! mkdir "$lock_directory" 2>/dev/null; then
   echo "iOS UI tests are already running for $derived_data" >&2
   exit 1
