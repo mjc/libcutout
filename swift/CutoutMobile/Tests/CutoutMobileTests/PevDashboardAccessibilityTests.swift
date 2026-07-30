@@ -211,11 +211,18 @@ final class PevDashboardAccessibilityTests: XCTestCase {
     }
 
     func testStatusStripUsesVisibleTextAsItsAccessibilityLabel() {
-        let strip = PevStatusStrip(text: "Saved capture", tone: .critical)
+        let cases: [(PevStatusStripTone, String)] = [
+            (.nominal, ""),
+            (.critical, "critical"),
+        ]
 
-        XCTAssertEqual(strip.accessibilityLabelText, "Saved capture")
-        XCTAssertEqual(strip.accessibilityValueText, "critical")
-        XCTAssertEqual(strip.tone, .critical)
+        for (tone, expectedAccessibilityValue) in cases {
+            let strip = PevStatusStrip(text: "Saved capture", tone: tone)
+
+            XCTAssertEqual(strip.accessibilityLabelText, "Saved capture")
+            XCTAssertEqual(strip.accessibilityValueText, expectedAccessibilityValue)
+            XCTAssertEqual(strip.tone, tone)
+        }
     }
 
     func testPickerStateBuildsItsSharedStatusPill() {
