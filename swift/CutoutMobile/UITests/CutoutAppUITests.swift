@@ -843,6 +843,14 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: nil,
+            auditExclusions: []
+        )
+    }
+
     func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
         try assertVescDutyHeadroomAccessibility()
     }
