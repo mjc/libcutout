@@ -18,6 +18,99 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
+cutout_swift_ffi_source_fingerprint() {
+  local root
+  root="$1"
+
+  (
+    cd "$root"
+    {
+      printf '%s\n' Cargo.lock Cargo.toml rust-toolchain.toml
+      printf '%s\n' \
+        crates/cutout-core/Cargo.toml \
+        crates/cutout-mobile-ffi/Cargo.toml \
+        crates/cutout-protocols/Cargo.toml
+      find \
+        crates/cutout-core/src \
+        crates/cutout-mobile-ffi/src \
+        crates/cutout-protocols/src \
+        -type f -print
+      [[ ! -d crates/cutout-protocols/registry ]] \
+        || find crates/cutout-protocols/registry -type f -print
+      [[ ! -f crates/cutout-protocols/build.rs ]] || printf '%s\n' crates/cutout-protocols/build.rs
+      [[ ! -f crates/cutout-mobile-ffi/uniffi.toml ]] || printf '%s\n' crates/cutout-mobile-ffi/uniffi.toml
+    } \
+      | LC_ALL=C sort -u \
+      | while IFS= read -r file; do
+          printf '%s  ' "$file"
+          sha256sum "$file"
+        done
+  ) | sha256sum | cut -d ' ' -f 1
+}
+
+cutout_require_current_swift_ffi() {
+  local root stamp expected actual
+  root="$1"
+  stamp="$root/crates/cutout-mobile-ffi/CutoutMobileFFI/.cutout-source.sha256"
+
+  if [[ -f "$stamp" ]]; then
+    expected="$(tr -d '[:space:]' <"$stamp")"
+  else
+    expected=""
+  fi
+  actual="$(cutout_swift_ffi_source_fingerprint "$root")"
+  if [[ "$expected" == "$actual" ]]; then
+    return
+  fi
+
+  echo "Swift FFI artifact is missing or stale for the current Rust sources." >&2
+  echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
+  return 1
+}
+
+cutout_require_swift_ffi_build_input() {
+  local root package
+  local -a required
+  root="$1"
+  package="$root/crates/cutout-mobile-ffi/CutoutMobileFFI"
+  required=(
+    "$package/Package.swift"
+    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"
+    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/libcutout_mobile_ffi.a"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/libcutout_mobile_ffi.a"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    "$package/cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"
+    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/libcutout_mobile_ffi.a"
+    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"
+    "$package/cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  )
+
+  cutout_require_current_swift_ffi "$root"
+  for input in "${required[@]}"; do
+    if [[ ! -f "$input" ]]; then
+      echo "missing Swift FFI build input: $input" >&2
+      echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
+      return 1
+    fi
+  done
+
+  if [[ "$(uname -s)" == Darwin ]]; then
+    if ! /usr/bin/lipo "${required[3]}" -verify_arch arm64 >/dev/null 2>&1 \
+      || ! /usr/bin/lipo "${required[6]}" -verify_arch arm64 >/dev/null 2>&1 \
+      || ! /usr/bin/lipo "${required[6]}" -verify_arch x86_64 >/dev/null 2>&1 \
+      || ! /usr/bin/lipo "${required[9]}" -verify_arch arm64 >/dev/null 2>&1 \
+      || ! /usr/bin/lipo "${required[9]}" -verify_arch x86_64 >/dev/null 2>&1
+    then
+      echo "Swift FFI XCFramework contains a missing or wrong-architecture slice." >&2
+      echo "Run: nix develop -c ./scripts/regenerate-swift-ffi.sh" >&2
+      return 1
+    fi
+  fi
+}
+
 cutout_create_ios_ui_test_result_bundle() {
   local derived_data result_directory
   derived_data="$1"
@@ -84,6 +177,7 @@ cutout_build_ios_app_bundle() {
   product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir
+  cutout_require_swift_ffi_build_input "$root"
 
   rm -rf "$product"
 
@@ -119,6 +213,7 @@ cutout_build_ios_device_app_bundle() {
   bundle_id="${CUTOUT_IOS_APP_BUNDLE_ID:-}"
 
   cutout_use_xcode_developer_dir
+  cutout_require_swift_ffi_build_input "$root"
 
   rm -rf "$product"
 
@@ -159,6 +254,7 @@ cutout_archive_ios_release_testing_app() {
   local -a auth_args=()
 
   root="$(cutout_repo_root)"
+  cutout_require_swift_ffi_build_input "$root"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   archive_path="${CUTOUT_IOS_AD_HOC_ARCHIVE_PATH:-$root/target/xcode-ad-hoc/CutoutApp.xcarchive}"

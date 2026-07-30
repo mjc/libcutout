@@ -33,6 +33,27 @@ if cutout_require_swift_ffi_build_input "$fake" 2>"$tmp/missing.log"; then
 fi
 grep -q "missing Swift FFI build input" "$tmp/missing.log"
 
+if [[ "$(uname -s)" == Darwin ]]; then
+  package="$fake/crates/cutout-mobile-ffi/CutoutMobileFFI"
+  for slice in ios-arm64 ios-arm64_x86_64-simulator macos-arm64_x86_64; do
+    mkdir -p "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI"
+    touch \
+      "$package/cutout_mobile_ffiFFI.xcframework/$slice/libcutout_mobile_ffi.a" \
+      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h" \
+      "$package/cutout_mobile_ffiFFI.xcframework/$slice/Headers/cutout_mobile_ffiFFI/module.modulemap"
+  done
+  mkdir -p "$package/Sources/CutoutMobileFFI"
+  touch \
+    "$package/Package.swift" \
+    "$package/Sources/CutoutMobileFFI/cutout_mobile_ffi.swift" \
+    "$package/cutout_mobile_ffiFFI.xcframework/Info.plist"
+  if cutout_require_swift_ffi_build_input "$fake" 2>"$tmp/architecture.log"; then
+    echo "expected wrong-architecture XCFramework slices to fail before the Swift build" >&2
+    exit 1
+  fi
+  grep -q "wrong-architecture slice" "$tmp/architecture.log"
+fi
+
 printf 'pub struct Changed;\n' >>"$fake/crates/cutout-core/src/lib.rs"
 if cutout_require_current_swift_ffi "$fake" 2>"$tmp/stale.log"; then
   echo "expected changed Rust input to invalidate the Swift FFI artifact" >&2

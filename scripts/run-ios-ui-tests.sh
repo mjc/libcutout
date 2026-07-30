@@ -5,6 +5,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
 cd "$root"
+cutout_require_swift_ffi_build_input "$root"
 
 if [[ "$(uname -s)" != Darwin || "$(uname -m)" != arm64 ]]; then
   echo "CutoutApp iOS UI tests require Apple Silicon Darwin" >&2
