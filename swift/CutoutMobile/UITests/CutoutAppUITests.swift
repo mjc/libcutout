@@ -965,7 +965,18 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
-    private func assertEucStaleTelemetryAccessibility(usesLocalizedText: Bool = false) throws {
+    func testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
+        try assertEucStaleTelemetryAccessibility(
+            ignoringVisualProgressLabelContrastWarning: true,
+            auditScrolls: 1
+        )
+    }
+
+    private func assertEucStaleTelemetryAccessibility(
+        usesLocalizedText: Bool = false,
+        ignoringVisualProgressLabelContrastWarning: Bool = false,
+        auditScrolls: Int = 0
+    ) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard connectedScreen(timeout: 20) != nil else {
             XCTFail("The deterministic stale EUC fixture did not open its Ride screen")
@@ -992,7 +1003,12 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(status.label.contains("Telemetry stale"))
             XCTAssertEqual(status.value as? String, "warning")
         }
-        try performVisibleLayoutAccessibilityAudit()
+        for _ in 0..<auditScrolls {
+            app.descendants(matching: .any)["dashboard.screen.eucRide"].swipeUp()
+        }
+        try performVisibleLayoutAccessibilityAudit(
+            ignoringVisualProgressLabelContrastWarning: ignoringVisualProgressLabelContrastWarning
+        )
     }
 
     func testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
@@ -1612,6 +1628,7 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarContrastWarning: Bool = false,
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
+        ignoringVisualProgressLabelContrastWarning: Bool = false,
         ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false,
         ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false
@@ -1655,6 +1672,15 @@ final class CutoutAppUITests: XCTestCase {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic. Attributable contrast findings
                 // still fail this test.
+                return true
+            }
+            if ignoringVisualProgressLabelContrastWarning,
+               issue.auditType == .contrast,
+               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
+               issue.element?.label == "sag-adjusted energy" {
+                // The progress bar already exposes this same typed label and
+                // value on its parent. Xcode 27 reports its black-on-white
+                // visual child only in this RTL simulator audit.
                 return true
             }
             if ignoringBmsDetailSelectorDynamicTypeWarning,
