@@ -371,11 +371,8 @@ final class CutoutAppUITests: XCTestCase {
         // positive for the grouped metric representation.
         // XCTest's text-clipping audit also reports a framework false positive
         // for this bold/high-contrast launch configuration.
-        // XCTest's contrast audit also reports false positives for SwiftUI's
-        // grouped dashboard cards even when the rendered surface is black on
-        // the semantic system background. Picker contrast is covered above.
         try performVisibleLayoutAccessibilityAudit(
-            excluding: [.dynamicType, .textClipped, .contrast],
+            excluding: [.dynamicType, .textClipped],
             ignoringNilElementTextRepresentationWarning: true
         )
     }

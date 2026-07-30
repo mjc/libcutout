@@ -41,7 +41,12 @@ public struct PevDashboardMetricTile: View {
     }
 
     private var resolvedValueColor: Color {
-        resolvedColor(PevDashboardColors.primaryText)
+        switch metricValue {
+        case .unavailable:
+            colorScheme == .dark ? .white : .black
+        case .available, .status:
+            resolvedColor(PevDashboardColors.primaryText)
+        }
     }
 
     private func resolvedColor(_ color: Color) -> Color {
