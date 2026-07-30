@@ -470,6 +470,30 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testAdvancedCapturePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        let advancedCapture = openAdvancedCapture()
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let recordButton = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
+        ).firstMatch
+
+        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !captureKind.isHittable {
+            advancedCapture.swipeUp()
+        }
+        XCTAssertTrue(captureKind.isHittable)
+
+        for _ in 0..<6 where !recordButton.isHittable {
+            advancedCapture.swipeUp()
+        }
+        XCTAssertTrue(recordButton.isHittable)
+
+        restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
+        try performVisibleLayoutAccessibilityAudit(
+            ignoringSystemToolbarDynamicTypeWarning: true
+        )
+    }
+
     func testVescUseOpensAnAccessibleLiveRide() throws {
         try assertConnectedSurface(for: .vesc)
     }
@@ -1340,6 +1364,7 @@ final class CutoutAppUITests: XCTestCase {
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringNilElementTextRepresentationWarning: Bool = false,
         ignoringSystemToolbarContrastWarning: Bool = false,
+        ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringUnattributedSwiftUIContrastWarning: Bool = false,
         ignoringPseudolocalizedDutyContrastWarning: Bool = false
@@ -1362,6 +1387,15 @@ final class CutoutAppUITests: XCTestCase {
             if ignoringSystemToolbarContrastWarning,
                issue.auditType == .contrast,
                issue.element?.identifier == "device-picker.capture-kind.done" {
+                return true
+            }
+            if ignoringSystemToolbarDynamicTypeWarning,
+               issue.auditType == .dynamicType,
+               issue.detailedDescription == "User will not be able to change the font size of this SwiftUI.AccessibilityNode",
+               ["Done Done", "Cancel Cancel"].contains(issue.element?.label) {
+                // These are NavigationStack's native toolbar controls. Their
+                // rendered screens show the system Dynamic Type buttons; all
+                // app-owned Dynamic Type findings remain fatal.
                 return true
             }
             if ignoringNilElementContrastWarning,
