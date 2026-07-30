@@ -579,8 +579,7 @@ final class CutoutAppUITests: XCTestCase {
     func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertFailedVescConnectionAccessibility(
             usesLocalizedText: true,
-            auditExclusions: [],
-            ignoringNilElementContrastWarning: true
+            auditExclusions: []
         )
     }
 
