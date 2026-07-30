@@ -664,7 +664,7 @@ final class CutoutAppModel {
         guard
             previousSnapshot == nil
                 || snapshot.connectionState != previousSnapshot?.connectionState
-                || lastLiveActivityUpdate.map({ now.rawValue >= $0.rawValue + Self.liveActivityUpdateIntervalMilliseconds }) != false
+                || lastLiveActivityUpdate.map({ now.elapsed(since: $0).rawValue >= Self.liveActivityUpdateIntervalMilliseconds }) != false
         else { return false }
 
         lastLiveActivitySnapshot = snapshot

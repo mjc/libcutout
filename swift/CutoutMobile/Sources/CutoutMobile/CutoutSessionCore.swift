@@ -1058,7 +1058,7 @@ public final class CutoutSessionCore: NSObject {
         let queuedAt = clock.now()
         return bleQueue.sync {
             let result = work()
-            let waitMilliseconds = elapsedMilliseconds(since: queuedAt, until: clock.now())
+            let waitMilliseconds = clock.now().elapsed(since: queuedAt).rawValue
             if waitMilliseconds > 0 {
                 record("ble_queue_wait_ms=\(waitMilliseconds)")
             }
@@ -1083,7 +1083,7 @@ public final class CutoutSessionCore: NSObject {
         let now = clock.now()
         let intervalMilliseconds: UInt64 = 333
         let elapsed = lastDisplayPublication.map {
-            elapsedMilliseconds(since: $0, until: now)
+            now.elapsed(since: $0).rawValue
         } ?? intervalMilliseconds
         guard elapsed >= intervalMilliseconds else {
             guard displayPublishWorkItem == nil else { return }
@@ -1105,19 +1105,12 @@ public final class CutoutSessionCore: NSObject {
         displayPublishWorkItem = nil
         pendingDisplayState = nil
         let publicationDelayMilliseconds = pendingDisplayStateQueuedAt.map {
-            elapsedMilliseconds(since: $0, until: now)
+            now.elapsed(since: $0).rawValue
         } ?? 0
         pendingDisplayStateQueuedAt = nil
         lastDisplayPublication = now
         onDisplayStateChange?(value)
         onRecord?("snapshot_publication_ms=\(publicationDelayMilliseconds)")
-    }
-
-    private func elapsedMilliseconds(
-        since start: MonotonicMilliseconds,
-        until end: MonotonicMilliseconds
-    ) -> UInt64 {
-        end.rawValue >= start.rawValue ? end.rawValue - start.rawValue : 0
     }
 
     private func publishScanState() {
@@ -1257,7 +1250,7 @@ public final class CutoutSessionCore: NSObject {
         guard let captureStartedAt else {
             return 0
         }
-        return clock.now().rawValue.saturatingSubtracting(captureStartedAt.rawValue)
+        return clock.now().elapsed(since: captureStartedAt).rawValue
     }
 
     private func captureProgress() -> CaptureProgress {
@@ -1296,12 +1289,6 @@ public final class CutoutSessionCore: NSObject {
 
     private func pevcapResolvedIdentity() -> MobileResolvedIdentityDto? {
         captureResolvedIdentity(protocolIdentityCandidate: protocolIdentityCandidate)
-    }
-}
-
-private extension UInt64 {
-    func saturatingSubtracting(_ other: UInt64) -> UInt64 {
-        self >= other ? self - other : 0
     }
 }
 

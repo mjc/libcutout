@@ -19,6 +19,10 @@ public struct MonotonicMilliseconds: Equatable, Hashable, Sendable {
         self.rawValue = rawValue
     }
 
+    public func elapsed(since start: Self) -> Self {
+        Self(rawValue >= start.rawValue ? rawValue - start.rawValue : 0)
+    }
+
     fileprivate var dto: MobileMonotonicMillisDto {
         MobileMonotonicMillisDto(milliseconds: rawValue)
     }

@@ -16,6 +16,17 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(clock.now(), MonotonicMilliseconds(250))
     }
 
+    func testMonotonicElapsedSaturatesWhenTheClockMovesBackward() {
+        XCTAssertEqual(
+            MonotonicMilliseconds(1_333).elapsed(since: MonotonicMilliseconds(1_000)),
+            MonotonicMilliseconds(333)
+        )
+        XCTAssertEqual(
+            MonotonicMilliseconds(1_000).elapsed(since: MonotonicMilliseconds(1_333)),
+            MonotonicMilliseconds(0)
+        )
+    }
+
     func testConnectionReconnectPolicyBoundsJitteredBackoff() {
         XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 1, jitter: 0), 200)
         XCTAssertEqual(ConnectionReconnectPolicy.delayMilliseconds(attempt: 2, jitter: 0.5), 500)
