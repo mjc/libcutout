@@ -113,12 +113,20 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(writer.value as? String, "Healthy")
     }
 
-    func testFinishCaptureReturnsToPickerAfterFinalizing() {
+    func testFinishCaptureReturnsToPickerAfterFinalizing() throws {
+        _ = try finishCaptureAndReturnToPicker()
+    }
+
+    func testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        _ = try finishCaptureAndReturnToPicker()
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
+    private func finishCaptureAndReturnToPicker() throws -> XCUIElement {
         enterCapture()
 
         let finish = app.buttons["capture.stop"]
         let picker = app.descendants(matching: .any)["device-picker.screen"]
-
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         XCTAssertEqual(finish.elementType, .button)
         finish.tap()
@@ -126,6 +134,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertTrue(picker.isHittable)
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].isHittable)
+        return picker
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenVisible() throws {
