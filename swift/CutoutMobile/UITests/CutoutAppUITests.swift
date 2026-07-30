@@ -1618,7 +1618,8 @@ final class CutoutAppUITests: XCTestCase {
             }
             if ignoringNilElementContrastWarning,
                issue.auditType == .contrast,
-               issue.element == nil {
+               issue.element == nil,
+               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode" {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic. Attributable contrast findings
                 // still fail this test.
