@@ -601,6 +601,14 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescReconnectKeepsRideAccessibleInRightToLeftLayout() throws {
+        try assertReconnectAccessibility(
+            for: .vesc,
+            ignoringNilElementContrastWarning: true,
+            scrollsBeforeAudit: true
+        )
+    }
+
     func testEucReconnectKeepsRideRoute() throws {
         try assertReconnectAccessibility(for: .euc)
     }
@@ -617,7 +625,8 @@ final class CutoutAppUITests: XCTestCase {
         for family: ConnectedDeviceFamily,
         usesLocalizedText: Bool = false,
         auditExclusions: XCUIAccessibilityAuditType = [],
-        ignoringNilElementContrastWarning: Bool = false
+        ignoringNilElementContrastWarning: Bool = false,
+        scrollsBeforeAudit: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(family))
         guard let rideScreen = connectedScreen(timeout: 20) else {
@@ -646,6 +655,9 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertEqual(rideScreen.identifier, family.screenIdentifier)
         XCTAssertTrue(app.descendants(matching: .any)["ride.hero.speed"].exists)
+        if scrollsBeforeAudit {
+            rideScreen.swipeUp()
+        }
         try performVisibleLayoutAccessibilityAudit(
             excluding: auditExclusions,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
