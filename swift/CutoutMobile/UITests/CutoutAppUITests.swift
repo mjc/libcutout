@@ -568,6 +568,15 @@ final class CutoutAppUITests: XCTestCase {
         try assertReconnectAccessibility(for: .euc)
     }
 
+    func testEucReconnectKeepsRideAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
+        try assertReconnectAccessibility(
+            for: .euc,
+            usesLocalizedText: true,
+            auditExclusions: [],
+            ignoringNilElementContrastWarning: true
+        )
+    }
+
     private func assertReconnectAccessibility(
         for family: ConnectedDeviceFamily,
         usesLocalizedText: Bool = false,
