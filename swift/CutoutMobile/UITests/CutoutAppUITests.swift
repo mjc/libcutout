@@ -945,6 +945,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
+    func testVescStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
+        try assertVescStaleTelemetryAccessibility()
+    }
+
     func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
