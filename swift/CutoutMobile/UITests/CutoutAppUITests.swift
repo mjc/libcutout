@@ -838,6 +838,20 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
+        try assertVescDutyHeadroomAccessibility()
+    }
+
+    func testVescDutyHeadroomSpeaksPercentWithIncreasedContrastAtAccessibilityDynamicType() throws {
+        try assertVescDutyHeadroomAccessibility(
+            auditExclusions: [],
+            ignoringNilElementContrastWarning: true
+        )
+    }
+
+    private func assertVescDutyHeadroomAccessibility(
+        auditExclusions: XCUIAccessibilityAuditType = [.contrast],
+        ignoringNilElementContrastWarning: Bool = false
+    ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
@@ -853,7 +867,10 @@ final class CutoutAppUITests: XCTestCase {
             (headroom.value as? String)?.contains("77%") == true,
             "The VESC duty-headroom metric must speak its percent unit: \(String(describing: headroom.value))"
         )
-        try performVisibleLayoutAccessibilityAudit(excluding: [.contrast])
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: auditExclusions,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
     }
 
     func testVescRidePassesAccessibilityAuditAtExtraExtraExtraLargeType() throws {
@@ -1276,7 +1293,8 @@ final class CutoutAppUITests: XCTestCase {
     private func performVisibleLayoutAccessibilityAudit(
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringNilElementTextRepresentationWarning: Bool = false,
-        ignoringSystemToolbarContrastWarning: Bool = false
+        ignoringSystemToolbarContrastWarning: Bool = false,
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
@@ -1296,6 +1314,14 @@ final class CutoutAppUITests: XCTestCase {
             if ignoringSystemToolbarContrastWarning,
                issue.auditType == .contrast,
                issue.element?.identifier == "device-picker.capture-kind.done" {
+                return true
+            }
+            if ignoringNilElementContrastWarning,
+               issue.auditType == .contrast,
+               issue.element == nil {
+                // XCTest supplied no element, frame, or color for this
+                // simulator-only diagnostic. Attributable contrast findings
+                // still fail this test.
                 return true
             }
             return false
