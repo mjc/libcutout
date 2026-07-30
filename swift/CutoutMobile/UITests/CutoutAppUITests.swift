@@ -284,6 +284,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertUseShowsConnectingBeforeRide(for: .euc)
     }
 
+    func testVescUseShowsConnectingBeforeRideInRightToLeftLayout() throws {
+        try assertUseShowsConnectingBeforeRide(for: .vesc)
+    }
+
+    func testEucUseShowsConnectingBeforeRideInRightToLeftLayout() throws {
+        try assertUseShowsConnectingBeforeRide(for: .euc)
+    }
+
     private func assertUseShowsConnectingBeforeRide(for family: ConnectedDeviceFamily) throws {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         let connectionStatus = app.descendants(matching: .any)["device-picker.connection-status"]
