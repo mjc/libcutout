@@ -501,6 +501,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertProductionPickerAccessibility()
     }
 
+    func testProductionPickerPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertProductionPickerAccessibility()
+    }
+
+    func testProductionPickerPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertProductionPickerAccessibility()
+    }
+
     func testProductionPickerPassesAccessibilityAuditInRightToLeftLayout() throws {
         try assertProductionPickerAccessibility()
     }
