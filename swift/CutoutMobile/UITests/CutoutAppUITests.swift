@@ -121,11 +121,27 @@ final class CutoutAppUITests: XCTestCase {
         try assertBluetoothBlockedPicker(status: "Bluetooth unavailable")
     }
 
+    func testBluetoothUnavailablePickerDoesNotOfferUseOrRideInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertBluetoothBlockedPicker(status: "Bluetooth unavailable")
+    }
+
+    func testBluetoothUnavailablePickerDoesNotOfferUseOrRideInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertBluetoothBlockedPicker(status: "Bluetooth unavailable")
+    }
+
     func testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRide() throws {
         try assertBluetoothBlockedPicker(status: "Bluetooth permission denied")
     }
 
     func testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRideInRightToLeftLayout() throws {
+        try assertBluetoothBlockedPicker(status: "Bluetooth permission denied")
+    }
+
+    func testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRideInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertBluetoothBlockedPicker(status: "Bluetooth permission denied")
+    }
+
+    func testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRideInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertBluetoothBlockedPicker(status: "Bluetooth permission denied")
     }
 
