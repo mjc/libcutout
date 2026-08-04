@@ -2028,6 +2028,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .euc, requiredMetricLabel: "pack")
     }
 
+    func testEucRidePassesAccessibilityAuditInLandscapeAtExtraExtraExtraLargeType() throws {
+        try assertConnectedSurface(for: .euc, requiredMetricLabel: "pack")
+    }
+
     func testVescRidePassesAccessibilityAuditWithIncreasedContrast() throws {
         try assertConnectedSurface(
             for: .vesc,
