@@ -780,8 +780,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertFailedVescConnectionAccessibility(
-        usesLocalizedText: Bool = false,
-        ignoringNilElementContrastWarning: Bool = false
+        usesLocalizedText: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
 
@@ -794,9 +793,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
         let connectingLabel = connectionStatus.label
         restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit()
 
         let failed = XCTNSPredicateExpectation(
             predicate: usesLocalizedText
@@ -809,9 +806,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(connectionStatus.label.isEmpty)
         restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit()
 
         let lateRide = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         let resurrected = XCTNSPredicateExpectation(
@@ -841,9 +836,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [failedAgain], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
         restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit()
 
     }
 
@@ -1163,8 +1156,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertVescStaleTelemetryAccessibility(
-        usesLocalizedText: Bool = false,
-        ignoringNilElementContrastWarning: Bool = false
+        usesLocalizedText: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
@@ -1191,9 +1183,7 @@ final class CutoutAppUITests: XCTestCase {
                 "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
             )
         }
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
@@ -2004,7 +1994,6 @@ final class CutoutAppUITests: XCTestCase {
     private func assertEucBmsAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
         assertsEnglishMetric: Bool = true,
-        ignoringNilElementContrastWarning: Bool = false,
         scrollsBeforeAudit: Int = 0
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
@@ -2021,10 +2010,7 @@ final class CutoutAppUITests: XCTestCase {
         for _ in 0..<scrollsBeforeAudit {
             bmsScreen.swipeUp()
         }
-        try performVisibleLayoutAccessibilityAudit(
-            excluding: excluded,
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
     }
 
     private func assertEucBmsOverviewAccessibility(
@@ -2052,7 +2038,6 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertEucBmsDetailAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        ignoringNilElementContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
         ignoringClippedBmsGroupChildAuditWarnings: Bool = false
     ) throws {
@@ -2067,7 +2052,6 @@ final class CutoutAppUITests: XCTestCase {
         assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning,
             ignoringScrolledOutBmsDetailBackControlContrastWarning: true,
             ignoringVisibleBmsDetailBackControlContrastWarning: ignoringVisibleBmsDetailBackControlContrastWarning,
             ignoringClippedBmsGroupChildAuditWarnings: ignoringClippedBmsGroupChildAuditWarnings
@@ -2075,8 +2059,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucNoBmsSurface(
-        auditExclusions: XCUIAccessibilityAuditType = [],
-        ignoringNilElementContrastWarning: Bool = false
+        auditExclusions: XCUIAccessibilityAuditType = []
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
         defer { disconnectIfConnected() }
@@ -2084,10 +2067,7 @@ final class CutoutAppUITests: XCTestCase {
         let warning = bmsScreen.descendants(matching: .any)["bms.no-data.warning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
         XCTAssertFalse(warning.label.isEmpty)
-        try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
     private func assertEucUnknownTopologySurface(
