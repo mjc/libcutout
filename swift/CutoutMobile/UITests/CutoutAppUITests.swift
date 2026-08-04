@@ -825,6 +825,15 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
         let expectedHeadroom = stateName == "Critical" ? "reduce acceleration" : "good"
         XCTAssertTrue((islandHeadroom.value as? String)?.localizedCaseInsensitiveContains(expectedHeadroom) == true)
+        let expandedActivity = springboard.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS 'CutOut' AND label CONTAINS 'Speed' AND label CONTAINS 'Headroom'")
+        ).firstMatch
+        XCTAssertTrue(expandedActivity.exists, springboard.debugDescription)
+        let orderedSafetyValues = expandedActivity.descendants(matching: .any).matching(
+            NSPredicate(format: "label == 'Speed' OR label == 'Headroom'")
+        )
+        XCTAssertEqual(orderedSafetyValues.count, 2)
+        XCTAssertEqual(orderedSafetyValues.element(boundBy: 0).label, stateName == "Critical" ? "Headroom" : "Speed")
         attachScreenshot(of: springboard, named: "\(stateName) Expanded Dynamic Island")
     }
 
