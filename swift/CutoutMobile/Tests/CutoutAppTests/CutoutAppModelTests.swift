@@ -483,6 +483,43 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testBluetoothLossCannotLeaveRideConnected() {
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        for phase in [
+            SessionConnectionPhase.bluetoothPermissionDenied,
+            .bluetoothUnavailable(rawState: 4),
+        ] {
+            let driver = SessionDriverSpy(rows: [row])
+            let model = CutoutAppModel(core: driver)
+            model.start()
+            XCTAssertTrue(model.pair(platformIdentifier: row.id))
+            driver.onPhaseChange?(.subscribing)
+            driver.onPhaseChange?(.live)
+            XCTAssertEqual(
+                model.connectionState.navigationIntent(isRecordOnlyCapture: false),
+                .openRide(.vescOnewheel)
+            )
+
+            driver.onPhaseChange?(phase)
+
+            XCTAssertEqual(model.phase, phase)
+            XCTAssertEqual(model.connectionState, .picker)
+            XCTAssertEqual(
+                model.connectionState.navigationIntent(isRecordOnlyCapture: false),
+                .stay
+            )
+        }
+    }
+
+    @MainActor
     func testLateRetryCannotOverwriteADifferentSelectedDevice() {
         let vesc = DevicePickerRow(
             id: "vesc-1234",

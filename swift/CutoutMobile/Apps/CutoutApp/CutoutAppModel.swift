@@ -616,7 +616,9 @@ final class CutoutAppModel {
             connectionState = .failed(selection, failure)
             let rows = devicePickerScanState?.rows ?? []
             devicePickerScanState = .failed(phase.displayText, rows: rows)
-        case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning:
+        case .bluetoothPermissionDenied, .bluetoothUnavailable:
+            connectionState = .picker
+        case .starting, .scanning:
             break
         }
     }
