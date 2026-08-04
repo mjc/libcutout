@@ -496,6 +496,8 @@ public final class CutoutSessionCore: NSObject {
         if let testScript {
             guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
             let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
+            captureFileURL = fileURL
+            isRecordOnly = true
             publishCaptureEvent(.started(fileURL: fileURL))
             publishCaptureEvent(.progress(CaptureProgress(
                 elapsedMilliseconds: 63_000,
@@ -743,7 +745,16 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
+#if DEBUG
+        if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
+            captureFileURL = nil
+            publishCaptureEvent(.finished(fileURL: completedCaptureURL))
+        } else {
+            finishCaptureAfterLinkDown()
+        }
+#else
         finishCaptureAfterLinkDown()
+#endif
         isRecordOnly = false
         isProbeOnly = false
         selectedModel = nil

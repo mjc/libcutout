@@ -48,7 +48,10 @@ struct DevicePickerView: View {
             }
 
             if let captureStatusText {
-                PevStatusStrip(text: captureStatusText)
+                PevStatusStrip(
+                    text: captureStatusText,
+                    accessibilityIdentifier: "device-picker.capture-status"
+                )
             }
 
             VStack(alignment: .leading, spacing: 18) {

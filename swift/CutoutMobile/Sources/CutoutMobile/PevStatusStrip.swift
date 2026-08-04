@@ -22,13 +22,19 @@ public enum PevStatusStripTone: Sendable, Equatable {
 public struct PevStatusStrip: View {
     let text: String
     public let tone: PevStatusStripTone
+    public let accessibilityIdentifier: String
 
     var accessibilityLabelText: String { text }
     var accessibilityValueText: String { tone.accessibilityValueText }
 
-    public init(text: String, tone: PevStatusStripTone = .nominal) {
+    public init(
+        text: String,
+        tone: PevStatusStripTone = .nominal,
+        accessibilityIdentifier: String = ""
+    ) {
         self.text = text
         self.tone = tone
+        self.accessibilityIdentifier = accessibilityIdentifier
     }
 
     public var body: some View {
@@ -51,5 +57,6 @@ public struct PevStatusStrip: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabelText)
         .accessibilityValue(accessibilityValueText)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }

@@ -190,21 +190,33 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        _ = try finishCaptureAndReturnToPicker()
+        _ = try finishCaptureAndReturnToPicker(usesLocalizedText: true)
         try performVisibleLayoutAccessibilityAudit()
     }
 
-    private func finishCaptureAndReturnToPicker() throws -> XCUIElement {
+    private func finishCaptureAndReturnToPicker(
+        usesLocalizedText: Bool = false
+    ) throws -> XCUIElement {
         enterCapture()
 
         let finish = app.buttons["capture.stop"]
         let picker = app.descendants(matching: .any)["device-picker.screen"]
+        let savedCapture = app.descendants(matching: .any)["device-picker.capture-status"]
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         XCTAssertEqual(finish.elementType, .button)
         finish.tap()
 
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertTrue(picker.isHittable)
+        XCTAssertTrue(savedCapture.waitForExistence(timeout: 5))
+        XCTAssertTrue(savedCapture.isHittable, "The saved-capture result must be visible without scrolling")
+        XCTAssertFalse(savedCapture.label.isEmpty)
+        XCTAssertTrue(savedCapture.label.contains("ui-test.capture"))
+        if usesLocalizedText {
+            XCTAssertNotEqual(savedCapture.label, "Saved capture: ui-test.capture")
+        } else {
+            XCTAssertTrue(savedCapture.label.hasPrefix("Saved capture:"))
+        }
         XCTAssertFalse(app.descendants(matching: .any)["capture.screen"].isHittable)
         return picker
     }
