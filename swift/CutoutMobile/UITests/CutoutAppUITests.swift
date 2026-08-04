@@ -1732,16 +1732,11 @@ final class CutoutAppUITests: XCTestCase {
             }
         }
 
-        for index in 0..<6 where !metric.exists || !metric.isHittable {
-            if index < 3 {
-                let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
-                let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
-                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
-            } else {
-                let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
-                let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
-                start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
-            }
+        for _ in 0..<8 where !metric.exists || !metric.isHittable {
+            scrollTarget.swipeUp(velocity: .fast)
+        }
+        for _ in 0..<8 where !metric.exists || !metric.isHittable {
+            scrollTarget.swipeDown(velocity: .fast)
         }
 
         XCTAssertTrue(metric.exists, "The \(label) metric is missing at accessibility text sizes")
