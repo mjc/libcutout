@@ -498,9 +498,17 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType() throws {
-        XCTAssertTrue(pairAvailableDevice(.vesc))
+        try assertRidePublishesDynamicTelemetryAfterRouteMounts(.vesc)
+    }
+
+    func testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType() throws {
+        try assertRidePublishesDynamicTelemetryAfterRouteMounts(.euc)
+    }
+
+    private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {
+        XCTAssertTrue(pairAvailableDevice(family))
         guard connectedScreen(timeout: 20) != nil else {
-            XCTFail("The dynamic VESC fixture did not open its Ride screen")
+            XCTFail("The dynamic \(family.name) fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
@@ -1593,6 +1601,7 @@ final class CutoutAppUITests: XCTestCase {
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case euc
+        case eucDynamic
         case eucStale
         case eucReconnect
         case eucOverview
@@ -1628,6 +1637,9 @@ final class CutoutAppUITests: XCTestCase {
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
+            if testName.localizedCaseInsensitiveContains("Euc"), testName.contains("DynamicTelemetry") {
+                return .eucDynamic
+            }
             if testName.contains("DynamicTelemetry") { return .vescDynamic }
             if testName.contains("StaleTelemetry") { return .vescStale }
             if testName.localizedCaseInsensitiveContains("EucBmsOverview") { return .eucOverview }
@@ -1657,6 +1669,7 @@ final class CutoutAppUITests: XCTestCase {
             case .bluetoothUnavailable: "bluetooth-unavailable"
             case .bluetoothPermissionDenied: "bluetooth-permission-denied"
             case .euc: "euc"
+            case .eucDynamic: "euc-dynamic"
             case .eucStale: "euc-stale"
             case .eucReconnect: "euc-reconnect"
             case .eucOverview: "euc-overview"

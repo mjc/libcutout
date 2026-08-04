@@ -1118,12 +1118,18 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.reconnectsAfterFirstLive ?? false)
     }
 
-    func testDynamicVescFixturePublishesASecondTelemetrySample() {
-        let fixture = CutoutUITestSessionFixture(value: "vesc-dynamic")
+    func testDynamicFixturesPublishASecondTelemetrySample() {
+        let cases = [
+            ("vesc-dynamic", Speed(value: 8_000), Speed(value: 16_000)),
+            ("euc-dynamic", Speed(value: 12_000), Speed(value: 18_000)),
+        ]
 
-        XCTAssertEqual(fixture?.testScript.telemetry?.speed, Speed(value: 8_000))
-        XCTAssertEqual(fixture?.testScript.telemetryUpdate?.speed, Speed(value: 16_000))
-        XCTAssertEqual(fixture?.testScript.telemetryUpdateDelayMilliseconds, 1_500)
+        for (name, initialSpeed, updatedSpeed) in cases {
+            let fixture = CutoutUITestSessionFixture(value: name)
+            XCTAssertEqual(fixture?.testScript.telemetry?.speed, initialSpeed)
+            XCTAssertEqual(fixture?.testScript.telemetryUpdate?.speed, updatedSpeed)
+            XCTAssertEqual(fixture?.testScript.telemetryUpdateDelayMilliseconds, 1_500)
+        }
     }
 }
 

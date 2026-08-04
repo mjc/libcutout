@@ -880,6 +880,7 @@ enum CutoutUITestSessionFixture {
     case reconnectingVesc
     case connectingVesc
     case euc
+    case dynamicEuc
     case staleEuc
     case reconnectingEuc
     case connectingEuc
@@ -908,6 +909,7 @@ enum CutoutUITestSessionFixture {
         case "vesc-reconnect": self = .reconnectingVesc
         case "vesc-connecting": self = .connectingVesc
         case "euc": self = .euc
+        case "euc-dynamic": self = .dynamicEuc
         case "euc-stale": self = .staleEuc
         case "euc-reconnect": self = .reconnectingEuc
         case "euc-connecting": self = .connectingEuc
@@ -966,7 +968,7 @@ enum CutoutUITestSessionFixture {
                 support: .probeRecommended(disabledReason: "Identity probe required"),
                 symbolName: "magnifyingglass"
             )
-        case .euc, .staleEuc, .reconnectingEuc, .connectingEuc, .eucOverview, .eucNoBms, .eucUnknownTopology:
+        case .euc, .dynamicEuc, .staleEuc, .reconnectingEuc, .connectingEuc, .eucOverview, .eucNoBms, .eucUnknownTopology:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
                 displayName: "Test EUC",
@@ -1021,6 +1023,7 @@ enum CutoutUITestSessionFixture {
             || self == .probeConflictingEvidence
             || self == .probeUnsupported
             || self == .euc
+            || self == .dynamicEuc
             || self == .staleEuc
             || self == .reconnectingEuc
             || self == .connectingEuc
@@ -1042,8 +1045,8 @@ enum CutoutUITestSessionFixture {
         CutoutSessionTestScript(
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
-            telemetryUpdate: self == .dynamicVesc ? dynamicTelemetryUpdate : nil,
-            telemetryUpdateDelayMilliseconds: self == .dynamicVesc ? 1_500 : 0,
+            telemetryUpdate: dynamicTelemetryUpdate,
+            telemetryUpdateDelayMilliseconds: dynamicTelemetryUpdate == nil ? 0 : 1_500,
             bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
             initialBluetoothState: initialBluetoothState,
@@ -1092,20 +1095,36 @@ enum CutoutUITestSessionFixture {
         )
     }
 
-    private var dynamicTelemetryUpdate: TelemetrySnapshot {
-        TelemetrySnapshot(
-            speed: Speed(value: 16_000),
-            speedSource: .reported,
-            speedQuality: .known,
-            operatingState: .riding,
-            voltage: Voltage(value: 62_000),
-            batteryCurrent: BatteryCurrent(value: 12_000),
-            motorCurrent: PhaseCurrent(value: 20_000),
-            controllerTemperature: Temperature(value: 43_000),
-            motorTemperature: Temperature(value: 49_000),
-            pwm: DutyCycle(permille: 720),
-            batteryLevelReported: BatteryLevel(value: 71)
-        )
+    private var dynamicTelemetryUpdate: TelemetrySnapshot? {
+        switch self {
+        case .dynamicVesc:
+            TelemetrySnapshot(
+                speed: Speed(value: 16_000),
+                speedSource: .reported,
+                speedQuality: .known,
+                operatingState: .riding,
+                voltage: Voltage(value: 62_000),
+                batteryCurrent: BatteryCurrent(value: 12_000),
+                motorCurrent: PhaseCurrent(value: 20_000),
+                controllerTemperature: Temperature(value: 43_000),
+                motorTemperature: Temperature(value: 49_000),
+                pwm: DutyCycle(permille: 720),
+                batteryLevelReported: BatteryLevel(value: 71)
+            )
+        case .dynamicEuc:
+            TelemetrySnapshot(
+                speed: Speed(value: 18_000),
+                speedSource: .reported,
+                speedQuality: .known,
+                operatingState: .riding,
+                voltage: Voltage(value: 80_000),
+                batteryCurrent: BatteryCurrent(value: 10_000),
+                controllerTemperature: Temperature(value: 35_000),
+                batteryLevelReported: BatteryLevel(value: 61)
+            )
+        default:
+            nil
+        }
     }
 
     private var eucBmsSnapshot: BmsSnapshot {
