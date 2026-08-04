@@ -21,7 +21,7 @@ then
   echo "expected --no-build to be rejected" >&2
   exit 1
 fi
-if ! grep -q "incremental build-for-testing is required" "$tmp/no-build.log"; then
+if ! grep -q "an incremental test build is required" "$tmp/no-build.log"; then
   cat "$tmp/no-build.log" >&2
   exit 1
 fi

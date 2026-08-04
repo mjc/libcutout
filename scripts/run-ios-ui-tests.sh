@@ -27,7 +27,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --no-build)
-      echo "--no-build is unsupported; incremental build-for-testing is required" >&2
+      echo "--no-build is unsupported; an incremental test build is required" >&2
       exit 2
       ;;
     *) break ;;
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
-  echo "CUTOUT_IOS_UI_TEST_SKIP_BUILD is unsupported; incremental build-for-testing is required" >&2
+  echo "CUTOUT_IOS_UI_TEST_SKIP_BUILD is unsupported; an incremental test build is required" >&2
   exit 2
 fi
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
@@ -153,8 +153,6 @@ else
   ui_test_run_timeout=1800
 fi
 
-/usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
-
 if [[ "$mode" == "test" ]]; then
   result_bundle="$(cutout_create_ios_ui_test_result_bundle "$derived_data")"
   test_status=0
@@ -167,7 +165,7 @@ if [[ "$mode" == "test" ]]; then
     -default-test-execution-time-allowance 120 \
     -maximum-test-execution-time-allowance 120 \
     -resultBundlePath "$result_bundle" \
-    test-without-building
+    test
   then
     :
   else
@@ -192,3 +190,5 @@ if [[ "$mode" == "test" ]]; then
 
   exit "$test_status"
 fi
+
+/usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" build-for-testing
