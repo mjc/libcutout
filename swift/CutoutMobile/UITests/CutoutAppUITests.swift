@@ -356,6 +356,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertNotEqual(status.label, "Capture failed")
         XCTAssertTrue(status.isHittable)
         XCTAssertTrue(finish.isHittable)
+        XCTAssertTrue(app.frame.contains(finish.frame))
+        XCTAssertGreaterThanOrEqual(finish.frame.width, capture.frame.width - 36)
+        XCTAssertLessThanOrEqual(status.frame.maxY, finish.frame.minY)
         try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
         finish.tap()
 

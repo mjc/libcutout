@@ -80,9 +80,9 @@ struct CaptureRecordingScreen: View {
         }
         .safeAreaInset(edge: .bottom) {
             stopCaptureButton
-                .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
+                .background(PevColors.pageBackground)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
@@ -97,6 +97,7 @@ struct CaptureRecordingScreen: View {
                 .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, minHeight: 44)
         .background(Capsule().fill(CaptureActionButtonTone.finish.tint))
         .disabled(isFinishing)
         .accessibilityIdentifier("capture.stop")
