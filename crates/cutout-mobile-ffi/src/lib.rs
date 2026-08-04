@@ -594,6 +594,9 @@ pub enum MobileIdentificationProbeOutcomeDto {
         /// Bounded query writes.
         writes: Vec<MobileIdentificationProbeWriteDto>,
     },
+
+    /// An earlier identification query is still awaiting a response.
+    AlreadyPending,
 }
 
 impl MobileIdentificationProbeWriteDto {
@@ -625,6 +628,13 @@ impl CutoutSessionStateHandle {
     ) -> MobileIdentificationProbeOutcomeDto {
         let probes = begode_identification_probes();
         let mut state = self.lock_inner();
+        if state
+            .detector
+            .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(0))
+            .is_some()
+        {
+            return MobileIdentificationProbeOutcomeDto::AlreadyPending;
+        }
         let MobileSessionState { state, detector } = &mut *state;
         for probe in &probes {
             let _ = detector.observe_probe_write_at(
@@ -6650,6 +6660,20 @@ mod tests {
                     MobileIdentificationProbeWriteDto::begode(b"M"),
                 ],
             }
+        );
+        assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
+    }
+
+    #[test]
+    fn mobile_identification_probe_rejects_duplicate_without_resetting_deadline() {
+        let session = CutoutSessionStateHandle::new();
+        let _ = session.begin_identification_probe_at(1_000);
+
+        let duplicate = session.begin_identification_probe_at(1_500);
+
+        assert_eq!(
+            duplicate,
+            MobileIdentificationProbeOutcomeDto::AlreadyPending
         );
         assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
     }
