@@ -779,12 +779,30 @@ final class CutoutAppUITests: XCTestCase {
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
-        XCTAssertTrue(screen.waitForExistence(timeout: 20))
+        XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+        defer {
+            app.activate()
+            disconnectIfConnected()
+        }
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // XCTest disconnects before termination so it cannot prove persistence.
-        // Use scripts/run-ios-app-on-phone.sh for physical ActivityKit inspection.
+
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let locationPrompt = springboard.alerts.firstMatch
+        if locationPrompt.waitForExistence(timeout: 1) {
+            locationPrompt.buttons["Don’t Allow"].tap()
+        }
+        XCUIDevice.shared.press(.home)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
+            .press(forDuration: 1)
+        let islandSpeed = springboard.descendants(matching: .any)["Speed"]
+        XCTAssertTrue(islandSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue((islandSpeed.value as? String)?.contains("17.9") == true)
+        let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
+        XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue((islandHeadroom.value as? String)?.contains("good") == true)
     }
 
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() throws {
