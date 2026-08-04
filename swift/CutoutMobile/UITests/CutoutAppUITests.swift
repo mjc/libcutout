@@ -1379,6 +1379,7 @@ final class CutoutAppUITests: XCTestCase {
 
         if let requiredMetricLabel {
             assertMetricIsReachable(requiredMetricLabel, in: screen)
+            restoreDashboardViewport(screen)
         }
 
         try performVisibleLayoutAccessibilityAudit(
@@ -1815,9 +1816,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(captureKind.isHittable)
     }
 
-    private func restoreBmsViewport(_ bmsScreen: XCUIElement) {
-        let scrollView = bmsScreen.scrollViews.firstMatch
-        let scrollTarget = scrollView.exists ? scrollView : bmsScreen
+    private func restoreDashboardViewport(_ screen: XCUIElement) {
+        let scrollView = screen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : screen
         for _ in 0..<4 {
             scrollTarget.swipeDown()
         }
@@ -1928,7 +1929,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(bmsScreen.exists)
         }
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
-        restoreBmsViewport(bmsScreen)
+        restoreDashboardViewport(bmsScreen)
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
