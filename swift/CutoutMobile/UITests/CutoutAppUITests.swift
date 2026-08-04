@@ -786,6 +786,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescCriticalLiveActivityLockScreenPreservesSafetySemantics() {
+        assertVescLiveActivityLockScreen(headroom: "reduce acceleration", stateName: "Critical")
+    }
+
+    func testVescLiveActivityLockScreenPreservesNominalSemantics() {
+        assertVescLiveActivityLockScreen(headroom: "good", stateName: "Nominal")
+    }
+
+    private func assertVescLiveActivityLockScreen(headroom expectedHeadroom: String, stateName: String) {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
         defer {
@@ -830,10 +838,10 @@ final class CutoutAppUITests: XCTestCase {
         let headroom = springboard.descendants(matching: .any)["Headroom"]
         XCTAssertTrue(headroom.waitForExistence(timeout: 5), springboard.debugDescription)
         XCTAssertTrue(
-            (headroom.value as? String)?.localizedCaseInsensitiveContains("reduce acceleration") == true,
+            (headroom.value as? String)?.localizedCaseInsensitiveContains(expectedHeadroom) == true,
             headroom.debugDescription
         )
-        attachScreenshot(of: springboard, named: "Critical Lock Screen Live Activity")
+        attachScreenshot(of: springboard, named: "\(stateName) Lock Screen Live Activity")
     }
 
     private func assertVescLiveActivityAutoFixture() throws {
@@ -1864,6 +1872,7 @@ final class CutoutAppUITests: XCTestCase {
             {
                 return .vescCriticalLiveActivityAuto
             }
+            if testName.contains("LiveActivityLockScreen") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
