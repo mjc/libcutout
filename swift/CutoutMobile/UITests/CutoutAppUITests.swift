@@ -482,11 +482,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCapturePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
-        try assertCaptureAccessibility(ignoringNilElementContrastWarning: true)
+        try assertCaptureAccessibility()
     }
 
     func testCapturePassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertCaptureAccessibility(ignoringNilElementContrastWarning: true)
+        try assertCaptureAccessibility()
     }
 
     func testCapturePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
@@ -2175,8 +2175,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertCaptureAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        exercisesLabels: Bool = true,
-        ignoringNilElementContrastWarning: Bool = false
+        exercisesLabels: Bool = true
     ) throws {
         enterCapture()
 
@@ -2192,8 +2191,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
         guard exercisesLabels else {
             try performVisibleLayoutAccessibilityAudit(
-                excluding: excluded,
-                ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+                excluding: excluded
             )
             return
         }
@@ -2215,8 +2213,7 @@ final class CutoutAppUITests: XCTestCase {
         restoreCaptureViewport(screen)
         XCTAssertTrue(stopCapture.isHittable)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: excluded,
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+            excluding: excluded
         )
     }
 
@@ -2553,9 +2550,14 @@ final class CutoutAppUITests: XCTestCase {
     private func restoreCaptureViewport(_ screen: XCUIElement) {
         let scrollView = screen.scrollViews.firstMatch
         let scrollTarget = scrollView.exists ? scrollView : screen
-        for _ in 0..<6 {
+        let topAnchor = app.descendants(matching: .any)["capture.status"]
+
+        for _ in 0..<20 where !topAnchor.exists || !screen.frame.contains(topAnchor.frame) {
             scrollTarget.swipeDown()
         }
+
+        XCTAssertTrue(topAnchor.exists)
+        XCTAssertTrue(screen.frame.contains(topAnchor.frame), screen.debugDescription)
     }
 
     private func assertEucBmsAccessibility(
