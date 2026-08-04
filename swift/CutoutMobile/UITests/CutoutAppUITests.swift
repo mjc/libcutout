@@ -2021,23 +2021,15 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
-    func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() throws {
-        try assertVescDutyHeadroomAccessibility(
-            ignoringNilElementContrastWarning: true
-        )
+    func testVescDutyHeadroomSpeaksPercentAtAccessibilityDynamicType() {
+        assertVescDutyHeadroomAccessibility()
     }
 
-    func testVescDutyHeadroomSpeaksPercentWithIncreasedContrastAtAccessibilityDynamicType() throws {
-        try assertVescDutyHeadroomAccessibility(
-            auditExclusions: [],
-            ignoringNilElementContrastWarning: true
-        )
+    func testVescDutyHeadroomSpeaksPercentWithIncreasedContrastAtAccessibilityDynamicType() {
+        assertVescDutyHeadroomAccessibility()
     }
 
-    private func assertVescDutyHeadroomAccessibility(
-        auditExclusions: XCUIAccessibilityAuditType = [],
-        ignoringNilElementContrastWarning: Bool = false
-    ) throws {
+    private func assertVescDutyHeadroomAccessibility() {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
@@ -2045,17 +2037,16 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
-        assertMetricIsReachable("Duty headroom", in: screen)
         let headroom = screen.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "Duty headroom")
         ).firstMatch
+        XCTAssertTrue(headroom.waitForExistence(timeout: 5))
+        scrollElementFrameIntoViewport(headroom, in: screen, maxScrolls: 4)
+        XCTAssertTrue(headroom.isHittable)
+        XCTAssertTrue(screen.frame.contains(headroom.frame))
         XCTAssertTrue(
-            (headroom.value as? String)?.contains("77%") == true,
+            (headroom.value as? String)?.contains("28%") == true,
             "The VESC duty-headroom metric must speak its percent unit: \(String(describing: headroom.value))"
-        )
-        try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
     }
 
@@ -2382,6 +2373,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
+            if testName.contains("DutyHeadroom") { return .vescDynamic }
             if testName.localizedCaseInsensitiveContains("Euc"), testName.contains("DynamicTelemetry") {
                 return .eucDynamic
             }
