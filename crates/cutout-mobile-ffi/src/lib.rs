@@ -3863,6 +3863,7 @@ fn write_capture_stream(
     let mut bytes_since_flush = 0_u64;
     let mut last_flush = Instant::now();
     let mut last_sync = Instant::now();
+    let mut pending_metadata = None;
 
     while let Ok(message) = receiver.recv() {
         state.queued_messages.fetch_sub(1, Ordering::AcqRel);
@@ -3887,37 +3888,51 @@ fn write_capture_stream(
                 )?;
             }
             CaptureWriterMessage::Metadata(metadata) => {
-                *header = capture_header(
-                    header.wall_clock_start_unix_ms,
-                    header.platform_id.as_str(),
-                    header.write_limit,
-                    &metadata,
-                )?;
-                let bytes = rewrite_capture_header(path, &mut writer, header)?;
-                state
-                    .physical_bytes_written
-                    .fetch_add(bytes, Ordering::AcqRel);
-                bytes_since_flush = 0;
-                last_flush = Instant::now();
-                last_sync = last_flush;
+                pending_metadata = Some(metadata);
             }
             CaptureWriterMessage::Flush => {
-                maybe_flush(
+                let rewrote_metadata = rewrite_pending_capture_metadata(
+                    path,
                     &mut writer,
-                    &mut bytes_since_flush,
-                    &mut last_flush,
-                    &mut last_sync,
-                    true,
+                    header,
+                    &mut pending_metadata,
+                    state,
                 )?;
+                if rewrote_metadata {
+                    bytes_since_flush = 0;
+                    last_flush = Instant::now();
+                    last_sync = last_flush;
+                } else {
+                    maybe_flush(
+                        &mut writer,
+                        &mut bytes_since_flush,
+                        &mut last_flush,
+                        &mut last_sync,
+                        true,
+                    )?;
+                }
             }
             CaptureWriterMessage::Finish(reply) => {
-                let result = maybe_flush(
+                let result = rewrite_pending_capture_metadata(
+                    path,
                     &mut writer,
-                    &mut bytes_since_flush,
-                    &mut last_flush,
-                    &mut last_sync,
-                    true,
-                );
+                    header,
+                    &mut pending_metadata,
+                    state,
+                )
+                .and_then(|rewrote_metadata| {
+                    if rewrote_metadata {
+                        Ok(())
+                    } else {
+                        maybe_flush(
+                            &mut writer,
+                            &mut bytes_since_flush,
+                            &mut last_flush,
+                            &mut last_sync,
+                            true,
+                        )
+                    }
+                });
                 if let Err(error) = &result {
                     state.fail(error.clone());
                 }
@@ -3926,11 +3941,35 @@ fn write_capture_stream(
             }
         }
     }
+    rewrite_pending_capture_metadata(path, &mut writer, header, &mut pending_metadata, state)?;
     writer.flush().map_err(|error| error.to_string())?;
     writer
         .get_mut()
         .sync_data()
         .map_err(|error| error.to_string())
+}
+
+fn rewrite_pending_capture_metadata(
+    path: &Path,
+    writer: &mut BufWriter<File>,
+    header: &mut PevcapHeader,
+    pending_metadata: &mut Option<CaptureMetadata>,
+    state: &CaptureWriterState,
+) -> Result<bool, String> {
+    let Some(metadata) = pending_metadata.take() else {
+        return Ok(false);
+    };
+    *header = capture_header(
+        header.wall_clock_start_unix_ms,
+        header.platform_id.as_str(),
+        header.write_limit,
+        &metadata,
+    )?;
+    let bytes = rewrite_capture_header(path, writer, header)?;
+    state
+        .physical_bytes_written
+        .fetch_add(bytes, Ordering::AcqRel);
+    Ok(true)
 }
 
 fn write_line(writer: &mut BufWriter<File>, line: &str) -> Result<usize, String> {
@@ -9182,6 +9221,59 @@ mod tests {
         assert_eq!(status.queued_messages, 1);
         assert_eq!(status.peak_queued_messages, 1);
         assert_eq!(status.dropped_messages, 0);
+    }
+
+    #[test]
+    fn capture_writer_coalesces_late_metadata_into_one_replacement() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-late-metadata-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+
+        for index in 0..1_024 {
+            while builder.writer_status().queued_messages >= 64 {
+                thread::yield_now();
+            }
+            assert!(builder.record_notification(
+                ms(index),
+                vec![0xe1; 16],
+                vec![0xe0; 16],
+                vec![0xaa; 160],
+            ));
+        }
+        for index in 0..cutout_core::PEVCAP_MAX_ANNOTATIONS {
+            assert!(builder.add_annotation(format!("synthetic=late-{index}")));
+        }
+        assert!(builder.finish_writer());
+        let status = builder.writer_status();
+        assert!(
+            status.physical_bytes_written < status.bytes_written * 3,
+            "late metadata physically wrote {} bytes for {} record bytes",
+            status.physical_bytes_written,
+            status.bytes_written,
+        );
+
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("capture is readable"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("capture is valid PEVCAP");
+        assert!(
+            capture
+                .header
+                .annotations
+                .iter()
+                .any(|annotation| annotation == "synthetic=late-7")
+        );
+        let _ = fs::remove_file(path);
     }
 
     #[test]
