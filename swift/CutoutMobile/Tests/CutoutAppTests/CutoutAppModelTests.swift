@@ -1030,6 +1030,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.isEuc ?? false)
     }
 
+    func testCriticalLiveActivityFixtureStartsLiveWithCriticalPwm() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            persistedValue: nil,
+            arguments: ["-CUTOUT_UI_TEST_FIXTURE", "vesc-live-activity-critical-auto"]
+        )
+
+        XCTAssertTrue(fixture?.startsLive ?? false)
+        XCTAssertEqual(fixture?.testScript.telemetry?.pwm?.permille, 850)
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,

@@ -778,6 +778,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
+    func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
+    private func assertVescLiveActivityAutoFixture() throws {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
         defer {
@@ -795,7 +803,8 @@ final class CutoutAppUITests: XCTestCase {
             locationPrompt.buttons["Don’t Allow"].tap()
         }
         XCUIDevice.shared.press(.home)
-        attachScreenshot(of: springboard, named: "Compact Dynamic Island")
+        let stateName = name.contains("Critical") ? "Critical" : "Nominal"
+        attachScreenshot(of: springboard, named: "\(stateName) Compact Dynamic Island")
         springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
             .press(forDuration: 1)
         let islandSpeed = springboard.descendants(matching: .any)["Speed"]
@@ -803,8 +812,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue((islandSpeed.value as? String)?.contains("17.9") == true)
         let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
         XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
-        XCTAssertTrue((islandHeadroom.value as? String)?.contains("good") == true)
-        attachScreenshot(of: springboard, named: "Expanded Dynamic Island")
+        let expectedHeadroom = stateName == "Critical" ? "reduce acceleration" : "good"
+        XCTAssertTrue((islandHeadroom.value as? String)?.localizedCaseInsensitiveContains(expectedHeadroom) == true)
+        attachScreenshot(of: springboard, named: "\(stateName) Expanded Dynamic Island")
     }
 
     private func attachScreenshot(of application: XCUIApplication, named name: String) {
@@ -1762,6 +1772,7 @@ final class CutoutAppUITests: XCTestCase {
         case eucConnecting
         case vescLiveActivity
         case vescLiveActivityAuto
+        case vescCriticalLiveActivityAuto
 
         static func testFixture(for testName: String) -> Self {
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
@@ -1773,6 +1784,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
             if testName.contains("BluetoothPermissionDenied") { return .bluetoothPermissionDenied }
+            if testName.contains("CriticalLiveActivityAutoFixture") { return .vescCriticalLiveActivityAuto }
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
@@ -1830,6 +1842,7 @@ final class CutoutAppUITests: XCTestCase {
             case .eucConnecting: "euc-connecting"
             case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
+            case .vescCriticalLiveActivityAuto: "vesc-live-activity-critical-auto"
             }
         }
     }

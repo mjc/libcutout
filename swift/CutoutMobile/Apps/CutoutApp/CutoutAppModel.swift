@@ -889,6 +889,7 @@ enum CutoutUITestSessionFixture {
     case eucUnknownTopology
     case vescLiveActivity
     case autoVescLiveActivity
+    case autoCriticalVescLiveActivity
 
     init?(value: String?) {
         switch value {
@@ -918,6 +919,7 @@ enum CutoutUITestSessionFixture {
         case "euc-unknown-topology": self = .eucUnknownTopology
         case "vesc-live-activity": self = .vescLiveActivity
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
+        case "vesc-live-activity-critical-auto": self = .autoCriticalVescLiveActivity
         default: return nil
         }
     }
@@ -981,7 +983,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -994,7 +996,7 @@ enum CutoutUITestSessionFixture {
         }
     }
 
-    var startsLive: Bool { self == .autoVescLiveActivity }
+    var startsLive: Bool { self == .autoVescLiveActivity || self == .autoCriticalVescLiveActivity }
     var initialBluetoothState: CutoutSessionTestInitialBluetoothState {
         switch self {
         case .bluetoothUnavailable: .unavailable
@@ -1090,7 +1092,7 @@ enum CutoutUITestSessionFixture {
             voltage: Voltage(value: 50_400),
             batteryCurrent: BatteryCurrent(value: 12_000),
             controllerTemperature: Temperature(value: 32_000),
-            pwm: DutyCycle(permille: 230),
+            pwm: DutyCycle(permille: self == .autoCriticalVescLiveActivity ? 850 : 230),
             batteryLevelReported: BatteryLevel(value: 72)
         )
     }
