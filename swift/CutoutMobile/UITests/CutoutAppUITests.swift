@@ -94,7 +94,23 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device identification timed out")
     }
 
+    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device identification timed out")
+    }
+
+    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device identification timed out")
+    }
+
     func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device returned an invalid identification response")
+    }
+
+    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device returned an invalid identification response")
+    }
+
+    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertProbeFailure("Device returned an invalid identification response")
     }
 
@@ -102,7 +118,23 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device identification found conflicting evidence")
     }
 
+    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device identification found conflicting evidence")
+    }
+
+    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device identification found conflicting evidence")
+    }
+
     func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device does not support this identification probe")
+    }
+
+    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertProbeFailure("Device does not support this identification probe")
+    }
+
+    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertProbeFailure("Device does not support this identification probe")
     }
 
@@ -2307,6 +2339,7 @@ final class CutoutAppUITests: XCTestCase {
         _ = openAdvancedCapture()
         let probeButton = app.buttons["device-picker.probe.ui-test-probe"]
         let status = app.descendants(matching: .any)["device-picker.connection-status"]
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
 
         XCTAssertTrue(probeButton.waitForExistence(timeout: 5))
         probeButton.tap()
@@ -2321,8 +2354,10 @@ final class CutoutAppUITests: XCTestCase {
             ),
             .completed
         )
-        XCTAssertTrue(app.descendants(matching: .any)["device-picker.screen"].exists)
+        XCTAssertTrue(picker.exists)
+        XCTAssertTrue(status.isHittable, "Probe failure must be visible when the transition occurs")
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.eucRide"].exists)
+        restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit()
     }
 
