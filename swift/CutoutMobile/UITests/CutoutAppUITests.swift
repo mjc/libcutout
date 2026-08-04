@@ -1342,6 +1342,23 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility()
     }
 
+    func testEucBmsDiagnosticsExposeStableAccessibleDataRows() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        let diagnostics = app.staticTexts["bms.diagnostics"].firstMatch
+        scrollElementIntoReachability(diagnostics, in: bmsScreen, maxScrolls: 20)
+        XCTAssertTrue(diagnostics.isHittable, bmsScreen.debugDescription)
+        diagnostics.tap()
+
+        let voltage = app.descendants(matching: .any)["dashboard.key-value.voltage"]
+        XCTAssertTrue(voltage.waitForExistence(timeout: 5), bmsScreen.debugDescription)
+        XCTAssertEqual(voltage.label, "voltage")
+        XCTAssertEqual(voltage.value as? String, "82.0 V")
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.key-value.page"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.key-value.page-verification"].exists)
+    }
+
     func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
     }

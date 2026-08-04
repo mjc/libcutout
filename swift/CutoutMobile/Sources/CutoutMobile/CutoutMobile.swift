@@ -2892,7 +2892,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
     }
 
     public var voltageMetricValue: PevDashboardMetricValue {
-        bmsMetricValue(voltage) {
+        bmsMetricValue(voltage, accessibilityUnit: RideUnits.voltageUnit) {
             RideUnits.voltageText(millivolts: $0.value)
         }
     }
@@ -2941,7 +2941,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "current",
                 label: "current",
-                metricValue: bmsMetricValue(current) {
+                metricValue: bmsMetricValue(current, accessibilityUnit: RideUnits.currentUnit) {
                     RideUnits.currentText(milliamps: $0.value)
                 }
             ),
@@ -2951,7 +2951,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                 SessionDebugRow(
                     id: "bms-current-0",
                     label: "bms current 0",
-                    metricValue: bmsMetricValue(bmsPackCurrent0) {
+                    metricValue: bmsMetricValue(
+                        bmsPackCurrent0,
+                        accessibilityUnit: RideUnits.currentUnit
+                    ) {
                         RideUnits.currentText(milliamps: $0.value)
                     }
                 )
@@ -2962,7 +2965,10 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
                 SessionDebugRow(
                     id: "bms-current-1",
                     label: "bms current 1",
-                    metricValue: bmsMetricValue(bmsPackCurrent1) {
+                    metricValue: bmsMetricValue(
+                        bmsPackCurrent1,
+                        accessibilityUnit: RideUnits.currentUnit
+                    ) {
                         RideUnits.currentText(milliamps: $0.value)
                     }
                 )
@@ -2972,21 +2978,21 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "high-group",
                 label: "high group",
-                metricValue: bmsMetricValue(highGroupVoltage) {
+                metricValue: bmsMetricValue(highGroupVoltage, accessibilityUnit: RideUnits.voltageUnit) {
                     RideUnits.voltageText(millivolts: $0.value, fractionDigits: 3)
                 }
             ),
             SessionDebugRow(
                 id: "low-group",
                 label: "low group",
-                metricValue: bmsMetricValue(lowGroupVoltage) {
+                metricValue: bmsMetricValue(lowGroupVoltage, accessibilityUnit: RideUnits.voltageUnit) {
                     RideUnits.voltageText(millivolts: $0.value, fractionDigits: 3)
                 }
             ),
             SessionDebugRow(
                 id: "delta",
                 label: "delta",
-                metricValue: bmsMetricValue(cellDelta) { String($0.value) }
+                metricValue: bmsMetricValue(cellDelta, accessibilityUnit: "mV") { String($0.value) }
             ),
             SessionDebugRow(
                 id: "lowest-group",
@@ -2996,7 +3002,7 @@ public struct BmsSnapshot: Equatable, Hashable, Sendable {
             SessionDebugRow(
                 id: "temperature",
                 label: "temperature",
-                metricValue: bmsMetricValue(highestTemperature) {
+                metricValue: bmsMetricValue(highestTemperature, accessibilityUnit: RideUnits.temperatureUnit) {
                     RideUnits.temperatureText(millicelsius: $0.value, fractionDigits: 1)
                 }
             ),
@@ -3433,11 +3439,15 @@ private func mergeGroups(_ updates: [BmsGroupSnapshot], into existing: [BmsGroup
 
 private func bmsMetricValue<Value>(
     _ value: Value?,
+    accessibilityUnit: String = "",
     format: (Value) -> String
 ) -> PevDashboardMetricValue {
     guard let value else { return .unavailable }
     let text = format(value)
-    return .available(display: text, accessibility: text)
+    return .available(
+        display: text,
+        accessibility: accessibilityUnit.isEmpty ? text : "\(text) \(accessibilityUnit)"
+    )
 }
 
 public func bmsVoltageMetricValue(_ voltage: Voltage?) -> PevDashboardMetricValue {

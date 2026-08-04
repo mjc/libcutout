@@ -117,11 +117,11 @@ struct BmsDiagnosticsSection: View {
                     .font(.caption.weight(.bold))
                     .foregroundStyle(PevColors.muted)
             }
+            .accessibilityIdentifier("bms.diagnostics")
         }
         .tint(PevColors.muted)
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
         .background(PevDashboardCardBackground(cornerRadius: 20))
-        .accessibilityIdentifier("bms.diagnostics")
     }
 }

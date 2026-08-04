@@ -53,6 +53,7 @@ public struct PevDashboardKeyValueRows: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(row.label)
                 .accessibilityValue(row.accessibilityValueText)
+                .accessibilityIdentifier("dashboard.key-value.\(row.id)")
 
                 if row.id != rows.last?.id {
                     Rectangle()

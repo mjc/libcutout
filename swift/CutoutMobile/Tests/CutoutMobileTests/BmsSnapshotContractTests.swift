@@ -109,7 +109,7 @@ final class BmsSnapshotContractTests: XCTestCase {
         let voltageText = RideUnits.voltageText(millivolts: 81_600)
         XCTAssertEqual(
             BmsSnapshot(topology: topology, voltage: Voltage(value: 81_600)).voltageMetricValue,
-            .available(display: voltageText, accessibility: voltageText)
+            .available(display: voltageText, accessibility: "\(voltageText) V")
         )
     }
 
@@ -500,15 +500,29 @@ final class BmsSnapshotContractTests: XCTestCase {
                     role: .transportMetadata
                 ),
                 availableDebugRow(id: "charge", label: "charge", value: "72%"),
-                availableDebugRow(id: "voltage", label: "voltage", value: "81.6"),
-                availableDebugRow(id: "current", label: "current", value: "-12.4"),
-                availableDebugRow(id: "bms-current-0", label: "bms current 0", value: "-8.1"),
-                availableDebugRow(id: "bms-current-1", label: "bms current 1", value: "-4.3"),
-                availableDebugRow(id: "high-group", label: "high group", value: "4.089"),
-                availableDebugRow(id: "low-group", label: "low group", value: "4.071"),
-                availableDebugRow(id: "delta", label: "delta", value: "18"),
+                availableDebugRow(
+                    id: "voltage", label: "voltage", value: "81.6", accessibilityValue: "81.6 V"
+                ),
+                availableDebugRow(
+                    id: "current", label: "current", value: "-12.4", accessibilityValue: "-12.4 A"
+                ),
+                availableDebugRow(
+                    id: "bms-current-0", label: "bms current 0", value: "-8.1", accessibilityValue: "-8.1 A"
+                ),
+                availableDebugRow(
+                    id: "bms-current-1", label: "bms current 1", value: "-4.3", accessibilityValue: "-4.3 A"
+                ),
+                availableDebugRow(
+                    id: "high-group", label: "high group", value: "4.089", accessibilityValue: "4.089 V"
+                ),
+                availableDebugRow(
+                    id: "low-group", label: "low group", value: "4.071", accessibilityValue: "4.071 V"
+                ),
+                availableDebugRow(id: "delta", label: "delta", value: "18", accessibilityValue: "18 mV"),
                 availableDebugRow(id: "lowest-group", label: "lowest group", value: "17"),
-                availableDebugRow(id: "temperature", label: "temperature", value: "37.8"),
+                availableDebugRow(
+                    id: "temperature", label: "temperature", value: "37.8", accessibilityValue: "37.8 °C"
+                ),
                 availableDebugRow(id: "temperature-sensors", label: "temperature sensors", value: "2"),
                 SessionDebugRow(
                     id: "topology",
@@ -836,10 +850,15 @@ final class BmsSnapshotContractTests: XCTestCase {
     }
 }
 
-private func availableDebugRow(id: String, label: String, value: String) -> SessionDebugRow {
+private func availableDebugRow(
+    id: String,
+    label: String,
+    value: String,
+    accessibilityValue: String? = nil
+) -> SessionDebugRow {
     SessionDebugRow(
         id: id,
         label: label,
-        metricValue: .available(display: value, accessibility: value)
+        metricValue: .available(display: value, accessibility: accessibilityValue ?? value)
     )
 }
