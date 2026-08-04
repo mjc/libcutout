@@ -834,9 +834,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(bmsScreen.exists)
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
         XCTAssertTrue(reachableBmsGroup(7, in: bmsScreen).isHittable)
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: true
-        )
+        restoreDashboardViewport(bmsScreen)
+        revealBottomEdgeContent(in: bmsScreen)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
@@ -1770,6 +1770,14 @@ final class CutoutAppUITests: XCTestCase {
         for _ in 0..<4 {
             scrollTarget.swipeDown()
         }
+    }
+
+    private func revealBottomEdgeContent(in screen: XCUIElement) {
+        let scrollView = screen.scrollViews.firstMatch
+        let scrollTarget = scrollView.exists ? scrollView : screen
+        let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.72))
+        let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.48))
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
     }
 
     private func connectedScreen(timeout: TimeInterval = 2) -> XCUIElement? {
