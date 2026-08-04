@@ -249,6 +249,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
     }
 
+    func testFinishCaptureFailureKeepsCaptureScreenAccessibleInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
+    }
+
+    func testFinishCaptureFailureKeepsCaptureScreenAccessibleInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
+    }
+
     func testFinishCaptureFailureKeepsCaptureScreenAccessibleWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible(usesLocalizedText: true)
     }
