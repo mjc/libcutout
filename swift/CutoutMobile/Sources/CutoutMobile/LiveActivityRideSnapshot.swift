@@ -40,15 +40,6 @@ public struct LiveActivityRideIdentity: Codable, Equatable, Hashable, Sendable {
         localizedLiveActivityText("live_activity.accessibility.device")
     }
 
-    public var displayLabel: String {
-        switch source {
-        case .productionModel, .productionDevice:
-            localizedLiveActivityText("live_activity.identity.connected", label)
-        case .unavailable:
-            label
-        }
-    }
-
     public func accessibilityValue(for connectionState: LiveActivityRideConnectionState) -> String {
         let spokenIdentity = source == .unavailable ? Self.accessibilityLabel : label
         return localizedLiveActivityText(

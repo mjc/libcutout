@@ -247,11 +247,10 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         }
     }
 
-    func testProductionDeviceIdentityUsesConnectedDisplayLabel() {
+    func testProductionDeviceIdentityIncludesConnectionStateInAccessibilityValue() {
         let identity = LiveActivityRideIdentity.device("Little FOCer BT")
 
         XCTAssertEqual(identity.source, .productionDevice)
-        XCTAssertEqual(identity.displayLabel, "Little FOCer BT connected")
         XCTAssertEqual(
             identity.accessibilityValue(for: .connected),
             "Little FOCer BT, connected"
@@ -286,7 +285,6 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             staleAfter: MonotonicMilliseconds(2_000)
         )
 
-        XCTAssertEqual(snapshot.identity.displayLabel, "Aero connected")
         XCTAssertEqual(snapshot.glyph, .electricUnicycle)
         XCTAssertEqual(snapshot.connectionState, .connected)
         XCTAssertEqual(
@@ -452,7 +450,6 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             staleAfter: MonotonicMilliseconds(2_000)
         )
 
-        XCTAssertEqual(snapshot.identity.displayLabel, "VESC BLE UART connected")
         XCTAssertEqual(snapshot.glyph, .floatwheelAtom)
         XCTAssertEqual(snapshot.packVoltage, .available(label: "Voltage", value: "61.8", unit: "V", source: .liveTelemetry))
         XCTAssertEqual(snapshot.temperature, .available(label: "Temp", value: "27", unit: "°C", source: .liveTelemetry))

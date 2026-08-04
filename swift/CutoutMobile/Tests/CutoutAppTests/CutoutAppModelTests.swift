@@ -1040,6 +1040,25 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(fixture?.testScript.telemetry?.pwm?.permille, 850)
     }
 
+    @MainActor
+    func testAutoLiveActivityUsesTheCandidateDisplayName() async {
+        let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: CutoutSessionCore(testScript: fixture.testScript),
+            liveActivityManager: manager
+        )
+
+        model.start()
+        for _ in 0 ..< 20 {
+            if await manager.lastStartedSnapshot != nil { break }
+            await Task.yield()
+        }
+
+        let snapshot = await manager.lastStartedSnapshot
+        XCTAssertEqual(snapshot?.identity.label, fixture.candidate.displayName)
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,
@@ -1156,13 +1175,15 @@ private func observesChange(_ render: () -> Void, _ change: () -> Void) -> Bool 
 private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
     private var error: LiveActivityRideLifecycleError?
     private(set) var startCount = 0
+    private(set) var lastStartedSnapshot: LiveActivityRideSnapshot?
 
-    init(error: LiveActivityRideLifecycleError) {
+    init(error: LiveActivityRideLifecycleError?) {
         self.error = error
     }
 
-    func start(snapshot _: LiveActivityRideSnapshot) async throws {
+    func start(snapshot: LiveActivityRideSnapshot) async throws {
         startCount += 1
+        lastStartedSnapshot = snapshot
         if let error { throw error }
     }
 

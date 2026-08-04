@@ -98,7 +98,7 @@ public struct PevLiveActivityHeader: View {
             Text("CUTOUT")
                 .font(.system(size: compact ? compactWordmarkSize : expandedWordmarkSize, weight: .bold))
             Spacer(minLength: 8)
-            Text(snapshot.identity.displayLabel)
+            Text(snapshot.identity.label)
                 .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 .lineLimit(1)

@@ -533,10 +533,6 @@
       "comment" : "Live Activity safety warning when the rider should reduce acceleration.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reduce acceleration" } } }
     },
-    "live_activity.identity.connected" : {
-      "comment" : "Live Activity display identity. The placeholder is the vehicle or device name.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%@ connected" } } }
-    },
     "live_activity.identity.unavailable" : {
       "comment" : "Live Activity display identity when no vehicle is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device unavailable" } } }

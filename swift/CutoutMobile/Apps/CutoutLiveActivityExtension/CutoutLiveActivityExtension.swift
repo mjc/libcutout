@@ -37,14 +37,21 @@ private struct CutoutRideLiveActivityWidget: Widget {
                     .accessibilityLabel("CutOut")
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    HStack(spacing: 5) {
-                        Text(context.presentationSnapshot.identity.displayLabel)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(PevLiveActivityPalette.secondaryText)
-                            .lineLimit(1)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 5) {
+                            Text(context.presentationSnapshot.identity.label)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(PevLiveActivityPalette.secondaryText)
+                            Circle()
+                                .fill(context.presentationSnapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
+                                .frame(width: 6, height: 6)
+                                .accessibilityHidden(true)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
                         Circle()
                             .fill(context.presentationSnapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                             .frame(width: 6, height: 6)
+                            .frame(width: 18)
                             .accessibilityHidden(true)
                     }
                     .accessibilityElement(children: .ignore)

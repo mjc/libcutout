@@ -662,7 +662,7 @@ final class CutoutAppModel {
         }
         return ConnectionSelection(
             platformIdentifier: candidate.platformIdentifier,
-            title: candidate.detail,
+            title: candidate.displayName,
             route: route
         )
     }
@@ -676,7 +676,7 @@ final class CutoutAppModel {
             return vescRideIdentity(using: selectedRow?.title)
         }
         if core.protocolIdentityCandidate?.support.connectionRoute == .vescOnewheel {
-            return vescRideIdentity(using: core.protocolIdentityCandidate?.detail)
+            return vescRideIdentity(using: core.protocolIdentityCandidate?.displayName)
         }
         if let model = selectedRow?.electricUnicycleModel
             ?? core.protocolIdentityCandidate?.support.electricUnicycleModel
