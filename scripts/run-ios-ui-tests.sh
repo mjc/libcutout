@@ -43,6 +43,10 @@ project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
 derived_data="${CUTOUT_IOS_UI_TEST_DERIVED_DATA:-$root/target/xcode-ui-tests}"
 lock_directory="$derived_data/.run-ios-ui-tests.lock"
+simulator_device=""
+prior_appearance=""
+prior_increase_contrast=""
+prior_content_size=""
 
 mkdir -p "$derived_data"
 if ! mkdir "$lock_directory" 2>/dev/null; then
@@ -50,9 +54,69 @@ if ! mkdir "$lock_directory" 2>/dev/null; then
   exit 1
 fi
 cleanup() {
-  rmdir "$lock_directory"
+  cleanup_status=$?
+  restore_status=0
+  trap - EXIT
+  set +e
+  if [[ -n "$simulator_device" ]]; then
+    [[ -z "$prior_appearance" ]] || /usr/bin/xcrun simctl ui "$simulator_device" appearance "$prior_appearance" >/dev/null || restore_status=$?
+    [[ -z "$prior_increase_contrast" ]] || /usr/bin/xcrun simctl ui "$simulator_device" increase_contrast "$prior_increase_contrast" >/dev/null || restore_status=$?
+    [[ -z "$prior_content_size" ]] || /usr/bin/xcrun simctl ui "$simulator_device" content_size "$prior_content_size" >/dev/null || restore_status=$?
+  fi
+  rmdir "$lock_directory" || restore_status=$?
+  if (( cleanup_status == 0 && restore_status != 0 )); then
+    echo "failed to restore simulator UI settings or release the test lock" >&2
+    cleanup_status=$restore_status
+  fi
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
+
+requested_appearance="${CUTOUT_IOS_SIMULATOR_APPEARANCE:-}"
+requested_increase_contrast="${CUTOUT_IOS_SIMULATOR_INCREASE_CONTRAST:-}"
+requested_content_size="${CUTOUT_IOS_SIMULATOR_CONTENT_SIZE:-}"
+if [[ -n "$requested_appearance$requested_increase_contrast$requested_content_size" ]]; then
+  if [[ "$destination" != platform=iOS\ Simulator,* ]]; then
+    echo "simulator UI settings require an iOS Simulator destination" >&2
+    exit 2
+  fi
+  if [[ "$destination" =~ ,id=([^,]+) ]]; then
+    simulator_device="${BASH_REMATCH[1]}"
+  elif [[ "$destination" =~ ,name=([^,]+) ]]; then
+    simulator_device="${BASH_REMATCH[1]}"
+  else
+    echo "simulator UI settings require a destination with id= or name=" >&2
+    exit 2
+  fi
+
+  case "$requested_appearance" in
+    ""|light|dark) ;;
+    *) echo "CUTOUT_IOS_SIMULATOR_APPEARANCE must be light or dark" >&2; exit 2 ;;
+  esac
+  case "$requested_increase_contrast" in
+    ""|enabled|disabled) ;;
+    *) echo "CUTOUT_IOS_SIMULATOR_INCREASE_CONTRAST must be enabled or disabled" >&2; exit 2 ;;
+  esac
+
+  /usr/bin/xcrun simctl boot "$simulator_device" 2>/dev/null || true
+  /usr/bin/xcrun simctl bootstatus "$simulator_device" -b
+
+  if [[ -n "$requested_appearance" ]]; then
+    prior_appearance="$(/usr/bin/xcrun simctl ui "$simulator_device" appearance)"
+    /usr/bin/xcrun simctl ui "$simulator_device" appearance "$requested_appearance"
+    [[ "$(/usr/bin/xcrun simctl ui "$simulator_device" appearance)" == "$requested_appearance" ]]
+  fi
+  if [[ -n "$requested_increase_contrast" ]]; then
+    prior_increase_contrast="$(/usr/bin/xcrun simctl ui "$simulator_device" increase_contrast)"
+    /usr/bin/xcrun simctl ui "$simulator_device" increase_contrast "$requested_increase_contrast"
+    [[ "$(/usr/bin/xcrun simctl ui "$simulator_device" increase_contrast)" == "$requested_increase_contrast" ]]
+  fi
+  if [[ -n "$requested_content_size" ]]; then
+    prior_content_size="$(/usr/bin/xcrun simctl ui "$simulator_device" content_size)"
+    /usr/bin/xcrun simctl ui "$simulator_device" content_size "$requested_content_size"
+    [[ "$(/usr/bin/xcrun simctl ui "$simulator_device" content_size)" == "$requested_content_size" ]]
+  fi
+fi
 
 xcodebuild_args=(
   -project "$root/$project"
