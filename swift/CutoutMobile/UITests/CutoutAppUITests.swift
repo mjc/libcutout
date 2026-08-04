@@ -1195,6 +1195,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility()
     }
 
+    func testVescStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertVescStaleTelemetryAccessibility()
+    }
+
+    func testVescStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertVescStaleTelemetryAccessibility()
+    }
+
     func testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }
@@ -1212,6 +1220,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
+        try assertEucStaleTelemetryAccessibility()
+    }
+
+    func testEucStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucStaleTelemetryAccessibility()
+    }
+
+    func testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility()
     }
 
