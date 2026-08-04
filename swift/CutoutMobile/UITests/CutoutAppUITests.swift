@@ -1456,6 +1456,36 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility()
     }
 
+    func testVescStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
+        assertStaleWarningPrecedesSpeed(for: .vesc)
+    }
+
+    func testEucStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
+        assertStaleWarningPrecedesSpeed(for: .euc)
+    }
+
+    private func assertStaleWarningPrecedesSpeed(for family: ConnectedDeviceFamily) {
+        XCTAssertTrue(pairAvailableDevice(family))
+        let warningIdentifier = switch family {
+        case .vesc: "vesc.warning.telemetry-stale"
+        case .euc: "euc.warning"
+        }
+        let familyScreen = app.descendants(matching: .any)[family.screenIdentifier]
+        XCTAssertTrue(familyScreen.waitForExistence(timeout: 20), app.debugDescription)
+
+        let orderedSafetyValues = familyScreen.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier == 'ride.hero.speed' OR identifier == %@",
+                warningIdentifier
+            )
+        )
+        XCTAssertEqual(orderedSafetyValues.count, 2, familyScreen.debugDescription)
+        XCTAssertEqual(
+            orderedSafetyValues.element(boundBy: 0).identifier,
+            warningIdentifier
+        )
+    }
+
     func testVescStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }

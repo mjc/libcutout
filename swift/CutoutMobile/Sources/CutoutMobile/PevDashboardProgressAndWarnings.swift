@@ -212,5 +212,6 @@ public struct PevDashboardWarningCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
         .accessibilityValue(accessibilityValueText)
+        .accessibilitySortPriority(2)
     }
 }
