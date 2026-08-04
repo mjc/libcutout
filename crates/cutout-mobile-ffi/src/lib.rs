@@ -51,14 +51,15 @@ use cutout_core::{
     VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
-    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession, ConcreteFalconProfileDto,
-    ConcreteFalconReadOnlySession, ConcreteSessionErrorDto, ConcreteSessionStepResultDto,
-    DeviceDetectionEvent, DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily,
-    IdentityBannerEvidence, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
-    ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
-    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
-    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
-    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
+    ConcreteFalconProfileDto, ConcreteFalconReadOnlySession, ConcreteSessionErrorDto,
+    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
+    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
+    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
+    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
+    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
+    VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
     identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
@@ -565,8 +566,81 @@ pub enum MobilePendingProbeDto {
     BegodeImu,
 }
 
+/// GATT write mode for an authorized identification query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileIdentificationProbeWriteModeDto {
+    /// Write without waiting for a GATT response acknowledgement.
+    WithoutResponse,
+}
+
+/// One Rust-authorized, bounded identification query write.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileIdentificationProbeWriteDto {
+    /// Characteristic UUID bytes.
+    pub characteristic: Vec<u8>,
+
+    /// Protocol-owned bounded payload bytes.
+    pub payload: Vec<u8>,
+
+    /// Required GATT write mode.
+    pub mode: MobileIdentificationProbeWriteModeDto,
+}
+
+/// Result of requesting a non-mutating identification probe.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileIdentificationProbeOutcomeDto {
+    /// Ordered authorized writes that the transport must execute.
+    Writes {
+        /// Bounded query writes.
+        writes: Vec<MobileIdentificationProbeWriteDto>,
+    },
+}
+
+impl MobileIdentificationProbeWriteDto {
+    fn from_begode_probe(probe: &cutout_protocols::EncodedIdentificationProbe) -> Self {
+        debug_assert_eq!(probe.mode, WriteMode::WithoutResponse);
+        Self {
+            characteristic: BEGODE_DATA_CHANNEL.as_bytes().to_vec(),
+            payload: probe.payload.as_slice().to_vec(),
+            mode: MobileIdentificationProbeWriteModeDto::WithoutResponse,
+        }
+    }
+
+    #[cfg(test)]
+    fn begode(payload: &[u8]) -> Self {
+        Self {
+            characteristic: BEGODE_DATA_CHANNEL.as_bytes().to_vec(),
+            payload: payload.to_vec(),
+            mode: MobileIdentificationProbeWriteModeDto::WithoutResponse,
+        }
+    }
+}
+
 #[uniffi::export]
 impl CutoutSessionStateHandle {
+    /// Begins the complete ordered non-mutating identification query sequence.
+    pub fn begin_identification_probe_at(
+        &self,
+        started_at_ms: u64,
+    ) -> MobileIdentificationProbeOutcomeDto {
+        let probes = begode_identification_probes();
+        let mut state = self.lock_inner();
+        let MobileSessionState { state, detector } = &mut *state;
+        for probe in &probes {
+            let _ = detector.observe_probe_write_at(
+                state,
+                probe.probe,
+                MonotonicTimestamp::new(started_at_ms),
+            );
+        }
+        MobileIdentificationProbeOutcomeDto::Writes {
+            writes: probes
+                .iter()
+                .map(MobileIdentificationProbeWriteDto::from_begode_probe)
+                .collect(),
+        }
+    }
+
     /// Observes raw advertisement-name bytes from the mobile BLE stack.
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned bytes")]
     pub fn observe_advertisement(&self, name: Option<Vec<u8>>) -> DeviceDetectionResolutionRecord {
@@ -6559,6 +6633,25 @@ mod tests {
         let resolution = session.observe_notification(b"NAME=Falcon".to_vec());
 
         assert_eq!(resolution.model_banner, Some(b"Falcon".to_vec()));
+    }
+
+    #[test]
+    fn mobile_identification_probe_returns_bounded_typed_writes_and_tracks_them() {
+        let session = CutoutSessionStateHandle::new();
+
+        let outcome = session.begin_identification_probe_at(1_000);
+
+        assert_eq!(
+            outcome,
+            MobileIdentificationProbeOutcomeDto::Writes {
+                writes: vec![
+                    MobileIdentificationProbeWriteDto::begode(b"N"),
+                    MobileIdentificationProbeWriteDto::begode(b"V"),
+                    MobileIdentificationProbeWriteDto::begode(b"M"),
+                ],
+            }
+        );
+        assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
     }
 
     #[test]

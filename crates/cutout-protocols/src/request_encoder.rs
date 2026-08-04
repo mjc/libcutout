@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    CommandKind, RequestKey, RequestTarget, VescControllerId, WriteMode, WritePayload,
+    CommandKind, PendingProbe, RequestKey, RequestTarget, VescControllerId, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -22,6 +22,34 @@ pub struct EncodedRequest<P> {
 
     /// GATT write mode required by this request.
     pub mode: WriteMode,
+}
+
+/// One bounded, non-mutating Begode identification request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedIdentificationProbe {
+    /// Response correlated with this request.
+    pub probe: PendingProbe,
+
+    /// Bounded request bytes.
+    pub payload: WritePayload,
+
+    /// GATT write mode required by this request.
+    pub mode: WriteMode,
+}
+
+/// Returns the complete ordered Begode identity query sequence.
+#[must_use]
+pub fn begode_identification_probes() -> [EncodedIdentificationProbe; 3] {
+    [
+        (PendingProbe::BegodeName, b"N"),
+        (PendingProbe::BegodeFirmware, b"V"),
+        (PendingProbe::BegodeImu, b"M"),
+    ]
+    .map(|(probe, payload)| EncodedIdentificationProbe {
+        probe,
+        payload: request_payload(payload),
+        mode: WriteMode::WithoutResponse,
+    })
 }
 
 /// Explicit disposition for a family-specific request.
