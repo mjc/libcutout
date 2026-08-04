@@ -970,6 +970,22 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(detailScreen.waitForExistence(timeout: 2))
     }
 
+    func testEucBmsFormattedAccessibilityCopyResolvesWithoutPlaceholders() throws {
+        let bmsScreen = try XCTUnwrap(openEucBmsMap())
+        defer { disconnectIfConnected() }
+
+        let group = reachableBmsGroup(7, in: bmsScreen)
+        let accessibilityText = [group.label, group.value as? String]
+            .compactMap { $0 }
+            .joined(separator: " ")
+
+        XCTAssertEqual(group.label, "Cell group 7, right pack group 7")
+        XCTAssertFalse(accessibilityText.contains("$"))
+        XCTAssertFalse(accessibilityText.split(separator: " ").contains("@"))
+        XCTAssertTrue(accessibilityText.contains("7"))
+        XCTAssertTrue(accessibilityText.contains("4.036"))
+    }
+
     func testEucBmsDetailPassesAccessibilityAuditWithIncreasedContrast() throws {
         try assertEucBmsDetailAccessibility(excluding: .all.subtracting(.contrast))
     }
