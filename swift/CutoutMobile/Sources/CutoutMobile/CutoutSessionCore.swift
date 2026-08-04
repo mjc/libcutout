@@ -404,7 +404,7 @@ public final class CutoutSessionCore: NSObject {
             return
         }
 #endif
-        startLocationUpdates()
+        _ = locationManager
         return onBleQueue {
             guard central == nil else {
                 return
@@ -2180,31 +2180,16 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         locationManager.requestAlwaysAuthorization()
     }
 
-    private func startLocationUpdates() {
-        guard CLLocationManager.locationServicesEnabled() else { return }
-        switch locationManager.authorizationStatus {
-        case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
-        case .authorizedAlways:
-            locationManager.startUpdatingLocation()
-        case .authorizedWhenInUse:
-            requestAlwaysLocationAuthorizationIfNeeded()
-            locationManager.startUpdatingLocation()
-        case .denied, .restricted:
-            break
-        @unknown default:
-            break
-        }
-    }
-
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()
         case .authorizedAlways:
             manager.startUpdatingLocation()
         case .authorizedWhenInUse:
             requestAlwaysLocationAuthorizationIfNeeded()
             manager.startUpdatingLocation()
-        case .notDetermined, .denied, .restricted:
+        case .denied, .restricted:
             break
         @unknown default:
             break
