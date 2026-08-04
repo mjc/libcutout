@@ -1516,20 +1516,42 @@ private extension CoreBluetoothAdvertisement {
 
 extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        handleCentralState(central.state) {
+            central.scanForPeripherals(withServices: nil)
+        }
+    }
+
+    func handleCentralState(_ state: CBManagerState, startScan: () -> Void) {
+        onBleQueue {
+            handleCentralStateOnBleQueue(state, startScan: startScan)
+        }
+    }
+
+    private func handleCentralStateOnBleQueue(_ state: CBManagerState, startScan: () -> Void) {
         assertOnBleQueue()
-        record("central_state=\(central.state.rawValue)")
-        guard central.state == .poweredOn else {
+        record("central_state=\(state.rawValue)")
+        guard state == .poweredOn else {
+            cancelPendingReconnect()
+            scanState = state == .unauthorized
+                ? .permissionDenied
+                : DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+            publishScanState()
             setPhase(
-                central.state == .unauthorized
+                state == .unauthorized
                     ? .bluetoothPermissionDenied
-                    : .bluetoothUnavailable(rawState: central.state.rawValue)
+                    : .bluetoothUnavailable(rawState: state.rawValue)
             )
             return
         }
+        scanState = DevicePickerScanState(
+            status: .scanning,
+            discoverySnapshot: rustSessionState.discoverySnapshot()
+        )
+        publishScanState()
         setPhase(.scanning)
         let services = CoreBluetoothScanPolicy.aeroFalcon.coreBluetoothServiceUuids
         record("scan_supported_services=\(services.map(\.uuidString).joined(separator: ","))")
-        central.scanForPeripherals(withServices: nil)
+        startScan()
     }
 
     public func centralManager(

@@ -327,6 +327,47 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(reconnectCount, 1)
     }
 
+    func testBluetoothStateChangesClearPickerCancelReconnectAndRestoreScanning() {
+        let scheduler = RecordingReconnectScheduler()
+        var reconnectCount = 0
+        var scanCount = 0
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 60_000
+            ),
+            reconnectScheduler: scheduler,
+            reconnectJitter: { 0 }
+        )
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        core.handleTransportTermination(
+            platformIdentifier: scriptedVescCandidate.platformIdentifier,
+            error: nil,
+            reconnect: { reconnectCount += 1 }
+        )
+
+        core.handleCentralState(.poweredOff, startScan: {})
+        scheduler.runAll()
+
+        XCTAssertEqual(core.phase, .bluetoothUnavailable(rawState: CBManagerState.poweredOff.rawValue))
+        XCTAssertEqual(core.scanState, DevicePickerScanState(status: .bluetoothUnavailable, rows: []))
+        XCTAssertEqual(reconnectCount, 0)
+
+        core.handleCentralState(.unauthorized, startScan: { scanCount += 1 })
+        XCTAssertEqual(core.phase, .bluetoothPermissionDenied)
+        XCTAssertEqual(core.scanState, .permissionDenied)
+        XCTAssertEqual(scanCount, 0)
+
+        core.handleCentralState(.poweredOn, startScan: { scanCount += 1 })
+        XCTAssertEqual(core.phase, .scanning)
+        XCTAssertEqual(core.scanState.status, .scanning)
+        XCTAssertEqual(scanCount, 1)
+    }
+
     func testRecordOnlyMissingCandidateReturnsFalse() {
         let core = CutoutSessionCore()
 
