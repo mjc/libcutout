@@ -1135,6 +1135,40 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testEucRideTelemetryAgesWithoutAnotherSampleAtAccessibilityDynamicType() {
+        assertMountedTelemetryAges(for: .euc)
+    }
+
+    func testVescRideTelemetryAgesWithoutAnotherSampleAtAccessibilityDynamicType() {
+        assertMountedTelemetryAges(for: .vesc)
+    }
+
+    private func assertMountedTelemetryAges(for family: ConnectedDeviceFamily) {
+        XCTAssertTrue(pairAvailableDevice(family))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic \(family.name) fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let status = app.descendants(matching: .any)["ride.hero.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertFalse(status.label.contains("Telemetry stale"), "The fixture must mount with fresh telemetry")
+
+        let stale = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let status = object as? XCUIElement else { return false }
+                return status.exists && status.label.contains("Telemetry stale")
+            },
+            object: status
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [stale], timeout: 4),
+            .completed,
+            "The mounted \(family.name) Ride screen did not become stale when telemetry stopped"
+        )
+    }
+
     func testVescStaleTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility()
     }
