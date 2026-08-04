@@ -8,6 +8,7 @@ struct DevicePickerView: View {
     let hasSavedDevice: Bool
     let pair: (DevicePickerRow) -> Void
     let forgetSavedDevice: () -> Void
+    let probe: (DevicePickerRow) -> Bool
     let recordOnly: (DevicePickerRow, String) -> Bool
     @State private var isAdvancedCapturePresented = false
 
@@ -68,6 +69,7 @@ struct DevicePickerView: View {
         .sheet(isPresented: $isAdvancedCapturePresented) {
             CaptureUnknownDeviceSheet(
                 sections: sections,
+                probe: probe,
                 recordOnly: recordOnly
             )
         }
@@ -131,6 +133,7 @@ enum CaptureRecordActionTone: Equatable, Sendable {
 
 private struct CaptureUnknownDeviceSheet: View {
     let sections: DevicePickerSections
+    let probe: (DevicePickerRow) -> Bool
     let recordOnly: (DevicePickerRow, String) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var deviceKind = ""
@@ -203,13 +206,21 @@ private struct CaptureUnknownDeviceSheet: View {
     }
 
     private func captureButton(for row: DevicePickerRow) -> some View {
-        let tone = CaptureRecordActionTone.forDeviceKind(trimmedDeviceKind)
+        let tone = row.isProbeRecommended
+            ? CaptureRecordActionTone.ready
+            : CaptureRecordActionTone.forDeviceKind(trimmedDeviceKind)
         return Button {
-            if recordOnly(row, trimmedDeviceKind) {
+            let didStart = row.isProbeRecommended
+                ? probe(row)
+                : recordOnly(row, trimmedDeviceKind)
+            if didStart {
                 dismiss()
             }
         } label: {
-            Label(row.captureActionTitle, systemImage: "record.circle")
+            Label(
+                row.captureActionTitle,
+                systemImage: row.isProbeRecommended ? "magnifyingglass" : "record.circle"
+            )
                 .font(.callout.weight(.bold))
                 .foregroundStyle(tone.foreground)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -222,9 +233,13 @@ private struct CaptureUnknownDeviceSheet: View {
                 )
         }
         .buttonStyle(.plain)
-        .disabled(!tone.isEnabled)
+        .disabled(!row.isProbeRecommended && !tone.isEnabled)
         .accessibilityLabel(row.captureActionAccessibilityLabel)
-        .accessibilityHint(tone.isEnabled ? "" : localizedAppText("picker.capture_kind_required_hint"))
+        .accessibilityHint(
+            row.isProbeRecommended || tone.isEnabled
+                ? ""
+                : localizedAppText("picker.capture_kind_required_hint")
+        )
         .accessibilityIdentifier("device-picker.record.\(row.id)")
     }
 

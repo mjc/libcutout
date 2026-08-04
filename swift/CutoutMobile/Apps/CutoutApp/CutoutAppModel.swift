@@ -164,6 +164,7 @@ protocol CutoutSessionDriving: AnyObject {
     func start()
     func pair(platformIdentifier: String) -> Bool
     func pair(platformIdentifier: String, model: ElectricUnicycleModel) -> Bool
+    func probe(platformIdentifier: String) -> Bool
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
     func annotateCapture(label: String)
     func annotateCapture(key: String, value: String)
@@ -396,6 +397,32 @@ final class CutoutAppModel {
                 liveActivityGlyph = .electricUnicycle
             }
             syncLiveActivity()
+        }
+        return didStart
+    }
+
+    func startProbe(platformIdentifier: String) -> Bool {
+        let rows = devicePickerScanState?.rows ?? []
+        guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }),
+              selectedRow.isProbeRecommended
+        else {
+            return false
+        }
+        let selection = ConnectionSelection(
+            platformIdentifier: selectedRow.id,
+            title: selectedRow.title,
+            route: .electricUnicycle
+        )
+        connectionState = .connecting(selection, phase: .discoveringServices)
+        phase = .discoveringServices
+        let didStart = core.probe(platformIdentifier: platformIdentifier)
+        if !didStart {
+            connectionState = .picker
+            phase = .scanning
+            devicePickerScanState = .failed(
+                localizedAppText("picker.error.device_no_longer_available"),
+                rows: rows
+            )
         }
         return didStart
     }

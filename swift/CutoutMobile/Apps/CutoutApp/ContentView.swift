@@ -246,6 +246,7 @@ private struct DevicePickerRouteView: View {
             hasSavedDevice: model.hasSavedDevice,
             pair: pair,
             forgetSavedDevice: model.forgetSavedDevice,
+            probe: { row in model.startProbe(platformIdentifier: row.id) },
             recordOnly: { row, deviceKind in
                 guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
                 navigate(model.isRecordOnlyCapture ? .capture : .eucRide)

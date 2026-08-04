@@ -217,6 +217,20 @@ public final class DeviceDetectionSession {
         DeviceDetectionResolution(inner.observeNotification(bytes: bytes))
     }
 
+    func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
+        switch inner.beginIdentificationProbeAt(startedAtMs: startedAt.rawValue) {
+        case .writes(let writes):
+            return .writes(writes.map { write in
+                IdentificationProbeWrite(
+                    channel: BluetoothUuid(write.characteristic)!,
+                    bytes: write.payload
+                )
+            })
+        case .alreadyPending:
+            return .alreadyPending
+        }
+    }
+
     public func observeBegodeNameProbe() -> DeviceDetectionResolution {
         DeviceDetectionResolution(inner.observeBegodeNameProbe())
     }
@@ -276,6 +290,16 @@ public final class DeviceDetectionSession {
     func reset() {
         inner.resetDeviceDetection()
     }
+}
+
+enum IdentificationProbeOutcome: Equatable, Sendable {
+    case writes([IdentificationProbeWrite])
+    case alreadyPending
+}
+
+struct IdentificationProbeWrite: Equatable, Sendable {
+    let channel: BluetoothUuid
+    let bytes: Data
 }
 
 public enum SessionActionKind: Equatable, Hashable, Sendable {
@@ -4784,14 +4808,18 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
-    fileprivate var startupProbeOperations: [CoreBluetoothPlannedOperation] {
+    fileprivate func startupProbeOperations(
+        at monotonicMilliseconds: MonotonicMilliseconds,
+        detectionSession: DeviceDetectionSession
+    ) -> [CoreBluetoothPlannedOperation] {
         switch self {
         case .electricUnicycle(let session) where session.model == .falcon:
-            [
-                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("N".utf8)),
-                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("V".utf8)),
-                .writeWithoutResponse(channel: .bluetooth16(0xffe1), bytes: Data("M".utf8)),
-            ]
+            switch detectionSession.beginIdentificationProbe(at: monotonicMilliseconds) {
+            case .writes(let writes):
+                writes.map { .writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
+            case .alreadyPending:
+                []
+            }
         case .electricUnicycle:
             []
         case .vescOnewheel:
@@ -4868,15 +4896,18 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
     private let session: CoreBluetoothSession
     private let planner: CoreBluetoothTransportPlanner
     private let captureContext: CoreBluetoothCaptureContext?
+    private let detectionSession: DeviceDetectionSession
 
     public init(
         session: CoreBluetoothSession,
         writeLimit: TransportWriteLimitBytes,
-        captureContext: CoreBluetoothCaptureContext? = nil
+        captureContext: CoreBluetoothCaptureContext? = nil,
+        detectionSession: DeviceDetectionSession = DeviceDetectionSession()
     ) {
         self.session = session
         self.planner = CoreBluetoothTransportPlanner(writeLimit: writeLimit)
         self.captureContext = captureContext
+        self.detectionSession = detectionSession
     }
 
     /// Configures the Rust-owned charge estimate profile for the live session.
@@ -4896,7 +4927,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
                 at: monotonicMilliseconds,
                 writeLimit: planner.writeLimit
             )
-            let operations = actions.flatMap(planner.plan(action:)) + session.startupProbeOperations
+            let operations = actions.flatMap(planner.plan(action:)) + session.startupProbeOperations(
+                at: monotonicMilliseconds,
+                detectionSession: detectionSession
+            )
             return CoreBluetoothSessionStep(
                 operations: operations,
                 snapshot: session.currentSnapshot,
@@ -5023,6 +5057,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         advertisement: CoreBluetoothAdvertisement,
         writeLimit: TransportWriteLimitBytes,
         operationSink: CoreBluetoothOperationSink,
+        detectionSession: DeviceDetectionSession = DeviceDetectionSession(),
         retryCommandOnLinkUp: DeviceCommand? = nil,
         maximumRetryAttempts: Int = 3,
         retryDelay: DispatchTimeInterval = .seconds(1),
@@ -5033,6 +5068,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             advertisement: advertisement,
             writeLimit: writeLimit,
             operationSink: operationSink,
+            detectionSession: detectionSession,
             retryCommandOnLinkUp: retryCommandOnLinkUp,
             maximumRetryAttempts: maximumRetryAttempts,
             retryDelay: retryDelay,
@@ -5046,6 +5082,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         advertisement: CoreBluetoothAdvertisement,
         writeLimit: TransportWriteLimitBytes,
         operationSink: CoreBluetoothOperationSink,
+        detectionSession: DeviceDetectionSession = DeviceDetectionSession(),
         retryCommandOnLinkUp: DeviceCommand? = nil,
         maximumRetryAttempts: Int = 3,
         retryDelay: DispatchTimeInterval = .seconds(1),
@@ -5060,7 +5097,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
                 platformIdentifier: advertisement.peripheralIdentifier,
                 advertisement: advertisement,
                 writeLimit: writeLimit
-            )
+            ),
+            detectionSession: detectionSession
         )
         self.retainedSink = operationSink
         self.executor = CoreBluetoothOperationExecutor(sink: operationSink)

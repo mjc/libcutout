@@ -193,6 +193,25 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testProbePickerActionUsesTheProbeOperationInsteadOfRecordOnly() {
+        let row = DevicePickerRow(
+            id: "probe-1234",
+            title: "Probe first",
+            subtitle: "Unknown electric unicycle",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .probe),
+            symbolName: "questionmark.circle"
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertTrue(model.startProbe(platformIdentifier: row.id))
+        XCTAssertEqual(driver.probedPlatformIdentifiers, [row.id])
+        XCTAssertTrue(driver.recordedPlatformIdentifiers.isEmpty)
+    }
+
+    @MainActor
     func testManualPickerRowKeepsItsTypedStatusInOneAccessibleElement() {
         let row = DevicePickerRow(
             id: "manual-1234",
@@ -1057,6 +1076,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool
     private(set) var pairedPlatformIdentifiers = [String]()
+    private(set) var probedPlatformIdentifiers = [String]()
+    private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
@@ -1080,7 +1101,15 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         pair(platformIdentifier: platformIdentifier)
     }
 
-    func recordOnly(platformIdentifier _: String, note _: String?, annotations _: [String]) -> Bool { true }
+    func probe(platformIdentifier: String) -> Bool {
+        probedPlatformIdentifiers.append(platformIdentifier)
+        return true
+    }
+
+    func recordOnly(platformIdentifier: String, note _: String?, annotations _: [String]) -> Bool {
+        recordedPlatformIdentifiers.append(platformIdentifier)
+        return true
+    }
     func annotateCapture(label: String) {
         captureAnnotations.append(label)
     }

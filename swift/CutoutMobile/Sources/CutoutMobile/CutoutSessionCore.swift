@@ -428,6 +428,11 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
+    public func probe(platformIdentifier: String) -> Bool {
+        pair(platformIdentifier: platformIdentifier, model: .falcon)
+    }
+
+    @discardableResult
     public func recordOnly(platformIdentifier: String, note: String? = nil, annotations: [String] = []) -> Bool {
 #if DEBUG
         if let testScript {
@@ -972,6 +977,7 @@ public final class CutoutSessionCore: NSObject {
                 advertisement: advertisement,
                 writeLimit: TransportWriteLimitBytes(23),
                 operationSink: self,
+                detectionSession: deviceDetectionSession,
                 retryCommandOnLinkUp: selectedRoute == .vescOnewheel ? .requestTelemetry : nil,
                 executionQueue: bleQueue,
                 monotonicClock: clock
