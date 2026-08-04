@@ -810,6 +810,12 @@ final class CutoutAppUITests: XCTestCase {
         let islandSpeed = springboard.descendants(matching: .any)["Speed"]
         XCTAssertTrue(islandSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
         XCTAssertTrue((islandSpeed.value as? String)?.contains("17.9") == true)
+        let islandDevice = springboard.descendants(matching: .any)["Device"]
+        XCTAssertTrue(islandDevice.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue(
+            (islandDevice.value as? String)?.localizedCaseInsensitiveContains("Refloat VESC") == true,
+            islandDevice.debugDescription
+        )
         let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
         XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
         let expectedHeadroom = stateName == "Critical" ? "reduce acceleration" : "good"
