@@ -785,6 +785,57 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescLiveActivityAutoFixture()
     }
 
+    func testVescCriticalLiveActivityLockScreenPreservesSafetySemantics() {
+        let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+        defer {
+            app.activate()
+            disconnectIfConnected()
+        }
+
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissLocationPromptIfNeeded(in: springboard)
+        XCUIDevice.shared.press(.home)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.01))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.8))
+            )
+
+        let allowLiveActivities = springboard.buttons["Allow"]
+        if allowLiveActivities.waitForExistence(timeout: 1) {
+            allowLiveActivities.tap()
+        }
+        XCTAssertFalse(
+            allowLiveActivities.waitForExistence(timeout: 2),
+            "The system Live Activity permission prompt still obscures rendered Lock Screen evidence"
+        )
+        let alwaysAllowLiveActivities = springboard.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Always'")
+        ).firstMatch
+        if alwaysAllowLiveActivities.waitForExistence(timeout: 1) {
+            alwaysAllowLiveActivities.tap()
+        }
+        XCTAssertFalse(
+            alwaysAllowLiveActivities.waitForExistence(timeout: 2),
+            "The continuing Live Activity permission prompt still obscures rendered Lock Screen evidence"
+        )
+
+        let activity = springboard.descendants(matching: .any)["CutOut ride"]
+        XCTAssertTrue(activity.waitForExistence(timeout: 5), springboard.debugDescription)
+        let speed = springboard.descendants(matching: .any)["Speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue((speed.value as? String)?.contains("17.9") == true, speed.debugDescription)
+        let headroom = springboard.descendants(matching: .any)["Headroom"]
+        XCTAssertTrue(headroom.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue(
+            (headroom.value as? String)?.localizedCaseInsensitiveContains("reduce acceleration") == true,
+            headroom.debugDescription
+        )
+        attachScreenshot(of: springboard, named: "Critical Lock Screen Live Activity")
+    }
+
     private func assertVescLiveActivityAutoFixture() throws {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
@@ -798,10 +849,7 @@ final class CutoutAppUITests: XCTestCase {
 
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let locationPrompt = springboard.alerts.firstMatch
-        if locationPrompt.waitForExistence(timeout: 1) {
-            locationPrompt.buttons["Don’t Allow"].tap()
-        }
+        dismissLocationPromptIfNeeded(in: springboard)
         XCUIDevice.shared.press(.home)
         let stateName = name.contains("Critical") ? "Critical" : "Nominal"
         attachScreenshot(of: springboard, named: "\(stateName) Compact Dynamic Island")
@@ -835,6 +883,13 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(orderedSafetyValues.count, 2)
         XCTAssertEqual(orderedSafetyValues.element(boundBy: 0).label, stateName == "Critical" ? "Headroom" : "Speed")
         attachScreenshot(of: springboard, named: "\(stateName) Expanded Dynamic Island")
+    }
+
+    private func dismissLocationPromptIfNeeded(in springboard: XCUIApplication) {
+        let locationPrompt = springboard.alerts.firstMatch
+        if locationPrompt.waitForExistence(timeout: 1) {
+            locationPrompt.buttons["Don’t Allow"].tap()
+        }
     }
 
     private func attachScreenshot(of application: XCUIApplication, named name: String) {
@@ -1804,7 +1859,11 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
             if testName.contains("BluetoothPermissionDenied") { return .bluetoothPermissionDenied }
-            if testName.contains("CriticalLiveActivityAutoFixture") { return .vescCriticalLiveActivityAuto }
+            if testName.contains("CriticalLiveActivityAutoFixture")
+                || testName.contains("CriticalLiveActivityLockScreen")
+            {
+                return .vescCriticalLiveActivityAuto
+            }
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
