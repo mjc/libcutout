@@ -365,6 +365,18 @@
       "comment" : "Connection failure. The placeholder is the platform's connection error description.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connect failed: %@" } } }
     },
+    "euc.failure.identification_conflict" : {
+      "comment" : "Connection failure when identification evidence resolves to incompatible protocol families.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identification found conflicting evidence" } } }
+    },
+    "euc.failure.identification_malformed" : {
+      "comment" : "Connection failure when a device returns a malformed identification response.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device returned an invalid identification response" } } }
+    },
+    "euc.failure.identification_timeout" : {
+      "comment" : "Connection failure when the selected device does not answer its identification probes before the deadline.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identification timed out" } } }
+    },
     "euc.failure.missing_notify_channel" : {
       "comment" : "Connection failure when the device does not expose a notification channel.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Missing notify channel" } } }

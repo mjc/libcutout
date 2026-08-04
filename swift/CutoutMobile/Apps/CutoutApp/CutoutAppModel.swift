@@ -861,6 +861,7 @@ enum CutoutUITestSessionFixture {
     case unknownDevice
     case unknownDeviceFinishFailure
     case probeDevice
+    case probeTimeout
     case bluetoothUnavailable
     case bluetoothPermissionDenied
     case vesc
@@ -884,6 +885,7 @@ enum CutoutUITestSessionFixture {
         case "unknown-device": self = .unknownDevice
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
         case "probe-device": self = .probeDevice
+        case "probe-timeout": self = .probeTimeout
         case "bluetooth-unavailable": self = .bluetoothUnavailable
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
@@ -941,7 +943,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .probeDevice:
+        case .probeDevice, .probeTimeout:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-probe",
                 displayName: "Unknown EUC",
@@ -986,12 +988,16 @@ enum CutoutUITestSessionFixture {
         }
     }
     var failsConnection: Bool { self == .failedVesc }
+    var identificationProbeFailure: IdentificationProbeFailure? {
+        self == .probeTimeout ? .timedOut : nil
+    }
     var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
     var emitsStaleTelemetry: Bool { self == .staleVesc || self == .staleEuc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool {
         self == .probeDevice
+            || self == .probeTimeout
             || self == .euc
             || self == .staleEuc
             || self == .reconnectingEuc
@@ -1018,6 +1024,7 @@ enum CutoutUITestSessionFixture {
             startsLive: startsLive,
             initialBluetoothState: initialBluetoothState,
             failsConnection: failsConnection,
+            identificationProbeFailure: identificationProbeFailure,
             emitsLateLiveAfterFailure: failsConnection,
             reconnectsAfterFirstLive: reconnectsAfterFirstLive,
             reconnectAfterLiveMilliseconds: reconnectsAfterFirstLive ? 1_500 : 0,

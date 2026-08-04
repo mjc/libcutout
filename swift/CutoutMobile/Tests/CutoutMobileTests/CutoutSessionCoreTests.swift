@@ -179,6 +179,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.pair(platformIdentifier: "ios-local-missing"))
     }
 
+    func testScriptedProbeTimeoutFailsWithoutPublishingLive() {
+        let failed = expectation(description: "probe timeout is published")
+        let live = expectation(description: "probe timeout never publishes live")
+        live.isInverted = true
+        let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
+            candidate: scriptedProbeCandidate,
+            telemetry: nil,
+            identificationProbeFailure: .timedOut,
+            connectionDelayMilliseconds: 0
+        ))
+        core.onPhaseChange = { phase in
+            if phase == .failed(.identificationFailed(.timedOut)) {
+                failed.fulfill()
+            }
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+
+        core.start()
+        XCTAssertTrue(core.probe(platformIdentifier: scriptedProbeCandidate.platformIdentifier))
+
+        wait(for: [failed, live], timeout: 0.2)
+        XCTAssertEqual(core.phase, .failed(.identificationFailed(.timedOut)))
+        XCTAssertNil(core.displayState.speed.millimetersPerSecond)
+    }
+
     func testScriptedSessionUsesTheCorePublicationPath() {
         let live = expectation(description: "scripted session reaches live")
         let core = CutoutSessionCore(
@@ -2630,6 +2657,18 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             detail: "core callback fixture",
             support: .supported(connectionRoute: .vescOnewheel, electricUnicycleModel: nil),
             symbolName: "circle.hexagongrid.circle"
+        )
+    }
+
+    private var scriptedProbeCandidate: DevicePickerDiscoveryCandidate {
+        DevicePickerDiscoveryCandidate(
+            platformIdentifier: "scripted-probe",
+            displayName: "Unknown EUC",
+            productCategory: "Electric unicycle",
+            evidence: "test script",
+            detail: "identification required",
+            support: .probeRecommended(disabledReason: "Identity probe required"),
+            symbolName: "magnifyingglass"
         )
     }
 }

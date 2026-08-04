@@ -990,6 +990,13 @@ final class CutoutAppModelTests: XCTestCase {
         }
     }
 
+    func testProbeTimeoutFixturePublishesTypedIdentificationFailure() {
+        let fixture = CutoutUITestSessionFixture(value: "probe-timeout")
+
+        XCTAssertEqual(fixture?.identificationProbeFailure, .timedOut)
+        XCTAssertEqual(fixture?.candidate.support, .probeRecommended(disabledReason: "Identity probe required"))
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucOverviewFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,

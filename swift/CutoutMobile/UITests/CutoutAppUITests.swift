@@ -84,6 +84,29 @@ final class CutoutAppUITests: XCTestCase {
         disconnectIfConnected()
     }
 
+    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailure() throws {
+        _ = openAdvancedCapture()
+        let probeButton = app.buttons["device-picker.probe.ui-test-probe"]
+        let status = app.descendants(matching: .any)["device-picker.connection-status"]
+
+        XCTAssertTrue(probeButton.waitForExistence(timeout: 5))
+        probeButton.tap()
+
+        XCTAssertEqual(
+            XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", "Device identification timed out"),
+                    object: status
+                )],
+                timeout: 5
+            ),
+            .completed
+        )
+        XCTAssertTrue(app.descendants(matching: .any)["device-picker.screen"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.eucRide"].exists)
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testSupportedPickerRowUsesOneWholeRowAction() {
         let useButton = app.buttons["device-picker.use.ui-test-vesc"]
 
@@ -1481,6 +1504,7 @@ final class CutoutAppUITests: XCTestCase {
         case unknownDevice
         case unknownDeviceFinishFailure
         case probeDevice
+        case probeTimeout
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case euc
@@ -1501,6 +1525,7 @@ final class CutoutAppUITests: XCTestCase {
 
         static func testFixture(for testName: String) -> Self {
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
+            if testName.contains("ProbeTimeout") { return .probeTimeout }
             if testName.contains("ProbeAction") { return .probeDevice }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
@@ -1535,6 +1560,7 @@ final class CutoutAppUITests: XCTestCase {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
             case .probeDevice: "probe-device"
+            case .probeTimeout: "probe-timeout"
             case .bluetoothUnavailable: "bluetooth-unavailable"
             case .bluetoothPermissionDenied: "bluetooth-permission-denied"
             case .euc: "euc"

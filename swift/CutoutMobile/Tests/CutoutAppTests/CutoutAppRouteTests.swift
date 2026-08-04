@@ -268,6 +268,18 @@ final class CutoutAppRouteTests: XCTestCase {
             SessionConnectionPhase.failed(.connectFailed("timed out")).accessibilityAnnouncement,
             "Connection failed. Choose a device to try again. Connect failed: timed out"
         )
+        XCTAssertEqual(
+            SessionConnectionPhase.failed(.identificationFailed(.timedOut)).accessibilityAnnouncement,
+            "Connection failed. Choose a device to try again. Device identification timed out"
+        )
+        XCTAssertEqual(
+            SessionConnectionPhase.failed(.identificationFailed(.malformedResponse)).accessibilityAnnouncement,
+            "Connection failed. Choose a device to try again. Device returned an invalid identification response"
+        )
+        XCTAssertEqual(
+            SessionConnectionPhase.failed(.identificationFailed(.conflictingEvidence)).accessibilityAnnouncement,
+            "Connection failed. Choose a device to try again. Device identification found conflicting evidence"
+        )
     }
 
     func testConnectionAnnouncementsSpeakRejectedPickerActionOnlyOnce() {

@@ -4142,6 +4142,7 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
     case characteristicDiscoveryFailed(String)
     case notificationFailed(String)
     case notificationIngestFailed(String)
+    case identificationFailed(IdentificationProbeFailure)
 
     public var displayText: String {
         switch self {
@@ -4161,6 +4162,21 @@ public enum SessionConnectionFailure: Equatable, Hashable, Sendable {
             pevLocalizedText("euc.failure.notification", message)
         case .notificationIngestFailed(let message):
             pevLocalizedText("euc.failure.notification_ingest", message)
+        case .identificationFailed(let failure):
+            failure.displayText
+        }
+    }
+}
+
+public extension IdentificationProbeFailure {
+    var displayText: String {
+        switch self {
+        case .timedOut:
+            pevLocalizedText("euc.failure.identification_timeout")
+        case .malformedResponse:
+            pevLocalizedText("euc.failure.identification_malformed")
+        case .conflictingEvidence:
+            pevLocalizedText("euc.failure.identification_conflict")
         }
     }
 }
