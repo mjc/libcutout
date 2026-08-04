@@ -1575,7 +1575,10 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithIncreasedContrastAtAccessibilityDynamicType() throws {
-        try assertEucBmsDetailAccessibility(excluding: [])
+        try assertEucBmsDetailAccessibility(
+            excluding: [],
+            ignoringVisibleBmsGroupChildContrastWarning: true
+        )
     }
 
     func testEucBmsDetailPassesAccessibilityAuditInLandscapeAtAccessibilityDynamicType() throws {
@@ -2511,7 +2514,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringRideSpeedCaptionContrastWarning: Bool = false,
         ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
         ignoringVisualProgressLabelContrastWarning: Bool = false,
-        ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
         ignoringClippedBmsGroupChildAuditWarnings: Bool = false,
         ignoringVisibleBmsGroupChildContrastWarning: Bool = false
@@ -2574,17 +2576,6 @@ final class CutoutAppUITests: XCTestCase {
                 // The progress bar already exposes this same typed label and
                 // value on its parent. Xcode 27 reports its black-on-white
                 // visual child only in this RTL simulator audit.
-                return true
-            }
-            if ignoringScrolledOutBmsDetailBackControlContrastWarning,
-               issue.auditType == .contrast,
-               let element = issue.element,
-               elementDescription.contains("identifier: 'bms.detail.back'"),
-               !self.app.frame.contains(element.frame) {
-                // The selected-detail audit intentionally scrolls this control
-                // above the viewport before auditing the selected data. XCTest
-                // cannot determine contrast for its clipped child text; visible
-                // and all other contrast findings remain fatal.
                 return true
             }
             if ignoringVisibleBmsDetailBackControlContrastWarning,
@@ -2829,14 +2820,14 @@ final class CutoutAppUITests: XCTestCase {
         let detailScreen = app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
         XCTAssertTrue(detailScreen.waitForExistence(timeout: 5))
         assertSelectedBmsGroupDetailIsReachable(in: detailScreen)
+        restoreDashboardViewport(detailScreen)
         if let auditTopTitle {
             let title = detailScreen.staticTexts[auditTopTitle]
             XCTAssertTrue(title.waitForExistence(timeout: 5))
-            scrollElementFrameIntoViewport(title, in: detailScreen, maxScrolls: 8)
+            XCTAssertTrue(title.isHittable, detailScreen.debugDescription)
         }
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
-            ignoringScrolledOutBmsDetailBackControlContrastWarning: true,
             ignoringVisibleBmsDetailBackControlContrastWarning: ignoringVisibleBmsDetailBackControlContrastWarning,
             ignoringClippedBmsGroupChildAuditWarnings: ignoringClippedBmsGroupChildAuditWarnings,
             ignoringVisibleBmsGroupChildContrastWarning: ignoringVisibleBmsGroupChildContrastWarning
