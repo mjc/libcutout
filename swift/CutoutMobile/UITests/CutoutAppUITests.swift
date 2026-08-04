@@ -832,9 +832,8 @@ final class CutoutAppUITests: XCTestCase {
             object: connectionStatus
         )
         XCTAssertEqual(XCTWaiter.wait(for: [connecting], timeout: 3), .completed)
+        XCTAssertTrue(connectionStatus.isHittable, "Connecting status must be visible when the transition occurs")
         let connectingLabel = connectionStatus.label
-        restorePickerViewport(picker)
-        try performVisibleLayoutAccessibilityAudit()
 
         let failed = XCTNSPredicateExpectation(
             predicate: usesLocalizedText
@@ -844,6 +843,7 @@ final class CutoutAppUITests: XCTestCase {
         )
         XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 5), .completed)
         XCTAssertTrue(picker.exists)
+        XCTAssertTrue(connectionStatus.isHittable, "Connection failure must be visible without test-controlled scrolling")
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(connectionStatus.label.isEmpty)
         restorePickerViewport(picker)
