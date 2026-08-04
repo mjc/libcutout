@@ -218,10 +218,40 @@ public struct CutoutSessionTestScript {
 }
 #endif
 
+struct BoundedDiagnosticLog {
+    private let capacity: Int
+    private var storage: [String] = []
+    private var nextIndex = 0
+    private(set) var droppedCount = 0
+
+    init(capacity: Int) {
+        precondition(capacity > 0)
+        self.capacity = capacity
+        storage.reserveCapacity(capacity)
+    }
+
+    var values: [String] {
+        guard storage.count == capacity else { return storage }
+        return Array(storage[nextIndex...]) + Array(storage[..<nextIndex])
+    }
+
+    mutating func append(_ value: String) {
+        guard storage.count == capacity else {
+            storage.append(value)
+            return
+        }
+
+        storage[nextIndex] = value
+        nextIndex = (nextIndex + 1) % capacity
+        droppedCount += 1
+    }
+}
+
 public final class CutoutSessionCore: NSObject {
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
-    public private(set) var records: [String] = []
+    public var records: [String] { diagnosticLog.values }
+    public var droppedRecordCount: Int { diagnosticLog.droppedCount }
     public private(set) var hasObservedSpeedSnapshot = false
     public private(set) var scanState = DevicePickerScanState(status: .idle, rows: [])
     public private(set) var settingsReadback: SettingsReadback?
@@ -243,6 +273,7 @@ public final class CutoutSessionCore: NSObject {
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
 
     private let clock: MonotonicClock
+    private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth", qos: .userInitiated)
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
@@ -1120,9 +1151,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func record(_ message: String) {
-        if records.count < 2_048 {
-            records.append(message)
-        }
+        diagnosticLog.append(message)
         publishOnMain { self.onRecord?(message) }
     }
 

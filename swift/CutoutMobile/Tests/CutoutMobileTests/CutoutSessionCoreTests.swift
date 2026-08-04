@@ -6,6 +6,15 @@ import CoreBluetooth
 @testable import CutoutMobile
 
 final class CutoutSessionCoreTests: XCTestCase {
+    func testBoundedDiagnosticLogRetainsNewestRecordsAndCountsDroppedHistory() {
+        var log = BoundedDiagnosticLog(capacity: 3)
+
+        ["one", "two", "three", "four"].forEach { log.append($0) }
+
+        XCTAssertEqual(log.values, ["two", "three", "four"])
+        XCTAssertEqual(log.droppedCount, 1)
+    }
+
     func testMonotonicClockUsesItsInjectedUptimeSource() {
         var now = MonotonicMilliseconds(100)
         let clock = MonotonicClock(now: { now })
