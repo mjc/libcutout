@@ -53,6 +53,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(cancelCapture.exists)
         XCTAssertEqual(cancelCapture.label, "Cancel")
         XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(recordButton.frame.height, 44)
         XCTAssertTrue(recordButton.label.contains("Unknown BLE device"))
         XCTAssertFalse(recordButton.isEnabled)
 
@@ -204,6 +205,7 @@ final class CutoutAppUITests: XCTestCase {
         let savedCapture = app.descendants(matching: .any)["device-picker.capture-status"]
         XCTAssertTrue(finish.waitForExistence(timeout: 5))
         XCTAssertEqual(finish.elementType, .button)
+        XCTAssertGreaterThanOrEqual(finish.frame.height, 44)
         finish.tap()
 
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
