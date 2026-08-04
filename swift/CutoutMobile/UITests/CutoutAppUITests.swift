@@ -134,6 +134,7 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         XCTAssertEqual(status.label, expectedStatus)
+        XCTAssertTrue(status.isHittable, "The blocking Bluetooth status must be visible without scrolling")
         XCTAssertFalse(app.buttons["device-picker.use.ui-test-vesc"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.vescRide"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.eucRide"].exists)
