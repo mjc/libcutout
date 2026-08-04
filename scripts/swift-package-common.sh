@@ -20,6 +20,38 @@ cutout_ios_development_team() {
   printf '%s\n' "${CUTOUT_IOS_DEVELOPMENT_TEAM:-2RH32Y5HM5}"
 }
 
+cutout_replace_generated_directory() {
+  local target parent name backup_root backup status
+  target="$1"
+  shift
+  parent="$(dirname "$target")"
+  name="$(basename "$target")"
+  if [[ "$target" != /* || "$target" == "/" || "$name" == "." || "$name" == ".." || ! -d "$parent" ]]; then
+    echo "refusing unsafe generated-directory target: $target" >&2
+    return 2
+  fi
+
+  backup_root="$(mktemp -d "$parent/.$name.backup.XXXXXX")"
+  backup="$backup_root/$name"
+  if [[ -e "$target" ]]; then
+    mv "$target" "$backup"
+  fi
+
+  if "$@"; then
+    rm -rf -- "$backup_root"
+    return 0
+  else
+    status=$?
+  fi
+
+  rm -rf -- "$target"
+  if [[ -e "$backup" ]]; then
+    mv "$backup" "$target"
+  fi
+  rmdir "$backup_root"
+  return "$status"
+}
+
 cutout_swift_ffi_source_fingerprint() {
   local root
   root="$1"

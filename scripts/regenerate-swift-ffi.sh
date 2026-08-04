@@ -13,7 +13,8 @@ if [[ "${RUSTC_WRAPPER+x}" != x || -n "$RUSTC_WRAPPER" ||
   exit 1
 fi
 
-cargo swift package \
+package="$root/crates/cutout-mobile-ffi/CutoutMobileFFI"
+cutout_replace_generated_directory "$package" cargo swift package \
   --platforms ios@18 macos@15 \
   --release \
   --name CutoutMobileFFI \

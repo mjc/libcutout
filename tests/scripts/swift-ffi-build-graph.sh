@@ -60,3 +60,35 @@ if cutout_require_current_swift_ffi "$fake" 2>"$tmp/stale.log"; then
   exit 1
 fi
 grep -q "scripts/regenerate-swift-ffi.sh" "$tmp/stale.log"
+
+generated="$tmp/generated-package"
+mkdir -p "$generated"
+printf 'old\n' >"$generated/original"
+
+if cutout_replace_generated_directory relative-package true 2>"$tmp/unsafe.log"; then
+  echo "expected a relative replacement target to be rejected" >&2
+  exit 1
+fi
+grep -q "refusing unsafe generated-directory target" "$tmp/unsafe.log"
+
+failed_generation() {
+  mkdir -p "$generated"
+  printf 'partial\n' >"$generated/partial"
+  return 1
+}
+
+if cutout_replace_generated_directory "$generated" failed_generation; then
+  echo "expected failed regeneration to preserve the prior package" >&2
+  exit 1
+fi
+test -f "$generated/original"
+test ! -e "$generated/partial"
+
+successful_generation() {
+  mkdir -p "$generated"
+  printf 'new\n' >"$generated/replacement"
+}
+
+cutout_replace_generated_directory "$generated" successful_generation
+test ! -e "$generated/original"
+test -f "$generated/replacement"
