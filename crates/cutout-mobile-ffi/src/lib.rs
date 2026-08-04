@@ -8891,6 +8891,44 @@ mod tests {
     }
 
     #[test]
+    fn mobile_capture_writer_reports_failure_after_a_successful_append() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-late-failure-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_link_up(ms(1), None));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = builder.writer_status();
+            if status.bytes_written > 0 {
+                break;
+            }
+            assert!(!status.failed, "writer failed before fixture mutation");
+            assert!(Instant::now() < deadline, "writer did not append in time");
+            thread::yield_now();
+        }
+        fs::remove_file(&path).expect("open capture pathname is removable");
+        fs::create_dir(&path).expect("directory replaces capture pathname");
+
+        assert!(builder.add_annotation("force=header-rewrite".into()));
+        assert!(!builder.finish_writer());
+        let status = builder.writer_status();
+        assert!(status.failed);
+        assert!(status.last_error.is_some());
+        fs::remove_dir(path).expect("failure fixture directory is removable");
+    }
+
+    #[test]
     fn capture_writer_queue_overrun_is_nonblocking_and_instrumented() {
         let (sender, _receiver) = sync_channel(0);
         let state = Arc::new(CaptureWriterState::default());
