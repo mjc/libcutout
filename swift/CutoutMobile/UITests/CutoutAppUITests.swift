@@ -206,6 +206,16 @@ final class CutoutAppUITests: XCTestCase {
         _ = try finishCaptureAndReturnToPicker()
     }
 
+    func testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType() throws {
+        _ = try finishCaptureAndReturnToPicker()
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
+    func testFinishCaptureReturnsToAccessiblePickerInDarkAppearanceAtAccessibilityDynamicType() throws {
+        _ = try finishCaptureAndReturnToPicker()
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         _ = try finishCaptureAndReturnToPicker(usesLocalizedText: true)
         try performVisibleLayoutAccessibilityAudit()
