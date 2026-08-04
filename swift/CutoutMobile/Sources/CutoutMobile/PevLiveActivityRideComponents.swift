@@ -94,14 +94,20 @@ public struct PevLiveActivityHeader: View {
 
     public var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            PevLiveActivityBrandMark(size: compact ? 16 : 18)
-            Text("CUTOUT")
-                .font(.system(size: compact ? compactWordmarkSize : expandedWordmarkSize, weight: .bold))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    PevLiveActivityBrandMark(size: compact ? 16 : 18)
+                    Text("CUTOUT")
+                        .font(.system(size: compact ? compactWordmarkSize : expandedWordmarkSize, weight: .bold))
+                }
+                PevLiveActivityBrandMark(size: compact ? 16 : 18)
+            }
             Spacer(minLength: 8)
             Text(snapshot.identity.label)
                 .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 .lineLimit(1)
+                .layoutPriority(1)
             Circle()
                 .fill(snapshot.connectionState == .connected ? PevLiveActivityPalette.connected : PevLiveActivityPalette.warning)
                 .frame(width: 7, height: 7)
@@ -323,35 +329,44 @@ public struct PevLiveActivitySafetyFooter: View {
     }
 
     public var body: some View {
-        HStack(spacing: compact ? 6 : 8) {
-            PevLiveActivityFooterChip(
-                systemName: headroomPresentation.systemName,
-                value: snapshot.headroom,
-                tint: headroomPresentation.tint,
-                lineLimit: snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
-                emphasizesValue: snapshot.headroomSeverity == .reduceAcceleration
-            )
-            .accessibilitySortPriority(
-                PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
-            )
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: compact ? 6 : 8) {
+                headroomChip
+                if snapshot.showsSecondarySafetyMetrics {
+                    Divider().overlay(PevLiveActivityPalette.border)
+                        .accessibilityHidden(true)
+                    PevLiveActivityFooterChip(
+                        systemName: "speaker.wave.2.fill",
+                        value: snapshot.beeps,
+                        tint: PevLiveActivityPalette.accent
+                    )
+                    Divider().overlay(PevLiveActivityPalette.border)
+                        .accessibilityHidden(true)
+                    PevLiveActivityFooterChip(
+                        systemName: "thermometer.medium",
+                        value: snapshot.temperature,
+                        tint: PevLiveActivityPalette.primaryText
+                    )
+                }
+            }
             if snapshot.showsSecondarySafetyMetrics {
-                Divider().overlay(PevLiveActivityPalette.border)
-                    .accessibilityHidden(true)
-                PevLiveActivityFooterChip(
-                    systemName: "speaker.wave.2.fill",
-                    value: snapshot.beeps,
-                    tint: PevLiveActivityPalette.accent
-                )
-                Divider().overlay(PevLiveActivityPalette.border)
-                    .accessibilityHidden(true)
-                PevLiveActivityFooterChip(
-                    systemName: "thermometer.medium",
-                    value: snapshot.temperature,
-                    tint: PevLiveActivityPalette.primaryText
-                )
+                headroomChip
             }
         }
         .font(.system(size: compact ? compactFontSize : expandedFontSize, weight: .medium))
+    }
+
+    private var headroomChip: some View {
+        PevLiveActivityFooterChip(
+            systemName: headroomPresentation.systemName,
+            value: snapshot.headroom,
+            tint: headroomPresentation.tint,
+            lineLimit: snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
+            emphasizesValue: snapshot.headroomSeverity == .reduceAcceleration
+        )
+        .accessibilitySortPriority(
+            PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
+        )
     }
 }
 
