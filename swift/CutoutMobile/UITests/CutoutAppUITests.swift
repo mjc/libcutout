@@ -994,8 +994,7 @@ final class CutoutAppUITests: XCTestCase {
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertConnectedSurface(
             for: .vesc,
-            requiredMetricLabel: "voltage",
-            ignoringNilElementContrastWarning: true
+            requiredMetricLabel: "voltage"
         )
     }
 
