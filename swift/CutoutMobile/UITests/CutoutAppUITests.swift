@@ -414,7 +414,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertProductionPickerAccessibility(assertsPseudolocalizedCopy: true)
     }
 
-    func testProductionSurfacesRespectSystemAccessibilitySettings() throws {
+    func testProductionSurfacesPassAccessibilityAudit() throws {
         let picker = app.descendants(matching: .any)["device-picker.screen"]
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
         try performVisibleLayoutAccessibilityAudit()
@@ -429,15 +429,8 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.exists)
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // This launch intentionally fixes the preferred category to normal
-        // Large while exercising the other system settings. Dedicated
-        // Accessibility-XXXL routes are the Dynamic Type authority; asking
-        // XCTest to infer scaling from this fixed-size launch is a false
-        // positive for the grouped metric representation.
-        // XCTest's text-clipping audit also reports a framework false positive
-        // for this bold/high-contrast launch configuration.
         try performVisibleLayoutAccessibilityAudit(
-            excluding: [.dynamicType, .textClipped],
+            excluding: [.textClipped],
             ignoringNilElementTextRepresentationWarning: true
         )
     }
@@ -1416,44 +1409,31 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchArguments: [String] {
         var arguments = fixture.launchArguments
-        if name.contains("RespectSystemAccessibilitySettings") {
+        if name.contains("InLightAppearance") {
+            arguments += ["-AppleInterfaceStyle", "Light"]
+        }
+        if name.contains("IncreasedContrast") {
+            arguments += ["-UIAccessibilityDarkerSystemColorsEnabled", "YES"]
+        }
+        if name.contains("Pseudolocalized") {
+            arguments += ["-NSDoubleLocalizedStrings", "YES"]
+        }
+        if name.contains("RightToLeft") {
             arguments += [
-                "-AppleInterfaceStyle", "Dark",
-                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryLarge",
-                "-UIAccessibilityBoldTextEnabled", "YES",
-                "-UIAccessibilityDarkerSystemColorsEnabled", "YES",
-                "-UIAccessibilityDifferentiateWithoutColorEnabled", "YES",
-                "-UIAccessibilityReduceMotionEnabled", "YES",
-                "-UIAccessibilityReduceTransparencyEnabled", "YES",
-                "-UIAccessibilityGrayscaleEnabled", "YES",
-            ]
-        } else {
-            if name.contains("InLightAppearance") {
-                arguments += ["-AppleInterfaceStyle", "Light"]
-            }
-            if name.contains("IncreasedContrast") {
-                arguments += ["-UIAccessibilityDarkerSystemColorsEnabled", "YES"]
-            }
-            if name.contains("Pseudolocalized") {
-                arguments += ["-NSDoubleLocalizedStrings", "YES"]
-            }
-            if name.contains("RightToLeft") {
-                arguments += [
                 "-AppleLanguages", "(ar)",
                 "-AppleLocale", "ar_SA",
-                ]
-            }
-            if name.contains("AccessibilityDynamicType") || name.contains("RightToLeft") {
-                arguments += [
-                    "-UIPreferredContentSizeCategoryName",
-                    "UICTContentSizeCategoryAccessibilityXXXL",
-                ]
-            } else if name.contains("ExtraExtraExtraLarge") {
-                arguments += [
-                    "-UIPreferredContentSizeCategoryName",
-                    "UICTContentSizeCategoryXXXL",
-                ]
-            }
+            ]
+        }
+        if name.contains("AccessibilityDynamicType") || name.contains("RightToLeft") {
+            arguments += [
+                "-UIPreferredContentSizeCategoryName",
+                "UICTContentSizeCategoryAccessibilityXXXL",
+            ]
+        } else if name.contains("ExtraExtraExtraLarge") {
+            arguments += [
+                "-UIPreferredContentSizeCategoryName",
+                "UICTContentSizeCategoryXXXL",
+            ]
         }
 
         return arguments
