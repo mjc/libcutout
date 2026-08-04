@@ -443,6 +443,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertCaptureAccessibility()
     }
 
+    func testCapturePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertCaptureAccessibility(ignoringNilElementContrastWarning: true)
+    }
+
+    func testCapturePassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertCaptureAccessibility(ignoringNilElementContrastWarning: true)
+    }
+
     func testCapturePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertCaptureAccessibility()
 
@@ -1840,7 +1848,8 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertCaptureAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        exercisesLabels: Bool = true
+        exercisesLabels: Bool = true,
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         enterCapture()
 
@@ -1855,7 +1864,10 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
         guard exercisesLabels else {
-            try performVisibleLayoutAccessibilityAudit(excluding: excluded)
+            try performVisibleLayoutAccessibilityAudit(
+                excluding: excluded,
+                ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+            )
             return
         }
         let firstAnnotation = reachableCaptureAnnotation("ride", in: screen)
@@ -1875,7 +1887,10 @@ final class CutoutAppUITests: XCTestCase {
 
         restoreCaptureViewport(screen)
         XCTAssertTrue(stopCapture.isHittable)
-        try performVisibleLayoutAccessibilityAudit(excluding: excluded)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: excluded,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
     }
 
     private func openAdvancedCapture() -> XCUIElement {
