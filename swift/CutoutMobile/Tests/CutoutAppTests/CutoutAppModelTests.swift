@@ -1,6 +1,8 @@
 import XCTest
 @testable import CutoutApp
 import CutoutMobile
+import Observation
+import Synchronization
 
 final class CutoutAppModelTests: XCTestCase {
     private static let priorCaptureProgress = CaptureProgress(
@@ -10,6 +12,64 @@ final class CutoutAppModelTests: XCTestCase {
         queuedMessageCount: 0,
         writerError: nil
     )
+
+    @MainActor
+    func testAvailableBmsRouteDoesNotObserveRideTelemetry() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        driver.onBmsSnapshotChange?(
+            BmsSnapshot(
+                topology: BmsTopology(
+                    layoutLabel: "20S1P",
+                    seriesGroupCount: 20,
+                    parallelCount: 1,
+                    packCount: 1,
+                    bmsCount: 1,
+                    confidence: .verified
+                )
+            )
+        )
+        let route = EucPackRouteView(
+            model: model,
+            packScreen: .root,
+            selectedGroupIndex: nil,
+            navigate: { _ in }
+        )
+        XCTAssertFalse(observesChange({ _ = route.body }) {
+            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+        })
+    }
+
+    @MainActor
+    func testUnavailableBmsRouteObservesRideTelemetryForItsEstimate() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let route = EucPackRouteView(
+            model: model,
+            packScreen: .root,
+            selectedGroupIndex: nil,
+            navigate: { _ in }
+        )
+
+        XCTAssertTrue(observesChange({ _ = route.body }) {
+            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+        })
+    }
+
+    @MainActor
+    func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let picker = DevicePickerRouteView(model: model, pair: { _ in }, navigate: { _ in })
+        let capture = CaptureRouteView(model: model, finishCapture: {})
+
+        XCTAssertFalse(observesChange({ _ = picker.body }) {
+            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
+        })
+        XCTAssertFalse(observesChange({ _ = capture.body }) {
+            driver.onDisplayStateChange?(RideDisplayState(notificationCount: 2))
+        })
+    }
 
     func testCaptureQuickLabelProvidesOneStatefulActionName() {
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
@@ -1057,6 +1117,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.isEuc ?? false)
         XCTAssertTrue(fixture?.reconnectsAfterFirstLive ?? false)
     }
+}
+
+@MainActor
+private func observesChange(_ render: () -> Void, _ change: () -> Void) -> Bool {
+    let invalidated = Mutex(false)
+    withObservationTracking(render) {
+        invalidated.withLock { $0 = true }
+    }
+    change()
+    return invalidated.withLock { $0 }
 }
 
 private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {

@@ -233,7 +233,7 @@ struct ContentView: View {
 
 }
 
-private struct DevicePickerRouteView: View {
+struct DevicePickerRouteView: View {
     let model: CutoutAppModel
     let pair: (DevicePickerRow) -> Void
     let navigate: (CutoutAppRoute) -> Void
@@ -275,7 +275,7 @@ private struct EucRideRouteView: View {
     }
 }
 
-private struct CaptureRouteView: View {
+struct CaptureRouteView: View {
     let model: CutoutAppModel
     let finishCapture: () -> Void
 
@@ -294,7 +294,7 @@ private struct CaptureRouteView: View {
     }
 }
 
-private struct EucPackRouteView: View {
+struct EucPackRouteView: View {
     let model: CutoutAppModel
     let packScreen: EucPackScreen
     let selectedGroupIndex: Int?
@@ -304,9 +304,10 @@ private struct EucPackRouteView: View {
 
     var body: some View {
         if let screen = bmsScreen {
+            let rideState = screen.bmsContentOrUnavailable.kind == .noData ? model.rideState : nil
             BmsScreenView(
                 screen: screen,
-                rideState: model.rideState,
+                rideState: rideState,
                 bmsSnapshot: model.bmsSnapshot,
                 selectedGroupIndex: selectedGroupIndex,
                 showGroupDetail: { groupIndex in
