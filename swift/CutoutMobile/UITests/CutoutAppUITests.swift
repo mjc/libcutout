@@ -902,7 +902,6 @@ final class CutoutAppUITests: XCTestCase {
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             excluding: [],
-            ignoringNilElementContrastWarning: true,
             ignoringClippedBmsGroupChildAuditWarnings: true
         )
     }
