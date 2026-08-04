@@ -64,6 +64,26 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
     }
 
+    func testProbeActionDoesNotFallThroughToRecordOnly() {
+        let advancedCapture = openAdvancedCapture()
+        let captureKind = app.textFields["device-picker.capture-kind"]
+        let probeButton = app.buttons["device-picker.probe.ui-test-probe"]
+
+        XCTAssertTrue(advancedCapture.exists)
+        XCTAssertTrue(captureKind.exists)
+        XCTAssertTrue(probeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(probeButton.isEnabled)
+        XCTAssertTrue(probeButton.isHittable)
+        XCTAssertTrue(probeButton.label.contains("Start probe"))
+        XCTAssertTrue(probeButton.label.contains("Unknown EUC"))
+
+        probeButton.tap()
+
+        XCTAssertFalse(advancedCapture.waitForExistence(timeout: 2))
+        XCTAssertNotNil(connectedScreen(timeout: 20))
+        disconnectIfConnected()
+    }
+
     func testSupportedPickerRowUsesOneWholeRowAction() {
         let useButton = app.buttons["device-picker.use.ui-test-vesc"]
 
@@ -1460,6 +1480,7 @@ final class CutoutAppUITests: XCTestCase {
     private enum Fixture {
         case unknownDevice
         case unknownDeviceFinishFailure
+        case probeDevice
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case euc
@@ -1480,6 +1501,7 @@ final class CutoutAppUITests: XCTestCase {
 
         static func testFixture(for testName: String) -> Self {
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
+            if testName.contains("ProbeAction") { return .probeDevice }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
             if testName.contains("BluetoothPermissionDenied") { return .bluetoothPermissionDenied }
@@ -1512,6 +1534,7 @@ final class CutoutAppUITests: XCTestCase {
             switch self {
             case .unknownDevice: "unknown-device"
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
+            case .probeDevice: "probe-device"
             case .bluetoothUnavailable: "bluetooth-unavailable"
             case .bluetoothPermissionDenied: "bluetooth-permission-denied"
             case .euc: "euc"

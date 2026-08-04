@@ -860,6 +860,7 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 enum CutoutUITestSessionFixture {
     case unknownDevice
     case unknownDeviceFinishFailure
+    case probeDevice
     case bluetoothUnavailable
     case bluetoothPermissionDenied
     case vesc
@@ -882,6 +883,7 @@ enum CutoutUITestSessionFixture {
         switch value {
         case "unknown-device": self = .unknownDevice
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
+        case "probe-device": self = .probeDevice
         case "bluetooth-unavailable": self = .bluetoothUnavailable
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
@@ -939,6 +941,16 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
+        case .probeDevice:
+            DevicePickerDiscoveryCandidate(
+                platformIdentifier: "ui-test-probe",
+                displayName: "Unknown EUC",
+                productCategory: "Electric unicycle",
+                evidence: "UI test fixture",
+                detail: "Deterministic identification probe device",
+                support: .probeRecommended(disabledReason: "Identity probe required"),
+                symbolName: "magnifyingglass"
+            )
         case .euc, .staleEuc, .reconnectingEuc, .connectingEuc, .eucOverview, .eucNoBms, .eucUnknownTopology:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-euc",
@@ -979,7 +991,8 @@ enum CutoutUITestSessionFixture {
     var emitsStaleTelemetry: Bool { self == .staleVesc || self == .staleEuc }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool {
-        self == .euc
+        self == .probeDevice
+            || self == .euc
             || self == .staleEuc
             || self == .reconnectingEuc
             || self == .connectingEuc

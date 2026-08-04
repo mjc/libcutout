@@ -556,7 +556,20 @@ public final class CutoutSessionCore: NSObject {
         model: ElectricUnicycleModel? = nil
     ) -> Bool {
         guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
-        guard case let .supported(route, candidateModel) = testScript.candidate.support else { return false }
+        let route: DevicePickerConnectionRoute
+        let candidateModel: ElectricUnicycleModel?
+        switch testScript.candidate.support {
+        case .supported(let supportedRoute, let supportedModel),
+             .provisionalRoute(let supportedRoute, let supportedModel):
+            guard let supportedRoute else { return false }
+            route = supportedRoute
+            candidateModel = supportedModel
+        case .probeRecommended where model != nil:
+            route = .electricUnicycle
+            candidateModel = nil
+        default:
+            return false
+        }
         let selectedModel = model ?? candidateModel
         if route == .electricUnicycle, selectedModel == nil {
             return false

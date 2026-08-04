@@ -240,7 +240,9 @@ private struct CaptureUnknownDeviceSheet: View {
                 ? ""
                 : localizedAppText("picker.capture_kind_required_hint")
         )
-        .accessibilityIdentifier("device-picker.record.\(row.id)")
+        .accessibilityIdentifier(
+            "device-picker.\(row.isProbeRecommended ? "probe" : "record").\(row.id)"
+        )
     }
 
     private var trimmedDeviceKind: String {
