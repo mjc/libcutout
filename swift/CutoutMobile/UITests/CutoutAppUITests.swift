@@ -84,19 +84,19 @@ final class CutoutAppUITests: XCTestCase {
         disconnectIfConnected()
     }
 
-    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailure() throws {
+    func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailureAtAccessibilityDynamicType() throws {
         try assertProbeFailure("Device identification timed out")
     }
 
-    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailure() throws {
+    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailureAtAccessibilityDynamicType() throws {
         try assertProbeFailure("Device returned an invalid identification response")
     }
 
-    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailure() throws {
+    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailureAtAccessibilityDynamicType() throws {
         try assertProbeFailure("Device identification found conflicting evidence")
     }
 
-    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailure() throws {
+    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailureAtAccessibilityDynamicType() throws {
         try assertProbeFailure("Device does not support this identification probe")
     }
 
