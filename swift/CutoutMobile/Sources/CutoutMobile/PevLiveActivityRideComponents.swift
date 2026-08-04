@@ -114,9 +114,6 @@ public struct PevLiveActivityHeader: View {
 }
 
 public struct PevLiveActivitySpeedGauge: View {
-    @ScaledMetric(relativeTo: .title2) private var speedScale: CGFloat = 1
-    @ScaledMetric(relativeTo: .caption) private var unitScale: CGFloat = 1
-
     let snapshot: LiveActivityRideSnapshot
     let diameter: CGFloat
 
@@ -146,11 +143,11 @@ public struct PevLiveActivitySpeedGauge: View {
                 .rotationEffect(.degrees(38))
             VStack(spacing: 0) {
                 Text(speed.displayValue)
-                    .font(.system(size: diameter * 0.35 * speedScale, weight: .bold, design: .rounded))
+                    .font(.system(size: diameter * 0.35, weight: .bold, design: .rounded))
                     .lineLimit(1)
                 if let unit = speed.unit {
                     Text(unit)
-                        .font(.system(size: diameter * 0.13 * unitScale, weight: .medium))
+                        .font(.system(size: diameter * 0.13, weight: .medium))
                         .foregroundStyle(PevLiveActivityPalette.secondaryText)
                 }
             }
