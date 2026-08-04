@@ -946,6 +946,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility()
     }
 
+    func testEucRideAndBmsPassAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucBmsAccessibility()
+    }
+
     func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
     }
@@ -1140,6 +1144,13 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescRidePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: "voltage"
+        )
+    }
+
+    func testVescRidePassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: "voltage"
@@ -1601,6 +1612,9 @@ final class CutoutAppUITests: XCTestCase {
         var arguments = fixture.launchArguments
         if name.contains("InLightAppearance") {
             arguments += ["-AppleInterfaceStyle", "Light"]
+        }
+        if name.contains("InDarkAppearance") {
+            arguments += ["-AppleInterfaceStyle", "Dark"]
         }
         if name.contains("IncreasedContrast") {
             arguments += ["-UIAccessibilityDarkerSystemColorsEnabled", "YES"]
