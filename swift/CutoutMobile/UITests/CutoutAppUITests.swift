@@ -85,26 +85,15 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testProbeTimeoutRemainsOnPickerAndExposesAccessibleFailure() throws {
-        _ = openAdvancedCapture()
-        let probeButton = app.buttons["device-picker.probe.ui-test-probe"]
-        let status = app.descendants(matching: .any)["device-picker.connection-status"]
+        try assertProbeFailure("Device identification timed out")
+    }
 
-        XCTAssertTrue(probeButton.waitForExistence(timeout: 5))
-        probeButton.tap()
+    func testProbeMalformedResponseRemainsOnPickerAndExposesAccessibleFailure() throws {
+        try assertProbeFailure("Device returned an invalid identification response")
+    }
 
-        XCTAssertEqual(
-            XCTWaiter.wait(
-                for: [XCTNSPredicateExpectation(
-                    predicate: NSPredicate(format: "label == %@", "Device identification timed out"),
-                    object: status
-                )],
-                timeout: 5
-            ),
-            .completed
-        )
-        XCTAssertTrue(app.descendants(matching: .any)["device-picker.screen"].exists)
-        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.eucRide"].exists)
-        try performVisibleLayoutAccessibilityAudit()
+    func testProbeConflictingEvidenceRemainsOnPickerAndExposesAccessibleFailure() throws {
+        try assertProbeFailure("Device identification found conflicting evidence")
     }
 
     func testSupportedPickerRowUsesOneWholeRowAction() {
@@ -1505,6 +1494,8 @@ final class CutoutAppUITests: XCTestCase {
         case unknownDeviceFinishFailure
         case probeDevice
         case probeTimeout
+        case probeMalformedResponse
+        case probeConflictingEvidence
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case euc
@@ -1526,6 +1517,8 @@ final class CutoutAppUITests: XCTestCase {
         static func testFixture(for testName: String) -> Self {
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
             if testName.contains("ProbeTimeout") { return .probeTimeout }
+            if testName.contains("ProbeMalformedResponse") { return .probeMalformedResponse }
+            if testName.contains("ProbeConflictingEvidence") { return .probeConflictingEvidence }
             if testName.contains("ProbeAction") { return .probeDevice }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
@@ -1561,6 +1554,8 @@ final class CutoutAppUITests: XCTestCase {
             case .unknownDeviceFinishFailure: "unknown-device-finish-failure"
             case .probeDevice: "probe-device"
             case .probeTimeout: "probe-timeout"
+            case .probeMalformedResponse: "probe-malformed"
+            case .probeConflictingEvidence: "probe-conflict"
             case .bluetoothUnavailable: "bluetooth-unavailable"
             case .bluetoothPermissionDenied: "bluetooth-permission-denied"
             case .euc: "euc"
@@ -1686,6 +1681,29 @@ final class CutoutAppUITests: XCTestCase {
         openAdvancedCapture.tap()
         XCTAssertTrue(advancedCapture.waitForExistence(timeout: 5))
         return advancedCapture
+    }
+
+    private func assertProbeFailure(_ expectedStatus: String) throws {
+        _ = openAdvancedCapture()
+        let probeButton = app.buttons["device-picker.probe.ui-test-probe"]
+        let status = app.descendants(matching: .any)["device-picker.connection-status"]
+
+        XCTAssertTrue(probeButton.waitForExistence(timeout: 5))
+        probeButton.tap()
+
+        XCTAssertEqual(
+            XCTWaiter.wait(
+                for: [XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", expectedStatus),
+                    object: status
+                )],
+                timeout: 5
+            ),
+            .completed
+        )
+        XCTAssertTrue(app.descendants(matching: .any)["device-picker.screen"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["dashboard.screen.eucRide"].exists)
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     private func assertMetricIsReachable(_ label: String, in screen: XCUIElement) {

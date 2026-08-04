@@ -862,6 +862,8 @@ enum CutoutUITestSessionFixture {
     case unknownDeviceFinishFailure
     case probeDevice
     case probeTimeout
+    case probeMalformedResponse
+    case probeConflictingEvidence
     case bluetoothUnavailable
     case bluetoothPermissionDenied
     case vesc
@@ -886,6 +888,8 @@ enum CutoutUITestSessionFixture {
         case "unknown-device-finish-failure": self = .unknownDeviceFinishFailure
         case "probe-device": self = .probeDevice
         case "probe-timeout": self = .probeTimeout
+        case "probe-malformed": self = .probeMalformedResponse
+        case "probe-conflict": self = .probeConflictingEvidence
         case "bluetooth-unavailable": self = .bluetoothUnavailable
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
@@ -943,7 +947,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .probeDevice, .probeTimeout:
+        case .probeDevice, .probeTimeout, .probeMalformedResponse, .probeConflictingEvidence:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-probe",
                 displayName: "Unknown EUC",
@@ -989,7 +993,12 @@ enum CutoutUITestSessionFixture {
     }
     var failsConnection: Bool { self == .failedVesc }
     var identificationProbeFailure: IdentificationProbeFailure? {
-        self == .probeTimeout ? .timedOut : nil
+        switch self {
+        case .probeTimeout: .timedOut
+        case .probeMalformedResponse: .malformedResponse
+        case .probeConflictingEvidence: .conflictingEvidence
+        default: nil
+        }
     }
     var reconnectsAfterFirstLive: Bool { self == .reconnectingVesc || self == .reconnectingEuc }
     var emitsPendingTelemetry: Bool { self == .pendingVesc }
@@ -998,6 +1007,8 @@ enum CutoutUITestSessionFixture {
     var isEuc: Bool {
         self == .probeDevice
             || self == .probeTimeout
+            || self == .probeMalformedResponse
+            || self == .probeConflictingEvidence
             || self == .euc
             || self == .staleEuc
             || self == .reconnectingEuc

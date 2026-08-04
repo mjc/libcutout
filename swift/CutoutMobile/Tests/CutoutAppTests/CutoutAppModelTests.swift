@@ -997,6 +997,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(fixture?.candidate.support, .probeRecommended(disabledReason: "Identity probe required"))
     }
 
+    func testProbeRefusalFixturesPublishTypedIdentificationFailures() {
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "probe-malformed")?.identificationProbeFailure,
+            .malformedResponse
+        )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "probe-conflict")?.identificationProbeFailure,
+            .conflictingEvidence
+        )
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucOverviewFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,
