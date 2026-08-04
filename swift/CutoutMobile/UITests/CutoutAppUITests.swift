@@ -795,6 +795,7 @@ final class CutoutAppUITests: XCTestCase {
             locationPrompt.buttons["Don’t Allow"].tap()
         }
         XCUIDevice.shared.press(.home)
+        attachScreenshot(of: springboard, named: "Compact Dynamic Island")
         springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
             .press(forDuration: 1)
         let islandSpeed = springboard.descendants(matching: .any)["Speed"]
@@ -803,6 +804,14 @@ final class CutoutAppUITests: XCTestCase {
         let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
         XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
         XCTAssertTrue((islandHeadroom.value as? String)?.contains("good") == true)
+        attachScreenshot(of: springboard, named: "Expanded Dynamic Island")
+    }
+
+    private func attachScreenshot(of application: XCUIApplication, named name: String) {
+        let attachment = XCTAttachment(screenshot: application.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() throws {
