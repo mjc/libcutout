@@ -1579,7 +1579,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func skipLiveActivityTestsOnSimulator() throws {
-        guard name.contains("LiveActivity"),
+        guard name.contains("LiveActivityFixture"),
               ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil
         else { return }
         throw XCTSkip("Live Activity inspection is reserved for a physical-device ActivityKit run")
