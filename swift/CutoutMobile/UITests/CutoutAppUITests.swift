@@ -776,6 +776,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertFailedVescConnectionAccessibility()
     }
 
+    func testFailedVescConnectionPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertFailedVescConnectionAccessibility()
+    }
+
+    func testFailedVescConnectionPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertFailedVescConnectionAccessibility()
+    }
+
     func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertFailedVescConnectionAccessibility(
             usesLocalizedText: true

@@ -21,50 +21,56 @@ struct DevicePickerView: View {
     }
 
     var body: some View {
-        PevDashboardScaffold(
-            sectionTitle: localizedAppText("picker.section.setup"),
-            bottomPadding: 24,
-            allowsVerticalScroll: true,
-            contentSpacing: 10,
-            horizontalPadding: 24
-        ) {
-            PevScreenTitleBlock(
-                title: localizedAppText("picker.title"),
-                subtitle: localizedAppText("picker.subtitle.nearby_devices")
-            )
-
-            PevDashboardScanningPill(
-                title: connectionPresentation.title,
-                isScanning: connectionPresentation.showsActivity,
-                symbolName: connectionPresentation.symbolName
-            )
-                .padding(.top, 4)
-                .accessibilityIdentifier("device-picker.connection-status")
-
-            if hasSavedDevice {
-                Button("picker.saved_device.forget", role: .destructive, action: forgetSavedDevice)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("device-picker.forget-saved-device")
-            }
-
-            if let captureStatusText {
-                PevStatusStrip(
-                    text: captureStatusText,
-                    accessibilityIdentifier: "device-picker.capture-status"
-                )
-            }
-
-            VStack(alignment: .leading, spacing: 18) {
-                deviceSection(
-                    title: localizedAppText("picker.section.supported_now"),
-                    rows: sections.supported
+        ScrollViewReader { proxy in
+            PevDashboardScaffold(
+                sectionTitle: localizedAppText("picker.section.setup"),
+                bottomPadding: 24,
+                allowsVerticalScroll: true,
+                contentSpacing: 10,
+                horizontalPadding: 24
+            ) {
+                PevScreenTitleBlock(
+                    title: localizedAppText("picker.title"),
+                    subtitle: localizedAppText("picker.subtitle.nearby_devices")
                 )
 
-                Button("picker.advanced_capture") { isAdvancedCapturePresented = true }
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityIdentifier("device-picker.open-advanced-capture")
+                PevDashboardScanningPill(
+                    title: connectionPresentation.title,
+                    isScanning: connectionPresentation.showsActivity,
+                    symbolName: connectionPresentation.symbolName
+                )
+                    .padding(.top, 4)
+                    .id("device-picker.connection-status")
+                    .accessibilityIdentifier("device-picker.connection-status")
+
+                if hasSavedDevice {
+                    Button("picker.saved_device.forget", role: .destructive, action: forgetSavedDevice)
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("device-picker.forget-saved-device")
+                }
+
+                if let captureStatusText {
+                    PevStatusStrip(
+                        text: captureStatusText,
+                        accessibilityIdentifier: "device-picker.capture-status"
+                    )
+                }
+
+                VStack(alignment: .leading, spacing: 18) {
+                    deviceSection(
+                        title: localizedAppText("picker.section.supported_now"),
+                        rows: sections.supported
+                    )
+
+                    Button("picker.advanced_capture") { isAdvancedCapturePresented = true }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .accessibilityIdentifier("device-picker.open-advanced-capture")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .onChange(of: connectionPhase) {
+                proxy.scrollTo("device-picker.connection-status", anchor: .top)
+            }
         }
         .foregroundStyle(PevColors.primaryText)
         .accessibilityElement(children: .contain)
