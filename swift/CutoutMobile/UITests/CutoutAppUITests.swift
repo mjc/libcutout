@@ -430,7 +430,9 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(speed.exists)
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: [.textClipped],
+            // This default-size route owns semantics and clipping. The
+            // Accessibility-XXXL VESC route owns rendered Dynamic Type.
+            excluding: .dynamicType,
             ignoringNilElementTextRepresentationWarning: true,
             ignoringNilElementContrastWarning: true
         )

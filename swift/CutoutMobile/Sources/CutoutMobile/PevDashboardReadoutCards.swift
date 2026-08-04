@@ -141,9 +141,12 @@ public struct PevDashboardMetricTile: View {
                 stroke: PevDashboardColors.cardStroke
             )
         )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue(accessibilityValueText)
+        .accessibilityRepresentation {
+            Text(label)
+                .font(.body)
+                .accessibilityLabel(label)
+                .accessibilityValue(accessibilityValueText)
+        }
     }
 }
 
