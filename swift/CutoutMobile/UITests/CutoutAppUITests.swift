@@ -1111,6 +1111,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["euc.warning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertTrue(warning.isHittable, "The EUC stale warning must be visible without scrolling")
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry stale")
             XCTAssertFalse(warning.label.isEmpty)
@@ -1122,6 +1123,7 @@ final class CutoutAppUITests: XCTestCase {
 
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.isHittable, "The EUC stale operating status must be visible without scrolling")
         if usesLocalizedText {
             XCTAssertFalse(status.label.isEmpty)
             XCTAssertFalse((status.value as? String ?? "").isEmpty)

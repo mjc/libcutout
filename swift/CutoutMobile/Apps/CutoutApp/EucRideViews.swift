@@ -78,16 +78,6 @@ struct EucRideScreenView: View {
             speedReadout: speedReadout,
             speedCaption: localizedAppText("euc.speed.caption"),
         ) {
-            VStack(spacing: 10) {
-                ForEach(safetyBars) { bar in
-                    PevDashboardProgressBar(
-                        label: bar.label,
-                        metricValue: bar.metricValue,
-                        progress: bar.progress
-                    )
-                }
-            }
-
             if let warningCard {
                 PevDashboardWarningCard(
                     title: warningCard.title,
@@ -99,6 +89,16 @@ struct EucRideScreenView: View {
                 )
                     .accessibilityIdentifier("euc.warning")
                     .padding(.top, 14)
+            }
+
+            VStack(spacing: 10) {
+                ForEach(safetyBars) { bar in
+                    PevDashboardProgressBar(
+                        label: bar.label,
+                        metricValue: bar.metricValue,
+                        progress: bar.progress
+                    )
+                }
             }
 
             PevDashboardGrid(columnSpacing: 12, spacing: 12) {
