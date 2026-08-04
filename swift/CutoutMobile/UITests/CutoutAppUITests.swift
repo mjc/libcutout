@@ -874,6 +874,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc)
     }
 
+    func testEucEssentialRideControlsRemainVisibleWithoutScrollingInLandscapeAtExtraExtraExtraLargeType() throws {
+        try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc)
+    }
+
     private func assertEssentialRideControlsRemainVisibleWithoutScrolling(
         for family: ConnectedDeviceFamily
     ) throws {
