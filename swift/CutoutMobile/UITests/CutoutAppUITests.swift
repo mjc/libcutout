@@ -1482,14 +1482,14 @@ final class CutoutAppUITests: XCTestCase {
 
     func testEucBmsDetailPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
-            ignoringVisibleBmsGroupChildContrastWarning: true,
+            ignoringClippedBmsDetailBoundaryWarnings: true,
             auditTopTitle: "Cell detail"
         )
     }
 
     func testEucBmsDetailPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
-            ignoringVisibleBmsGroupChildContrastWarning: true,
+            ignoringClippedBmsDetailBoundaryWarnings: true,
             auditTopTitle: "Cell detail"
         )
     }
@@ -1641,7 +1641,7 @@ final class CutoutAppUITests: XCTestCase {
     func testEucBmsDetailPassesAccessibilityAuditWithIncreasedContrastAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             excluding: [],
-            ignoringVisibleBmsGroupChildContrastWarning: true
+            ignoringClippedBmsDetailBoundaryWarnings: true
         )
     }
 
@@ -2580,8 +2580,7 @@ final class CutoutAppUITests: XCTestCase {
         ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
         ignoringVisualProgressLabelContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
-        ignoringClippedBmsDetailBoundaryWarnings: Bool = false,
-        ignoringVisibleBmsGroupChildContrastWarning: Bool = false
+        ignoringClippedBmsDetailBoundaryWarnings: Bool = false
     ) throws {
         continueAfterFailure = true
         defer { continueAfterFailure = false }
@@ -2649,30 +2648,27 @@ final class CutoutAppUITests: XCTestCase {
                     NSPredicate(format: "identifier BEGINSWITH %@", "bms.group.")
                 ).allElementsBoundByIndex
                 let selectedGroupChip = self.app.staticTexts["bms.chip.selectedGroup"]
+                let tabBar = self.app.tabBars.firstMatch
+                let unobscuredFrame = CGRect(
+                    x: detail.frame.minX,
+                    y: detail.frame.minY,
+                    width: detail.frame.width,
+                    height: max(
+                        0,
+                        min(detail.frame.maxY, tabBar.exists ? tabBar.frame.minY : detail.frame.maxY)
+                            - detail.frame.minY
+                    )
+                )
                 let isClippedSelectedGroupChip = selectedGroupChip.exists
-                    && !detail.frame.contains(selectedGroupChip.frame)
+                    && !unobscuredFrame.contains(selectedGroupChip.frame)
                     && selectedGroupChip.frame.contains(element.frame)
                 let isClippedGroupButton = groups.contains {
-                    !detail.frame.contains($0.frame) && $0.frame.contains(element.frame)
+                    !unobscuredFrame.contains($0.frame) && $0.frame.contains(element.frame)
                 }
                 if detail.exists, isClippedSelectedGroupChip || isClippedGroupButton {
-                    // The row scales with Dynamic Type, but this landscape
-                    // viewport intersects an identified chip or group Button
-                    // while its localized visual child remains in the audit
-                    // region. Fully contained and unrelated findings stay fatal.
-                    return true
-                }
-            }
-            if ignoringVisibleBmsGroupChildContrastWarning,
-               issue.auditType == .contrast,
-               let label = issue.element?.label,
-               ["7", "12"].contains(label) {
-                let detail = self.app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-                let group = self.app.buttons["bms.group.\(label)"]
-                if detail.exists, group.exists, detail.frame.contains(group.frame) {
-                    // Xcode 27 reports the visual numeral even though the
-                    // captured native Button is black on an opaque system card.
-                    // Other visible contrast findings remain fatal.
+                    // The viewport intersects an identified chip or group
+                    // Button outside the region unobscured by the native tab
+                    // bar. Fully visible and unrelated findings stay fatal.
                     return true
                 }
             }
@@ -2869,7 +2865,6 @@ final class CutoutAppUITests: XCTestCase {
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
         ignoringClippedBmsDetailBoundaryWarnings: Bool = false,
-        ignoringVisibleBmsGroupChildContrastWarning: Bool = false,
         auditTopTitle: String? = nil
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
@@ -2890,8 +2885,7 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
             ignoringVisibleBmsDetailBackControlContrastWarning: ignoringVisibleBmsDetailBackControlContrastWarning,
-            ignoringClippedBmsDetailBoundaryWarnings: ignoringClippedBmsDetailBoundaryWarnings,
-            ignoringVisibleBmsGroupChildContrastWarning: ignoringVisibleBmsGroupChildContrastWarning
+            ignoringClippedBmsDetailBoundaryWarnings: ignoringClippedBmsDetailBoundaryWarnings
         )
     }
 
