@@ -368,6 +368,37 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(scanCount, 1)
     }
 
+    func testTransportTerminationExhaustionCannotRunAnOlderReconnect() {
+        let scheduler = RecordingReconnectScheduler()
+        var reconnectCount = 0
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(1_000) },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 60_000
+            ),
+            reconnectScheduler: scheduler,
+            reconnectJitter: { 0 }
+        )
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        for _ in 0...ConnectionReconnectPolicy.maximumAttempts {
+            core.handleTransportTermination(
+                platformIdentifier: scriptedVescCandidate.platformIdentifier,
+                error: nil,
+                reconnect: { reconnectCount += 1 }
+            )
+        }
+
+        scheduler.runAll()
+
+        XCTAssertEqual(core.phase, .failed(.connectFailed("unknown error")))
+        XCTAssertEqual(core.scanState.rows, [scriptedVescCandidate.pickerRow])
+        XCTAssertEqual(reconnectCount, 0)
+    }
+
     func testRecordOnlyMissingCandidateReturnsFalse() {
         let core = CutoutSessionCore()
 
