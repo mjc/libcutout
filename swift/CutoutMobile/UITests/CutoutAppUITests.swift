@@ -817,7 +817,15 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescLiveActivityAutoFixture()
     }
 
+    func testVescUnavailableLiveActivityAutoFixturePreservesUnavailableSemanticsInLandscape() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
     func testVescStaleLiveActivityAutoFixturePreservesStaleSemantics() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
+    func testVescStaleLiveActivityAutoFixturePreservesStaleSemanticsInLandscape() throws {
         try assertVescLiveActivityAutoFixture()
     }
 
