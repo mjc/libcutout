@@ -941,6 +941,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(fixture?.isEuc ?? false)
     }
 
+    func testLaunchEnvironmentFixtureSurvivesMissingProcessArgument() {
+        let fixture = CutoutUITestSessionFixture.resolve(
+            environmentValue: "euc",
+            persistedValue: nil,
+            arguments: []
+        )
+
+        XCTAssertTrue(fixture?.isEuc ?? false)
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,

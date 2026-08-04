@@ -586,6 +586,7 @@ final class CutoutAppModel {
     private static var uiTestFixture: CutoutUITestSessionFixture? {
         #if DEBUG
         CutoutUITestSessionFixture.resolve(
+            environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
             persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
             arguments: ProcessInfo.processInfo.arguments
         )
@@ -883,10 +884,12 @@ enum CutoutUITestSessionFixture {
     }
 
     static func resolve(
+        environmentValue: String? = nil,
         persistedValue: String?,
         arguments: [String]
     ) -> Self? {
-        Self(arguments: arguments)
+        Self(value: environmentValue)
+            ?? Self(arguments: arguments)
             ?? Self(value: persistedValue)
     }
 

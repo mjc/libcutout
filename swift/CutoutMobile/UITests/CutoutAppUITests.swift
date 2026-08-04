@@ -11,6 +11,8 @@ final class CutoutAppUITests: XCTestCase {
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
         app.launchArguments = launchArguments
+        app.launchEnvironment = fixture.launchEnvironment
+        app.terminate()
         app.launch()
     }
 
@@ -1483,6 +1485,10 @@ final class CutoutAppUITests: XCTestCase {
 
         var launchArguments: [String] {
             ["-CUTOUT_UI_TEST_FIXTURE", value]
+        }
+
+        var launchEnvironment: [String: String] {
+            ["CUTOUT_UI_TEST_FIXTURE": value]
         }
 
         private var value: String {
