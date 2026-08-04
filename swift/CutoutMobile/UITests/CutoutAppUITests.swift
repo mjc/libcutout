@@ -879,7 +879,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
-            ignoringNilElementContrastWarning: true
+            scrollsBeforeAudit: 1
         )
     }
 
@@ -887,7 +887,7 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility(
             excluding: [],
             assertsEnglishMetric: false,
-            ignoringNilElementContrastWarning: true
+            scrollsBeforeAudit: 1
         )
     }
 
@@ -2005,7 +2005,8 @@ final class CutoutAppUITests: XCTestCase {
     private func assertEucBmsAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
         assertsEnglishMetric: Bool = true,
-        ignoringNilElementContrastWarning: Bool = false
+        ignoringNilElementContrastWarning: Bool = false,
+        scrollsBeforeAudit: Int = 0
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
         defer { disconnectIfConnected() }
@@ -2018,6 +2019,9 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.pack"].isSelected)
         restoreDashboardViewport(bmsScreen)
+        for _ in 0..<scrollsBeforeAudit {
+            bmsScreen.swipeUp()
+        }
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
