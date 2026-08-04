@@ -869,7 +869,31 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescCriticalLiveActivityLockScreenPreservesSafetySemanticsInLightAppearanceAtAccessibilityDynamicType() {
+        assertVescLiveActivityLockScreen(
+            speed: "17.9",
+            headroom: "reduce acceleration",
+            stateName: "Critical"
+        )
+    }
+
+    func testVescCriticalLiveActivityLockScreenPreservesSafetySemanticsInDarkAppearanceAtAccessibilityDynamicType() {
+        assertVescLiveActivityLockScreen(
+            speed: "17.9",
+            headroom: "reduce acceleration",
+            stateName: "Critical"
+        )
+    }
+
     func testVescLiveActivityLockScreenPreservesNominalSemantics() {
+        assertVescLiveActivityLockScreen(speed: "17.9", headroom: "good", stateName: "Nominal")
+    }
+
+    func testVescLiveActivityLockScreenPreservesNominalSemanticsInLightAppearanceAtAccessibilityDynamicType() {
+        assertVescLiveActivityLockScreen(speed: "17.9", headroom: "good", stateName: "Nominal")
+    }
+
+    func testVescLiveActivityLockScreenPreservesNominalSemanticsInDarkAppearanceAtAccessibilityDynamicType() {
         assertVescLiveActivityLockScreen(speed: "17.9", headroom: "good", stateName: "Nominal")
     }
 
@@ -881,7 +905,31 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescUnavailableLiveActivityLockScreenPreservesUnavailableSemanticsInLightAppearanceAtAccessibilityDynamicType() {
+        assertVescLiveActivityLockScreen(
+            speed: "unavailable",
+            headroom: "unavailable",
+            stateName: "Unavailable"
+        )
+    }
+
+    func testVescUnavailableLiveActivityLockScreenPreservesUnavailableSemanticsInDarkAppearanceAtAccessibilityDynamicType() {
+        assertVescLiveActivityLockScreen(
+            speed: "unavailable",
+            headroom: "unavailable",
+            stateName: "Unavailable"
+        )
+    }
+
     func testVescStaleLiveActivityLockScreenPreservesStaleSemantics() {
+        assertVescLiveActivityLockScreen(speed: "stale", headroom: "good", stateName: "Stale")
+    }
+
+    func testVescStaleLiveActivityLockScreenPreservesStaleSemanticsInLightAppearanceAtAccessibilityDynamicType() {
+        assertVescLiveActivityLockScreen(speed: "stale", headroom: "good", stateName: "Stale")
+    }
+
+    func testVescStaleLiveActivityLockScreenPreservesStaleSemanticsInDarkAppearanceAtAccessibilityDynamicType() {
         assertVescLiveActivityLockScreen(speed: "stale", headroom: "good", stateName: "Stale")
     }
 
