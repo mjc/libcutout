@@ -1752,6 +1752,33 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
     }
 
+    func testIdentificationProbeTransportSubscribesBeforeOrderedWrites() {
+        let sink = RecordingOperationSink()
+        let transport = IdentificationProbeTransportCoordinator(
+            detectionSession: DeviceDetectionSession()
+        )
+
+        transport.subscribe(using: sink)
+        XCTAssertEqual(sink.events, [.subscribe])
+
+        let outcome = transport.notificationsEnabled(
+            at: MonotonicMilliseconds(42),
+            using: sink
+        )
+
+        XCTAssertEqual(sink.events, [.subscribe, .write, .write, .write])
+        XCTAssertEqual(sink.writes, [Data("N".utf8), Data("V".utf8), Data("M".utf8)])
+        guard case .writes = outcome else {
+            return XCTFail("expected ordered probe writes")
+        }
+
+        let resolution = transport.observeNotification(
+            channel: .bluetooth16(0xffe1),
+            bytes: Data("NAME=Falcon".utf8)
+        )
+        XCTAssertEqual(resolution.modelBanner, Data("Falcon".utf8))
+    }
+
     func testUnrelatedWriteReachesNormalTransportValidation() {
         let core = CutoutSessionCore()
 

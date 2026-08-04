@@ -100,6 +100,33 @@ struct BegodeProbeResponsePolicy {
     static let timeoutAfter = MonotonicMilliseconds(2_000)
 }
 
+struct IdentificationProbeTransportCoordinator {
+    let detectionSession: DeviceDetectionSession
+
+    func subscribe(using sink: any CoreBluetoothOperationSink) {
+        sink.subscribe(channel: .bluetooth16(0xffe1))
+    }
+
+    @discardableResult
+    func notificationsEnabled(
+        at now: MonotonicMilliseconds,
+        using sink: any CoreBluetoothOperationSink
+    ) -> IdentificationProbeOutcome {
+        let outcome = detectionSession.beginIdentificationProbe(at: now)
+        if case .writes(let writes) = outcome {
+            writes.forEach { sink.writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
+        }
+        return outcome
+    }
+
+    func observeNotification(channel: BluetoothUuid, bytes: Data) -> DeviceDetectionResolution {
+        guard channel.bluetooth16Value == 0xffe1 else {
+            return detectionSession.resolution
+        }
+        return detectionSession.observeNotification(bytes: bytes)
+    }
+}
+
 struct ConnectionReconnectSchedule: Equatable {
     let attempt: Int
     let delayMilliseconds: UInt64
@@ -302,6 +329,7 @@ public final class CutoutSessionCore: NSObject {
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
     private let deviceDetectionSession: DeviceDetectionSession
+    private let identificationProbeTransport: IdentificationProbeTransportCoordinator
     private var begodeProbeExpiryWorkItem: DispatchWorkItem?
     private var pendingDisplayState: RideDisplayState?
     private var pendingDisplayStateQueuedAt: MonotonicMilliseconds?
@@ -340,7 +368,11 @@ public final class CutoutSessionCore: NSObject {
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
-        self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
+        let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
+        self.deviceDetectionSession = deviceDetectionSession
+        self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
+            detectionSession: deviceDetectionSession
+        )
         self.clock = clock
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
@@ -352,7 +384,11 @@ public final class CutoutSessionCore: NSObject {
     init(clock: MonotonicClock) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
-        self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
+        let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
+        self.deviceDetectionSession = deviceDetectionSession
+        self.identificationProbeTransport = IdentificationProbeTransportCoordinator(
+            detectionSession: deviceDetectionSession
+        )
         self.clock = clock
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
@@ -1770,7 +1806,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         if isProbeOnly {
             if pendingServiceDiscoveries.isEmpty {
                 setPhase(.subscribing)
-                subscribe(channel: .bluetooth16(0xffe1))
+                identificationProbeTransport.subscribe(using: self)
             }
             return
         }
@@ -1873,7 +1909,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             return
         }
         if isProbeOnly, channel.bluetooth16Value == 0xffe1, characteristic.isNotifying {
-            switch deviceDetectionSession.beginIdentificationProbe(at: clock.now()) {
+            switch identificationProbeTransport.notificationsEnabled(at: clock.now(), using: self) {
             case .noProbeNeeded:
                 if !promoteProbeIfResolved(
                     deviceDetectionSession.resolution,
@@ -1883,8 +1919,8 @@ extension CutoutSessionCore: CBPeripheralDelegate {
                 }
             case .unsupported:
                 refuseProbe(.unsupported, on: characteristic.service?.peripheral)
-            case .writes(let writes):
-                writes.forEach { writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
+            case .writes:
+                break
             case .alreadyPending:
                 break
             }
@@ -1998,11 +2034,11 @@ extension CutoutSessionCore {
 
     @discardableResult
     func observeDetectionNotification(channel: BluetoothUuid, bytes: Data) -> DeviceDetectionResolution {
-        guard channel.bluetooth16Value == 0xffe1 else {
-            return deviceDetectionSession.resolution
-        }
         let previous = deviceDetectionSession.resolution
-        let current = deviceDetectionSession.observeNotification(bytes: bytes)
+        let current = identificationProbeTransport.observeNotification(channel: channel, bytes: bytes)
+        guard channel.bluetooth16Value == 0xffe1 else {
+            return current
+        }
         scheduleBegodeProbeExpiry()
         if current.modelBanner != nil, current.modelBanner != previous.modelBanner {
             annotateDetection("begode_probe_response=model")
