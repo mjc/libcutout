@@ -28,6 +28,60 @@ final class DeviceDetectionSessionTests: XCTestCase {
         XCTAssertEqual(resolution.modelBanner, Data("Falcon".utf8))
     }
 
+    func testProbeDispositionPromotesOnlyRustResolvedModels() {
+        let begode = DeviceDetectionSession()
+        _ = begode.observeBegodeNameProbe()
+        let falcon = begode.observeNotification(bytes: Data("NAME=Falcon".utf8))
+
+        let veteran = DeviceDetectionSession()
+        let aero = veteran.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
+
+        XCTAssertEqual(
+            falcon.probeDisposition(platformIdentifier: "begode", displayName: "Unknown EUC"),
+            .promote(.falcon)
+        )
+        XCTAssertEqual(
+            aero.probeDisposition(platformIdentifier: "veteran", displayName: "Unknown EUC"),
+            .promote(.aero)
+        )
+        XCTAssertEqual(
+            DeviceDetectionSession().resolution.probeDisposition(
+                platformIdentifier: "unknown",
+                displayName: "Unknown EUC"
+            ),
+            .pending
+        )
+    }
+
+    func testProbeDispositionRefusesMissingMalformedAndConflictingEvidence() {
+        let missingSession = DeviceDetectionSession()
+        _ = missingSession.observeBegodeNameProbe()
+        let missing = missingSession.observeBegodeNameProbeTimeout()
+
+        let malformedSession = DeviceDetectionSession()
+        _ = malformedSession.observeBegodeNameProbe()
+        let malformed = malformedSession.observeNotification(bytes: Data("NAME=Falcon\0".utf8))
+
+        let conflictingSession = DeviceDetectionSession()
+        _ = conflictingSession.observeNotification(bytes: syntheticVeteranFrameWithModelId43())
+        let conflict = conflictingSession.observeNotification(
+            bytes: Data([0x55, 0xaa, 0x17, 0x75, 0x05, 0x38, 0x00, 0x76, 0x02, 0xee, 0xfb, 0x64, 0xf4, 0x94, 0x14, 0x81, 0x00, 0x09, 0x00, 0x18, 0x5a, 0x5a, 0x5a, 0x5a])
+        )
+
+        XCTAssertEqual(
+            missing.probeDisposition(platformIdentifier: "missing", displayName: "Unknown EUC"),
+            .refuse(.timedOut)
+        )
+        XCTAssertEqual(
+            malformed.probeDisposition(platformIdentifier: "malformed", displayName: "Unknown EUC"),
+            .refuse(.malformedResponse)
+        )
+        XCTAssertEqual(
+            conflict.probeDisposition(platformIdentifier: "conflict", displayName: "Unknown EUC"),
+            .refuse(.conflictingEvidence)
+        )
+    }
+
     func testBegodeFirmwareProbeRetainsFirmwareBannerBytes() {
         let session = DeviceDetectionSession()
 

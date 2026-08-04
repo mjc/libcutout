@@ -120,6 +120,18 @@ public struct DeviceDetectionResolution: Equatable, Hashable, Sendable {
     }
 }
 
+public enum IdentificationProbeFailure: Equatable, Hashable, Sendable {
+    case timedOut
+    case malformedResponse
+    case conflictingEvidence
+}
+
+public enum IdentificationProbeResolutionDisposition: Equatable, Hashable, Sendable {
+    case pending
+    case promote(ElectricUnicycleModel)
+    case refuse(IdentificationProbeFailure)
+}
+
 public extension DeviceDetectionResolution {
     func discoveryCandidate(
         platformIdentifier: String,
@@ -140,6 +152,27 @@ public extension DeviceDetectionResolution {
                 malformedProbeResponse: malformedProbeResponse.map(\.dto)
             )
         )
+    }
+
+    func probeDisposition(
+        platformIdentifier: String,
+        displayName: String
+    ) -> IdentificationProbeResolutionDisposition {
+        if protocolConflict {
+            return .refuse(.conflictingEvidence)
+        }
+        if malformedProbeResponse != nil {
+            return .refuse(.malformedResponse)
+        }
+        if missingProbeResponse != nil {
+            return .refuse(.timedOut)
+        }
+        let support = DevicePickerCandidateSupport(discoveryCandidate(
+            platformIdentifier: platformIdentifier,
+            displayName: displayName
+        ))
+        return support.electricUnicycleModel.map(IdentificationProbeResolutionDisposition.promote)
+            ?? .pending
     }
 }
 
