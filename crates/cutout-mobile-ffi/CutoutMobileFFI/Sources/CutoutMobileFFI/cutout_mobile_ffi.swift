@@ -823,6 +823,11 @@ public func FfiConverterTypeAeroReadOnlySession_lower(_ value: AeroReadOnlySessi
 public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
 
     /**
+     * Begins the complete ordered non-mutating identification query sequence.
+     */
+    func beginIdentificationProbeAt(startedAtMs: UInt64)  -> MobileIdentificationProbeOutcomeDto
+
+    /**
      * Returns the current discovery snapshot.
      */
     func discoverySnapshot()  -> DiscoverySnapshot
@@ -988,6 +993,18 @@ public convenience init() {
 
 
 
+
+    /**
+     * Begins the complete ordered non-mutating identification query sequence.
+     */
+open func beginIdentificationProbeAt(startedAtMs: UInt64) -> MobileIdentificationProbeOutcomeDto  {
+    return try!  FfiConverterTypeMobileIdentificationProbeOutcomeDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_begin_identification_probe_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(startedAtMs),$0
+    )
+})
+}
 
     /**
      * Returns the current discovery snapshot.
@@ -5865,6 +5882,85 @@ public func FfiConverterTypeMobileGattFingerprintDto_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileGattFingerprintDto_lower(_ value: MobileGattFingerprintDto) -> RustBuffer {
     return FfiConverterTypeMobileGattFingerprintDto.lower(value)
+}
+
+
+/**
+ * One Rust-authorized, bounded identification query write.
+ */
+public struct MobileIdentificationProbeWriteDto: Equatable, Hashable {
+    /**
+     * Characteristic UUID bytes.
+     */
+    public var characteristic: Data
+    /**
+     * Protocol-owned bounded payload bytes.
+     */
+    public var payload: Data
+    /**
+     * Required GATT write mode.
+     */
+    public var mode: MobileIdentificationProbeWriteModeDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Characteristic UUID bytes.
+         */characteristic: Data,
+        /**
+         * Protocol-owned bounded payload bytes.
+         */payload: Data,
+        /**
+         * Required GATT write mode.
+         */mode: MobileIdentificationProbeWriteModeDto) {
+        self.characteristic = characteristic
+        self.payload = payload
+        self.mode = mode
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileIdentificationProbeWriteDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileIdentificationProbeWriteDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentificationProbeWriteDto {
+        return
+            try MobileIdentificationProbeWriteDto(
+                characteristic: FfiConverterData.read(from: &buf),
+                payload: FfiConverterData.read(from: &buf),
+                mode: FfiConverterTypeMobileIdentificationProbeWriteModeDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileIdentificationProbeWriteDto, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.characteristic, into: &buf)
+        FfiConverterData.write(value.payload, into: &buf)
+        FfiConverterTypeMobileIdentificationProbeWriteModeDto.write(value.mode, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentificationProbeWriteDto_lift(_ buf: RustBuffer) throws -> MobileIdentificationProbeWriteDto {
+    return try FfiConverterTypeMobileIdentificationProbeWriteDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentificationProbeWriteDto_lower(_ value: MobileIdentificationProbeWriteDto) -> RustBuffer {
+    return FfiConverterTypeMobileIdentificationProbeWriteDto.lower(value)
 }
 
 
@@ -11976,6 +12072,154 @@ public func FfiConverterTypeMobileGattRoleDto_lower(_ value: MobileGattRoleDto) 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Result of requesting a non-mutating identification probe.
+ */
+
+public enum MobileIdentificationProbeOutcomeDto: Equatable, Hashable {
+
+    /**
+     * Ordered authorized writes that the transport must execute.
+     */
+    case writes(
+        /**
+         * Bounded query writes.
+         */writes: [MobileIdentificationProbeWriteDto]
+    )
+    /**
+     * An earlier identification query is still awaiting a response.
+     */
+    case alreadyPending
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileIdentificationProbeOutcomeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileIdentificationProbeOutcomeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileIdentificationProbeOutcomeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentificationProbeOutcomeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .writes(writes: try FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.read(from: &buf)
+        )
+
+        case 2: return .alreadyPending
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileIdentificationProbeOutcomeDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .writes(writes):
+            writeInt(&buf, Int32(1))
+            FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.write(writes, into: &buf)
+
+
+        case .alreadyPending:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentificationProbeOutcomeDto_lift(_ buf: RustBuffer) throws -> MobileIdentificationProbeOutcomeDto {
+    return try FfiConverterTypeMobileIdentificationProbeOutcomeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentificationProbeOutcomeDto_lower(_ value: MobileIdentificationProbeOutcomeDto) -> RustBuffer {
+    return FfiConverterTypeMobileIdentificationProbeOutcomeDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * GATT write mode for an authorized identification query.
+ */
+
+public enum MobileIdentificationProbeWriteModeDto: Equatable, Hashable {
+
+    /**
+     * Write without waiting for a GATT response acknowledgement.
+     */
+    case withoutResponse
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileIdentificationProbeWriteModeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileIdentificationProbeWriteModeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileIdentificationProbeWriteModeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentificationProbeWriteModeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .withoutResponse
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileIdentificationProbeWriteModeDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .withoutResponse:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentificationProbeWriteModeDto_lift(_ buf: RustBuffer) throws -> MobileIdentificationProbeWriteModeDto {
+    return try FfiConverterTypeMobileIdentificationProbeWriteModeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileIdentificationProbeWriteModeDto_lower(_ value: MobileIdentificationProbeWriteModeDto) -> RustBuffer {
+    return FfiConverterTypeMobileIdentificationProbeWriteModeDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Mobile ignored notification reason.
  */
 
@@ -15675,6 +15919,31 @@ fileprivate struct FfiConverterSequenceTypeMobileGattFingerprintDto: FfiConverte
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileIdentificationProbeWriteDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileIdentificationProbeWriteDto]
+
+    public static func write(_ value: [MobileIdentificationProbeWriteDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileIdentificationProbeWriteDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileIdentificationProbeWriteDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileIdentificationProbeWriteDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileIdentificationProbeWriteDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileRawFieldValueDto: FfiConverterRustBuffer {
     typealias SwiftType = [MobileRawFieldValueDto]
 
@@ -16002,6 +16271,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_aeroreadonlysession_ingest_checked() != 60308) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_begin_identification_probe_at() != 56624) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_discovery_snapshot() != 452) {
