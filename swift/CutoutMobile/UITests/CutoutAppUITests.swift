@@ -920,10 +920,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucNoBmsSurfacePassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertEucNoBmsSurface(
-            auditExclusions: [],
-            ignoringNilElementContrastWarning: true
-        )
+        try assertEucNoBmsSurface(auditExclusions: [])
     }
 
     func testEucUnknownTopologyPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
