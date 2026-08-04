@@ -1250,6 +1250,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
     }
 
+    func testEucBmsOverviewPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
+    }
+
+    func testEucBmsOverviewPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
+    }
+
     func testEucBmsOverviewPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucBmsOverviewAccessibility(scrollsBeforeAudit: true)
     }
