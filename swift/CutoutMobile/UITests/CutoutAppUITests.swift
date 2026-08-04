@@ -1351,6 +1351,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucNoBmsSurface()
     }
 
+    func testEucNoBmsSurfacePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucNoBmsSurface()
+    }
+
+    func testEucNoBmsSurfacePassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucNoBmsSurface()
+    }
+
     func testEucNoBmsSurfaceDoesNotInventARidingRule() throws {
         let bmsScreen = try XCTUnwrap(openEucBmsScreen(identifier: "dashboard.screen.bmsNoData"))
         defer { disconnectIfConnected() }
