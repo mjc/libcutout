@@ -176,6 +176,26 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(first), .update(second)])
     }
+
+    func testRelaunchReconciliationAdoptsOneMatchingActivityAndEndsEverySibling() {
+        let desired = LiveActivityRideIdentity.device("Current ride")
+        let stale = LiveActivityRideIdentity.device("Previous ride")
+
+        XCTAssertEqual(
+            liveActivityRideReconciliation(
+                existingIdentities: [stale, desired, desired],
+                desiredIdentity: desired
+            ),
+            LiveActivityRideReconciliation(adoptedIndex: 1, staleIndices: [0, 2])
+        )
+        XCTAssertEqual(
+            liveActivityRideReconciliation(
+                existingIdentities: [stale],
+                desiredIdentity: desired
+            ),
+            LiveActivityRideReconciliation(adoptedIndex: nil, staleIndices: [0])
+        )
+    }
 }
 
 private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecycleManaging {

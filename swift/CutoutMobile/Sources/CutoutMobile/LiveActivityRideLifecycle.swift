@@ -20,6 +20,22 @@ public protocol LiveActivityRideLifecycleManaging: Sendable {
     func end(reason: LiveActivityRideLifecycleEndReason) async throws
 }
 
+struct LiveActivityRideReconciliation: Equatable, Sendable {
+    let adoptedIndex: Int?
+    let staleIndices: [Int]
+}
+
+func liveActivityRideReconciliation(
+    existingIdentities: [LiveActivityRideIdentity],
+    desiredIdentity: LiveActivityRideIdentity
+) -> LiveActivityRideReconciliation {
+    let adoptedIndex = existingIdentities.firstIndex(of: desiredIdentity)
+    return LiveActivityRideReconciliation(
+        adoptedIndex: adoptedIndex,
+        staleIndices: existingIdentities.indices.filter { $0 != adoptedIndex }
+    )
+}
+
 public actor LiveActivityRideLifecycleCoordinator {
     private let manager: any LiveActivityRideLifecycleManaging
     private var isActive = false
@@ -184,21 +200,22 @@ private actor LiveActivityRideActivityKitState {
         }
 
         let existingActivities = Activity<LiveActivityRideAttributes>.activities
-        if let existing = existingActivities.first(where: { $0.attributes.identity == snapshot.identity }) {
-            activity = existing
+        let reconciliation = liveActivityRideReconciliation(
+            existingIdentities: existingActivities.map(\.attributes.identity),
+            desiredIdentity: snapshot.identity
+        )
+        for staleIndex in reconciliation.staleIndices {
+            let staleActivity = existingActivities[staleIndex]
+            await staleActivity.end(staleActivity.content, dismissalPolicy: .immediate)
+        }
+
+        if let adoptedIndex = reconciliation.adoptedIndex {
+            activity = existingActivities[adoptedIndex]
             try await update(snapshot: snapshot)
             return
         }
 
-        if activity != nil {
-            if let activeActivity = activity {
-                await activeActivity.end(activeActivity.content, dismissalPolicy: .immediate)
-            }
-            activity = nil
-            try await start(snapshot: snapshot)
-            return
-        }
-
+        activity = nil
         do {
             activity = try Activity.request(
                 attributes: LiveActivityRideAttributes(identity: snapshot.identity),
