@@ -3452,6 +3452,8 @@ pub struct MobileCaptureWriterStatusDto {
     pub dropped_messages: u64,
     /// Bytes written to the capture file.
     pub bytes_written: u64,
+    /// Total successful write payload bytes, including header rewrites.
+    pub physical_bytes_written: u64,
     /// Whether the writer has encountered an unrecoverable error.
     pub failed: bool,
     /// Last writer error, if one exists.
@@ -3464,6 +3466,7 @@ struct CaptureWriterState {
     peak_queued_messages: AtomicU64,
     dropped_messages: AtomicU64,
     bytes_written: AtomicU64,
+    physical_bytes_written: AtomicU64,
     failed: AtomicBool,
     last_error: Mutex<Option<String>>,
 }
@@ -3475,6 +3478,7 @@ impl Default for CaptureWriterState {
             peak_queued_messages: AtomicU64::new(0),
             dropped_messages: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
+            physical_bytes_written: AtomicU64::new(0),
             failed: AtomicBool::new(false),
             last_error: Mutex::new(None),
         }
@@ -3496,6 +3500,7 @@ impl CaptureWriterState {
             peak_queued_messages: self.peak_queued_messages.load(Ordering::Acquire),
             dropped_messages: self.dropped_messages.load(Ordering::Acquire),
             bytes_written: self.bytes_written.load(Ordering::Acquire),
+            physical_bytes_written: self.physical_bytes_written.load(Ordering::Acquire),
             failed: self.failed.load(Ordering::Acquire),
             last_error: self
                 .last_error
@@ -3715,10 +3720,13 @@ fn write_capture_stream(
 ) -> Result<(), String> {
     let file = File::create(path).map_err(|error| error.to_string())?;
     let mut writer = BufWriter::new(file);
-    write_line(
+    let header_bytes = write_line(
         &mut writer,
         &header.to_jsonl_line().map_err(|error| error.to_string())?,
     )?;
+    state
+        .physical_bytes_written
+        .fetch_add(header_bytes as u64, Ordering::AcqRel);
     writer.flush().map_err(|error| error.to_string())?;
     writer
         .get_mut()
@@ -3738,6 +3746,9 @@ fn write_capture_stream(
                 let line = record.to_jsonl_line().map_err(|error| error.to_string())?;
                 let bytes = write_line(&mut writer, &line)? as u64;
                 state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
+                state
+                    .physical_bytes_written
+                    .fetch_add(bytes, Ordering::AcqRel);
                 bytes_since_flush = bytes_since_flush.saturating_add(bytes);
                 maybe_flush(
                     &mut writer,
@@ -3754,7 +3765,10 @@ fn write_capture_stream(
                     header.write_limit,
                     &metadata,
                 )?;
-                rewrite_capture_header(path, &mut writer, header)?;
+                let bytes = rewrite_capture_header(path, &mut writer, header)?;
+                state
+                    .physical_bytes_written
+                    .fetch_add(bytes, Ordering::AcqRel);
                 bytes_since_flush = 0;
                 last_flush = Instant::now();
                 last_sync = last_flush;
@@ -3829,7 +3843,7 @@ fn rewrite_capture_header(
     path: &Path,
     writer: &mut BufWriter<File>,
     header: &PevcapHeader,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     writer.flush().map_err(|error| error.to_string())?;
     writer
         .get_mut()
@@ -3848,11 +3862,12 @@ fn rewrite_capture_header(
         .write(true)
         .open(&temp_path)
         .map_err(|error| error.to_string())?;
-    write_line_to_file(
+    let header_bytes = write_line_to_file(
         &mut output,
         &header.to_jsonl_line().map_err(|error| error.to_string())?,
     )?;
-    std::io::copy(&mut reader, &mut output).map_err(|error| error.to_string())?;
+    let copied_bytes =
+        std::io::copy(&mut reader, &mut output).map_err(|error| error.to_string())?;
     output.sync_data().map_err(|error| error.to_string())?;
     drop(output);
     fs::rename(&temp_path, path).map_err(|error| error.to_string())?;
@@ -3861,12 +3876,13 @@ fn rewrite_capture_header(
         .open(path)
         .map_err(|error| error.to_string())?;
     *writer = BufWriter::new(file);
-    Ok(())
+    Ok(header_bytes as u64 + copied_bytes)
 }
 
-fn write_line_to_file(file: &mut File, line: &str) -> Result<(), String> {
+fn write_line_to_file(file: &mut File, line: &str) -> Result<usize, String> {
     file.write_all(line.as_bytes())
         .and_then(|()| file.write_all(b"\n"))
+        .map(|()| line.len() + 1)
         .map_err(|error| error.to_string())
 }
 
@@ -8913,6 +8929,80 @@ mod tests {
         assert_eq!(status.queued_messages, 1);
         assert_eq!(status.peak_queued_messages, 1);
         assert_eq!(status.dropped_messages, 0);
+    }
+
+    #[test]
+    fn capture_writer_handles_thirty_and_sixty_minute_synthetic_rides() {
+        const NOTIFICATIONS_PER_SECOND: u64 = 10;
+
+        fn run(minutes: u64) -> (u64, u64, u64, Duration) {
+            let path = std::env::temp_dir().join(format!(
+                "cutout-mobile-writer-{minutes}m-{}-{}.jsonl",
+                std::process::id(),
+                thread::current().name().unwrap_or("test")
+            ));
+            let _ = fs::remove_file(&path);
+            let builder = MobilePevcapCaptureBuilder::new(
+                wc(1_700_000_000_000),
+                "ios-corebluetooth".into(),
+                None,
+            );
+            assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+
+            let record_count = minutes * 60 * NOTIFICATIONS_PER_SECOND;
+            let characteristic = vec![0xe1; 16];
+            let service = vec![0xe0; 16];
+            let payload = vec![0xaa; 160];
+            let started = Instant::now();
+            for index in 0..record_count {
+                while builder.writer_status().queued_messages >= 64 {
+                    thread::yield_now();
+                }
+                assert!(builder.record_notification(
+                    ms(index * 1_000 / NOTIFICATIONS_PER_SECOND),
+                    characteristic.clone(),
+                    service.clone(),
+                    payload.clone(),
+                ));
+                if index == record_count / 2 {
+                    assert!(builder.add_annotation("synthetic=midpoint".into()));
+                }
+            }
+            assert!(builder.finish_writer());
+            let elapsed = started.elapsed();
+            let status = builder.writer_status();
+            let capture_size = fs::metadata(&path).expect("capture exists").len();
+            let capture = PevcapCapture::decode(
+                &fs::read(&path).expect("capture is readable"),
+                PevcapEncoding::Jsonl,
+            )
+            .expect("capture is valid PEVCAP");
+
+            assert_eq!(capture.records.len() as u64, record_count);
+            assert_eq!(status.queued_messages, 0);
+            assert!(status.peak_queued_messages <= CAPTURE_WRITER_QUEUE_CAPACITY as u64);
+            assert_eq!(status.dropped_messages, 0);
+            assert!(!status.failed);
+            assert!(status.physical_bytes_written > capture_size);
+            eprintln!(
+                "capture_writer minutes={minutes} records={record_count} elapsed_ms={} capture_bytes={capture_size} physical_bytes={} peak_queue={}",
+                elapsed.as_millis(),
+                status.physical_bytes_written,
+                status.peak_queued_messages,
+            );
+            let _ = fs::remove_file(path);
+            (
+                capture_size,
+                status.physical_bytes_written,
+                status.peak_queued_messages,
+                elapsed,
+            )
+        }
+
+        let thirty = run(30);
+        let sixty = run(60);
+        assert!(sixty.0 >= thirty.0 * 19 / 10 && sixty.0 <= thirty.0 * 21 / 10);
+        assert!(sixty.1 >= thirty.1 * 19 / 10 && sixty.1 <= thirty.1 * 21 / 10);
     }
 
     fn charge_profile(

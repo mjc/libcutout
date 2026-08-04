@@ -4543,6 +4543,10 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
      */
     public var bytesWritten: UInt64
     /**
+     * Total successful write payload bytes, including header rewrites.
+     */
+    public var physicalBytesWritten: UInt64
+    /**
      * Whether the writer has encountered an unrecoverable error.
      */
     public var failed: Bool
@@ -4567,6 +4571,9 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
          * Bytes written to the capture file.
          */bytesWritten: UInt64,
         /**
+         * Total successful write payload bytes, including header rewrites.
+         */physicalBytesWritten: UInt64,
+        /**
          * Whether the writer has encountered an unrecoverable error.
          */failed: Bool,
         /**
@@ -4576,6 +4583,7 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
         self.peakQueuedMessages = peakQueuedMessages
         self.droppedMessages = droppedMessages
         self.bytesWritten = bytesWritten
+        self.physicalBytesWritten = physicalBytesWritten
         self.failed = failed
         self.lastError = lastError
     }
@@ -4600,6 +4608,7 @@ public struct FfiConverterTypeMobileCaptureWriterStatusDto: FfiConverterRustBuff
                 peakQueuedMessages: FfiConverterUInt64.read(from: &buf),
                 droppedMessages: FfiConverterUInt64.read(from: &buf),
                 bytesWritten: FfiConverterUInt64.read(from: &buf),
+                physicalBytesWritten: FfiConverterUInt64.read(from: &buf),
                 failed: FfiConverterBool.read(from: &buf),
                 lastError: FfiConverterOptionString.read(from: &buf)
         )
@@ -4610,6 +4619,7 @@ public struct FfiConverterTypeMobileCaptureWriterStatusDto: FfiConverterRustBuff
         FfiConverterUInt64.write(value.peakQueuedMessages, into: &buf)
         FfiConverterUInt64.write(value.droppedMessages, into: &buf)
         FfiConverterUInt64.write(value.bytesWritten, into: &buf)
+        FfiConverterUInt64.write(value.physicalBytesWritten, into: &buf)
         FfiConverterBool.write(value.failed, into: &buf)
         FfiConverterOptionString.write(value.lastError, into: &buf)
     }
