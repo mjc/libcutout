@@ -684,6 +684,9 @@ final class CutoutAppUITests: XCTestCase {
             let element = app.descendants(matching: .any)[identifier]
             XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing essential Ride control: \(identifier)")
             XCTAssertTrue(element.isHittable, "Essential Ride control requires scrolling: \(identifier)")
+            if identifier == "dashboard.disconnect" {
+                XCTAssertGreaterThanOrEqual(element.frame.height, 44)
+            }
         }
         XCTAssertTrue(screen.exists)
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.ride"].isHittable)
@@ -2179,6 +2182,7 @@ final class CutoutAppUITests: XCTestCase {
             return false
         }
         XCTAssertEqual(button.elementType, .button)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         XCTAssertTrue(family.matches(label: button.label))
         button.tap()
         return true
