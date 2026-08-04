@@ -1806,6 +1806,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescDebugSurface()
     }
 
+    func testVescDebugPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertVescDebugSurface()
+    }
+
+    func testVescDebugPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertVescDebugSurface()
+    }
+
     func testVescDebugPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertVescDebugSurface(requiredMetricLabel: nil)
     }
