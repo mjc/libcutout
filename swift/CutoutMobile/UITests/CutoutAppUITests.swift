@@ -1045,6 +1045,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertReconnectAccessibility(for: .vesc)
     }
 
+    func testVescReconnectKeepsRideAccessibleInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertReconnectAccessibility(for: .vesc)
+    }
+
+    func testVescReconnectKeepsRideAccessibleInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertReconnectAccessibility(for: .vesc)
+    }
+
     func testVescReconnectKeepsRideAccessibleWithIncreasedContrastAtAccessibilityDynamicType() throws {
         try assertReconnectAccessibility(for: .vesc, auditExclusions: [])
     }
@@ -1074,6 +1082,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucReconnectKeepsRideRoute() throws {
+        try assertReconnectAccessibility(for: .euc)
+    }
+
+    func testEucReconnectKeepsRideAccessibleInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertReconnectAccessibility(for: .euc)
+    }
+
+    func testEucReconnectKeepsRideAccessibleInDarkAppearanceAtAccessibilityDynamicType() throws {
         try assertReconnectAccessibility(for: .euc)
     }
 
