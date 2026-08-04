@@ -308,6 +308,11 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
         XCTAssertTrue(status.waitForExistence(timeout: 5))
+        let failure = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Capture failed"),
+            object: status
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [failure], timeout: 5), .completed)
         XCTAssertEqual(status.label, "Capture failed")
         XCTAssertTrue(status.isHittable, "Background flush failure must remain visible after reactivation")
         XCTAssertTrue(finish.isHittable, "Finish capture must remain usable after a background flush failure")
@@ -2234,8 +2239,9 @@ final class CutoutAppUITests: XCTestCase {
         case vescStaleLiveActivityAuto
 
         static func testFixture(for testName: String) -> Self {
-            if testName.contains("BackgroundFlushFailure") { return .unknownDeviceFinishFailure }
-            if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
+            if testName.contains("BackgroundFlushFailure") || testName.contains("FinishCaptureFailure") {
+                return .unknownDeviceFinishFailure
+            }
             if testName.contains("ProbeTimeout") { return .probeTimeout }
             if testName.contains("ProbeMalformedResponse") { return .probeMalformedResponse }
             if testName.contains("ProbeConflictingEvidence") { return .probeConflictingEvidence }
