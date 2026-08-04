@@ -1682,6 +1682,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescPendingTelemetryAccessibility()
     }
 
+    func testVescPendingTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertVescPendingTelemetryAccessibility()
+    }
+
+    func testVescPendingTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertVescPendingTelemetryAccessibility()
+    }
+
     func testVescPendingTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertVescPendingTelemetryAccessibility(usesLocalizedText: true)
     }
