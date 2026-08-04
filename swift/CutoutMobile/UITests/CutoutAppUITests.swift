@@ -1676,7 +1676,6 @@ final class CutoutAppUITests: XCTestCase {
 
     private func performVisibleLayoutAccessibilityAudit(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        ignoringNilElementTextRepresentationWarning: Bool = false,
         ignoringSystemToolbarContrastWarning: Bool = false,
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
@@ -1690,15 +1689,6 @@ final class CutoutAppUITests: XCTestCase {
         try app.performAccessibilityAudit(for: auditTypes) { issue in
             let elementDescription = issue.element?.debugDescription ?? "No element"
             print("Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)")
-            if ignoringNilElementTextRepresentationWarning,
-               issue.element == nil,
-               issue.detailedDescription.contains("text that should be represented using the accessibility API") {
-                // Xcode 27's simulator audit occasionally emits this warning
-                // after multiple launch-argument changes without identifying
-                // an element. The captured AX hierarchy has all rendered text
-                // represented; real element-based findings remain failures.
-                return true
-            }
             if ignoringSystemToolbarContrastWarning,
                issue.auditType == .contrast,
                [
