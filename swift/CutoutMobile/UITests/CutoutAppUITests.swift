@@ -636,6 +636,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescEssentialRideControlsRemainVisibleWithoutScrolling() throws {
+        try assertVescEssentialRideControlsRemainVisibleWithoutScrolling()
+    }
+
+    func testVescEssentialRideControlsRemainVisibleWithoutScrollingInLandscape() throws {
+        try assertVescEssentialRideControlsRemainVisibleWithoutScrolling()
+    }
+
+    private func assertVescEssentialRideControlsRemainVisibleWithoutScrolling() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic VESC fixture did not open its Ride screen")
