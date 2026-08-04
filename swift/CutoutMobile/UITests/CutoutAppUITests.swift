@@ -96,6 +96,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertProbeFailure("Device identification found conflicting evidence")
     }
 
+    func testProbeUnsupportedRemainsOnPickerAndExposesAccessibleFailure() throws {
+        try assertProbeFailure("Device does not support this identification probe")
+    }
+
     func testSupportedPickerRowUsesOneWholeRowAction() {
         let useButton = app.buttons["device-picker.use.ui-test-vesc"]
 
@@ -1496,6 +1500,7 @@ final class CutoutAppUITests: XCTestCase {
         case probeTimeout
         case probeMalformedResponse
         case probeConflictingEvidence
+        case probeUnsupported
         case bluetoothUnavailable
         case bluetoothPermissionDenied
         case euc
@@ -1519,6 +1524,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("ProbeTimeout") { return .probeTimeout }
             if testName.contains("ProbeMalformedResponse") { return .probeMalformedResponse }
             if testName.contains("ProbeConflictingEvidence") { return .probeConflictingEvidence }
+            if testName.contains("ProbeUnsupported") { return .probeUnsupported }
             if testName.contains("ProbeAction") { return .probeDevice }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
@@ -1556,6 +1562,7 @@ final class CutoutAppUITests: XCTestCase {
             case .probeTimeout: "probe-timeout"
             case .probeMalformedResponse: "probe-malformed"
             case .probeConflictingEvidence: "probe-conflict"
+            case .probeUnsupported: "probe-unsupported"
             case .bluetoothUnavailable: "bluetooth-unavailable"
             case .bluetoothPermissionDenied: "bluetooth-permission-denied"
             case .euc: "euc"

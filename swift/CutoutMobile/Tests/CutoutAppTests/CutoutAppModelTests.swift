@@ -1006,6 +1006,10 @@ final class CutoutAppModelTests: XCTestCase {
             CutoutUITestSessionFixture(value: "probe-conflict")?.identificationProbeFailure,
             .conflictingEvidence
         )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "probe-unsupported")?.identificationProbeFailure,
+            .unsupported
+        )
     }
 
     func testStandardUIFixtureLaunchArgumentSelectsEucOverviewFixture() {

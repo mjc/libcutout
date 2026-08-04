@@ -864,6 +864,7 @@ enum CutoutUITestSessionFixture {
     case probeTimeout
     case probeMalformedResponse
     case probeConflictingEvidence
+    case probeUnsupported
     case bluetoothUnavailable
     case bluetoothPermissionDenied
     case vesc
@@ -890,6 +891,7 @@ enum CutoutUITestSessionFixture {
         case "probe-timeout": self = .probeTimeout
         case "probe-malformed": self = .probeMalformedResponse
         case "probe-conflict": self = .probeConflictingEvidence
+        case "probe-unsupported": self = .probeUnsupported
         case "bluetooth-unavailable": self = .bluetoothUnavailable
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
@@ -947,7 +949,7 @@ enum CutoutUITestSessionFixture {
                 support: .unknownRecordable(disabledReason: "Unknown device fixture"),
                 symbolName: "questionmark.circle"
             )
-        case .probeDevice, .probeTimeout, .probeMalformedResponse, .probeConflictingEvidence:
+        case .probeDevice, .probeTimeout, .probeMalformedResponse, .probeConflictingEvidence, .probeUnsupported:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-probe",
                 displayName: "Unknown EUC",
@@ -997,6 +999,7 @@ enum CutoutUITestSessionFixture {
         case .probeTimeout: .timedOut
         case .probeMalformedResponse: .malformedResponse
         case .probeConflictingEvidence: .conflictingEvidence
+        case .probeUnsupported: .unsupported
         default: nil
         }
     }
@@ -1009,6 +1012,7 @@ enum CutoutUITestSessionFixture {
             || self == .probeTimeout
             || self == .probeMalformedResponse
             || self == .probeConflictingEvidence
+            || self == .probeUnsupported
             || self == .euc
             || self == .staleEuc
             || self == .reconnectingEuc
