@@ -277,9 +277,12 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(savedCapture.waitForExistence(timeout: 5))
         XCTAssertTrue(savedCapture.isHittable, "The saved-capture result must be visible without scrolling")
         XCTAssertFalse(savedCapture.label.isEmpty)
-        XCTAssertTrue(savedCapture.label.contains("ui-test.capture"))
+        XCTAssertTrue(savedCapture.label.contains("cutout-btle-capture-"))
+        XCTAssertTrue(savedCapture.label.contains(".jsonl"))
         if usesLocalizedText {
-            XCTAssertNotEqual(savedCapture.label, "Saved capture: ui-test.capture")
+            let filenameStart = try XCTUnwrap(savedCapture.label.range(of: "cutout-btle-capture-"))
+            let filename = String(savedCapture.label[filenameStart.lowerBound...])
+            XCTAssertNotEqual(savedCapture.label, "Saved capture: \(filename)")
         } else {
             XCTAssertTrue(savedCapture.label.hasPrefix("Saved capture:"))
         }
@@ -317,6 +320,37 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(status.isHittable, "Background flush failure must remain visible after reactivation")
         XCTAssertTrue(finish.isHittable, "Finish capture must remain usable after a background flush failure")
         try performVisibleLayoutAccessibilityAudit()
+    }
+
+    func testBackgroundFlushRealWriterRemainsUsableAfterReactivatingCaptureAtAccessibilityDynamicType() throws {
+        enterCapture()
+
+        let capture = app.descendants(matching: .any)["capture.screen"]
+        let status = app.descendants(matching: .any)["capture.status"]
+        let fileSize = app.descendants(matching: .any)["dashboard.key-value.capture-file-size"]
+        let finish = app.buttons["capture.stop"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(fileSize.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(fileSize.value as? String, "0 B")
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(status.label, "Capture failed")
+        XCTAssertTrue(status.isHittable)
+        XCTAssertTrue(finish.isHittable)
+        try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
+        finish.tap()
+
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        let savedCapture = app.descendants(matching: .any)["device-picker.capture-status"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        XCTAssertTrue(savedCapture.waitForExistence(timeout: 5))
+        XCTAssertTrue(savedCapture.label.contains("cutout-btle-capture-"))
+        XCTAssertTrue(savedCapture.label.contains(".jsonl"))
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenAccessibleAtAccessibilityDynamicType() throws {

@@ -503,6 +503,22 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
         if let testScript {
             guard platformIdentifier == testScript.candidate.platformIdentifier else { return false }
+            if testScript.flushCaptureSucceeds {
+                return onBleQueue {
+                    isRecordOnly = true
+                    startCapture(
+                        reason: note ?? "record-only",
+                        annotations: annotations,
+                        evidence: "simulator_fixture"
+                    )
+                    guard captureBuilder != nil else {
+                        isRecordOnly = false
+                        return false
+                    }
+                    publishCaptureEvent(.progress(captureProgress()))
+                    return true
+                }
+            }
             let fileURL = URL(fileURLWithPath: "/tmp/ui-test.capture")
             captureFileURL = fileURL
             isRecordOnly = true
@@ -545,8 +561,8 @@ public final class CutoutSessionCore: NSObject {
 
     public func flushCapture() -> Bool {
 #if DEBUG
-        if let testScript {
-            return testScript.flushCaptureSucceeds
+        if let testScript, !testScript.flushCaptureSucceeds {
+            return false
         }
 #endif
         return onBleQueue {
@@ -777,7 +793,9 @@ public final class CutoutSessionCore: NSObject {
         suppressReconnect = true
         cancelPendingReconnect()
 #if DEBUG
-        if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
+        if testScript != nil, isRecordOnly, captureBuilder != nil {
+            finishCaptureAfterLinkDown()
+        } else if testScript != nil, isRecordOnly, let completedCaptureURL = captureFileURL {
             captureFileURL = nil
             publishCaptureEvent(.finished(fileURL: completedCaptureURL))
         } else {
@@ -1457,7 +1475,11 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    private func startCapture(reason: String, annotations extraAnnotations: [String] = []) {
+    private func startCapture(
+        reason: String,
+        annotations extraAnnotations: [String] = [],
+        evidence: String = "hardware_tested"
+    ) {
         captureStartedAt = clock.now()
         captureNotificationCount = 0
 
@@ -1475,7 +1497,7 @@ public final class CutoutSessionCore: NSObject {
             "source=ios-app",
             "capture_reason=\(reason)",
             "capture_privacy=private",
-            "capture_evidence=hardware_tested",
+            "capture_evidence=\(evidence)",
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
