@@ -171,7 +171,7 @@ pub struct DeviceIdentityState {
 impl DeviceIdentityState {
     /// Records an identity probe and the monotonic time at which it was written.
     pub fn observe_probe_write(&mut self, probe: PendingProbe, started_at: MonotonicTimestamp) {
-        self.pending_probe_started_at[probe.index()] = Some(started_at);
+        self.pending_probe_started_at[probe.index()].get_or_insert(started_at);
     }
 
     /// Clears one probe after its matching response arrives.
@@ -720,6 +720,19 @@ mod tests {
             Some(ProtocolFamily::BegodeGotway)
         );
         assert_eq!(state.identity().model.as_deref(), Some("Begode Falcon"));
+    }
+
+    #[test]
+    fn duplicate_probe_observation_preserves_the_original_deadline() {
+        let mut identity = DeviceIdentityState::default();
+        identity.observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(1_000));
+
+        identity.observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(1_500));
+
+        assert_eq!(
+            identity.next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
+            Some(MonotonicTimestamp::new(3_001))
+        );
     }
 
     #[test]
