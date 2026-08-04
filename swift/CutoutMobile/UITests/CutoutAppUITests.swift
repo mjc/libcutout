@@ -683,6 +683,7 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         let initialValue = try XCTUnwrap(speed.value as? String)
+        let waitStarted = ContinuousClock.now
         let changed = XCTNSPredicateExpectation(
             predicate: NSPredicate { object, _ in
                 guard let element = object as? XCUIElement,
@@ -693,7 +694,10 @@ final class CutoutAppUITests: XCTestCase {
             object: speed
         )
 
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 3), .completed)
+        let latency = waitStarted.duration(to: .now)
+        XCTAssertLessThanOrEqual(latency, .seconds(3))
+        XCTContext.runActivity(named: "Mounted Ride telemetry latency: \(latency)") { _ in }
         XCTAssertFalse(app.descendants(matching: .any)["device-picker.screen"].exists)
         XCTAssertFalse(app.descendants(matching: .any)["device-picker.capture"].exists)
     }
