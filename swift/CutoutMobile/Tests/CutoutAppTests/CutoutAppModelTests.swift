@@ -559,6 +559,20 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.captureStatus, .failed)
     }
 
+    @MainActor
+    func testFlushFailureMarksOnlyAnActiveCaptureFailed() {
+        let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.flushCapture())
+        XCTAssertNil(model.captureStatus)
+
+        model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/capture.jsonl")))
+        XCTAssertFalse(model.flushCapture())
+        XCTAssertEqual(model.captureStatus, .failed)
+        XCTAssertEqual(driver.flushCaptureCount, 2)
+    }
+
     func testUITestFixtureMarksCaptureFinalizationFailure() {
         XCTAssertFalse(CutoutUITestSessionFixture.unknownDeviceFinishFailure.flushCaptureSucceeds)
     }

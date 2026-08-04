@@ -11,6 +11,15 @@ enum CaptureStatus: Equatable {
     case saved(fileName: String)
     case failed
 
+    var isRecording: Bool {
+        switch self {
+        case .recordingLocally, .recording, .labelStarted, .labelStopped:
+            true
+        case .saved, .failed:
+            false
+        }
+    }
+
     var displayText: String {
         switch self {
         case let .recordingLocally(fileName):
@@ -424,7 +433,11 @@ final class CutoutAppModel {
 
     @discardableResult
     func flushCapture() -> Bool {
-        core.flushCapture()
+        let didFlush = core.flushCapture()
+        if !didFlush, captureStatus?.isRecording == true {
+            captureStatus = .failed
+        }
+        return didFlush
     }
 
     @discardableResult
