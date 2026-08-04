@@ -636,17 +636,23 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescEssentialRideControlsRemainVisibleWithoutScrolling() throws {
-        try assertVescEssentialRideControlsRemainVisibleWithoutScrolling()
+        try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .vesc)
     }
 
     func testVescEssentialRideControlsRemainVisibleWithoutScrollingInLandscape() throws {
-        try assertVescEssentialRideControlsRemainVisibleWithoutScrolling()
+        try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .vesc)
     }
 
-    private func assertVescEssentialRideControlsRemainVisibleWithoutScrolling() throws {
-        XCTAssertTrue(pairAvailableDevice(.vesc))
+    func testEucEssentialRideControlsRemainVisibleWithoutScrolling() throws {
+        try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc)
+    }
+
+    private func assertEssentialRideControlsRemainVisibleWithoutScrolling(
+        for family: ConnectedDeviceFamily
+    ) throws {
+        XCTAssertTrue(pairAvailableDevice(family))
         guard let screen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            XCTFail("The deterministic \(family.name) fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
@@ -658,7 +664,11 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertTrue(screen.exists)
         XCTAssertTrue(app.tabBars.buttons["dashboard.nav.ride"].isHittable)
-        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.debug"].isHittable)
+        let secondaryRoute = switch family {
+        case .vesc: "dashboard.nav.debug"
+        case .euc: "dashboard.nav.pack"
+        }
+        XCTAssertTrue(app.tabBars.buttons[secondaryRoute].isHittable)
     }
 
     func testVescLiveActivityFixtureStartsFromAnAccessibleRide() throws {
