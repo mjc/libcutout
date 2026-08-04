@@ -9,10 +9,10 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let first = liveSnapshot(label: "Connected ride", speedMph: 19.8)
         let second = liveSnapshot(label: "Connected ride", speedMph: 21.6)
 
-        await coordinator.reconcile(snapshot: first, shouldBeActive: true)
-        await coordinator.reconcile(snapshot: first, shouldBeActive: true)
-        await coordinator.reconcile(snapshot: second, shouldBeActive: true)
-        await coordinator.reconcile(snapshot: second, shouldBeActive: false, endReason: .disconnected)
+        await coordinator.reconcile(requestID: 1, snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 2, snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 3, snapshot: second, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 4, snapshot: second, shouldBeActive: false, endReason: .disconnected)
 
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(first), .update(second), .end(.disconnected)])
@@ -22,8 +22,8 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
 
-        await coordinator.reconcile(snapshot: nil, shouldBeActive: true)
-        await coordinator.reconcile(snapshot: nil, shouldBeActive: false, endReason: .sessionEnded)
+        await coordinator.reconcile(requestID: 1, snapshot: nil, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 2, snapshot: nil, shouldBeActive: false, endReason: .sessionEnded)
 
         let events = await manager.recordedEvents()
         XCTAssertTrue(events.isEmpty)
@@ -34,9 +34,9 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
-        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
-        await coordinator.end(reason: .sessionEnded)
-        await coordinator.end(reason: .sessionEnded)
+        await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(requestID: 2, reason: .sessionEnded)
+        await coordinator.end(requestID: 3, reason: .sessionEnded)
 
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(snapshot), .end(.sessionEnded)])
@@ -47,14 +47,14 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
-        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
-        await coordinator.end(reason: .sessionEnded)
+        await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(requestID: 2, reason: .sessionEnded)
 
         let error = await coordinator.lastError
         XCTAssertEqual(error, .activityUnavailable)
 
         await manager.setEndError(nil)
-        await coordinator.end(reason: .sessionEnded)
+        await coordinator.end(requestID: 3, reason: .sessionEnded)
 
         let recoveredError = await coordinator.lastError
         let events = await manager.recordedEvents()
@@ -69,7 +69,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
 
-        await coordinator.end(reason: .sessionEnded)
+        await coordinator.end(requestID: 1, reason: .sessionEnded)
 
         let events = await manager.recordedEvents()
         XCTAssertTrue(events.isEmpty)
@@ -80,7 +80,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 27)
 
-        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
 
         let events = await manager.recordedEvents()
         XCTAssertEqual(events, [.start(snapshot)])
@@ -102,8 +102,8 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let first = liveSnapshot(label: "First ride", speedMph: 19.8)
         let replacement = liveSnapshot(label: "Second ride", speedMph: 19.8)
 
-        await coordinator.reconcile(snapshot: first, shouldBeActive: true)
-        await coordinator.reconcile(snapshot: replacement, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 1, snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 2, snapshot: replacement, shouldBeActive: true)
 
         let events = await manager.recordedEvents()
         XCTAssertEqual(
@@ -117,8 +117,8 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
-        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
-        await coordinator.end(reason: .sessionEnded)
+        await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(requestID: 2, reason: .sessionEnded)
 
         let error = await coordinator.lastError
         XCTAssertEqual(error, .requestFailed)
@@ -132,14 +132,14 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
         let updated = liveSnapshot(label: "Connected ride", speedMph: 20.1)
 
-        await coordinator.reconcile(snapshot: snapshot, shouldBeActive: true)
-        await coordinator.reconcile(snapshot: updated, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 2, snapshot: updated, shouldBeActive: true)
 
         let error = await coordinator.lastError
         XCTAssertEqual(error, .activityUnavailable)
 
         await manager.setUpdateError(nil)
-        await coordinator.reconcile(snapshot: updated, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 3, snapshot: updated, shouldBeActive: true)
 
         let recoveredError = await coordinator.lastError
         let events = await manager.recordedEvents()
@@ -150,6 +150,18 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         )
     }
 
+    func testOlderEndRequestCannotUndoANewerReconciliation() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(requestID: 2, snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(requestID: 1, reason: .disconnected)
+
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot)])
+    }
+
     func testConcurrentReconciliationsDoNotOverlapLifecycleOperations() async {
         let manager = RecordingLiveActivityRideLifecycleManager(blockFirstStart: true)
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
@@ -157,12 +169,12 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let second = liveSnapshot(label: "Connected ride", speedMph: 21.6)
 
         let firstReconciliation = Task {
-            await coordinator.reconcile(snapshot: first, shouldBeActive: true)
+            await coordinator.reconcile(requestID: 1, snapshot: first, shouldBeActive: true)
         }
         await manager.waitUntilFirstStartIsBlocked()
 
         let secondReconciliation = Task {
-            await coordinator.reconcile(snapshot: second, shouldBeActive: true)
+            await coordinator.reconcile(requestID: 2, snapshot: second, shouldBeActive: true)
         }
         try? await Task.sleep(for: .milliseconds(50))
 

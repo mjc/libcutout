@@ -41,6 +41,7 @@ public actor LiveActivityRideLifecycleCoordinator {
     private var isActive = false
     private var lastSnapshot: LiveActivityRideSnapshot?
     public private(set) var lastError: LiveActivityRideLifecycleError?
+    private var latestRequestID: UInt64 = 0
     private var isOperationInFlight = false
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
 
@@ -49,12 +50,15 @@ public actor LiveActivityRideLifecycleCoordinator {
     }
 
     public func reconcile(
+        requestID: UInt64,
         snapshot: LiveActivityRideSnapshot?,
         shouldBeActive: Bool,
         endReason: LiveActivityRideLifecycleEndReason = .sessionEnded
     ) async {
+        guard accept(requestID: requestID) else { return }
         await beginOperation()
         defer { finishOperation() }
+        guard requestID == latestRequestID else { return }
 
         guard shouldBeActive else {
             await endIfNeeded(reason: endReason)
@@ -90,10 +94,18 @@ public actor LiveActivityRideLifecycleCoordinator {
         }
     }
 
-    public func end(reason: LiveActivityRideLifecycleEndReason) async {
+    public func end(requestID: UInt64, reason: LiveActivityRideLifecycleEndReason) async {
+        guard accept(requestID: requestID) else { return }
         await beginOperation()
         defer { finishOperation() }
+        guard requestID == latestRequestID else { return }
         await endIfNeeded(reason: reason)
+    }
+
+    private func accept(requestID: UInt64) -> Bool {
+        guard requestID > latestRequestID else { return false }
+        latestRequestID = requestID
+        return true
     }
 
     private func beginOperation() async {

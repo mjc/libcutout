@@ -243,6 +243,7 @@ final class CutoutAppModel {
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
     private var lastLiveActivityUpdate: MonotonicMilliseconds?
+    private var liveActivityRequestID: UInt64 = 0
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
@@ -513,8 +514,10 @@ final class CutoutAppModel {
     }
 
     func endLiveActivity(reason: LiveActivityRideLifecycleEndReason = .sessionEnded) {
+        liveActivityRequestID += 1
+        let requestID = liveActivityRequestID
         Task { [weak self, liveActivityCoordinator] in
-            await liveActivityCoordinator.end(reason: reason)
+            await liveActivityCoordinator.end(requestID: requestID, reason: reason)
             self?.liveActivityError = await liveActivityCoordinator.lastError
         }
         lastLiveActivitySnapshot = nil
@@ -641,8 +644,11 @@ final class CutoutAppModel {
             .sessionEnded
         }
         guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
+        liveActivityRequestID += 1
+        let requestID = liveActivityRequestID
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.reconcile(
+                requestID: requestID,
                 snapshot: snapshot,
                 shouldBeActive: shouldBeActive,
                 endReason: endReason
