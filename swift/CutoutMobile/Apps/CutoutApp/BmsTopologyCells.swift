@@ -28,6 +28,7 @@ struct BmsChip: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    let id: PevBmsChip.ID
     let title: String
     let accent: PevAccent
 
@@ -42,6 +43,7 @@ struct BmsChip: View {
             .padding(.horizontal, 16)
             .frame(maxWidth: .infinity, minHeight: 44)
             .background(chipBackground)
+            .accessibilityIdentifier("bms.chip.\(id.rawValue)")
     }
 
     @ViewBuilder

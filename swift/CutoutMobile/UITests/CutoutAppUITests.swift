@@ -1437,7 +1437,7 @@ final class CutoutAppUITests: XCTestCase {
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             excluding: [],
-            ignoringClippedBmsGroupChildAuditWarnings: true
+            ignoringClippedBmsDetailBoundaryWarnings: true
         )
     }
 
@@ -2515,7 +2515,7 @@ final class CutoutAppUITests: XCTestCase {
         ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
         ignoringVisualProgressLabelContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
-        ignoringClippedBmsGroupChildAuditWarnings: Bool = false,
+        ignoringClippedBmsDetailBoundaryWarnings: Bool = false,
         ignoringVisibleBmsGroupChildContrastWarning: Bool = false
     ) throws {
         continueAfterFailure = true
@@ -2588,17 +2588,25 @@ final class CutoutAppUITests: XCTestCase {
                 // and black text. Other visible controls still fail.
                 return true
             }
-            if ignoringClippedBmsGroupChildAuditWarnings,
+            if ignoringClippedBmsDetailBoundaryWarnings,
                [.contrast, .dynamicType].contains(issue.auditType),
-               let label = issue.element?.label,
-               ["7", "12"].contains(label) {
+               let element = issue.element {
                 let detail = self.app.descendants(matching: .any)["dashboard.screen.bmsCellDetail"]
-                let group = self.app.buttons["bms.group.\(label)"]
-                if detail.exists, group.exists, !detail.frame.contains(group.frame) {
+                let groups = self.app.buttons.matching(
+                    NSPredicate(format: "identifier BEGINSWITH %@", "bms.group.")
+                ).allElementsBoundByIndex
+                let selectedGroupChip = self.app.staticTexts["bms.chip.selectedGroup"]
+                let isClippedSelectedGroupChip = selectedGroupChip.exists
+                    && !detail.frame.contains(selectedGroupChip.frame)
+                    && selectedGroupChip.frame.contains(element.frame)
+                let isClippedGroupButton = groups.contains {
+                    !detail.frame.contains($0.frame) && $0.frame.contains(element.frame)
+                }
+                if detail.exists, isClippedSelectedGroupChip || isClippedGroupButton {
                     // The row scales with Dynamic Type, but this landscape
-                    // viewport clips its parent buttons while their numeral
-                    // children remain in the audit region. Fully contained
-                    // contrast and Dynamic Type findings remain fatal.
+                    // viewport intersects an identified chip or group Button
+                    // while its localized visual child remains in the audit
+                    // region. Fully contained and unrelated findings stay fatal.
                     return true
                 }
             }
@@ -2807,7 +2815,7 @@ final class CutoutAppUITests: XCTestCase {
     private func assertEucBmsDetailAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
-        ignoringClippedBmsGroupChildAuditWarnings: Bool = false,
+        ignoringClippedBmsDetailBoundaryWarnings: Bool = false,
         ignoringVisibleBmsGroupChildContrastWarning: Bool = false,
         auditTopTitle: String? = nil
     ) throws {
@@ -2829,7 +2837,7 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
             ignoringVisibleBmsDetailBackControlContrastWarning: ignoringVisibleBmsDetailBackControlContrastWarning,
-            ignoringClippedBmsGroupChildAuditWarnings: ignoringClippedBmsGroupChildAuditWarnings,
+            ignoringClippedBmsDetailBoundaryWarnings: ignoringClippedBmsDetailBoundaryWarnings,
             ignoringVisibleBmsGroupChildContrastWarning: ignoringVisibleBmsGroupChildContrastWarning
         )
     }

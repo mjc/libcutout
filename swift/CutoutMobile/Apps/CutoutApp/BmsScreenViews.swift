@@ -80,6 +80,7 @@ struct BmsScreenView: View {
         ) {
             ForEach(content.chips) { chip in
                 BmsChip(
+                    id: chip.id,
                     title: chip.title,
                     accent: chip.accent
                 )
