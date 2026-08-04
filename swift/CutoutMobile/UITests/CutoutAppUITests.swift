@@ -1355,6 +1355,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucUnknownTopologySurface()
     }
 
+    func testEucUnknownTopologyPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucUnknownTopologySurface()
+    }
+
+    func testEucUnknownTopologyPassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucUnknownTopologySurface()
+    }
+
     func testEucUnknownTopologyPassesAccessibilityAuditWithIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucUnknownTopologySurface(auditExclusions: [])
     }
