@@ -942,6 +942,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucBmsAccessibility()
     }
 
+    func testEucRideAndBmsPassAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertEucBmsAccessibility()
+    }
+
     func testEucBmsOverviewPassesAccessibilityAuditAtAccessibilityDynamicType() throws {
         try assertEucBmsOverviewAccessibility(assertsEnglishEnergy: true)
     }
@@ -1129,6 +1133,13 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescRidePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: "voltage"
+        )
+    }
+
+    func testVescRidePassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType() throws {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: "voltage"
