@@ -212,6 +212,7 @@ public struct CutoutSessionTestScript {
     public let reconnectsAfterFirstLive: Bool
     public let reconnectAfterLiveMilliseconds: UInt64
     public let reconnectDelayMilliseconds: UInt64
+    public let bluetoothLossAfterFirstLiveMilliseconds: UInt64?
     public let emitsStaleTelemetry: Bool
     public let flushCaptureSucceeds: Bool
     public let connectionDelayMilliseconds: UInt64
@@ -230,6 +231,7 @@ public struct CutoutSessionTestScript {
         reconnectsAfterFirstLive: Bool = false,
         reconnectAfterLiveMilliseconds: UInt64 = 0,
         reconnectDelayMilliseconds: UInt64 = 1_000,
+        bluetoothLossAfterFirstLiveMilliseconds: UInt64? = nil,
         emitsStaleTelemetry: Bool = false,
         flushCaptureSucceeds: Bool = true,
         connectionDelayMilliseconds: UInt64 = 1_000
@@ -247,6 +249,7 @@ public struct CutoutSessionTestScript {
         self.reconnectsAfterFirstLive = reconnectsAfterFirstLive
         self.reconnectAfterLiveMilliseconds = reconnectAfterLiveMilliseconds
         self.reconnectDelayMilliseconds = reconnectDelayMilliseconds
+        self.bluetoothLossAfterFirstLiveMilliseconds = bluetoothLossAfterFirstLiveMilliseconds
         self.emitsStaleTelemetry = emitsStaleTelemetry
         self.flushCaptureSucceeds = flushCaptureSucceeds
         self.connectionDelayMilliseconds = connectionDelayMilliseconds
@@ -725,6 +728,7 @@ public final class CutoutSessionCore: NSObject {
         )
         scheduleTestTelemetryUpdateIfNeeded(testScript)
         scheduleTestReconnectIfNeeded(testScript)
+        scheduleTestBluetoothLossIfNeeded(testScript)
     }
 
     private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript) {
@@ -779,6 +783,23 @@ public final class CutoutSessionCore: NSObject {
         DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(Int(clamping: testScript.reconnectAfterLiveMilliseconds)),
             execute: reconnect
+        )
+    }
+
+    private func scheduleTestBluetoothLossIfNeeded(_ testScript: CutoutSessionTestScript) {
+        guard let delay = testScript.bluetoothLossAfterFirstLiveMilliseconds else { return }
+        let loss = DispatchWorkItem { [weak self] in
+            self?.onBleQueue {
+                guard let self else { return }
+                self.scanState = DevicePickerScanState(status: .bluetoothUnavailable, rows: [])
+                self.publishScanState()
+                self.setPhase(.bluetoothUnavailable(rawState: 4))
+            }
+        }
+        testScriptWorkItem = loss
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: delay)),
+            execute: loss
         )
     }
 #endif

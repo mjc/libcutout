@@ -162,6 +162,20 @@ final class CutoutAppUITests: XCTestCase {
         try assertBluetoothBlockedPicker(status: "Bluetooth unavailable")
     }
 
+    func testBluetoothUnavailableAfterLiveReturnsToAccessiblePickerAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        let ride = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(ride.waitForExistence(timeout: 5))
+
+        let picker = app.descendants(matching: .any)["device-picker.screen"]
+        let status = app.descendants(matching: .any)["device-picker.connection-status"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 8))
+        XCTAssertTrue(status.waitForExistence(timeout: 2))
+        XCTAssertEqual(status.label, "Bluetooth unavailable")
+        XCTAssertTrue(status.isHittable)
+        XCTAssertFalse(ride.exists)
+    }
+
     func testBluetoothPermissionDeniedPickerDoesNotOfferUseOrRide() throws {
         try assertBluetoothBlockedPicker(status: "Bluetooth permission denied")
     }
@@ -2268,6 +2282,7 @@ final class CutoutAppUITests: XCTestCase {
         case vescStale
         case vescFailure
         case vescReconnect
+        case vescBluetoothLoss
         case vescConnecting
         case eucConnecting
         case vescLiveActivity
@@ -2286,6 +2301,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("ProbeUnsupported") { return .probeUnsupported }
             if testName.contains("ProbeAction") { return .probeDevice }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
+            if testName.contains("BluetoothUnavailableAfterLive") { return .vescBluetoothLoss }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
             if testName.contains("BluetoothPermissionDenied") { return .bluetoothPermissionDenied }
             if testName.contains("CriticalLiveActivityAutoFixture")
@@ -2359,6 +2375,7 @@ final class CutoutAppUITests: XCTestCase {
             case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"
             case .vescReconnect: "vesc-reconnect"
+            case .vescBluetoothLoss: "vesc-bluetooth-loss"
             case .vescConnecting: "vesc-connecting"
             case .eucConnecting: "euc-connecting"
             case .vescLiveActivity: "vesc-live-activity"

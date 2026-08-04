@@ -133,9 +133,9 @@ enum ConnectionState: Equatable {
         switch self {
         case let .connected(selection):
             return .openRide(selection.route)
-        case .failed:
+        case .picker, .failed:
             return .returnToPicker
-        case .picker, .identified, .connecting, .retrying:
+        case .identified, .connecting, .retrying:
             return .stay
         }
     }
@@ -906,6 +906,7 @@ enum CutoutUITestSessionFixture {
     case staleVesc
     case failedVesc
     case reconnectingVesc
+    case bluetoothLossVesc
     case connectingVesc
     case euc
     case dynamicEuc
@@ -938,6 +939,7 @@ enum CutoutUITestSessionFixture {
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
         case "vesc-reconnect": self = .reconnectingVesc
+        case "vesc-bluetooth-loss": self = .bluetoothLossVesc
         case "vesc-connecting": self = .connectingVesc
         case "euc": self = .euc
         case "euc-dynamic": self = .dynamicEuc
@@ -1015,7 +1017,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1099,6 +1101,7 @@ enum CutoutUITestSessionFixture {
             reconnectsAfterFirstLive: reconnectsAfterFirstLive,
             reconnectAfterLiveMilliseconds: reconnectsAfterFirstLive ? 1_500 : 0,
             reconnectDelayMilliseconds: reconnectsAfterFirstLive ? 5_000 : 0,
+            bluetoothLossAfterFirstLiveMilliseconds: self == .bluetoothLossVesc ? 1_500 : nil,
             emitsStaleTelemetry: emitsStaleTelemetry,
             flushCaptureSucceeds: flushCaptureSucceeds,
             connectionDelayMilliseconds: startsLive ? 0 : (failsConnection ? 3_000 : connectingDelayMilliseconds)

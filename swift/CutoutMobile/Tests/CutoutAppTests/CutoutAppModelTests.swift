@@ -514,7 +514,7 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertEqual(model.connectionState, .picker)
             XCTAssertEqual(
                 model.connectionState.navigationIntent(isRecordOnlyCapture: false),
-                .stay
+                .returnToPicker
             )
         }
     }
@@ -592,6 +592,10 @@ final class CutoutAppModelTests: XCTestCase {
         )
         XCTAssertEqual(
             ConnectionState.failed(selection, .connectFailed("timed out")).navigationIntent(isRecordOnlyCapture: false),
+            .returnToPicker
+        )
+        XCTAssertEqual(
+            ConnectionState.picker.navigationIntent(isRecordOnlyCapture: false),
             .returnToPicker
         )
         XCTAssertEqual(
@@ -1237,6 +1241,13 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertTrue(fixture?.isEuc ?? false)
         XCTAssertTrue(fixture?.reconnectsAfterFirstLive ?? false)
+    }
+
+    func testBluetoothLossFixtureTransitionsAfterLive() {
+        let fixture = CutoutUITestSessionFixture(value: "vesc-bluetooth-loss")
+
+        XCTAssertEqual(fixture?.candidate.platformIdentifier, "ui-test-vesc")
+        XCTAssertEqual(fixture?.testScript.bluetoothLossAfterFirstLiveMilliseconds, 1_500)
     }
 
     func testDynamicFixturesPublishASecondTelemetrySample() {
