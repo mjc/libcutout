@@ -202,6 +202,35 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(first), .update(second)])
     }
 
+    func testQueuedRequestIsRecheckedAfterWaitingForAnInFlightOperation() async {
+        let manager = RecordingLiveActivityRideLifecycleManager(blockFirstStart: true)
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let first = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let latest = liveSnapshot(label: "Connected ride", speedMph: 21.6)
+
+        let firstReconciliation = Task {
+            await coordinator.reconcile(requestID: 1, snapshot: first, shouldBeActive: true)
+        }
+        await manager.waitUntilFirstStartIsBlocked()
+
+        let staleEnd = Task {
+            await coordinator.end(requestID: 2, reason: .disconnected)
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        let latestReconciliation = Task {
+            await coordinator.reconcile(requestID: 3, snapshot: latest, shouldBeActive: true)
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+
+        await manager.resumeFirstStart()
+        await firstReconciliation.value
+        await staleEnd.value
+        await latestReconciliation.value
+
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(first), .update(latest)])
+    }
+
     func testRelaunchReconciliationAdoptsOneMatchingActivityAndEndsEverySibling() {
         let desired = LiveActivityRideIdentity.device("Current ride")
         let stale = LiveActivityRideIdentity.device("Previous ride")
