@@ -662,15 +662,13 @@ final class CutoutAppUITests: XCTestCase {
 
     func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertFailedVescConnectionAccessibility(
-            usesLocalizedText: true,
-            auditExclusions: .contrast
+            usesLocalizedText: true
         )
     }
 
     func testFailedVescConnectionPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertFailedVescConnectionAccessibility(
-            usesLocalizedText: true,
-            auditExclusions: []
+            usesLocalizedText: true
         )
     }
 
@@ -779,7 +777,6 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertFailedVescConnectionAccessibility(
         usesLocalizedText: Bool = false,
-        auditExclusions: XCUIAccessibilityAuditType = [],
         ignoringNilElementContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
@@ -794,7 +791,6 @@ final class CutoutAppUITests: XCTestCase {
         let connectingLabel = connectionStatus.label
         restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
 
@@ -810,7 +806,6 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(connectionStatus.label.isEmpty)
         restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
 
@@ -843,7 +838,6 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(picker.exists)
         restorePickerViewport(picker)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: auditExclusions,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
 
