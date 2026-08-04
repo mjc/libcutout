@@ -869,8 +869,7 @@ final class CutoutAppUITests: XCTestCase {
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucBmsDetailAccessibility(
             excluding: [],
-            ignoringNilElementContrastWarning: true,
-            ignoringBmsDetailSelectorDynamicTypeWarning: true
+            ignoringNilElementContrastWarning: true
         )
     }
 
@@ -1682,7 +1681,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringVisualProgressLabelContrastWarning: Bool = false,
-        ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false,
         ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false
     ) throws {
@@ -1734,16 +1732,6 @@ final class CutoutAppUITests: XCTestCase {
                 // The progress bar already exposes this same typed label and
                 // value on its parent. Xcode 27 reports its black-on-white
                 // visual child only in this RTL simulator audit.
-                return true
-            }
-            if ignoringBmsDetailSelectorDynamicTypeWarning,
-               issue.auditType == .dynamicType,
-               issue.detailedDescription == "User will not be able to change the font size of this SwiftUI.AccessibilityNode",
-               ["7", "12"].contains(issue.element?.label) {
-                // The only visible selector numerals are native `.body` Text
-                // in real Buttons. Xcode 27 misattributes their expanded
-                // visual children despite the button's typed semantics; every
-                // other Dynamic Type finding remains fatal.
                 return true
             }
             if ignoringScrolledOutBmsDetailBackControlContrastWarning,
@@ -1868,11 +1856,24 @@ final class CutoutAppUITests: XCTestCase {
         let scrollView = screen.scrollViews.firstMatch
         let scrollTarget = scrollView.exists ? scrollView : screen
 
-        for index in 0..<maxScrolls where !element.exists || !element.isHittable {
-            if index < maxScrolls / 2 {
-                scrollTarget.swipeUp()
+        // Keep both drag endpoints above the persistent landscape tab bar.
+        for _ in 0..<maxScrolls where !element.exists || !element.isHittable {
+            if element.exists, element.frame.minY < screen.frame.minY {
+                scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
+                    .press(
+                        forDuration: 0.05,
+                        thenDragTo: scrollTarget.coordinate(
+                            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)
+                        )
+                    )
             } else {
-                scrollTarget.swipeDown()
+                scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
+                    .press(
+                        forDuration: 0.05,
+                        thenDragTo: scrollTarget.coordinate(
+                            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)
+                        )
+                    )
             }
         }
     }
@@ -1933,7 +1934,6 @@ final class CutoutAppUITests: XCTestCase {
     private func assertEucBmsDetailAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringNilElementContrastWarning: Bool = false,
-        ignoringBmsDetailSelectorDynamicTypeWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false
     ) throws {
         let bmsScreen = try XCTUnwrap(openEucBmsMap())
@@ -1948,7 +1948,6 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(
             excluding: excluded,
             ignoringNilElementContrastWarning: ignoringNilElementContrastWarning,
-            ignoringBmsDetailSelectorDynamicTypeWarning: ignoringBmsDetailSelectorDynamicTypeWarning,
             ignoringScrolledOutBmsDetailBackControlContrastWarning: true,
             ignoringVisibleBmsDetailBackControlContrastWarning: ignoringVisibleBmsDetailBackControlContrastWarning
         )
