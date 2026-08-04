@@ -1155,6 +1155,27 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(snapshot?.identity.label, fixture.candidate.displayName)
     }
 
+    @MainActor
+    func testBluetoothUnavailableEndsLiveActivityAsUnavailable() async {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
+
+        for _ in 0 ..< 20 {
+            if await manager.lastEndReason != nil { break }
+            await Task.yield()
+        }
+
+        let endReason = await manager.lastEndReason
+        XCTAssertEqual(endReason, .unavailable)
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,
@@ -1279,6 +1300,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
     private var error: LiveActivityRideLifecycleError?
     private(set) var startCount = 0
     private(set) var lastStartedSnapshot: LiveActivityRideSnapshot?
+    private(set) var lastEndReason: LiveActivityRideLifecycleEndReason?
 
     init(error: LiveActivityRideLifecycleError?) {
         self.error = error
@@ -1292,7 +1314,9 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 
     func update(snapshot _: LiveActivityRideSnapshot) async throws {}
 
-    func end(reason _: LiveActivityRideLifecycleEndReason) async throws {}
+    func end(reason: LiveActivityRideLifecycleEndReason) async throws {
+        lastEndReason = reason
+    }
 
     func setError(_ error: LiveActivityRideLifecycleError?) {
         self.error = error

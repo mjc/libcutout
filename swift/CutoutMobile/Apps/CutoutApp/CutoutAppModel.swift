@@ -660,7 +660,7 @@ final class CutoutAppModel {
         let endReason: LiveActivityRideLifecycleEndReason = switch phase {
         case .scanning:
             .disconnected
-        case .failed:
+        case .bluetoothPermissionDenied, .bluetoothUnavailable, .failed:
             .unavailable
         default:
             .sessionEnded
