@@ -260,6 +260,7 @@ public final class CutoutSessionCore: NSObject {
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
+    private let reconnectJitter: () -> Double
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
@@ -299,7 +300,8 @@ public final class CutoutSessionCore: NSObject {
     init(
         clock: MonotonicClock,
         testScript: CutoutSessionTestScript? = nil,
-        reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler()
+        reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
+        reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) }
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -307,6 +309,7 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
+        self.reconnectJitter = reconnectJitter
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -317,6 +320,7 @@ public final class CutoutSessionCore: NSObject {
         self.deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
         self.clock = clock
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
+        self.reconnectJitter = { Double.random(in: 0...1) }
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -1066,7 +1070,7 @@ public final class CutoutSessionCore: NSObject {
         reconnect: @escaping () -> Void
     ) {
         guard let schedule = reconnectController.schedule(
-            jitter: Double.random(in: 0...1),
+            jitter: reconnectJitter(),
             operation: { [weak self] in
                 guard let self else { return }
                 self.onBleQueue {

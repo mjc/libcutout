@@ -300,11 +300,13 @@ final class CutoutSessionCoreTests: XCTestCase {
                 telemetry: nil,
                 connectionDelayMilliseconds: 60_000
             ),
-            reconnectScheduler: scheduler
+            reconnectScheduler: scheduler,
+            reconnectJitter: { 0 }
         )
         core.onReconnectScheduled = { scheduled in
             XCTAssertEqual(scheduled.platformIdentifier, self.scriptedVescCandidate.platformIdentifier)
             XCTAssertEqual(scheduled.attempt, 1)
+            XCTAssertEqual(scheduled.deadline, MonotonicMilliseconds(1_200))
             retry.fulfill()
         }
 
