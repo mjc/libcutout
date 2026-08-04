@@ -1844,7 +1844,7 @@ final class CutoutAppUITests: XCTestCase {
     private func openEucBmsScreen(identifier: String) -> XCUIElement? {
         guard pairAvailableDevice(.euc) else { return nil }
         guard let rideScreen = connectedScreen(timeout: 20) else {
-            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            XCTFail("The deterministic EUC fixture did not open its Ride screen.\n\(app.debugDescription)")
             return nil
         }
 
