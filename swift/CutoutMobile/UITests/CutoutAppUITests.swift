@@ -434,7 +434,7 @@ final class CutoutAppUITests: XCTestCase {
         let ride = app.descendants(matching: .any)[family.screenIdentifier]
         XCTAssertFalse(ride.exists, "\(family.name) opened Ride before showing Connecting")
         try performVisibleLayoutAccessibilityAudit()
-        XCTAssertTrue(ride.waitForExistence(timeout: 20))
+        assertFirstRideRouteMatches(family, timeout: 20)
 
         app.buttons["dashboard.disconnect"].tap()
         XCTAssertTrue(picker.waitForExistence(timeout: 5))
@@ -447,7 +447,8 @@ final class CutoutAppUITests: XCTestCase {
 
         for cycle in 1...3 {
             XCTAssertTrue(pairAvailableDevice(family), "Cycle \(cycle) did not start from the native \(family.name) Use button")
-            XCTAssertTrue(ride.waitForExistence(timeout: 20), "Cycle \(cycle) did not open the \(family.name) Ride screen")
+            assertFirstRideRouteMatches(family, timeout: 20)
+            XCTAssertTrue(ride.exists, "Cycle \(cycle) did not open the \(family.name) Ride screen")
             XCTAssertTrue(disconnect.waitForExistence(timeout: 5))
             XCTAssertEqual(disconnect.elementType, .button)
 
@@ -455,6 +456,24 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(picker.waitForExistence(timeout: 5), "Cycle \(cycle) did not return to the picker")
             XCTAssertFalse(ride.exists, "Cycle \(cycle) left the previous Ride screen visible")
         }
+    }
+
+    private func assertFirstRideRouteMatches(
+        _ family: ConnectedDeviceFamily,
+        timeout: TimeInterval
+    ) {
+        let firstRide = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "dashboard.screen.")
+        ).firstMatch
+        XCTAssertTrue(
+            firstRide.waitForExistence(timeout: timeout),
+            "Use for \(family.name) did not open a Ride screen"
+        )
+        XCTAssertEqual(
+            firstRide.identifier,
+            family.screenIdentifier,
+            "Use for \(family.name) opened the wrong Ride screen first"
+        )
     }
 
     func testCapturePassesAccessibilityAuditAtAccessibilityDynamicType() throws {
