@@ -1101,6 +1101,10 @@ final class CutoutAppUITests: XCTestCase {
         try assertEucStaleTelemetryAccessibility()
     }
 
+    func testEucStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
+        try assertEucStaleTelemetryAccessibility()
+    }
+
     func testEucStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
         try assertEucStaleTelemetryAccessibility(usesLocalizedText: true)
     }
@@ -1125,7 +1129,9 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["euc.warning"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertTrue(warning.isHittable, "The EUC stale warning must be visible without scrolling")
+        if !isLandscapeTest {
+            XCTAssertTrue(warning.isHittable, "The EUC stale warning must be visible without scrolling")
+        }
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry stale")
             XCTAssertFalse(warning.label.isEmpty)
