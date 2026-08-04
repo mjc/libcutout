@@ -1093,6 +1093,41 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescReconnectPrioritizesWarningForAccessibility() {
+        assertReconnectWarningPrecedesSpeed(for: .vesc)
+    }
+
+    func testEucReconnectPrioritizesWarningForAccessibility() {
+        assertReconnectWarningPrecedesSpeed(for: .euc)
+    }
+
+    private func assertReconnectWarningPrecedesSpeed(for family: ConnectedDeviceFamily) {
+        XCTAssertTrue(pairAvailableDevice(family))
+        guard let rideScreen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic \(family.name) fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let status = app.descendants(matching: .any)["ride.hero.status"]
+        let retrying = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label CONTAINS %@", "Retrying connection"),
+            object: status
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [retrying], timeout: 5), .completed)
+
+        let orderedTransitionValues = rideScreen.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier == 'ride.hero.status' OR identifier == 'ride.hero.speed'"
+            )
+        )
+        XCTAssertEqual(orderedTransitionValues.count, 2, rideScreen.debugDescription)
+        XCTAssertEqual(
+            orderedTransitionValues.element(boundBy: 0).identifier,
+            "ride.hero.status"
+        )
+    }
+
     private func assertReconnectAccessibility(
         for family: ConnectedDeviceFamily,
         usesLocalizedText: Bool = false,
