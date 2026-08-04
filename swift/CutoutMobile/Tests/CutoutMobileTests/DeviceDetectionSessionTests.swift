@@ -82,6 +82,39 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
     }
 
+    func testIdentificationProbeOutcomeDistinguishesNoProbeNeededAndUnsupported() {
+        let aeroState = CutoutSessionStateHandle()
+        _ = aeroState.observeDiscovery(observation: DiscoveryObservation(
+            platformIdentifier: "ios-local-aero",
+            advertisedName: Data("NF2557".utf8),
+            advertisedServiceUuids: [0xffe0],
+            manufacturerData: [],
+            rssiDbm: -48
+        ))
+        _ = aeroState.selectDiscoveredPlatform(platformIdentifier: "ios-local-aero")
+
+        let vescState = CutoutSessionStateHandle()
+        _ = vescState.observeDiscovery(observation: DiscoveryObservation(
+            platformIdentifier: "ios-local-vesc",
+            advertisedName: Data("Little FOCer".utf8),
+            advertisedServiceUuids: [0xfff0],
+            manufacturerData: [],
+            rssiDbm: -48
+        ))
+        _ = vescState.selectDiscoveredPlatform(platformIdentifier: "ios-local-vesc")
+
+        XCTAssertEqual(
+            DeviceDetectionSession(sessionState: aeroState)
+                .beginIdentificationProbe(at: MonotonicMilliseconds(1_000)),
+            .noProbeNeeded
+        )
+        XCTAssertEqual(
+            DeviceDetectionSession(sessionState: vescState)
+                .beginIdentificationProbe(at: MonotonicMilliseconds(1_000)),
+            .unsupported
+        )
+    }
+
     func testBegodeFirmwareProbeRetainsFirmwareBannerBytes() {
         let session = DeviceDetectionSession()
 

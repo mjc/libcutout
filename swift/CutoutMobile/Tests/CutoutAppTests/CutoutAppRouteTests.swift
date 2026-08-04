@@ -280,6 +280,10 @@ final class CutoutAppRouteTests: XCTestCase {
             SessionConnectionPhase.failed(.identificationFailed(.conflictingEvidence)).accessibilityAnnouncement,
             "Connection failed. Choose a device to try again. Device identification found conflicting evidence"
         )
+        XCTAssertEqual(
+            SessionConnectionPhase.failed(.identificationFailed(.unsupported)).accessibilityAnnouncement,
+            "Connection failed. Choose a device to try again. Device does not support this identification probe"
+        )
     }
 
     func testConnectionAnnouncementsSpeakRejectedPickerActionOnlyOnce() {

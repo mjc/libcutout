@@ -377,6 +377,10 @@
       "comment" : "Connection failure when the selected device does not answer its identification probes before the deadline.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device identification timed out" } } }
     },
+    "euc.failure.identification_unsupported" : {
+      "comment" : "Connection failure when the selected device does not support the requested identification exchange.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Device does not support this identification probe" } } }
+    },
     "euc.failure.missing_notify_channel" : {
       "comment" : "Connection failure when the device does not expose a notification channel.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Missing notify channel" } } }

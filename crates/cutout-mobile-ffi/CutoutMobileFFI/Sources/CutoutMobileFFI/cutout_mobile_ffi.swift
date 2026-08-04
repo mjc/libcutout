@@ -12078,6 +12078,14 @@ public func FfiConverterTypeMobileGattRoleDto_lower(_ value: MobileGattRoleDto) 
 public enum MobileIdentificationProbeOutcomeDto: Equatable, Hashable {
 
     /**
+     * The selected device is already identified and requires no query.
+     */
+    case noProbeNeeded
+    /**
+     * The selected device does not support this identification exchange.
+     */
+    case unsupported
+    /**
      * Ordered authorized writes that the transport must execute.
      */
     case writes(
@@ -12110,10 +12118,14 @@ public struct FfiConverterTypeMobileIdentificationProbeOutcomeDto: FfiConverterR
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .writes(writes: try FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.read(from: &buf)
+        case 1: return .noProbeNeeded
+
+        case 2: return .unsupported
+
+        case 3: return .writes(writes: try FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.read(from: &buf)
         )
 
-        case 2: return .alreadyPending
+        case 4: return .alreadyPending
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -12123,13 +12135,21 @@ public struct FfiConverterTypeMobileIdentificationProbeOutcomeDto: FfiConverterR
         switch value {
 
 
-        case let .writes(writes):
+        case .noProbeNeeded:
             writeInt(&buf, Int32(1))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(2))
+
+
+        case let .writes(writes):
+            writeInt(&buf, Int32(3))
             FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.write(writes, into: &buf)
 
 
         case .alreadyPending:
-            writeInt(&buf, Int32(2))
+            writeInt(&buf, Int32(4))
 
         }
     }

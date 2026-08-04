@@ -1874,6 +1874,15 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         if isProbeOnly, channel.bluetooth16Value == 0xffe1, characteristic.isNotifying {
             switch deviceDetectionSession.beginIdentificationProbe(at: clock.now()) {
+            case .noProbeNeeded:
+                if !promoteProbeIfResolved(
+                    deviceDetectionSession.resolution,
+                    on: characteristic.service?.peripheral
+                ) {
+                    refuseProbe(.unsupported, on: characteristic.service?.peripheral)
+                }
+            case .unsupported:
+                refuseProbe(.unsupported, on: characteristic.service?.peripheral)
             case .writes(let writes):
                 writes.forEach { writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
             case .alreadyPending:
@@ -2083,11 +2092,17 @@ extension CutoutSessionCore {
             buildOwner(for: peripheral)
             return liveOwner != nil
         case .refuse(let failure):
-            annotateDetection("identification_probe_refused=\(failure)")
-            suppressReconnect = true
-            setPhase(.failed(.identificationFailed(failure)))
-            central?.cancelPeripheralConnection(peripheral)
+            refuseProbe(failure, on: peripheral)
             return false
+        }
+    }
+
+    private func refuseProbe(_ failure: IdentificationProbeFailure, on peripheral: CBPeripheral?) {
+        annotateDetection("identification_probe_refused=\(failure)")
+        suppressReconnect = true
+        setPhase(.failed(.identificationFailed(failure)))
+        if let peripheral {
+            central?.cancelPeripheralConnection(peripheral)
         }
     }
 

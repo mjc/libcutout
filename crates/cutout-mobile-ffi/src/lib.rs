@@ -589,6 +589,12 @@ pub struct MobileIdentificationProbeWriteDto {
 /// Result of requesting a non-mutating identification probe.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileIdentificationProbeOutcomeDto {
+    /// The selected device is already identified and requires no query.
+    NoProbeNeeded,
+
+    /// The selected device does not support this identification exchange.
+    Unsupported,
+
     /// Ordered authorized writes that the transport must execute.
     Writes {
         /// Bounded query writes.
@@ -628,6 +634,44 @@ impl CutoutSessionStateHandle {
     ) -> MobileIdentificationProbeOutcomeDto {
         let probes = begode_identification_probes();
         let mut state = self.lock_inner();
+        let selected_identifier = state
+            .state
+            .discovery()
+            .selected_platform_identifier
+            .as_deref();
+        let selected_candidate = selected_identifier.and_then(|identifier| {
+            state
+                .state
+                .discovery()
+                .picker_candidates()
+                .into_iter()
+                .find(|candidate| candidate.platform_identifier == identifier)
+        });
+        match selected_candidate {
+            Some(candidate)
+                if candidate.electric_unicycle_model
+                    == Some(CoreDiscoveryElectricUnicycleModel::Aero) =>
+            {
+                return MobileIdentificationProbeOutcomeDto::NoProbeNeeded;
+            }
+            Some(candidate)
+                if candidate.connection_route
+                    == Some(CoreDiscoveryConnectionRoute::VescOnewheel) =>
+            {
+                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            }
+            Some(candidate)
+                if candidate.support == CoreDiscoveryCandidateSupport::ProbeRecommended
+                    || candidate.electric_unicycle_model
+                        == Some(CoreDiscoveryElectricUnicycleModel::Falcon) => {}
+            Some(_) => {
+                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            }
+            None if selected_identifier.is_some() => {
+                return MobileIdentificationProbeOutcomeDto::Unsupported;
+            }
+            None => {}
+        }
         if state
             .detector
             .next_probe_expiry(&state.state, CoreDuration::from_milliseconds(0))
@@ -6676,6 +6720,60 @@ mod tests {
             MobileIdentificationProbeOutcomeDto::AlreadyPending
         );
         assert_eq!(session.next_begode_probe_expiry(2_000), Some(3_001));
+    }
+
+    #[test]
+    fn mobile_identification_probe_reports_no_probe_needed_for_selected_aero() {
+        let session = CutoutSessionStateHandle::new();
+        let _ = session.observe_discovery(DiscoveryObservation {
+            platform_identifier: "ios-local-aero".to_owned(),
+            advertised_name: Some(b"NF2557".to_vec()),
+            advertised_service_uuids: vec![0xffe0],
+            manufacturer_data: vec![],
+            rssi_dbm: Some(-48),
+        });
+        let _ = session.select_discovered_platform("ios-local-aero".to_owned());
+
+        assert_eq!(
+            session.begin_identification_probe_at(1_000),
+            MobileIdentificationProbeOutcomeDto::NoProbeNeeded
+        );
+    }
+
+    #[test]
+    fn mobile_identification_probe_returns_writes_for_selected_probe_candidate() {
+        let session = CutoutSessionStateHandle::new();
+        let _ = session.observe_discovery(DiscoveryObservation {
+            platform_identifier: "ios-local-unknown-euc".to_owned(),
+            advertised_name: Some(b"Unknown EUC".to_vec()),
+            advertised_service_uuids: vec![0xffe0],
+            manufacturer_data: vec![],
+            rssi_dbm: Some(-48),
+        });
+        let _ = session.select_discovered_platform("ios-local-unknown-euc".to_owned());
+
+        assert!(matches!(
+            session.begin_identification_probe_at(1_000),
+            MobileIdentificationProbeOutcomeDto::Writes { .. }
+        ));
+    }
+
+    #[test]
+    fn mobile_identification_probe_reports_unsupported_for_selected_vesc() {
+        let session = CutoutSessionStateHandle::new();
+        let _ = session.observe_discovery(DiscoveryObservation {
+            platform_identifier: "ios-local-vesc".to_owned(),
+            advertised_name: Some(b"Little FOCer".to_vec()),
+            advertised_service_uuids: vec![0xfff0],
+            manufacturer_data: vec![],
+            rssi_dbm: Some(-48),
+        });
+        let _ = session.select_discovered_platform("ios-local-vesc".to_owned());
+
+        assert_eq!(
+            session.begin_identification_probe_at(1_000),
+            MobileIdentificationProbeOutcomeDto::Unsupported
+        );
     }
 
     #[test]

@@ -124,6 +124,7 @@ public enum IdentificationProbeFailure: Equatable, Hashable, Sendable {
     case timedOut
     case malformedResponse
     case conflictingEvidence
+    case unsupported
 }
 
 public enum IdentificationProbeResolutionDisposition: Equatable, Hashable, Sendable {
@@ -252,6 +253,10 @@ public final class DeviceDetectionSession {
 
     func beginIdentificationProbe(at startedAt: MonotonicMilliseconds) -> IdentificationProbeOutcome {
         switch inner.beginIdentificationProbeAt(startedAtMs: startedAt.rawValue) {
+        case .noProbeNeeded:
+            return .noProbeNeeded
+        case .unsupported:
+            return .unsupported
         case .writes(let writes):
             return .writes(writes.map { write in
                 IdentificationProbeWrite(
@@ -326,6 +331,8 @@ public final class DeviceDetectionSession {
 }
 
 enum IdentificationProbeOutcome: Equatable, Sendable {
+    case noProbeNeeded
+    case unsupported
     case writes([IdentificationProbeWrite])
     case alreadyPending
 }
@@ -4177,6 +4184,8 @@ public extension IdentificationProbeFailure {
             pevLocalizedText("euc.failure.identification_malformed")
         case .conflictingEvidence:
             pevLocalizedText("euc.failure.identification_conflict")
+        case .unsupported:
+            pevLocalizedText("euc.failure.identification_unsupported")
         }
     }
 }
@@ -4864,6 +4873,8 @@ public enum CoreBluetoothSession: Sendable {
         switch self {
         case .electricUnicycle(let session) where session.model == .falcon:
             switch detectionSession.beginIdentificationProbe(at: monotonicMilliseconds) {
+            case .noProbeNeeded, .unsupported:
+                []
             case .writes(let writes):
                 writes.map { .writeWithoutResponse(channel: $0.channel, bytes: $0.bytes) }
             case .alreadyPending:
