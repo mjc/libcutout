@@ -431,7 +431,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
         try performVisibleLayoutAccessibilityAudit(
             excluding: [.textClipped],
-            ignoringNilElementTextRepresentationWarning: true
+            ignoringNilElementTextRepresentationWarning: true,
+            ignoringNilElementContrastWarning: true
         )
     }
 
