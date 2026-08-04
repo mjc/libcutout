@@ -800,6 +800,7 @@ final class CutoutAppUITests: XCTestCase {
                 object: status
             )
             XCTAssertEqual(XCTWaiter.wait(for: [retrying], timeout: 5), .completed)
+            XCTAssertTrue(status.isHittable, "Retrying status must be visible when the transition occurs")
             XCTAssertNotEqual(status.label, "Retrying connection…")
             XCTAssertFalse((status.value as? String)?.isEmpty ?? true)
         } else {
@@ -807,6 +808,7 @@ final class CutoutAppUITests: XCTestCase {
                 NSPredicate(format: "label CONTAINS %@", "Retrying connection")
             ).firstMatch
             XCTAssertTrue(retrying.waitForExistence(timeout: 5))
+            XCTAssertTrue(retrying.isHittable, "Retrying warning must be visible when the transition occurs")
             XCTAssertEqual(retrying.value as? String, "warning")
         }
         XCTAssertEqual(rideScreen.identifier, family.screenIdentifier)
