@@ -908,10 +908,15 @@ final class CutoutAppUITests: XCTestCase {
         }
         defer { disconnectIfConnected() }
 
+        let windowFrame = app.windows.firstMatch.frame
         for identifier in ["ride.hero.speed", "ride.hero.status", "dashboard.disconnect"] {
             let element = app.descendants(matching: .any)[identifier]
             XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing essential Ride control: \(identifier)")
             XCTAssertTrue(element.isHittable, "Essential Ride control requires scrolling: \(identifier)")
+            XCTAssertTrue(
+                windowFrame.insetBy(dx: -2, dy: -2).contains(element.frame),
+                "Essential Ride control is clipped by the viewport: \(identifier) \(element.frame)"
+            )
             if identifier == "dashboard.disconnect" {
                 XCTAssertGreaterThanOrEqual(element.frame.height, 44)
             }
@@ -922,7 +927,14 @@ final class CutoutAppUITests: XCTestCase {
         case .vesc: "dashboard.nav.debug"
         case .euc: "dashboard.nav.pack"
         }
-        XCTAssertTrue(app.tabBars.buttons[secondaryRoute].isHittable)
+        for identifier in ["dashboard.nav.ride", secondaryRoute] {
+            let tab = app.tabBars.buttons[identifier]
+            XCTAssertTrue(tab.isHittable)
+            XCTAssertTrue(
+                windowFrame.insetBy(dx: -2, dy: -2).contains(tab.frame),
+                "Ride tab is clipped by the viewport: \(identifier) \(tab.frame)"
+            )
+        }
     }
 
     func testVescLiveActivityFixtureStartsFromAnAccessibleRide() throws {
