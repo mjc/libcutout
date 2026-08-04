@@ -860,10 +860,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast() throws {
-        try assertEucBmsDetailAccessibility(
-            excluding: [],
-            ignoringNilElementContrastWarning: true
-        )
+        try assertEucBmsDetailAccessibility(excluding: [])
     }
 
     func testEucBmsDetailPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
@@ -1665,9 +1662,26 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(heading.exists, "The selected BMS group heading is missing")
         let voltage = screen.staticTexts["bms.detail.voltage"]
         XCTAssertTrue(voltage.exists, "The selected BMS group voltage is missing")
-        scrollElementIntoReachability(voltage, in: screen, maxScrolls: 6)
+        scrollElementFrameIntoViewport(voltage, in: screen, maxScrolls: 6)
         XCTAssertTrue(voltage.isHittable, screen.debugDescription)
         XCTAssertFalse((voltage.value as? String)?.isEmpty ?? true)
+        scrollElementFrameIntoViewport(heading, in: screen, maxScrolls: 6)
+        XCTAssertTrue(heading.isHittable, screen.debugDescription)
+    }
+
+    private func scrollElementFrameIntoViewport(
+        _ element: XCUIElement,
+        in screen: XCUIElement,
+        maxScrolls: Int
+    ) {
+        for _ in 0..<maxScrolls where !screen.frame.contains(element.frame) {
+            if element.frame.minY < screen.frame.minY {
+                screen.swipeDown()
+            } else {
+                screen.swipeUp()
+            }
+        }
+        XCTAssertTrue(screen.frame.contains(element.frame), screen.debugDescription)
     }
 
     private func performVisibleLayoutAccessibilityAudit(
