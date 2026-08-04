@@ -873,6 +873,7 @@ enum CutoutUITestSessionFixture {
     case bluetoothUnavailable
     case bluetoothPermissionDenied
     case vesc
+    case dynamicVesc
     case pendingVesc
     case staleVesc
     case failedVesc
@@ -900,6 +901,7 @@ enum CutoutUITestSessionFixture {
         case "bluetooth-unavailable": self = .bluetoothUnavailable
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
+        case "vesc-dynamic": self = .dynamicVesc
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
@@ -977,7 +979,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1040,6 +1042,8 @@ enum CutoutUITestSessionFixture {
         CutoutSessionTestScript(
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
+            telemetryUpdate: self == .dynamicVesc ? dynamicTelemetryUpdate : nil,
+            telemetryUpdateDelayMilliseconds: self == .dynamicVesc ? 1_500 : 0,
             bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
             initialBluetoothState: initialBluetoothState,
@@ -1085,6 +1089,22 @@ enum CutoutUITestSessionFixture {
             controllerTemperature: Temperature(value: 32_000),
             pwm: DutyCycle(permille: 230),
             batteryLevelReported: BatteryLevel(value: 72)
+        )
+    }
+
+    private var dynamicTelemetryUpdate: TelemetrySnapshot {
+        TelemetrySnapshot(
+            speed: Speed(value: 16_000),
+            speedSource: .reported,
+            speedQuality: .known,
+            operatingState: .riding,
+            voltage: Voltage(value: 62_000),
+            batteryCurrent: BatteryCurrent(value: 12_000),
+            motorCurrent: PhaseCurrent(value: 20_000),
+            controllerTemperature: Temperature(value: 43_000),
+            motorTemperature: Temperature(value: 49_000),
+            pwm: DutyCycle(permille: 720),
+            batteryLevelReported: BatteryLevel(value: 71)
         )
     }
 

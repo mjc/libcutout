@@ -497,6 +497,32 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The dynamic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let speed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        let initialValue = try XCTUnwrap(speed.value as? String)
+        let changed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { object, _ in
+                guard let element = object as? XCUIElement,
+                      let value = element.value as? String
+                else { return false }
+                return element.exists && value != initialValue
+            },
+            object: speed
+        )
+
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        XCTAssertFalse(app.descendants(matching: .any)["device-picker.screen"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["device-picker.capture"].exists)
+    }
+
     func testPickerSurfaceRemainsReachableAtAccessibilityDynamicType() throws {
         let window = app.windows.firstMatch
         let screen = app.descendants(matching: .any)["device-picker.screen"]
@@ -1573,6 +1599,7 @@ final class CutoutAppUITests: XCTestCase {
         case eucNoBms
         case eucUnknownTopology
         case vesc
+        case vescDynamic
         case vescPending
         case vescStale
         case vescFailure
@@ -1601,6 +1628,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
+            if testName.contains("DynamicTelemetry") { return .vescDynamic }
             if testName.contains("StaleTelemetry") { return .vescStale }
             if testName.localizedCaseInsensitiveContains("EucBmsOverview") { return .eucOverview }
             if testName.localizedCaseInsensitiveContains("EucNoBms") { return .eucNoBms }
@@ -1635,6 +1663,7 @@ final class CutoutAppUITests: XCTestCase {
             case .eucNoBms: "euc-no-bms"
             case .eucUnknownTopology: "euc-unknown-topology"
             case .vesc: "vesc"
+            case .vescDynamic: "vesc-dynamic"
             case .vescPending: "vesc-pending"
             case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"

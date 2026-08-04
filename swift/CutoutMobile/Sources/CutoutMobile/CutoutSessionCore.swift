@@ -201,6 +201,8 @@ public enum CutoutSessionTestInitialBluetoothState: Sendable {
 public struct CutoutSessionTestScript {
     public let candidate: DevicePickerDiscoveryCandidate
     public let telemetry: TelemetrySnapshot?
+    public let telemetryUpdate: TelemetrySnapshot?
+    public let telemetryUpdateDelayMilliseconds: UInt64
     public let bmsSnapshot: BmsSnapshot?
     public let startsLive: Bool
     public let initialBluetoothState: CutoutSessionTestInitialBluetoothState
@@ -217,6 +219,8 @@ public struct CutoutSessionTestScript {
     public init(
         candidate: DevicePickerDiscoveryCandidate,
         telemetry: TelemetrySnapshot?,
+        telemetryUpdate: TelemetrySnapshot? = nil,
+        telemetryUpdateDelayMilliseconds: UInt64 = 0,
         bmsSnapshot: BmsSnapshot? = nil,
         startsLive: Bool = false,
         initialBluetoothState: CutoutSessionTestInitialBluetoothState = .scanning,
@@ -232,6 +236,8 @@ public struct CutoutSessionTestScript {
     ) {
         self.candidate = candidate
         self.telemetry = telemetry
+        self.telemetryUpdate = telemetryUpdate
+        self.telemetryUpdateDelayMilliseconds = telemetryUpdateDelayMilliseconds
         self.bmsSnapshot = bmsSnapshot
         self.startsLive = startsLive
         self.initialBluetoothState = initialBluetoothState
@@ -340,6 +346,7 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
     private var testScriptWorkItem: DispatchWorkItem?
+    private var testScriptUpdateWorkItem: DispatchWorkItem?
     private var testScriptDidReconnect = false
 #endif
     private lazy var locationManager: CLLocationManager = {
@@ -584,6 +591,7 @@ public final class CutoutSessionCore: NSObject {
     private func start(testScript: CutoutSessionTestScript) {
         onBleQueue {
             testScriptWorkItem?.cancel()
+            testScriptUpdateWorkItem?.cancel()
             testScriptDidReconnect = false
             displayState = RideDisplayState()
             publishDisplayState()
@@ -638,6 +646,7 @@ public final class CutoutSessionCore: NSObject {
         self.selectedRoute = route
         self.selectedModel = selectedModel
         testScriptWorkItem?.cancel()
+        testScriptUpdateWorkItem?.cancel()
         setPhase(.discoveringServices)
         setPhase(.subscribing)
         let work = DispatchWorkItem { [weak self] in
@@ -697,7 +706,26 @@ public final class CutoutSessionCore: NSObject {
             CoreBluetoothSessionStep(operations: [], snapshot: telemetry, actions: actions),
             receivedAt: receivedAt
         )
+        scheduleTestTelemetryUpdateIfNeeded(testScript)
         scheduleTestReconnectIfNeeded(testScript)
+    }
+
+    private func scheduleTestTelemetryUpdateIfNeeded(_ testScript: CutoutSessionTestScript) {
+        guard let telemetry = testScript.telemetryUpdate else { return }
+        let update = DispatchWorkItem { [weak self] in
+            self?.onBleQueue {
+                guard let self else { return }
+                self.applyNotificationStep(
+                    CoreBluetoothSessionStep(operations: [], snapshot: telemetry),
+                    receivedAt: self.clock.now()
+                )
+            }
+        }
+        testScriptUpdateWorkItem = update
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: testScript.telemetryUpdateDelayMilliseconds)),
+            execute: update
+        )
     }
 
     private func scheduleTestReconnectIfNeeded(_ testScript: CutoutSessionTestScript) {
@@ -742,6 +770,8 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
         testScriptWorkItem?.cancel()
         testScriptWorkItem = nil
+        testScriptUpdateWorkItem?.cancel()
+        testScriptUpdateWorkItem = nil
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
@@ -1179,6 +1209,8 @@ public final class CutoutSessionCore: NSObject {
 #if DEBUG
         testScriptWorkItem?.cancel()
         testScriptWorkItem = nil
+        testScriptUpdateWorkItem?.cancel()
+        testScriptUpdateWorkItem = nil
 #endif
         markOutstandingBegodeProbeResponsesMissing()
         finishCaptureAfterLinkDown()
