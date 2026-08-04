@@ -328,7 +328,8 @@ public struct PevLiveActivitySafetyFooter: View {
                 systemName: headroomPresentation.systemName,
                 value: snapshot.headroom,
                 tint: headroomPresentation.tint,
-                lineLimit: snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1
+                lineLimit: snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
+                emphasizesValue: snapshot.headroomSeverity == .reduceAcceleration
             )
             .accessibilitySortPriority(
                 PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
@@ -361,12 +362,20 @@ public struct PevLiveActivityFooterChip: View {
     let value: LiveActivityRideValue
     let tint: Color
     let lineLimit: Int
+    let emphasizesValue: Bool
 
-    public init(systemName: String, value: LiveActivityRideValue, tint: Color, lineLimit: Int = 1) {
+    public init(
+        systemName: String,
+        value: LiveActivityRideValue,
+        tint: Color,
+        lineLimit: Int = 1,
+        emphasizesValue: Bool = false
+    ) {
         self.systemName = systemName
         self.value = value
         self.tint = tint
         self.lineLimit = lineLimit
+        self.emphasizesValue = emphasizesValue
     }
 
     public var body: some View {
@@ -377,7 +386,11 @@ public struct PevLiveActivityFooterChip: View {
                 .accessibilityHidden(true)
             Text(value.displayValue)
                 .lineLimit(lineLimit)
-                .foregroundStyle(value.state == .available ? PevLiveActivityPalette.primaryText : PevLiveActivityPalette.secondaryText)
+                .foregroundStyle(
+                    value.state == .available || emphasizesValue
+                        ? PevLiveActivityPalette.primaryText
+                        : PevLiveActivityPalette.secondaryText
+                )
             if let unit = value.unit {
                 Text(unit)
                     .lineLimit(1)
