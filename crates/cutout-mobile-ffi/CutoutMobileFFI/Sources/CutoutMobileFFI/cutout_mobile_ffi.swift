@@ -4531,6 +4531,10 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
      */
     public var queuedMessages: UInt64
     /**
+     * Highest number of accepted messages waiting to be written.
+     */
+    public var peakQueuedMessages: UInt64
+    /**
      * Messages rejected because the queue was full or closed.
      */
     public var droppedMessages: UInt64
@@ -4554,6 +4558,9 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
          * Messages accepted by the queue and not yet written.
          */queuedMessages: UInt64,
         /**
+         * Highest number of accepted messages waiting to be written.
+         */peakQueuedMessages: UInt64,
+        /**
          * Messages rejected because the queue was full or closed.
          */droppedMessages: UInt64,
         /**
@@ -4566,6 +4573,7 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
          * Last writer error, if one exists.
          */lastError: String?) {
         self.queuedMessages = queuedMessages
+        self.peakQueuedMessages = peakQueuedMessages
         self.droppedMessages = droppedMessages
         self.bytesWritten = bytesWritten
         self.failed = failed
@@ -4589,6 +4597,7 @@ public struct FfiConverterTypeMobileCaptureWriterStatusDto: FfiConverterRustBuff
         return
             try MobileCaptureWriterStatusDto(
                 queuedMessages: FfiConverterUInt64.read(from: &buf),
+                peakQueuedMessages: FfiConverterUInt64.read(from: &buf),
                 droppedMessages: FfiConverterUInt64.read(from: &buf),
                 bytesWritten: FfiConverterUInt64.read(from: &buf),
                 failed: FfiConverterBool.read(from: &buf),
@@ -4598,6 +4607,7 @@ public struct FfiConverterTypeMobileCaptureWriterStatusDto: FfiConverterRustBuff
 
     public static func write(_ value: MobileCaptureWriterStatusDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.queuedMessages, into: &buf)
+        FfiConverterUInt64.write(value.peakQueuedMessages, into: &buf)
         FfiConverterUInt64.write(value.droppedMessages, into: &buf)
         FfiConverterUInt64.write(value.bytesWritten, into: &buf)
         FfiConverterBool.write(value.failed, into: &buf)

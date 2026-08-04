@@ -3446,6 +3446,8 @@ const CAPTURE_WRITER_SYNC_INTERVAL: Duration = Duration::from_secs(3);
 pub struct MobileCaptureWriterStatusDto {
     /// Messages accepted by the queue and not yet written.
     pub queued_messages: u64,
+    /// Highest number of accepted messages waiting to be written.
+    pub peak_queued_messages: u64,
     /// Messages rejected because the queue was full or closed.
     pub dropped_messages: u64,
     /// Bytes written to the capture file.
@@ -3459,6 +3461,7 @@ pub struct MobileCaptureWriterStatusDto {
 #[derive(Debug)]
 struct CaptureWriterState {
     queued_messages: AtomicU64,
+    peak_queued_messages: AtomicU64,
     dropped_messages: AtomicU64,
     bytes_written: AtomicU64,
     failed: AtomicBool,
@@ -3469,6 +3472,7 @@ impl Default for CaptureWriterState {
     fn default() -> Self {
         Self {
             queued_messages: AtomicU64::new(0),
+            peak_queued_messages: AtomicU64::new(0),
             dropped_messages: AtomicU64::new(0),
             bytes_written: AtomicU64::new(0),
             failed: AtomicBool::new(false),
@@ -3489,6 +3493,7 @@ impl CaptureWriterState {
     fn status(&self) -> MobileCaptureWriterStatusDto {
         MobileCaptureWriterStatusDto {
             queued_messages: self.queued_messages.load(Ordering::Acquire),
+            peak_queued_messages: self.peak_queued_messages.load(Ordering::Acquire),
             dropped_messages: self.dropped_messages.load(Ordering::Acquire),
             bytes_written: self.bytes_written.load(Ordering::Acquire),
             failed: self.failed.load(Ordering::Acquire),
@@ -3579,9 +3584,14 @@ impl CaptureWriter {
     }
 
     fn try_send(&self, message: CaptureWriterMessage) -> bool {
-        self.state.queued_messages.fetch_add(1, Ordering::AcqRel);
+        let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
         match self.sender.try_send(message) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.state
+                    .peak_queued_messages
+                    .fetch_max(queued_messages, Ordering::AcqRel);
+                true
+            }
             Err(TrySendError::Full(_)) => {
                 self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
                 self.state.dropped_messages.fetch_add(1, Ordering::AcqRel);
@@ -3609,9 +3619,14 @@ impl CaptureWriter {
             return false;
         }
         records.push_back(record);
-        self.state.queued_messages.fetch_add(1, Ordering::AcqRel);
+        let queued_messages = self.state.queued_messages.fetch_add(1, Ordering::AcqRel) + 1;
         match self.sender.try_send(CaptureWriterMessage::Record) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.state
+                    .peak_queued_messages
+                    .fetch_max(queued_messages, Ordering::AcqRel);
+                true
+            }
             Err(TrySendError::Full(CaptureWriterMessage::Record)) => {
                 records.pop_back();
                 self.state.queued_messages.fetch_sub(1, Ordering::AcqRel);
@@ -8873,12 +8888,31 @@ mod tests {
         assert!(!writer.try_send(CaptureWriterMessage::Flush));
         let status = state.status();
         assert_eq!(status.queued_messages, 0);
+        assert_eq!(status.peak_queued_messages, 0);
         assert_eq!(status.dropped_messages, 1);
         assert!(status.failed);
         assert_eq!(
             status.last_error.as_deref(),
             Some("capture writer queue is full")
         );
+    }
+
+    #[test]
+    fn capture_writer_status_retains_peak_accepted_queue_depth() {
+        let (sender, _receiver) = sync_channel(1);
+        let state = Arc::new(CaptureWriterState::default());
+        let writer = CaptureWriter {
+            sender,
+            records: Arc::new(CaptureRecordPool::new(1)),
+            state: Arc::clone(&state),
+            join: None,
+        };
+
+        assert!(writer.try_send(CaptureWriterMessage::Flush));
+        let status = state.status();
+        assert_eq!(status.queued_messages, 1);
+        assert_eq!(status.peak_queued_messages, 1);
+        assert_eq!(status.dropped_messages, 0);
     }
 
     fn charge_profile(
