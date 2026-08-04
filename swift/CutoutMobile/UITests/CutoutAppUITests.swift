@@ -222,7 +222,9 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenVisible() throws {
-        try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
+        try assertFinishCaptureFailureKeepsCaptureScreenAccessible(
+            auditExclusions: .dynamicType
+        )
     }
 
     func testFinishCaptureFailureKeepsCaptureScreenAccessibleAtAccessibilityDynamicType() throws {
@@ -242,7 +244,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertFinishCaptureFailureKeepsCaptureScreenAccessible(
-        usesLocalizedText: Bool = false
+        usesLocalizedText: Bool = false,
+        auditExclusions: XCUIAccessibilityAuditType = []
     ) throws {
         enterCapture()
 
@@ -272,7 +275,7 @@ final class CutoutAppUITests: XCTestCase {
         if !usesLocalizedText {
             XCTAssertEqual(status.label, "Capture failed")
         }
-        try performVisibleLayoutAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit(excluding: auditExclusions)
     }
 
     func testCaptureExclusivePedalModeLeavesOneActiveAccessibleAction() {

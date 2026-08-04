@@ -200,9 +200,10 @@ private struct CaptureLabelControlRow: View {
             Text(label.actionTitle(isActive: isActive))
                 .font(.callout.weight(.bold))
                 .foregroundStyle(CaptureActionButtonTone.forState(isActive: isActive).tint)
-                .frame(minHeight: 44)
         }
         .buttonStyle(.plain)
+        .frame(minHeight: 44)
+        .contentShape(.rect)
         .accessibilityIdentifier("capture.label.\(label.id).action")
     }
 }
