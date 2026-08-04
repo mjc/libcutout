@@ -255,7 +255,8 @@ final class CutoutAppUITests: XCTestCase {
         }
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
         XCTAssertTrue(capture.isHittable)
-        XCTAssertTrue(finish.exists)
+        XCTAssertTrue(status.isHittable, "Capture failure must be visible without scrolling")
+        XCTAssertTrue(finish.isHittable, "Finish capture must remain usable after a failure")
         if !usesLocalizedText {
             XCTAssertEqual(status.label, "Capture failed")
         }
