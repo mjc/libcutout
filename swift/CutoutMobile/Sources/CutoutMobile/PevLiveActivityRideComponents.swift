@@ -189,7 +189,7 @@ public struct PevLiveActivityCompactPwmBar: View {
                     compactSpeedLabel(speed: speed, severity: severity, includesUnit: true)
                     compactSpeedLabel(speed: speed, severity: severity, includesUnit: false)
                 }
-                .foregroundStyle(PevLiveActivityPalette.primaryText)
+                .foregroundStyle(.white)
             }
         }
         .frame(width: 86, height: 28)
