@@ -327,18 +327,28 @@ public struct PevLiveActivitySafetyFooter: View {
             PevLiveActivityFooterChip(
                 systemName: headroomPresentation.systemName,
                 value: snapshot.headroom,
-                tint: headroomPresentation.tint
+                tint: headroomPresentation.tint,
+                lineLimit: snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1
             )
-            .layoutPriority(snapshot.headroomSeverity == .reduceAcceleration ? 1 : 0)
             .accessibilitySortPriority(
                 PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
             )
-            Divider().overlay(PevLiveActivityPalette.border)
-                .accessibilityHidden(true)
-            PevLiveActivityFooterChip(systemName: "speaker.wave.2.fill", value: snapshot.beeps, tint: PevLiveActivityPalette.accent)
-            Divider().overlay(PevLiveActivityPalette.border)
-                .accessibilityHidden(true)
-            PevLiveActivityFooterChip(systemName: "thermometer.medium", value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
+            if snapshot.showsSecondarySafetyMetrics {
+                Divider().overlay(PevLiveActivityPalette.border)
+                    .accessibilityHidden(true)
+                PevLiveActivityFooterChip(
+                    systemName: "speaker.wave.2.fill",
+                    value: snapshot.beeps,
+                    tint: PevLiveActivityPalette.accent
+                )
+                Divider().overlay(PevLiveActivityPalette.border)
+                    .accessibilityHidden(true)
+                PevLiveActivityFooterChip(
+                    systemName: "thermometer.medium",
+                    value: snapshot.temperature,
+                    tint: PevLiveActivityPalette.primaryText
+                )
+            }
         }
         .font(.system(size: compact ? compactFontSize : expandedFontSize, weight: .medium))
     }
@@ -350,11 +360,13 @@ public struct PevLiveActivityFooterChip: View {
     let systemName: String
     let value: LiveActivityRideValue
     let tint: Color
+    let lineLimit: Int
 
-    public init(systemName: String, value: LiveActivityRideValue, tint: Color) {
+    public init(systemName: String, value: LiveActivityRideValue, tint: Color, lineLimit: Int = 1) {
         self.systemName = systemName
         self.value = value
         self.tint = tint
+        self.lineLimit = lineLimit
     }
 
     public var body: some View {
@@ -364,7 +376,7 @@ public struct PevLiveActivityFooterChip: View {
                 .foregroundStyle(tint)
                 .accessibilityHidden(true)
             Text(value.displayValue)
-                .lineLimit(1)
+                .lineLimit(lineLimit)
                 .foregroundStyle(value.state == .available ? PevLiveActivityPalette.primaryText : PevLiveActivityPalette.secondaryText)
             if let unit = value.unit {
                 Text(unit)

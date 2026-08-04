@@ -332,6 +332,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.headroomSeverity, .reduceAcceleration)
+        XCTAssertFalse(snapshot.showsSecondarySafetyMetrics)
         XCTAssertEqual(snapshot.compactTrailingValue, snapshot.headroom)
         XCTAssertEqual(
             snapshot.minimalAccessibilitySummary,
@@ -356,6 +357,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
         )
 
         XCTAssertEqual(snapshot.compactTrailingValue, snapshot.battery)
+        XCTAssertTrue(snapshot.showsSecondarySafetyMetrics)
         XCTAssertEqual(
             snapshot.minimalAccessibilitySummary,
             "Aero, connected, Speed, 26.8, mph, vehicle telemetry"
