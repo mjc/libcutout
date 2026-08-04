@@ -1161,8 +1161,10 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["vesc.warning.telemetry-pending"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertTrue(warning.isHittable, "The pending warning must be visible without scrolling")
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.isHittable, "The pending operating status must be visible without scrolling")
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry pending")
             XCTAssertFalse(warning.label.isEmpty)
