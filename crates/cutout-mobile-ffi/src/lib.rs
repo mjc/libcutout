@@ -3650,7 +3650,7 @@ struct CaptureMetadata {
 enum CaptureWriterMessage {
     Record,
     Metadata(CaptureMetadata),
-    Flush,
+    Flush(SyncSender<Result<(), String>>),
     Finish(SyncSender<Result<(), String>>),
 }
 
@@ -3780,6 +3780,20 @@ impl CaptureWriter {
         }
     }
 
+    fn flush(&self) -> Result<(), String> {
+        let (sender, receiver) = sync_channel(0);
+        if !self.try_send(CaptureWriterMessage::Flush(sender)) {
+            return Err(self
+                .state
+                .status()
+                .last_error
+                .unwrap_or_else(|| "capture writer flush failed".into()));
+        }
+        receiver
+            .recv()
+            .map_err(|_| "capture writer stopped before flush".to_string())?
+    }
+
     fn finish(mut self) -> Result<(), String> {
         let (sender, receiver) = sync_channel(0);
         if !self.try_send(CaptureWriterMessage::Finish(sender)) {
@@ -3890,27 +3904,31 @@ fn write_capture_stream(
             CaptureWriterMessage::Metadata(metadata) => {
                 pending_metadata = Some(metadata);
             }
-            CaptureWriterMessage::Flush => {
-                let rewrote_metadata = rewrite_pending_capture_metadata(
+            CaptureWriterMessage::Flush(reply) => {
+                let result = rewrite_pending_capture_metadata(
                     path,
                     &mut writer,
                     header,
                     &mut pending_metadata,
                     state,
-                )?;
-                if rewrote_metadata {
-                    bytes_since_flush = 0;
-                    last_flush = Instant::now();
-                    last_sync = last_flush;
-                } else {
-                    maybe_flush(
-                        &mut writer,
-                        &mut bytes_since_flush,
-                        &mut last_flush,
-                        &mut last_sync,
-                        true,
-                    )?;
-                }
+                )
+                .and_then(|rewrote_metadata| {
+                    if rewrote_metadata {
+                        bytes_since_flush = 0;
+                        last_flush = Instant::now();
+                        last_sync = last_flush;
+                        Ok(())
+                    } else {
+                        maybe_flush(
+                            &mut writer,
+                            &mut bytes_since_flush,
+                            &mut last_flush,
+                            &mut last_sync,
+                            true,
+                        )
+                    }
+                });
+                reply_capture_writer_result(result, &reply)?;
             }
             CaptureWriterMessage::Finish(reply) => {
                 let result = rewrite_pending_capture_metadata(
@@ -3933,11 +3951,7 @@ fn write_capture_stream(
                         )
                     }
                 });
-                if let Err(error) = &result {
-                    state.fail(error.clone());
-                }
-                let _ = reply.send(result);
-                return Ok(());
+                return reply_capture_writer_result(result, &reply);
             }
         }
     }
@@ -3947,6 +3961,15 @@ fn write_capture_stream(
         .get_mut()
         .sync_data()
         .map_err(|error| error.to_string())
+}
+
+fn reply_capture_writer_result(
+    result: Result<(), String>,
+    reply: &SyncSender<Result<(), String>>,
+) -> Result<(), String> {
+    let failure = result.as_ref().err().cloned();
+    let _ = reply.send(result);
+    failure.map_or(Ok(()), Err)
 }
 
 fn rewrite_pending_capture_metadata(
@@ -4171,9 +4194,7 @@ impl MobilePevcapCaptureBuilder {
     /// Flushes buffered capture bytes and syncs them to durable storage.
     pub fn flush_writer(&self) -> bool {
         let writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        writer
-            .as_ref()
-            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Flush))
+        writer.as_ref().is_some_and(|writer| writer.flush().is_ok())
     }
 
     /// Finishes the Rust-owned streaming writer.
@@ -9193,7 +9214,8 @@ mod tests {
             join: None,
         };
 
-        assert!(!writer.try_send(CaptureWriterMessage::Flush));
+        let (reply, _result) = sync_channel(0);
+        assert!(!writer.try_send(CaptureWriterMessage::Flush(reply)));
         let status = state.status();
         assert_eq!(status.queued_messages, 0);
         assert_eq!(status.peak_queued_messages, 0);
@@ -9216,7 +9238,8 @@ mod tests {
             join: None,
         };
 
-        assert!(writer.try_send(CaptureWriterMessage::Flush));
+        let (reply, _result) = sync_channel(0);
+        assert!(writer.try_send(CaptureWriterMessage::Flush(reply)));
         let status = state.status();
         assert_eq!(status.queued_messages, 1);
         assert_eq!(status.peak_queued_messages, 1);
@@ -9273,6 +9296,43 @@ mod tests {
                 .iter()
                 .any(|annotation| annotation == "synthetic=late-7")
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn capture_writer_flush_returns_after_metadata_is_durable() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-durable-flush-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_link_up(ms(1), None));
+        assert!(builder.add_annotation("durability=background".into()));
+
+        assert!(builder.flush_writer());
+        assert_eq!(builder.writer_status().queued_messages, 0);
+        let capture = PevcapCapture::decode(
+            &fs::read(&path).expect("flushed capture is readable"),
+            PevcapEncoding::Jsonl,
+        )
+        .expect("flushed capture is durable PEVCAP");
+        assert_eq!(capture.records.len(), 1);
+        assert!(
+            capture
+                .header
+                .annotations
+                .iter()
+                .any(|annotation| annotation == "durability=background")
+        );
+
+        assert!(builder.finish_writer());
         let _ = fs::remove_file(path);
     }
 
