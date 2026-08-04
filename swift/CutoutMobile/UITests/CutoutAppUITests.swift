@@ -293,6 +293,27 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testBackgroundFlushFailureRemainsVisibleAfterReactivatingCaptureAtAccessibilityDynamicType() throws {
+        enterCapture()
+
+        let capture = app.descendants(matching: .any)["capture.screen"]
+        let status = app.descendants(matching: .any)["capture.status"]
+        let finish = app.buttons["capture.stop"]
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertNotEqual(status.label, "Capture failed")
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+
+        XCTAssertTrue(capture.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.label, "Capture failed")
+        XCTAssertTrue(status.isHittable, "Background flush failure must remain visible after reactivation")
+        XCTAssertTrue(finish.isHittable, "Finish capture must remain usable after a background flush failure")
+        try performVisibleLayoutAccessibilityAudit()
+    }
+
     func testFinishCaptureFailureKeepsCaptureScreenAccessibleAtAccessibilityDynamicType() throws {
         try assertFinishCaptureFailureKeepsCaptureScreenAccessible()
     }
@@ -2213,6 +2234,7 @@ final class CutoutAppUITests: XCTestCase {
         case vescStaleLiveActivityAuto
 
         static func testFixture(for testName: String) -> Self {
+            if testName.contains("BackgroundFlushFailure") { return .unknownDeviceFinishFailure }
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
             if testName.contains("ProbeTimeout") { return .probeTimeout }
             if testName.contains("ProbeMalformedResponse") { return .probeMalformedResponse }
