@@ -2112,6 +2112,12 @@ final class CutoutAppUITests: XCTestCase {
         let debugScreen = app.descendants(matching: .any)["dashboard.screen.vescDebug"]
         XCTAssertTrue(debugScreen.waitForExistence(timeout: 5))
         XCTAssertTrue(debugTab.isSelected)
+        for rowID in ["phase", "voltage"] {
+            let row = app.descendants(matching: .any)["dashboard.key-value.\(rowID)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(row.label.isEmpty)
+            XCTAssertFalse((row.value as? String)?.isEmpty ?? true)
+        }
         if let requiredMetricLabel {
             assertMetricIsReachable(requiredMetricLabel, in: debugScreen)
         }
