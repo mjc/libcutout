@@ -1662,16 +1662,9 @@ final class CutoutAppUITests: XCTestCase {
                 )
                 return
             }
-            if metric.frame.intersects(screen.frame) {
-                XCTAssertFalse(
-                    (metric.value as? String)?.isEmpty ?? true,
-                    "The \(label) metric has no accessible value"
-                )
-                return
-            }
         }
 
-        for index in 0..<6 where !metric.exists || (!metric.isHittable && !metric.frame.intersects(screen.frame)) {
+        for index in 0..<6 where !metric.exists || !metric.isHittable {
             if index < 3 {
                 let start = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.62))
                 let end = scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.28))
@@ -1684,10 +1677,7 @@ final class CutoutAppUITests: XCTestCase {
         }
 
         XCTAssertTrue(metric.exists, "The \(label) metric is missing at accessibility text sizes")
-        XCTAssertTrue(
-            metric.isHittable || metric.frame.intersects(screen.frame),
-            "The \(label) metric cannot be reached by scrolling"
-        )
+        XCTAssertTrue(metric.isHittable, "The \(label) metric cannot be reached by scrolling")
         XCTAssertFalse(
             (metric.value as? String)?.isEmpty ?? true,
             "The \(label) metric has no accessible value"
