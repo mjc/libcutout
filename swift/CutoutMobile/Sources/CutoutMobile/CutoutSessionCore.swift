@@ -663,6 +663,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
+        finishCaptureAfterLinkDown()
         isRecordOnly = false
         selectedModel = nil
         selectedRoute = nil
@@ -1061,12 +1062,7 @@ public final class CutoutSessionCore: NSObject {
         testScriptWorkItem = nil
 #endif
         markOutstandingBegodeProbeResponsesMissing()
-        _ = captureBuilder?.recordLinkDown(monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()))
-        let completedCaptureURL = captureFileURL
-        finishCaptureWriter()
-        if let completedCaptureURL {
-            publishCaptureEvent(.finished(fileURL: completedCaptureURL))
-        }
+        finishCaptureAfterLinkDown()
         let wasRecordOnly = isRecordOnly
         let reconnectRoute = selectedRoute
         isRecordOnly = false
@@ -1348,14 +1344,37 @@ public final class CutoutSessionCore: NSObject {
         return false
     }
 
-    private func finishCaptureWriter() {
+    private func finishCaptureAfterLinkDown() {
+        guard captureBuilder != nil else { return }
+        let linkDownAccepted = captureBuilder?.recordLinkDown(
+            monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds())
+        ) ?? false
+        finishCaptureWriter(publishesResult: true, priorWriteSucceeded: linkDownAccepted)
+    }
+
+    private func finishCaptureWriter(
+        publishesResult: Bool = false,
+        priorWriteSucceeded: Bool = true
+    ) {
         guard let builder = captureBuilder else { return }
+        let completedCaptureURL = captureFileURL
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
-        DispatchQueue.global(qos: .utility).async {
-            _ = builder.finishWriter()
+        let finish = DispatchWorkItem { [weak self] in
+            let writerSucceeded = builder.finishWriter()
+            let succeeded = priorWriteSucceeded && writerSucceeded
+            guard publishesResult, let self else { return }
+            self.onBleQueue {
+                if succeeded, let completedCaptureURL {
+                    self.publishCaptureEvent(.finished(fileURL: completedCaptureURL))
+                } else {
+                    self.record("capture_error=writer_finish_failed")
+                    self.publishCaptureEvent(.failed)
+                }
+            }
         }
+        DispatchQueue.global(qos: .utility).async(execute: finish)
     }
 
     private func captureElapsedMilliseconds() -> UInt64 {
