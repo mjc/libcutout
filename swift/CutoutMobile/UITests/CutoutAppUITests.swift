@@ -10,6 +10,7 @@ final class CutoutAppUITests: XCTestCase {
         try skipLiveActivityTestsOnSimulator()
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
+        app.terminate()
         app.launchArguments = launchArguments
         app.launchEnvironment = fixture.launchEnvironment
         app.launch()
@@ -801,6 +802,14 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
+    func testVescLiveActivityAutoFixtureStartsAnAccessibleRideInLandscape() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
+    func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRideInLandscape() throws {
         try assertVescLiveActivityAutoFixture()
     }
 
