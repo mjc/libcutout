@@ -571,6 +571,7 @@ final class LiveActivityRideSnapshotTests: XCTestCase {
             "Aero, stale, Speed, 4.5, mph, vehicle telemetry, stale"
         )
         XCTAssertEqual(unavailable.connectionState, .unavailable)
+        XCTAssertFalse(unavailable.showsSecondarySafetyMetrics)
         XCTAssertEqual(
             unavailable.minimalAccessibilitySummary,
             "Device, unavailable, Speed, unavailable, mph"

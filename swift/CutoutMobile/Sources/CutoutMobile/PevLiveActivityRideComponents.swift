@@ -275,7 +275,12 @@ public struct PevLiveActivityMetricGrid: View {
             }
             GridRow {
                 metricCell(role: .chargeEstimate, value: snapshot.chargeEstimate, tint: PevLiveActivityPalette.connected)
-                metricCell(role: .headroom, value: snapshot.headroom, tint: PevLiveActivityPalette.orange)
+                if snapshot.headroomSeverity == .nominal {
+                    metricCell(role: .headroom, value: snapshot.headroom, tint: PevLiveActivityPalette.orange)
+                } else {
+                    Color.clear
+                        .accessibilityHidden(true)
+                }
                 metricCell(role: .temperature, value: snapshot.temperature, tint: PevLiveActivityPalette.primaryText)
             }
         }
@@ -299,11 +304,14 @@ public struct PevLiveActivityMetricGrid: View {
             compact: compact,
             showProgress: showProgress
         )
-        .accessibilityHidden(role.isRepeatedInSafetyFooter)
+        .accessibilityHidden(
+            role == .headroom || (role == .temperature && snapshot.showsSecondarySafetyMetrics)
+        )
     }
 }
 
 public struct PevLiveActivitySafetyFooter: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .caption2) private var compactFontSize: CGFloat = 9
     @ScaledMetric(relativeTo: .caption2) private var expandedFontSize: CGFloat = 10
 
@@ -329,28 +337,23 @@ public struct PevLiveActivitySafetyFooter: View {
     }
 
     public var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: compact ? 6 : 8) {
-                headroomChip
-                if snapshot.showsSecondarySafetyMetrics {
-                    Divider().overlay(PevLiveActivityPalette.border)
-                        .accessibilityHidden(true)
-                    PevLiveActivityFooterChip(
-                        systemName: "speaker.wave.2.fill",
-                        value: snapshot.beeps,
-                        tint: PevLiveActivityPalette.accent
-                    )
-                    Divider().overlay(PevLiveActivityPalette.border)
-                        .accessibilityHidden(true)
-                    PevLiveActivityFooterChip(
-                        systemName: "thermometer.medium",
-                        value: snapshot.temperature,
-                        tint: PevLiveActivityPalette.primaryText
-                    )
-                }
-            }
-            if snapshot.showsSecondarySafetyMetrics {
-                headroomChip
+        HStack(spacing: compact ? 6 : 8) {
+            headroomChip
+            if snapshot.showsSecondarySafetyMetrics && !dynamicTypeSize.isAccessibilitySize {
+                Divider().overlay(PevLiveActivityPalette.border)
+                    .accessibilityHidden(true)
+                PevLiveActivityFooterChip(
+                    systemName: "speaker.wave.2.fill",
+                    value: snapshot.beeps,
+                    tint: PevLiveActivityPalette.accent
+                )
+                Divider().overlay(PevLiveActivityPalette.border)
+                    .accessibilityHidden(true)
+                PevLiveActivityFooterChip(
+                    systemName: "thermometer.medium",
+                    value: snapshot.temperature,
+                    tint: PevLiveActivityPalette.primaryText
+                )
             }
         }
         .font(.system(size: compact ? compactFontSize : expandedFontSize, weight: .medium))

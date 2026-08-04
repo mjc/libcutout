@@ -1040,6 +1040,14 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(fixture?.testScript.telemetry?.pwm?.permille, 850)
     }
 
+    func testUnavailableLiveActivityFixtureStartsLiveWithoutTelemetry() {
+        let fixture = CutoutUITestSessionFixture(value: "vesc-live-activity-unavailable-auto")
+
+        XCTAssertTrue(fixture?.startsLive ?? false)
+        XCTAssertTrue(fixture?.emitsPendingTelemetry ?? false)
+        XCTAssertNil(fixture?.testScript.telemetry)
+    }
+
     @MainActor
     func testAutoLiveActivityUsesTheCandidateDisplayName() async {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity

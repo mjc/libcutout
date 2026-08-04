@@ -407,7 +407,7 @@ public struct LiveActivityRideSnapshot: Codable, Equatable, Hashable, Sendable {
     }
 
     public var showsSecondarySafetyMetrics: Bool {
-        headroomSeverity != .reduceAcceleration
+        headroomSeverity == .nominal
     }
 
     public var pwmSeverity: LiveActivityRidePwmSeverity {
