@@ -526,6 +526,57 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(publicationCount, 2)
     }
 
+    func testDisplayPublicationThrottleDoesNotDelaySafetyWarningTransitions() throws {
+        let clock = TestMonotonicClock(MonotonicMilliseconds(1_000))
+        let core = CutoutSessionCore(clock: MonotonicClock(now: { clock.now }))
+        var publishedStates: [RideDisplayState] = []
+        core.onDisplayStateChange = { publishedStates.append($0) }
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(500))
+            ),
+            receivedAt: MonotonicMilliseconds(1_000)
+        )
+
+        clock.now = MonotonicMilliseconds(1_200)
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(800))
+            ),
+            receivedAt: MonotonicMilliseconds(1_200)
+        )
+
+        XCTAssertEqual(publishedStates.count, 2)
+        XCTAssertEqual(
+            EucRideScreenState(
+                phase: .live,
+                displayState: try XCTUnwrap(publishedStates.last)
+            ).warningState.severity,
+            .reduceAcceleration
+        )
+
+        clock.now = MonotonicMilliseconds(1_250)
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(
+                operations: [],
+                snapshot: TelemetrySnapshot(operatingState: .riding, pwm: dutyCycle(500))
+            ),
+            receivedAt: MonotonicMilliseconds(1_250)
+        )
+
+        XCTAssertEqual(publishedStates.count, 3)
+        XCTAssertEqual(
+            EucRideScreenState(
+                phase: .live,
+                displayState: try XCTUnwrap(publishedStates.last)
+            ).warningState.severity,
+            .normal
+        )
+    }
+
     func testVescRideSnapshotKeepsRideCriticalFieldsTyped() {
         let snapshot = VescRideSnapshot(
             title: "Fungineers X7",

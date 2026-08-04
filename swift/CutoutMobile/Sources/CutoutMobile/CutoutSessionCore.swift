@@ -341,6 +341,7 @@ public final class CutoutSessionCore: NSObject {
     private var pendingDisplayStateQueuedAt: MonotonicMilliseconds?
     private var displayPublishWorkItem: DispatchWorkItem?
     private var lastDisplayPublication: MonotonicMilliseconds?
+    private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let phoneLocationState = MobilePhoneLocationState()
     private var didRequestAlwaysLocationAuthorization = false
 #if DEBUG
@@ -1345,7 +1346,12 @@ public final class CutoutSessionCore: NSObject {
         let elapsed = lastDisplayPublication.map {
             now.elapsed(since: $0).rawValue
         } ?? intervalMilliseconds
-        guard elapsed >= intervalMilliseconds else {
+        let warningSeverity = EucRideScreenState(
+            phase: .live,
+            displayState: value
+        ).warningState.severity
+        let warningChanged = lastPublishedWarningSeverity.map { $0 != warningSeverity } ?? false
+        guard elapsed >= intervalMilliseconds || warningChanged else {
             guard displayPublishWorkItem == nil else { return }
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
@@ -1369,6 +1375,7 @@ public final class CutoutSessionCore: NSObject {
         } ?? 0
         pendingDisplayStateQueuedAt = nil
         lastDisplayPublication = now
+        lastPublishedWarningSeverity = warningSeverity
         onDisplayStateChange?(value)
         onRecord?("snapshot_publication_ms=\(publicationDelayMilliseconds)")
     }
