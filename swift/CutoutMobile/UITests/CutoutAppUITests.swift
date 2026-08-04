@@ -220,16 +220,10 @@ final class CutoutAppUITests: XCTestCase {
     func testCaptureExposesTypedWriterHealthDetails() {
         enterCapture()
 
-        let details = app.descendants(matching: .any)["capture.session-details"]
-        let writer = details.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", "Writer")
-        ).firstMatch
-        let pendingWrites = details.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", "Pending writes")
-        ).firstMatch
+        let writer = app.descendants(matching: .any)["dashboard.key-value.capture-writer-health"]
+        let pendingWrites = app.descendants(matching: .any)["dashboard.key-value.capture-queued-messages"]
 
-        XCTAssertTrue(details.waitForExistence(timeout: 5))
-        XCTAssertTrue(pendingWrites.exists)
+        XCTAssertTrue(pendingWrites.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(pendingWrites.value as? String, "0")
         XCTAssertTrue(writer.exists)
         XCTAssertEqual(writer.value as? String, "Healthy")

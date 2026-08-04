@@ -373,6 +373,17 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "=", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
         let modelHint = CutoutModelHint(deviceKind: annotationKind)
+        let previousCapture = (
+            status: captureStatus,
+            progress: captureProgress,
+            isFinishing: isFinishingCapture,
+            activeLabels: activeCaptureLabels,
+            fileName: captureFileName,
+            notificationCount: captureNotificationCount,
+            label: captureLabel,
+            deviceKind: recordOnlyDeviceKind
+        )
+        resetCaptureSession()
         let didStart = switch modelHint {
         case .falcon:
             core.pair(platformIdentifier: platformIdentifier, model: .falcon)
@@ -385,21 +396,30 @@ final class CutoutAppModel {
                 annotations: annotations
             )
         }
-        if didStart {
-            resetCaptureSession()
-            permitsStoredDeviceAutoPairing = false
-            if modelHint != .unknown {
-                core.annotateCapture(key: "device_kind", value: annotationKind)
-            }
-            isRecordOnlyCapture = modelHint == .unknown
-            recordOnlyDeviceKind = annotationKind
-            if modelHint == .unknown {
-                liveActivityIdentity = nil
-                liveActivityGlyph = .electricUnicycle
-            }
-            syncLiveActivity()
+        guard didStart else {
+            captureStatus = previousCapture.status
+            captureProgress = previousCapture.progress
+            isFinishingCapture = previousCapture.isFinishing
+            activeCaptureLabels = previousCapture.activeLabels
+            captureFileName = previousCapture.fileName
+            captureNotificationCount = previousCapture.notificationCount
+            captureLabel = previousCapture.label
+            recordOnlyDeviceKind = previousCapture.deviceKind
+            return false
         }
-        return didStart
+
+        permitsStoredDeviceAutoPairing = false
+        if modelHint != .unknown {
+            core.annotateCapture(key: "device_kind", value: annotationKind)
+        }
+        isRecordOnlyCapture = modelHint == .unknown
+        recordOnlyDeviceKind = annotationKind
+        if modelHint == .unknown {
+            liveActivityIdentity = nil
+            liveActivityGlyph = .electricUnicycle
+        }
+        syncLiveActivity()
+        return true
     }
 
     func startProbe(platformIdentifier: String) -> Bool {

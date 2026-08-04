@@ -70,7 +70,6 @@ struct CaptureRecordingScreen: View {
 
             if let captureProgress {
                 PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))
-                    .accessibilityIdentifier("capture.session-details")
             }
 
             CaptureLabelControls(
