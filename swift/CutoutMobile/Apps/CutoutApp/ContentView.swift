@@ -124,6 +124,7 @@ struct ContentView: View {
                     if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
                             connectedDestination(for: tabRoute)
+                                .id(tabRoute)
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
                         }
@@ -200,6 +201,7 @@ struct ContentView: View {
                 availableTabs.first(where: \.isSelected)?.id ?? .ride
             },
             set: { selectedID in
+                guard selectedID != availableTabs.first(where: \.isSelected)?.id else { return }
                 guard let target = availableTabs.first(where: { $0.id == selectedID })?.destinationTarget else {
                     return
                 }
