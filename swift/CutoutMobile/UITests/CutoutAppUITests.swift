@@ -1457,19 +1457,28 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
-        assertStaleWarningPrecedesSpeed(for: .vesc)
+        assertWarningPrecedesSpeed(
+            for: .vesc,
+            warningIdentifier: "vesc.warning.telemetry-stale"
+        )
     }
 
     func testEucStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
-        assertStaleWarningPrecedesSpeed(for: .euc)
+        assertWarningPrecedesSpeed(for: .euc, warningIdentifier: "euc.warning")
     }
 
-    private func assertStaleWarningPrecedesSpeed(for family: ConnectedDeviceFamily) {
+    func testVescPendingTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
+        assertWarningPrecedesSpeed(
+            for: .vesc,
+            warningIdentifier: "vesc.warning.telemetry-pending"
+        )
+    }
+
+    private func assertWarningPrecedesSpeed(
+        for family: ConnectedDeviceFamily,
+        warningIdentifier: String
+    ) {
         XCTAssertTrue(pairAvailableDevice(family))
-        let warningIdentifier = switch family {
-        case .vesc: "vesc.warning.telemetry-stale"
-        case .euc: "euc.warning"
-        }
         let familyScreen = app.descendants(matching: .any)[family.screenIdentifier]
         XCTAssertTrue(familyScreen.waitForExistence(timeout: 20), app.debugDescription)
 
