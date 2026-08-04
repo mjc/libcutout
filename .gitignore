@@ -1,5 +1,5 @@
 /target/
-/.build/
+.build/
 /fuzz/artifacts/
 /fuzz/corpus/
 /fuzz/target/
@@ -17,5 +17,4 @@ xcuserdata/
 entities.json
 # Keep raw capture payloads out of MemPalace; file durable facts instead.
 *.pevcap.jsonl
-swift/CutoutMobile/.build/
 crates/cutout-mobile-ffi/generated/
