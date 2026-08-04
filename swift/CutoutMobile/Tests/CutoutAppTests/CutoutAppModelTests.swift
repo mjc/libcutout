@@ -1048,6 +1048,14 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(fixture?.testScript.telemetry)
     }
 
+    func testStaleLiveActivityFixtureStartsLiveWithStaleTelemetry() {
+        let fixture = CutoutUITestSessionFixture(value: "vesc-live-activity-stale-auto")
+
+        XCTAssertTrue(fixture?.startsLive ?? false)
+        XCTAssertTrue(fixture?.emitsStaleTelemetry ?? false)
+        XCTAssertNotNil(fixture?.testScript.telemetry)
+    }
+
     @MainActor
     func testAutoLiveActivityUsesTheCandidateDisplayName() async {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity

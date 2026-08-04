@@ -805,6 +805,10 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescStaleLiveActivityLockScreenPreservesStaleSemantics() {
+        assertVescLiveActivityLockScreen(speed: "stale", headroom: "good", stateName: "Stale")
+    }
+
     private func assertVescLiveActivityLockScreen(
         speed expectedSpeed: String,
         headroom expectedHeadroom: String,
@@ -1876,6 +1880,7 @@ final class CutoutAppUITests: XCTestCase {
         case vescLiveActivityAuto
         case vescCriticalLiveActivityAuto
         case vescUnavailableLiveActivityAuto
+        case vescStaleLiveActivityAuto
 
         static func testFixture(for testName: String) -> Self {
             if testName.contains("FinishCaptureFailure") { return .unknownDeviceFinishFailure }
@@ -1894,6 +1899,9 @@ final class CutoutAppUITests: XCTestCase {
             }
             if testName.contains("UnavailableLiveActivityLockScreen") {
                 return .vescUnavailableLiveActivityAuto
+            }
+            if testName.contains("StaleLiveActivityLockScreen") {
+                return .vescStaleLiveActivityAuto
             }
             if testName.contains("LiveActivityLockScreen") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
@@ -1955,6 +1963,7 @@ final class CutoutAppUITests: XCTestCase {
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
             case .vescCriticalLiveActivityAuto: "vesc-live-activity-critical-auto"
             case .vescUnavailableLiveActivityAuto: "vesc-live-activity-unavailable-auto"
+            case .vescStaleLiveActivityAuto: "vesc-live-activity-stale-auto"
             }
         }
     }

@@ -891,6 +891,7 @@ enum CutoutUITestSessionFixture {
     case autoVescLiveActivity
     case autoCriticalVescLiveActivity
     case autoUnavailableVescLiveActivity
+    case autoStaleVescLiveActivity
 
     init?(value: String?) {
         switch value {
@@ -922,6 +923,7 @@ enum CutoutUITestSessionFixture {
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
         case "vesc-live-activity-critical-auto": self = .autoCriticalVescLiveActivity
         case "vesc-live-activity-unavailable-auto": self = .autoUnavailableVescLiveActivity
+        case "vesc-live-activity-stale-auto": self = .autoStaleVescLiveActivity
         default: return nil
         }
     }
@@ -985,7 +987,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1002,6 +1004,7 @@ enum CutoutUITestSessionFixture {
         self == .autoVescLiveActivity
             || self == .autoCriticalVescLiveActivity
             || self == .autoUnavailableVescLiveActivity
+            || self == .autoStaleVescLiveActivity
     }
     var initialBluetoothState: CutoutSessionTestInitialBluetoothState {
         switch self {
@@ -1024,7 +1027,9 @@ enum CutoutUITestSessionFixture {
     var emitsPendingTelemetry: Bool {
         self == .pendingVesc || self == .autoUnavailableVescLiveActivity
     }
-    var emitsStaleTelemetry: Bool { self == .staleVesc || self == .staleEuc }
+    var emitsStaleTelemetry: Bool {
+        self == .staleVesc || self == .staleEuc || self == .autoStaleVescLiveActivity
+    }
     var flushCaptureSucceeds: Bool { self != .unknownDeviceFinishFailure }
     var isEuc: Bool {
         self == .probeDevice
