@@ -785,6 +785,14 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescLiveActivityAutoFixture()
     }
 
+    func testVescUnavailableLiveActivityAutoFixturePreservesUnavailableSemantics() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
+    func testVescStaleLiveActivityAutoFixturePreservesStaleSemantics() throws {
+        try assertVescLiveActivityAutoFixture()
+    }
+
     func testVescCriticalLiveActivityLockScreenPreservesSafetySemantics() {
         assertVescLiveActivityLockScreen(
             speed: "17.9",
@@ -882,13 +890,40 @@ final class CutoutAppUITests: XCTestCase {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         dismissLocationPromptIfNeeded(in: springboard)
         XCUIDevice.shared.press(.home)
-        let stateName = name.contains("Critical") ? "Critical" : "Nominal"
+        let expectation = if name.contains("Critical") {
+            (
+                stateName: "Critical",
+                speed: "17.9",
+                headroom: "reduce acceleration",
+                connectionStates: ["connected", "stale"]
+            )
+        } else if name.contains("Unavailable") {
+            (
+                stateName: "Unavailable",
+                speed: "unavailable",
+                headroom: "unavailable",
+                connectionStates: ["waiting for telemetry"]
+            )
+        } else if name.contains("Stale") {
+            (stateName: "Stale", speed: "stale", headroom: "good", connectionStates: ["stale"])
+        } else {
+            (
+                stateName: "Nominal",
+                speed: "17.9",
+                headroom: "good",
+                connectionStates: ["connected", "stale"]
+            )
+        }
+        let stateName = expectation.stateName
         attachScreenshot(of: springboard, named: "\(stateName) Compact Dynamic Island")
         springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
             .press(forDuration: 1)
         let islandSpeed = springboard.descendants(matching: .any)["Speed"]
         XCTAssertTrue(islandSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
-        XCTAssertTrue((islandSpeed.value as? String)?.contains("17.9") == true)
+        XCTAssertTrue(
+            (islandSpeed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true,
+            islandSpeed.debugDescription
+        )
         let islandDevice = springboard.descendants(matching: .any)["Device"]
         XCTAssertTrue(islandDevice.waitForExistence(timeout: 5), springboard.debugDescription)
         XCTAssertTrue(
@@ -897,13 +932,17 @@ final class CutoutAppUITests: XCTestCase {
         )
         let deviceValue = islandDevice.value as? String
         XCTAssertTrue(
-            ["connected", "stale"].contains { deviceValue?.localizedCaseInsensitiveContains($0) == true },
+            expectation.connectionStates.contains {
+                deviceValue?.localizedCaseInsensitiveContains($0) == true
+            },
             islandDevice.debugDescription
         )
         let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
         XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
-        let expectedHeadroom = stateName == "Critical" ? "reduce acceleration" : "good"
-        XCTAssertTrue((islandHeadroom.value as? String)?.localizedCaseInsensitiveContains(expectedHeadroom) == true)
+        XCTAssertTrue(
+            (islandHeadroom.value as? String)?.localizedCaseInsensitiveContains(expectation.headroom) == true,
+            islandHeadroom.debugDescription
+        )
         let expandedActivity = springboard.descendants(matching: .any).matching(
             NSPredicate(format: "label CONTAINS 'CutOut' AND label CONTAINS 'Speed' AND label CONTAINS 'Headroom'")
         ).firstMatch
@@ -1901,6 +1940,12 @@ final class CutoutAppUITests: XCTestCase {
                 return .vescUnavailableLiveActivityAuto
             }
             if testName.contains("StaleLiveActivityLockScreen") {
+                return .vescStaleLiveActivityAuto
+            }
+            if testName.contains("UnavailableLiveActivityAutoFixture") {
+                return .vescUnavailableLiveActivityAuto
+            }
+            if testName.contains("StaleLiveActivityAutoFixture") {
                 return .vescStaleLiveActivityAuto
             }
             if testName.contains("LiveActivityLockScreen") { return .vescLiveActivityAuto }

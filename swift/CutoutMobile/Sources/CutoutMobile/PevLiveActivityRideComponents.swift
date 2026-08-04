@@ -162,6 +162,7 @@ public struct PevLiveActivitySpeedGauge: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(speed.label)
         .accessibilityValue(speed.accessibilityValue)
+        .accessibilitySortPriority(1)
     }
 }
 
@@ -364,7 +365,8 @@ public struct PevLiveActivitySafetyFooter: View {
             systemName: headroomPresentation.systemName,
             value: snapshot.headroom,
             tint: headroomPresentation.tint,
-            lineLimit: snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
+            lineLimit: dynamicTypeSize.isAccessibilitySize
+                || snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
             emphasizesValue: snapshot.headroomSeverity == .reduceAcceleration
         )
         .accessibilitySortPriority(
