@@ -795,6 +795,45 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testWriterProgressDoesNotRepublishAnUnchangedRideCaptureSummary() {
+        let model = CutoutAppModel()
+        let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
+        let initial = CaptureProgress(
+            elapsedMilliseconds: 1_000,
+            notificationCount: 42,
+            fileSizeBytes: 4_096,
+            queuedMessageCount: 2,
+            writerError: nil
+        )
+        let updated = CaptureProgress(
+            elapsedMilliseconds: 2_000,
+            notificationCount: 42,
+            fileSizeBytes: 8_192,
+            queuedMessageCount: 1,
+            writerError: nil
+        )
+
+        model.applyCaptureEvent(.started(fileURL: fileURL))
+        model.applyCaptureEvent(.progress(initial))
+
+        XCTAssertFalse(observesChange({ _ = model.captureStatusText }) {
+            model.applyCaptureEvent(.progress(updated))
+        })
+        XCTAssertEqual(model.captureProgress, updated)
+
+        let visibleSummaryChange = CaptureProgress(
+            elapsedMilliseconds: 2_100,
+            notificationCount: 43,
+            fileSizeBytes: 8_384,
+            queuedMessageCount: 1,
+            writerError: nil
+        )
+        XCTAssertTrue(observesChange({ _ = model.captureStatusText }) {
+            model.applyCaptureEvent(.progress(visibleSummaryChange))
+        })
+    }
+
     func testCaptureSessionDetailsExposeTypedWriterHealth() {
         let healthyProgress = CaptureProgress(
             elapsedMilliseconds: 63_000,
