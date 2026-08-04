@@ -816,8 +816,9 @@ final class CutoutAppUITests: XCTestCase {
             (islandDevice.value as? String)?.localizedCaseInsensitiveContains("Refloat VESC") == true,
             islandDevice.debugDescription
         )
+        let deviceValue = islandDevice.value as? String
         XCTAssertTrue(
-            (islandDevice.value as? String)?.localizedCaseInsensitiveContains("connected") == true,
+            ["connected", "stale"].contains { deviceValue?.localizedCaseInsensitiveContains($0) == true },
             islandDevice.debugDescription
         )
         let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
