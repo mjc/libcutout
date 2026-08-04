@@ -1870,7 +1870,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private func restorePickerViewport(_ picker: XCUIElement) {
         for _ in 0..<4 {
-            picker.swipeDown()
+            picker.swipeDown(velocity: .fast)
         }
     }
 
