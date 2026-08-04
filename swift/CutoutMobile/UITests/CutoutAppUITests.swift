@@ -12,11 +12,15 @@ final class CutoutAppUITests: XCTestCase {
         app = XCUIApplication()
         app.launchArguments = launchArguments
         app.launchEnvironment = fixture.launchEnvironment
-        app.terminate()
         app.launch()
     }
 
     override func tearDown() async throws {
+        let disconnect = app?.buttons["dashboard.disconnect"]
+        if disconnect?.exists == true, disconnect?.isHittable == true {
+            disconnect?.tap()
+            _ = app?.descendants(matching: .any)["device-picker.screen"].waitForExistence(timeout: 5)
+        }
         app?.terminate()
         app = nil
         XCUIDevice.shared.orientation = .portrait
@@ -638,8 +642,8 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // XCTest terminates the app in tearDown. Physical ActivityKit inspection
-        // must launch the fixture with scripts/run-ios-app-on-phone.sh instead.
+        // XCTest disconnects before termination so it cannot prove persistence.
+        // Use scripts/run-ios-app-on-phone.sh for physical ActivityKit inspection.
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
@@ -648,8 +652,8 @@ final class CutoutAppUITests: XCTestCase {
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
         XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // XCTest terminates the app in tearDown. Physical ActivityKit inspection
-        // must launch the fixture with scripts/run-ios-app-on-phone.sh instead.
+        // XCTest disconnects before termination so it cannot prove persistence.
+        // Use scripts/run-ios-app-on-phone.sh for physical ActivityKit inspection.
     }
 
     func testFailedVescConnectionReturnsToPickerInsteadOfLeavingRideRoute() throws {
