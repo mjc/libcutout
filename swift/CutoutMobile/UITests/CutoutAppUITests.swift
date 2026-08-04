@@ -635,6 +635,24 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(for: .vesc)
     }
 
+    func testVescEssentialRideControlsRemainVisibleWithoutScrolling() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic VESC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        for identifier in ["ride.hero.speed", "ride.hero.status", "dashboard.disconnect"] {
+            let element = app.descendants(matching: .any)[identifier]
+            XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing essential Ride control: \(identifier)")
+            XCTAssertTrue(element.isHittable, "Essential Ride control requires scrolling: \(identifier)")
+        }
+        XCTAssertTrue(screen.exists)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.ride"].isHittable)
+        XCTAssertTrue(app.tabBars.buttons["dashboard.nav.debug"].isHittable)
+    }
+
     func testVescLiveActivityFixtureStartsFromAnAccessibleRide() throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
@@ -1166,8 +1184,10 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["vesc.warning.telemetry-stale"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        XCTAssertTrue(warning.isHittable, "The stale warning must be visible without scrolling")
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.isHittable, "The stale operating status must be visible without scrolling")
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry stale")
             XCTAssertFalse(warning.label.isEmpty)
