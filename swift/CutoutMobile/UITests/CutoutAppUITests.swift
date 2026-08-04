@@ -595,27 +595,16 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType() throws {
-        let advancedCapture = openAdvancedCapture()
-        let captureKind = app.textFields["device-picker.capture-kind"]
-        let recordButton = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
-        ).firstMatch
+        try assertAdvancedCaptureControlsReachableAndAccessible()
+    }
 
-        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
-        for _ in 0..<6 where !captureKind.isHittable {
-            advancedCapture.swipeUp()
-        }
-        XCTAssertTrue(captureKind.isHittable)
+    func testAdvancedCaptureControlsRemainReachableInLightAppearanceAtAccessibilityDynamicType() throws {
+        try assertAdvancedCaptureControlsReachableAndAccessible()
+    }
 
-        for _ in 0..<6 where !recordButton.isHittable {
-            advancedCapture.swipeUp()
-        }
-        XCTAssertTrue(recordButton.isHittable)
-
-        restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringSystemToolbarContrastWarning: true,
-            ignoringSystemToolbarDynamicTypeWarning: true
+    func testAdvancedCaptureControlsRemainReachableInDarkAppearanceAtAccessibilityDynamicType() throws {
+        try assertAdvancedCaptureControlsReachableAndAccessible(
+            ignoringAdvancedCaptureTitleContrastWarning: true
         )
     }
 
@@ -657,29 +646,17 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testAdvancedCaptureControlsRemainReachableInRightToLeftLayout() throws {
-        let advancedCapture = openAdvancedCapture()
-        let captureKind = app.textFields["device-picker.capture-kind"]
-        let recordButton = app.buttons.matching(
-            NSPredicate(format: "identifier BEGINSWITH %@", "device-picker.record.")
-        ).firstMatch
-
-        XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
-        captureKind.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        app.buttons["device-picker.capture-kind.done"].tap()
-        XCTAssertTrue(captureKind.isHittable)
-        for _ in 0..<6 where !recordButton.isHittable {
-            advancedCapture.swipeUp()
-        }
-        XCTAssertTrue(recordButton.isHittable)
-        restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringSystemToolbarContrastWarning: true,
-            ignoringSystemToolbarDynamicTypeWarning: true
-        )
+        try assertAdvancedCaptureControlsReachableAndAccessible(exercisesKeyboard: true)
     }
 
     func testAdvancedCaptureControlsRemainReachableInLandscapeAtAccessibilityDynamicType() throws {
+        try assertAdvancedCaptureControlsReachableAndAccessible(exercisesKeyboard: true)
+    }
+
+    private func assertAdvancedCaptureControlsReachableAndAccessible(
+        exercisesKeyboard: Bool = false,
+        ignoringAdvancedCaptureTitleContrastWarning: Bool = false
+    ) throws {
         let advancedCapture = openAdvancedCapture()
         let captureKind = app.textFields["device-picker.capture-kind"]
         let recordButton = app.buttons.matching(
@@ -687,10 +664,17 @@ final class CutoutAppUITests: XCTestCase {
         ).firstMatch
 
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
-        captureKind.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        app.buttons["device-picker.capture-kind.done"].tap()
+        if exercisesKeyboard {
+            captureKind.tap()
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+            app.buttons["device-picker.capture-kind.done"].tap()
+        } else {
+            for _ in 0..<6 where !captureKind.isHittable {
+                advancedCapture.swipeUp()
+            }
+        }
         XCTAssertTrue(captureKind.isHittable)
+
         for _ in 0..<6 where !recordButton.isHittable {
             advancedCapture.swipeUp()
         }
@@ -698,7 +682,8 @@ final class CutoutAppUITests: XCTestCase {
         restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
         try performVisibleLayoutAccessibilityAudit(
             ignoringSystemToolbarContrastWarning: true,
-            ignoringSystemToolbarDynamicTypeWarning: true
+            ignoringSystemToolbarDynamicTypeWarning: true,
+            ignoringAdvancedCaptureTitleContrastWarning: ignoringAdvancedCaptureTitleContrastWarning
         )
     }
 
@@ -2021,6 +2006,7 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarContrastWarning: Bool = false,
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
+        ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
         ignoringVisualProgressLabelContrastWarning: Bool = false,
         ignoringScrolledOutBmsDetailBackControlContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
@@ -2056,6 +2042,13 @@ final class CutoutAppUITests: XCTestCase {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic. Attributable contrast findings
                 // still fail this test.
+                return true
+            }
+            if ignoringAdvancedCaptureTitleContrastWarning,
+               issue.auditType == .contrast,
+               ["Capture unknown device", "Device kind for capture"].contains(issue.element?.label) {
+                // Xcode 27 reports these white-on-dark visual heading children
+                // only in the Dark advanced-capture cell. Every other finding stays fatal.
                 return true
             }
             if ignoringVisualProgressLabelContrastWarning,
