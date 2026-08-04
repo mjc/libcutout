@@ -162,6 +162,19 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(snapshot)])
     }
 
+    func testOlderReconciliationCannotRestartAfterANewerEnd() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
+        await coordinator.end(requestID: 3, reason: .disconnected)
+        await coordinator.reconcile(requestID: 2, snapshot: snapshot, shouldBeActive: true)
+
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot), .end(.disconnected)])
+    }
+
     func testConcurrentReconciliationsDoNotOverlapLifecycleOperations() async {
         let manager = RecordingLiveActivityRideLifecycleManager(blockFirstStart: true)
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
