@@ -103,7 +103,6 @@ struct PevAppShell<Content: View>: View {
 
 struct PevDashboardHeader<LeadingAccessory: View>: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     let sectionTitle: String
     let leadingAccessory: LeadingAccessory
@@ -118,7 +117,7 @@ struct PevDashboardHeader<LeadingAccessory: View>: View {
 
     var body: some View {
         Group {
-            if dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact {
+            if dynamicTypeSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 8) {
                     leadingAccessory
                     section

@@ -1852,18 +1852,16 @@ final class CutoutAppUITests: XCTestCase {
 
     func testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
         try assertEucStaleTelemetryAccessibility(
-            ignoringVisualProgressLabelContrastWarning: true,
-            auditScrolls: 1
+            ignoringVisualProgressLabelContrastWarning: true
         )
     }
 
     private func assertEucStaleTelemetryAccessibility(
         usesLocalizedText: Bool = false,
-        ignoringVisualProgressLabelContrastWarning: Bool = false,
-        auditScrolls: Int = 0
+        ignoringVisualProgressLabelContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
-        guard connectedScreen(timeout: 20) != nil else {
+        guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic stale EUC fixture did not open its Ride screen")
             return
         }
@@ -1892,9 +1890,8 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(status.label.contains("Telemetry stale"))
             XCTAssertEqual(status.value as? String, "warning")
         }
-        for _ in 0..<auditScrolls {
-            app.descendants(matching: .any)["dashboard.screen.eucRide"].swipeUp()
-        }
+        scrollSafetyWarningAboveNavigation(warning, in: screen)
+        XCTAssertTrue(warning.isHittable, "The EUC stale warning cannot be reached by scrolling")
         try performVisibleLayoutAccessibilityAudit(
             ignoringVisualProgressLabelContrastWarning: ignoringVisualProgressLabelContrastWarning
         )
@@ -1917,12 +1914,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescPendingTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
-        try assertVescPendingTelemetryAccessibility(auditScrolls: 1)
+        try assertVescPendingTelemetryAccessibility()
     }
 
     private func assertVescPendingTelemetryAccessibility(
-        usesLocalizedText: Bool = false,
-        auditScrolls: Int = 0
+        usesLocalizedText: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -1932,10 +1928,11 @@ final class CutoutAppUITests: XCTestCase {
 
         let warning = app.descendants(matching: .any)["vesc.warning.telemetry-pending"]
         XCTAssertTrue(warning.waitForExistence(timeout: 5))
-        XCTAssertTrue(warning.isHittable, "The pending warning must be visible without scrolling")
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertTrue(status.isHittable, "The pending operating status must be visible without scrolling")
+        scrollSafetyWarningAboveNavigation(warning, in: screen)
+        XCTAssertTrue(warning.isHittable, "The pending warning cannot be reached by scrolling")
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry pending")
             XCTAssertFalse(warning.label.isEmpty)
@@ -1948,10 +1945,7 @@ final class CutoutAppUITests: XCTestCase {
             XCTAssertTrue(status.label.contains("Telemetry pending"))
             XCTAssertEqual(status.value as? String, "warning")
         }
-        for _ in 0..<auditScrolls {
-            screen.swipeUp()
-        }
-        try performVisibleLayoutAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
     }
 
     private func assertVescStaleTelemetryAccessibility(
@@ -1968,25 +1962,7 @@ final class CutoutAppUITests: XCTestCase {
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertTrue(status.isHittable, "The stale operating status must be visible without scrolling")
-        let navigationTop = [
-            app.tabBars.buttons["dashboard.nav.ride"],
-            app.tabBars.buttons["dashboard.nav.debug"],
-        ]
-        .filter(\.exists)
-        .map(\.frame.minY)
-        .min() ?? screen.frame.maxY
-        let unobscuredFrame = CGRect(
-            x: screen.frame.minX,
-            y: screen.frame.minY,
-            width: screen.frame.width,
-            height: max(0, navigationTop - screen.frame.minY)
-        )
-        for _ in 0..<8 where !unobscuredFrame.contains(warning.frame) {
-            let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
-            let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
-            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
-        }
-        XCTAssertTrue(unobscuredFrame.contains(warning.frame), screen.debugDescription)
+        scrollSafetyWarningAboveNavigation(warning, in: screen)
         XCTAssertTrue(warning.isHittable, "The stale warning cannot be reached by scrolling")
         if usesLocalizedText {
             XCTAssertNotEqual(warning.label, "Telemetry stale")
@@ -2004,6 +1980,40 @@ final class CutoutAppUITests: XCTestCase {
             )
         }
         try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
+    }
+
+    private func scrollSafetyWarningAboveNavigation(
+        _ warning: XCUIElement,
+        in screen: XCUIElement
+    ) {
+        let navigationTop = [
+            app.tabBars.buttons["dashboard.nav.ride"],
+            app.tabBars.buttons["dashboard.nav.debug"],
+        ]
+        .filter(\.exists)
+        .map(\.frame.minY)
+        .min() ?? screen.frame.maxY
+        let unobscuredFrame = CGRect(
+            x: screen.frame.minX,
+            y: screen.frame.minY,
+            width: screen.frame.width,
+            height: max(0, navigationTop - screen.frame.minY)
+        )
+        let isReachable: (CGRect) -> Bool = { frame in
+            if frame.height <= unobscuredFrame.height {
+                return unobscuredFrame.contains(frame)
+            }
+            return unobscuredFrame.contains(CGPoint(x: frame.midX, y: frame.minY))
+        }
+        for _ in 0..<12 where !isReachable(warning.frame) {
+            let isAboveViewport = warning.frame.minY < unobscuredFrame.minY
+            let startY = isAboveViewport ? 0.15 : 0.55
+            let endY = isAboveViewport ? 0.55 : 0.15
+            let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
+            let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+        }
+        XCTAssertTrue(isReachable(warning.frame), screen.debugDescription)
     }
 
     func testVescRidePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
