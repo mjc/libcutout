@@ -309,6 +309,16 @@ func vescVehicleKindText(_ vehicleKind: VescVehicleKind) -> String {
 }
 
 func vescRideSubtitle(_ snapshot: VescRideSnapshot) -> String {
+    switch snapshot.operatingMode {
+    case .darkride:
+        return localizedAppText("vesc.mode.darkride")
+    case .handtest:
+        return localizedAppText("vesc.mode.handtest")
+    case .flywheel:
+        return localizedAppText("vesc.mode.flywheel")
+    case .normal, .unknown:
+        break
+    }
     if case .unknown = snapshot.operatingState {
         return vescVehicleKindText(snapshot.vehicleKind)
     }

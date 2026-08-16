@@ -10,10 +10,11 @@ use crate::{
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingState, RideStopReason, RideWarning, SafetyClass, SemanticEventCount, SessionInput,
-    SessionOutput, SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
-    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
+    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, SafetyClass,
+    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
+    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
+    WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -552,6 +553,33 @@ impl From<RideOperatingState> for RideOperatingStateDto {
             RideOperatingState::Standing => Self::Standing,
             RideOperatingState::Riding => Self::Riding,
             RideOperatingState::Charging => Self::Charging,
+        }
+    }
+}
+
+/// UniFFI-ready controller operating mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideOperatingModeDto {
+    /// The protocol reported an unsupported mode value.
+    Unknown,
+    /// Normal upright balancing mode.
+    Normal,
+    /// Upside-down darkride mode.
+    Darkride,
+    /// Hand-test mode.
+    Handtest,
+    /// Flywheel test mode.
+    Flywheel,
+}
+
+impl From<RideOperatingMode> for RideOperatingModeDto {
+    fn from(mode: RideOperatingMode) -> Self {
+        match mode {
+            RideOperatingMode::Unknown => Self::Unknown,
+            RideOperatingMode::Normal => Self::Normal,
+            RideOperatingMode::Darkride => Self::Darkride,
+            RideOperatingMode::Handtest => Self::Handtest,
+            RideOperatingMode::Flywheel => Self::Flywheel,
         }
     }
 }
@@ -1928,6 +1956,9 @@ pub struct TelemetryDeltaDto {
     /// Ride operating state decoded from protocol-specific status fields.
     pub operating_state: Option<RideOperatingStateDto>,
 
+    /// Controller operating mode decoded from protocol-specific status fields.
+    pub operating_mode: Option<RideOperatingModeDto>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<PhaseCurrentReadingDto>,
 
@@ -1977,6 +2008,7 @@ impl From<TelemetryDelta> for TelemetryDeltaDto {
             battery_current: delta.battery_current.map(Into::into),
             charge_mode: delta.charge_mode.map(Into::into),
             operating_state: delta.operating_state.map(Into::into),
+            operating_mode: delta.operating_mode.map(Into::into),
             motor_current: delta.motor_current.map(Into::into),
             power: delta.power.map(Into::into),
             controller_temperature: delta.controller_temperature.map(Into::into),
@@ -2069,6 +2101,9 @@ pub struct TelemetrySnapshotDto {
     /// Ride operating state decoded from protocol-specific status fields.
     pub operating_state: Option<RideOperatingStateDto>,
 
+    /// Controller operating mode decoded from protocol-specific status fields.
+    pub operating_mode: Option<RideOperatingModeDto>,
+
     /// Protocol-decoded ride warning.
     pub ride_warning: Option<RideWarningDto>,
 
@@ -2124,6 +2159,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             battery_current: snapshot.battery_current.map(Into::into),
             charge_mode: snapshot.charge_mode.map(Into::into),
             operating_state: snapshot.operating_state.map(Into::into),
+            operating_mode: snapshot.operating_mode.map(Into::into),
             ride_warning: snapshot.ride_warning.map(Into::into),
             ride_stop_reason: snapshot.ride_stop_reason.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
@@ -2686,6 +2722,7 @@ mod tests {
             battery_current: None,
             charge_mode: Some(Measured::reported(ChargeMode::Charging)),
             operating_state: Some(RideOperatingState::Charging),
+            operating_mode: Some(RideOperatingMode::Darkride),
             ride_warning: Some(RideWarning::DutyPushback),
             ride_stop_reason: Some(RideStopReason::Pitch),
             motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
@@ -2723,6 +2760,10 @@ mod tests {
         assert_eq!(
             dto.operating_state.expect("operating state"),
             RideOperatingStateDto::Charging
+        );
+        assert_eq!(
+            dto.operating_mode.expect("operating mode"),
+            RideOperatingModeDto::Darkride
         );
         assert_eq!(
             dto.ride_warning.expect("ride warning"),

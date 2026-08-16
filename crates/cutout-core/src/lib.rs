@@ -5966,6 +5966,21 @@ pub enum RideOperatingState {
     Charging,
 }
 
+/// Protocol-decoded controller operating mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideOperatingMode {
+    /// The protocol reported an unsupported mode value.
+    Unknown,
+    /// Normal upright balancing mode.
+    Normal,
+    /// Upside-down darkride mode.
+    Darkride,
+    /// Hand-test mode.
+    Handtest,
+    /// Flywheel test mode.
+    Flywheel,
+}
+
 /// Protocol-decoded ride warning whose meaning is independent of presentation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RideWarning {
@@ -6476,6 +6491,9 @@ pub struct TelemetryDelta {
     /// Ride operating state decoded from protocol-specific status fields.
     pub operating_state: Option<RideOperatingState>,
 
+    /// Controller operating mode decoded from protocol-specific status fields.
+    pub operating_mode: Option<RideOperatingMode>,
+
     /// Ride warning decoded from a protocol-owned status field.
     pub ride_warning: Option<RideWarning>,
 
@@ -6533,6 +6551,7 @@ impl TelemetryDelta {
             battery_current: None,
             charge_mode: None,
             operating_state: None,
+            operating_mode: None,
             ride_warning: None,
             ride_stop_reason: None,
             motor_current: None,
@@ -6605,6 +6624,9 @@ pub struct TelemetrySnapshot {
     /// Latest known ride operating state.
     pub operating_state: Option<RideOperatingState>,
 
+    /// Latest known controller operating mode.
+    pub operating_mode: Option<RideOperatingMode>,
+
     /// Latest protocol-decoded ride warning.
     pub ride_warning: Option<RideWarning>,
 
@@ -6670,6 +6692,9 @@ impl TelemetrySnapshot {
         }
         if delta.operating_state.is_some() {
             self.operating_state = delta.operating_state;
+        }
+        if delta.operating_mode.is_some() {
+            self.operating_mode = delta.operating_mode;
         }
         if delta.ride_warning.is_some() {
             self.ride_warning = delta.ride_warning;

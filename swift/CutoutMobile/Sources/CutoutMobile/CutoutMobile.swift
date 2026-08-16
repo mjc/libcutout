@@ -1313,6 +1313,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let speedSource: ReadbackSource?
     public let speedQuality: ReadbackQuality?
     public let operatingState: RideOperatingState
+    public let vescOperatingMode: VescRideOperatingMode?
     public let vescWarning: VescRideWarning?
     public let vescStopReason: VescRideStopReason?
     public let voltage: Voltage?
@@ -1342,6 +1343,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         speedSource: ReadbackSource? = nil,
         speedQuality: ReadbackQuality? = nil,
         operatingState: RideOperatingState = .unknown,
+        vescOperatingMode: VescRideOperatingMode? = nil,
         vescWarning: VescRideWarning? = nil,
         vescStopReason: VescRideStopReason? = nil,
         voltage: Voltage? = nil,
@@ -1370,6 +1372,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.speedSource = speedSource
         self.speedQuality = speedQuality
         self.operatingState = operatingState
+        self.vescOperatingMode = vescOperatingMode
         self.vescWarning = vescWarning
         self.vescStopReason = vescStopReason
         self.voltage = voltage
@@ -1405,6 +1408,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             speedSource: dto.speed.map { ReadbackSource($0.source) },
             speedQuality: dto.speed.map { ReadbackQuality($0.quality) },
             operatingState: dto.operatingState,
+            vescOperatingMode: dto.vescOperatingMode.map(VescRideOperatingMode.init),
             vescWarning: dto.vescWarning.map(VescRideWarning.init),
             vescStopReason: dto.vescStopReason.map(VescRideStopReason.init),
             voltage: dto.voltage?.value,
@@ -1643,6 +1647,24 @@ public enum VescControllerState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum VescRideOperatingMode: Equatable, Hashable, Sendable {
+    case unknown
+    case normal
+    case darkride
+    case handtest
+    case flywheel
+
+    fileprivate init(_ dto: MobileVescRideOperatingModeDto) {
+        switch dto {
+        case .unknown: self = .unknown
+        case .normal: self = .normal
+        case .darkride: self = .darkride
+        case .handtest: self = .handtest
+        case .flywheel: self = .flywheel
+        }
+    }
+}
+
 public enum VescRideWarning: Equatable, Hashable, Sendable {
     case none
     case lowVoltage
@@ -1811,6 +1833,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let subProtocol: VescSubProtocol
     public let controllerState: VescControllerState
     public let operatingState: RideOperatingState
+    public let operatingMode: VescRideOperatingMode
     public let warning: VescRideWarning
     public let stopReason: VescRideStopReason
     public let boardSpeed: Speed?
@@ -1836,6 +1859,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         subProtocol: VescSubProtocol,
         controllerState: VescControllerState,
         operatingState: RideOperatingState = .unknown,
+        operatingMode: VescRideOperatingMode = .unknown,
         warning: VescRideWarning = .unknown,
         stopReason: VescRideStopReason = .none,
         boardSpeed: Speed? = nil,
@@ -1860,6 +1884,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.subProtocol = subProtocol
         self.controllerState = controllerState
         self.operatingState = operatingState
+        self.operatingMode = operatingMode
         self.warning = warning
         self.stopReason = stopReason
         self.boardSpeed = boardSpeed
@@ -1890,6 +1915,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             subProtocol: .generic,
             controllerState: .unknown,
             operatingState: telemetry.operatingState,
+            operatingMode: telemetry.vescOperatingMode ?? .unknown,
             warning: telemetry.vescWarning ?? .unknown,
             stopReason: telemetry.vescStopReason ?? .none,
             boardSpeed: telemetry.speed,

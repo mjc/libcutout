@@ -651,6 +651,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 telemetry: TelemetrySnapshot(
                     speed: speedValue(19_000),
                     operatingState: .riding,
+                    vescOperatingMode: .handtest,
                     vescWarning: .dutyPushback,
                     vescStopReason: .pitch
                 )
@@ -660,6 +661,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.warning, .dutyPushback)
         XCTAssertEqual(snapshot.stopReason, .pitch)
+        XCTAssertEqual(snapshot.operatingMode, .handtest)
     }
 
     func testVescRideSnapshotOwnsBatteryReadbackFormatting() {

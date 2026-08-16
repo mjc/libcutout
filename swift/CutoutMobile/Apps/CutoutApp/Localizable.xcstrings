@@ -985,6 +985,18 @@
       "comment" : "VESC Ride subtitle when the connection is live but telemetry has not arrived.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Telemetry pending" } } }
     },
+    "vesc.mode.darkride" : {
+      "comment" : "VESC Ride subtitle when Refloat is actively balancing upside down in darkride mode.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Darkride" } } }
+    },
+    "vesc.mode.handtest" : {
+      "comment" : "VESC Ride subtitle when Refloat reports hand-test mode.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hand test" } } }
+    },
+    "vesc.mode.flywheel" : {
+      "comment" : "VESC Ride subtitle when Refloat reports flywheel test mode.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Flywheel test" } } }
+    },
     "vesc.telemetry_pending.detail" : {
       "comment" : "VESC warning-card detail while waiting for live telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for live values." } } }

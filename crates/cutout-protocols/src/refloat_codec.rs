@@ -1,8 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
     Angle, BatteryCurrent, DutyCycle, FootpadContactState, FootpadTelemetry, Measured,
-    MonotonicTimestamp, PhaseCurrent, RideOperatingState, RideStopReason, RideWarning, Speed,
-    TelemetryDelta, Temperature, Voltage,
+    MonotonicTimestamp, PhaseCurrent, RideOperatingMode, RideOperatingState, RideStopReason,
+    RideWarning, Speed, TelemetryDelta, Temperature, Voltage,
 };
 use thiserror::Error;
 
@@ -243,6 +243,7 @@ impl RefloatRealtimeData {
                 .value("imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
+            operating_mode: Some(refloat_operating_mode(self.package_mode, self.darkride)),
             ride_warning: Some(if self.fatal_error.is_some() {
                 RideWarning::Error
             } else if self.wheelslip {
@@ -279,6 +280,18 @@ const fn refloat_footpad_contact_state(state: u8) -> Option<FootpadContactState>
         2 => Some(FootpadContactState::Right),
         3 => Some(FootpadContactState::Both),
         _ => None,
+    }
+}
+
+const fn refloat_operating_mode(package_mode: u8, darkride: bool) -> RideOperatingMode {
+    if darkride {
+        return RideOperatingMode::Darkride;
+    }
+    match package_mode {
+        0 => RideOperatingMode::Normal,
+        1 => RideOperatingMode::Handtest,
+        2 => RideOperatingMode::Flywheel,
+        _ => RideOperatingMode::Unknown,
     }
 }
 
@@ -1207,28 +1220,7 @@ mod tests {
 
     #[test]
     fn realtime_data_maps_refloat_state_and_documented_warnings() {
-        let mut data = RefloatRealtimeData {
-            mask: 0,
-            extra_flags: 0,
-            time_ticks: 0,
-            package_state: 2,
-            package_mode: 0,
-            footpad_state: 0,
-            charging: false,
-            fatal_error: None,
-            darkride: false,
-            wheelslip: false,
-            stop_condition: 0,
-            sat: 0,
-            beep_reason: 0,
-            values: ArrayVec::new(),
-            runtime_values: ArrayVec::new(),
-            charging_current: None,
-            charging_voltage: None,
-            active_alert_mask_low: None,
-            active_alert_mask_high: None,
-            firmware_fault_code: None,
-        };
+        let mut data = realtime_data_fixture();
 
         let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), false);
 
@@ -1260,7 +1252,7 @@ mod tests {
 
         data.package_state = 3;
         data.stop_condition = 0;
-        let warnings = [
+        for (beep_reason, warning) in [
             (1, RideWarning::LowVoltage),
             (2, RideWarning::HighVoltage),
             (3, RideWarning::MosfetTemperature),
@@ -1272,8 +1264,7 @@ mod tests {
             (9, RideWarning::None),
             (10, RideWarning::Error),
             (u8::MAX, RideWarning::None),
-        ];
-        for (beep_reason, warning) in warnings {
+        ] {
             data.beep_reason = beep_reason;
             let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(43), false);
             assert_eq!(delta.operating_state, Some(RideOperatingState::Riding));
@@ -1304,6 +1295,60 @@ mod tests {
             data.sat = sat;
             let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(45), false);
             assert_eq!(delta.ride_warning, Some(warning), "SAT {sat}");
+        }
+    }
+
+    fn realtime_data_fixture() -> RefloatRealtimeData {
+        RefloatRealtimeData {
+            mask: 0,
+            extra_flags: 0,
+            time_ticks: 0,
+            package_state: 2,
+            package_mode: 0,
+            footpad_state: 0,
+            charging: false,
+            fatal_error: None,
+            darkride: false,
+            wheelslip: false,
+            stop_condition: 0,
+            sat: 0,
+            beep_reason: 0,
+            values: ArrayVec::new(),
+            runtime_values: ArrayVec::new(),
+            charging_current: None,
+            charging_voltage: None,
+            active_alert_mask_low: None,
+            active_alert_mask_high: None,
+            firmware_fault_code: None,
+        }
+    }
+
+    #[test]
+    fn realtime_data_maps_refloat_operating_modes() {
+        let mut data = realtime_data_fixture();
+        assert_eq!(
+            data.to_delta(MonotonicTimestamp::from_milliseconds(45), false)
+                .operating_mode,
+            Some(RideOperatingMode::Normal)
+        );
+        data.darkride = true;
+        assert_eq!(
+            data.to_delta(MonotonicTimestamp::from_milliseconds(45), false)
+                .operating_mode,
+            Some(RideOperatingMode::Darkride)
+        );
+        data.darkride = false;
+        for (package_mode, mode) in [
+            (1, RideOperatingMode::Handtest),
+            (2, RideOperatingMode::Flywheel),
+            (u8::MAX, RideOperatingMode::Unknown),
+        ] {
+            data.package_mode = package_mode;
+            assert_eq!(
+                data.to_delta(MonotonicTimestamp::from_milliseconds(45), false)
+                    .operating_mode,
+                Some(mode)
+            );
         }
     }
 

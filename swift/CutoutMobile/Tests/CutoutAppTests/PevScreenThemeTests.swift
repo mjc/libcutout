@@ -580,6 +580,24 @@ final class PevScreenThemeTests: XCTestCase {
         )
 
         XCTAssertEqual(vescRideSubtitle(snapshot), "Charging")
+
+        for (mode, expected) in [
+            (VescRideOperatingMode.darkride, "Darkride"),
+            (.handtest, "Hand test"),
+            (.flywheel, "Flywheel test"),
+        ] {
+            XCTAssertEqual(
+                vescRideSubtitle(VescRideSnapshot(
+                    title: "VESC",
+                    vehicleKind: .float,
+                    subProtocol: .refloat,
+                    controllerState: .unknown,
+                    operatingState: .riding,
+                    operatingMode: mode
+                )),
+                expected
+            )
+        }
     }
 
     func testVescUnknownStateSubtitleUsesTheAppCatalog() {

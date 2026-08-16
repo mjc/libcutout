@@ -8148,6 +8148,10 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
      */
     public var operatingState: RideOperatingState
     /**
+     * Protocol-decoded controller operating mode.
+     */
+    public var vescOperatingMode: MobileVescRideOperatingModeDto?
+    /**
      * Protocol-decoded VESC ride warning, when the active protocol reports one.
      */
     public var vescWarning: MobileVescRideWarningDto?
@@ -8245,6 +8249,9 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
          * Conservative operating state inferred from currently available telemetry.
          */operatingState: RideOperatingState,
         /**
+         * Protocol-decoded controller operating mode.
+         */vescOperatingMode: MobileVescRideOperatingModeDto?,
+        /**
          * Protocol-decoded VESC ride warning, when the active protocol reports one.
          */vescWarning: MobileVescRideWarningDto?,
         /**
@@ -8310,6 +8317,7 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
         self.atMs = atMs
         self.speed = speed
         self.operatingState = operatingState
+        self.vescOperatingMode = vescOperatingMode
         self.vescWarning = vescWarning
         self.vescStopReason = vescStopReason
         self.voltage = voltage
@@ -8352,6 +8360,7 @@ public struct FfiConverterTypeMobileTelemetrySnapshotDto: FfiConverterRustBuffer
                 atMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf),
                 speed: FfiConverterOptionTypeSpeedReading.read(from: &buf),
                 operatingState: FfiConverterTypeRideOperatingState.read(from: &buf),
+                vescOperatingMode: FfiConverterOptionTypeMobileVescRideOperatingModeDto.read(from: &buf),
                 vescWarning: FfiConverterOptionTypeMobileVescRideWarningDto.read(from: &buf),
                 vescStopReason: FfiConverterOptionTypeMobileVescRideStopReasonDto.read(from: &buf),
                 voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf),
@@ -8380,6 +8389,7 @@ public struct FfiConverterTypeMobileTelemetrySnapshotDto: FfiConverterRustBuffer
         FfiConverterOptionTypeMobileMonotonicMillisDto.write(value.atMs, into: &buf)
         FfiConverterOptionTypeSpeedReading.write(value.speed, into: &buf)
         FfiConverterTypeRideOperatingState.write(value.operatingState, into: &buf)
+        FfiConverterOptionTypeMobileVescRideOperatingModeDto.write(value.vescOperatingMode, into: &buf)
         FfiConverterOptionTypeMobileVescRideWarningDto.write(value.vescWarning, into: &buf)
         FfiConverterOptionTypeMobileVescRideStopReasonDto.write(value.vescStopReason, into: &buf)
         FfiConverterOptionTypeVoltageReading.write(value.voltage, into: &buf)
@@ -13604,6 +13614,112 @@ public func FfiConverterTypeMobileVescControllerStateDto_lower(_ value: MobileVe
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * VESC controller operating mode for mobile UI.
+ */
+
+public enum MobileVescRideOperatingModeDto: Equatable, Hashable {
+
+    /**
+     * The protocol reported an unsupported mode value.
+     */
+    case unknown
+    /**
+     * Normal upright balancing mode.
+     */
+    case normal
+    /**
+     * Upside-down darkride mode.
+     */
+    case darkride
+    /**
+     * Hand-test mode.
+     */
+    case handtest
+    /**
+     * Flywheel test mode.
+     */
+    case flywheel
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileVescRideOperatingModeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileVescRideOperatingModeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVescRideOperatingModeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescRideOperatingModeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .unknown
+
+        case 2: return .normal
+
+        case 3: return .darkride
+
+        case 4: return .handtest
+
+        case 5: return .flywheel
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileVescRideOperatingModeDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .unknown:
+            writeInt(&buf, Int32(1))
+
+
+        case .normal:
+            writeInt(&buf, Int32(2))
+
+
+        case .darkride:
+            writeInt(&buf, Int32(3))
+
+
+        case .handtest:
+            writeInt(&buf, Int32(4))
+
+
+        case .flywheel:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVescRideOperatingModeDto_lift(_ buf: RustBuffer) throws -> MobileVescRideOperatingModeDto {
+    return try FfiConverterTypeMobileVescRideOperatingModeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVescRideOperatingModeDto_lower(_ value: MobileVescRideOperatingModeDto) -> RustBuffer {
+    return FfiConverterTypeMobileVescRideOperatingModeDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Reason a VESC float controller stopped balancing.
  */
 
@@ -15968,6 +16084,30 @@ fileprivate struct FfiConverterOptionTypeMobileVerificationStatusDto: FfiConvert
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileVescRideOperatingModeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVescRideOperatingModeDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileVescRideOperatingModeDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileVescRideOperatingModeDto.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

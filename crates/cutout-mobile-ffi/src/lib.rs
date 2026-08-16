@@ -40,16 +40,16 @@ use cutout_core::{
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
     RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingStateDto, RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount,
-    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
-    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
-    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
-    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
-    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
-    WallClockUnixTimestamp, WriteMode,
+    RideOperatingModeDto, RideOperatingStateDto, RideStopReasonDto, RideWarningDto,
+    SemanticEventCountDto, SeriesCount, SessionInputDto, SessionOutputDto, SettingsEntry,
+    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
+    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
+    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
+    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
@@ -2310,6 +2310,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Conservative operating state inferred from currently available telemetry.
     pub operating_state: RideOperatingState,
 
+    /// Protocol-decoded controller operating mode.
+    pub vesc_operating_mode: Option<MobileVescRideOperatingModeDto>,
+
     /// Protocol-decoded VESC ride warning, when the active protocol reports one.
     pub vesc_warning: Option<MobileVescRideWarningDto>,
 
@@ -2471,6 +2474,33 @@ pub enum MobileVescControllerStateDto {
 
     /// Controller state is not known from the current readback.
     Unknown,
+}
+
+/// VESC controller operating mode for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescRideOperatingModeDto {
+    /// The protocol reported an unsupported mode value.
+    Unknown,
+    /// Normal upright balancing mode.
+    Normal,
+    /// Upside-down darkride mode.
+    Darkride,
+    /// Hand-test mode.
+    Handtest,
+    /// Flywheel test mode.
+    Flywheel,
+}
+
+impl From<RideOperatingModeDto> for MobileVescRideOperatingModeDto {
+    fn from(mode: RideOperatingModeDto) -> Self {
+        match mode {
+            RideOperatingModeDto::Unknown => Self::Unknown,
+            RideOperatingModeDto::Normal => Self::Normal,
+            RideOperatingModeDto::Darkride => Self::Darkride,
+            RideOperatingModeDto::Handtest => Self::Handtest,
+            RideOperatingModeDto::Flywheel => Self::Flywheel,
+        }
+    }
 }
 
 /// VESC ride warning state for mobile UI.
@@ -5510,6 +5540,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
             operating_state,
+            vesc_operating_mode: snapshot.operating_mode.map(Into::into),
             vesc_warning: snapshot.ride_warning.map(Into::into),
             vesc_stop_reason: snapshot.ride_stop_reason.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
@@ -8982,6 +9013,10 @@ mod tests {
             Some(MobileVescRideWarningDto::Wheelslip)
         );
         assert_eq!(
+            refloat_snapshot.vesc_operating_mode,
+            Some(MobileVescRideOperatingModeDto::Handtest)
+        );
+        assert_eq!(
             refloat_snapshot.vesc_stop_reason,
             Some(MobileVescRideStopReasonDto::None)
         );
@@ -9533,6 +9568,7 @@ mod tests {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             speed: None,
             operating_state: RideOperatingState::Charging,
+            vesc_operating_mode: None,
             vesc_warning: None,
             vesc_stop_reason: None,
             voltage: Some(VoltageReading {
