@@ -645,19 +645,21 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
     }
 
-    func testVescRideSnapshotUsesProtocolDecodedDutyPushback() throws {
+    func testVescRideSnapshotUsesProtocolDecodedSafetyState() throws {
         let snapshot = try XCTUnwrap(VescRideSnapshot(
             displayState: RideDisplayState(
                 telemetry: TelemetrySnapshot(
                     speed: speedValue(19_000),
                     operatingState: .riding,
-                    vescWarning: .dutyPushback
+                    vescWarning: .dutyPushback,
+                    vescStopReason: .pitch
                 )
             ),
             title: nil
         ))
 
         XCTAssertEqual(snapshot.warning, .dutyPushback)
+        XCTAssertEqual(snapshot.stopReason, .pitch)
     }
 
     func testVescRideSnapshotOwnsBatteryReadbackFormatting() {

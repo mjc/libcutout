@@ -386,6 +386,18 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("accessibility.vesc_warning.duty_pushback"),
             "Warning. Pushback soon. Reduce acceleration."
         )
+        let stopCopy: [(String, String)] = [
+            ("vesc.stop.pitch", "Stopped: pitch"),
+            ("vesc.stop.roll", "Stopped: roll"),
+            ("vesc.stop.switch_half", "Half-footpad stop"),
+            ("vesc.stop.switch_full", "Footpad stop"),
+            ("vesc.stop.reverse", "Reverse stop"),
+            ("vesc.stop.quick_stop", "Quick stop"),
+            ("vesc.stop.detail", "Board stopped balancing. Re-engage only when safe."),
+        ]
+        for (key, expected) in stopCopy {
+            XCTAssertEqual(localizedAppText(key), expected)
+        }
         XCTAssertEqual(
             localizedAppText("accessibility.bms_alert.warning"),
             "Battery warning. Check BMS details."
@@ -445,6 +457,19 @@ final class CutoutAppRouteTests: XCTestCase {
             XCTAssertEqual(warning.accessibilityAnnouncement, announcement)
         }
         XCTAssertNil(VescRideWarning.unknown.accessibilityAnnouncement)
+
+        let stopAnnouncements: [(VescRideStopReason, String)] = [
+            (.pitch, "Board stopped balancing because of pitch. Re-engage only when safe."),
+            (.roll, "Board stopped balancing because of roll. Re-engage only when safe."),
+            (.switchHalf, "Board stopped balancing because half the footpad released. Re-engage only when safe."),
+            (.switchFull, "Board stopped balancing because the footpad released. Re-engage only when safe."),
+            (.reverse, "Board stopped with reverse-stop. Re-engage only when safe."),
+            (.quickStop, "Board quick-stopped. Re-engage only when safe."),
+        ]
+        XCTAssertNil(VescRideStopReason.none.accessibilityAnnouncement)
+        for (reason, announcement) in stopAnnouncements {
+            XCTAssertEqual(reason.accessibilityAnnouncement, announcement)
+        }
     }
 
     func testBmsAnnouncementUsesHighestTypedGroupSeverity() {

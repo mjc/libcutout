@@ -5997,6 +5997,25 @@ pub enum RideWarning {
     Error,
 }
 
+/// Protocol-decoded reason that the controller stopped balancing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideStopReason {
+    /// No stop condition is active.
+    None,
+    /// Board pitch exceeded the allowed range.
+    Pitch,
+    /// Board roll exceeded the allowed range.
+    Roll,
+    /// One half of the footpad switch caused the stop.
+    SwitchHalf,
+    /// The full footpad switch caused the stop.
+    SwitchFull,
+    /// Reverse-stop logic caused the stop.
+    Reverse,
+    /// Quick-stop logic caused the stop.
+    QuickStop,
+}
+
 impl core::fmt::Display for ChargeMode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -6457,6 +6476,9 @@ pub struct TelemetryDelta {
     /// Ride warning decoded from a protocol-owned status field.
     pub ride_warning: Option<RideWarning>,
 
+    /// Reason the controller stopped balancing.
+    pub ride_stop_reason: Option<RideStopReason>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
 
@@ -6509,6 +6531,7 @@ impl TelemetryDelta {
             charge_mode: None,
             operating_state: None,
             ride_warning: None,
+            ride_stop_reason: None,
             motor_current: None,
             power: None,
             controller_temperature: None,
@@ -6582,6 +6605,9 @@ pub struct TelemetrySnapshot {
     /// Latest protocol-decoded ride warning.
     pub ride_warning: Option<RideWarning>,
 
+    /// Latest reason the controller stopped balancing.
+    pub ride_stop_reason: Option<RideStopReason>,
+
     /// Latest known motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
 
@@ -6644,6 +6670,9 @@ impl TelemetrySnapshot {
         }
         if delta.ride_warning.is_some() {
             self.ride_warning = delta.ride_warning;
+        }
+        if delta.ride_stop_reason.is_some() {
+            self.ride_stop_reason = delta.ride_stop_reason;
         }
         if delta.motor_current.is_some() {
             self.motor_current = delta.motor_current;

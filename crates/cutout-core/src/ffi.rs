@@ -10,10 +10,10 @@ use crate::{
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingState, RideWarning, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
-    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed, TelemetryDelta,
-    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
-    ValueSource, VerificationStatus, Voltage, WriteMode,
+    RideOperatingState, RideStopReason, RideWarning, SafetyClass, SemanticEventCount, SessionInput,
+    SessionOutput, SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed,
+    TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit,
+    ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -583,6 +583,39 @@ pub enum RideWarningDto {
     LowBattery,
     /// The package reports an error warning.
     Error,
+}
+
+/// UniFFI-ready reason that the controller stopped balancing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideStopReasonDto {
+    /// No stop condition is active.
+    None,
+    /// Board pitch exceeded the allowed range.
+    Pitch,
+    /// Board roll exceeded the allowed range.
+    Roll,
+    /// One half of the footpad switch caused the stop.
+    SwitchHalf,
+    /// The full footpad switch caused the stop.
+    SwitchFull,
+    /// Reverse-stop logic caused the stop.
+    Reverse,
+    /// Quick-stop logic caused the stop.
+    QuickStop,
+}
+
+impl From<RideStopReason> for RideStopReasonDto {
+    fn from(reason: RideStopReason) -> Self {
+        match reason {
+            RideStopReason::None => Self::None,
+            RideStopReason::Pitch => Self::Pitch,
+            RideStopReason::Roll => Self::Roll,
+            RideStopReason::SwitchHalf => Self::SwitchHalf,
+            RideStopReason::SwitchFull => Self::SwitchFull,
+            RideStopReason::Reverse => Self::Reverse,
+            RideStopReason::QuickStop => Self::QuickStop,
+        }
+    }
 }
 
 impl From<RideWarning> for RideWarningDto {
@@ -2036,6 +2069,9 @@ pub struct TelemetrySnapshotDto {
     /// Protocol-decoded ride warning.
     pub ride_warning: Option<RideWarningDto>,
 
+    /// Protocol-decoded reason the controller stopped balancing.
+    pub ride_stop_reason: Option<RideStopReasonDto>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<PhaseCurrentReadingDto>,
 
@@ -2086,6 +2122,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             charge_mode: snapshot.charge_mode.map(Into::into),
             operating_state: snapshot.operating_state.map(Into::into),
             ride_warning: snapshot.ride_warning.map(Into::into),
+            ride_stop_reason: snapshot.ride_stop_reason.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
             controller_temperature: snapshot.controller_temperature.map(Into::into),
@@ -2647,6 +2684,7 @@ mod tests {
             charge_mode: Some(Measured::reported(ChargeMode::Charging)),
             operating_state: Some(RideOperatingState::Charging),
             ride_warning: Some(RideWarning::DutyPushback),
+            ride_stop_reason: Some(RideStopReason::Pitch),
             motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
             power: None,
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
@@ -2686,6 +2724,10 @@ mod tests {
         assert_eq!(
             dto.ride_warning.expect("ride warning"),
             RideWarningDto::DutyPushback
+        );
+        assert_eq!(
+            dto.ride_stop_reason.expect("ride stop reason"),
+            RideStopReasonDto::Pitch
         );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
         assert_eq!(

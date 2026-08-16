@@ -256,6 +256,20 @@ extension VescRideWarning {
     }
 }
 
+extension VescRideStopReason {
+    var accessibilityAnnouncement: String? {
+        switch self {
+        case .none: nil
+        case .pitch: localizedAppText("accessibility.vesc_stop.pitch")
+        case .roll: localizedAppText("accessibility.vesc_stop.roll")
+        case .switchHalf: localizedAppText("accessibility.vesc_stop.switch_half")
+        case .switchFull: localizedAppText("accessibility.vesc_stop.switch_full")
+        case .reverse: localizedAppText("accessibility.vesc_stop.reverse")
+        case .quickStop: localizedAppText("accessibility.vesc_stop.quick_stop")
+        }
+    }
+}
+
 extension BmsAlertLevel {
     var accessibilityAnnouncement: String? {
         switch self {

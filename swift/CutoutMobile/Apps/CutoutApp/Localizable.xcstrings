@@ -73,6 +73,30 @@
       "comment" : "VoiceOver announcement when Refloat reports temperature-based pushback without identifying the hot component.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Temperature pushback. Stop safely and let the board cool." } } }
     },
+    "accessibility.vesc_stop.pitch" : {
+      "comment" : "VoiceOver announcement when excessive pitch stopped VESC balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board stopped balancing because of pitch. Re-engage only when safe." } } }
+    },
+    "accessibility.vesc_stop.quick_stop" : {
+      "comment" : "VoiceOver announcement when VESC quick-stop logic stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board quick-stopped. Re-engage only when safe." } } }
+    },
+    "accessibility.vesc_stop.reverse" : {
+      "comment" : "VoiceOver announcement when VESC reverse-stop logic stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board stopped with reverse-stop. Re-engage only when safe." } } }
+    },
+    "accessibility.vesc_stop.roll" : {
+      "comment" : "VoiceOver announcement when excessive roll stopped VESC balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board stopped balancing because of roll. Re-engage only when safe." } } }
+    },
+    "accessibility.vesc_stop.switch_full" : {
+      "comment" : "VoiceOver announcement when the full footpad-switch condition stopped VESC balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board stopped balancing because the footpad released. Re-engage only when safe." } } }
+    },
+    "accessibility.vesc_stop.switch_half" : {
+      "comment" : "VoiceOver announcement when the half-footpad-switch condition stopped VESC balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board stopped balancing because half the footpad released. Re-engage only when safe." } } }
+    },
     "euc.metric.gps_speed" : {
       "comment" : "EUC ride dashboard metric label for phone GPS speed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS speed" } } }
@@ -1004,6 +1028,34 @@
     "vesc.warning.temperature_pushback" : {
       "comment" : "VESC warning-card title when Refloat reports temperature-based pushback without identifying the hot component.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature pushback" } } }
+    },
+    "vesc.stop.detail" : {
+      "comment" : "Detail beneath a VESC stop-condition warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Board stopped balancing. Re-engage only when safe." } } }
+    },
+    "vesc.stop.pitch" : {
+      "comment" : "VESC warning title when excessive board pitch stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped: pitch" } } }
+    },
+    "vesc.stop.quick_stop" : {
+      "comment" : "VESC warning title when quick-stop logic stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Quick stop" } } }
+    },
+    "vesc.stop.reverse" : {
+      "comment" : "VESC warning title when reverse-stop logic stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reverse stop" } } }
+    },
+    "vesc.stop.roll" : {
+      "comment" : "VESC warning title when excessive board roll stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped: roll" } } }
+    },
+    "vesc.stop.switch_full" : {
+      "comment" : "VESC warning title when the full footpad-switch condition stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Footpad stop" } } }
+    },
+    "vesc.stop.switch_half" : {
+      "comment" : "VESC warning title when the half-footpad-switch condition stopped balancing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Half-footpad stop" } } }
     },
     "vesc.warning.telemetry_stale" : {
       "comment" : "VESC warning-card title when telemetry is stale.",

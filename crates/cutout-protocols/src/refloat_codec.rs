@@ -1,8 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
     Angle, BatteryCurrent, DutyCycle, FootpadContactState, FootpadTelemetry, Measured,
-    MonotonicTimestamp, PhaseCurrent, RideOperatingState, RideWarning, Speed, TelemetryDelta,
-    Temperature, Voltage,
+    MonotonicTimestamp, PhaseCurrent, RideOperatingState, RideStopReason, RideWarning, Speed,
+    TelemetryDelta, Temperature, Voltage,
 };
 use thiserror::Error;
 
@@ -209,6 +209,7 @@ impl RefloatRealtimeData {
         at_ms: MonotonicTimestamp,
         reports_battery_current: bool,
     ) -> TelemetryDelta {
+        let stop_reason = refloat_stop_reason(self.stop_condition);
         TelemetryDelta {
             speed: self.value("motor.speed").map(|metres_per_second| {
                 Measured::reported(Speed::from_metres_per_second(metres_per_second))
@@ -244,9 +245,12 @@ impl RefloatRealtimeData {
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
             ride_warning: Some(if self.fatal_error.is_some() {
                 RideWarning::Error
+            } else if stop_reason != RideStopReason::None {
+                RideWarning::None
             } else {
                 refloat_ride_warning(self.sat, self.beep_reason)
             }),
+            ride_stop_reason: Some(stop_reason),
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
                 contact_state: refloat_footpad_contact_state(self.footpad_state),
@@ -295,6 +299,18 @@ const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
         8 => RideWarning::LowBattery,
         10 => RideWarning::Error,
         _ => RideWarning::None,
+    }
+}
+
+const fn refloat_stop_reason(stop_condition: u8) -> RideStopReason {
+    match stop_condition {
+        1 => RideStopReason::Pitch,
+        2 => RideStopReason::Roll,
+        3 => RideStopReason::SwitchHalf,
+        4 => RideStopReason::SwitchFull,
+        5 => RideStopReason::Reverse,
+        6 => RideStopReason::QuickStop,
+        _ => RideStopReason::None,
     }
 }
 
@@ -1216,8 +1232,32 @@ mod tests {
 
         assert_eq!(delta.operating_state, Some(RideOperatingState::Parked));
         assert_eq!(delta.ride_warning, Some(RideWarning::None));
+        assert_eq!(delta.ride_stop_reason, Some(RideStopReason::None));
+
+        data.beep_reason = REFLOAT_BEEP_DUTY;
+        for (stop_condition, reason) in [
+            (1, RideStopReason::Pitch),
+            (2, RideStopReason::Roll),
+            (3, RideStopReason::SwitchHalf),
+            (4, RideStopReason::SwitchFull),
+            (5, RideStopReason::Reverse),
+            (6, RideStopReason::QuickStop),
+            (u8::MAX, RideStopReason::None),
+        ] {
+            data.stop_condition = stop_condition;
+            let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), false);
+            assert_eq!(
+                delta.ride_stop_reason,
+                Some(reason),
+                "stop {stop_condition}"
+            );
+            if reason != RideStopReason::None {
+                assert_eq!(delta.ride_warning, Some(RideWarning::None));
+            }
+        }
 
         data.package_state = 3;
+        data.stop_condition = 0;
         let warnings = [
             (1, RideWarning::LowVoltage),
             (2, RideWarning::HighVoltage),

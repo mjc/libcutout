@@ -71,9 +71,29 @@ struct VescRideScreenView: View {
             return warningCard("vesc.warning.low_battery")
         case .error:
             return warningCard("vesc.warning.error")
-        case .none, .unknown:
+        case .none:
+            return stopWarningCard
+        case .unknown:
             return nil
         }
+    }
+
+    private var stopWarningCard: PevWarningCard? {
+        guard let stopReason = liveSnapshot?.stopReason else { return nil }
+        let titleKey: String
+        switch stopReason {
+        case .none: return nil
+        case .pitch: titleKey = "vesc.stop.pitch"
+        case .roll: titleKey = "vesc.stop.roll"
+        case .switchHalf: titleKey = "vesc.stop.switch_half"
+        case .switchFull: titleKey = "vesc.stop.switch_full"
+        case .reverse: titleKey = "vesc.stop.reverse"
+        case .quickStop: titleKey = "vesc.stop.quick_stop"
+        }
+        return PevWarningCard(
+            title: localizedAppText(titleKey),
+            detail: localizedAppText("vesc.stop.detail")
+        )
     }
 
     private func warningCard(_ titleKey: String, showsFootpad: Bool = false) -> PevWarningCard {
@@ -314,6 +334,12 @@ struct VescRideScreenView: View {
         .accessibilityElement(children: .contain)
         .onChange(of: liveSnapshot?.warning) { _, warning in
             if let announcement = warning?.accessibilityAnnouncement {
+                AccessibilityNotification.Announcement(announcement).post()
+            }
+        }
+        .onChange(of: liveSnapshot?.stopReason) { _, reason in
+            guard liveSnapshot?.warning == .some(.none) else { return }
+            if let announcement = reason?.accessibilityAnnouncement {
                 AccessibilityNotification.Announcement(announcement).post()
             }
         }

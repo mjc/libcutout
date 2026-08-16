@@ -40,8 +40,8 @@ use cutout_core::{
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
     RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingStateDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    RideOperatingStateDto, RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount,
+    SessionInputDto, SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
     TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
@@ -2313,6 +2313,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Protocol-decoded VESC ride warning, when the active protocol reports one.
     pub vesc_warning: Option<MobileVescRideWarningDto>,
 
+    /// Protocol-decoded reason the controller stopped balancing.
+    pub vesc_stop_reason: Option<MobileVescRideStopReasonDto>,
+
     /// Reported voltage.
     pub voltage: Option<VoltageReading>,
 
@@ -2497,6 +2500,39 @@ pub enum MobileVescRideWarningDto {
     LowBattery,
     /// The package reports an error warning.
     Error,
+}
+
+/// Reason a VESC float controller stopped balancing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileVescRideStopReasonDto {
+    /// No stop condition is active.
+    None,
+    /// Board pitch exceeded the allowed range.
+    Pitch,
+    /// Board roll exceeded the allowed range.
+    Roll,
+    /// One half of the footpad switch caused the stop.
+    SwitchHalf,
+    /// The full footpad switch caused the stop.
+    SwitchFull,
+    /// Reverse-stop logic caused the stop.
+    Reverse,
+    /// Quick-stop logic caused the stop.
+    QuickStop,
+}
+
+impl From<RideStopReasonDto> for MobileVescRideStopReasonDto {
+    fn from(reason: RideStopReasonDto) -> Self {
+        match reason {
+            RideStopReasonDto::None => Self::None,
+            RideStopReasonDto::Pitch => Self::Pitch,
+            RideStopReasonDto::Roll => Self::Roll,
+            RideStopReasonDto::SwitchHalf => Self::SwitchHalf,
+            RideStopReasonDto::SwitchFull => Self::SwitchFull,
+            RideStopReasonDto::Reverse => Self::Reverse,
+            RideStopReasonDto::QuickStop => Self::QuickStop,
+        }
+    }
 }
 
 impl From<RideWarningDto> for MobileVescRideWarningDto {
@@ -5472,6 +5508,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
             speed: snapshot.speed.map(Into::into),
             operating_state,
             vesc_warning: snapshot.ride_warning.map(Into::into),
+            vesc_stop_reason: snapshot.ride_stop_reason.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
             charge_mode: snapshot.charge_mode.map(Into::into),
@@ -8612,10 +8649,10 @@ mod tests {
         custom_app_frame(&payload)
     }
 
-    fn refloat_realtime_data_frame() -> Vec<u8> {
+    fn refloat_realtime_data_frame(stop_and_sat: u8, beep_reason: u8) -> Vec<u8> {
         let mut payload = vec![101, 31, 0x4, 0];
         payload.extend_from_slice(&42_u32.to_be_bytes());
-        payload.extend_from_slice(&[0x13, 0xc1, 0, 6]);
+        payload.extend_from_slice(&[0x13, 0xc1, stop_and_sat, beep_reason]);
         for half in [
             0x3c00_u16, // 1.0 m/s
             0x4400_u16, // 4 degrees pitch
@@ -8930,12 +8967,16 @@ mod tests {
         assert_eq!(link_result.error, None);
 
         vesc_notification(&session, 2, &refloat_realtime_ids_frame());
-        vesc_notification(&session, 3, &refloat_realtime_data_frame());
+        vesc_notification(&session, 3, &refloat_realtime_data_frame(0, 6));
 
         let refloat_snapshot = session.current_snapshot();
         assert_eq!(
             refloat_snapshot.vesc_warning,
             Some(MobileVescRideWarningDto::DutyPushback)
+        );
+        assert_eq!(
+            refloat_snapshot.vesc_stop_reason,
+            Some(MobileVescRideStopReasonDto::None)
         );
         assert_eq!(
             refloat_snapshot.pitch,
@@ -8956,6 +8997,17 @@ mod tests {
             })
         );
 
+        vesc_notification(&session, 4, &refloat_realtime_data_frame(1, 6));
+        let stopped_snapshot = session.current_snapshot();
+        assert_eq!(
+            stopped_snapshot.vesc_warning,
+            Some(MobileVescRideWarningDto::None)
+        );
+        assert_eq!(
+            stopped_snapshot.vesc_stop_reason,
+            Some(MobileVescRideStopReasonDto::Pitch)
+        );
+
         for (index, chunk) in [
             LIVE_VESC_VALUES_CHUNK_0,
             LIVE_VESC_VALUES_CHUNK_1,
@@ -8969,7 +9021,7 @@ mod tests {
         {
             vesc_notification(
                 &session,
-                u64::try_from(index).expect("fixture index fits") + 4,
+                u64::try_from(index).expect("fixture index fits") + 5,
                 chunk,
             );
         }
@@ -9475,6 +9527,7 @@ mod tests {
             speed: None,
             operating_state: RideOperatingState::Charging,
             vesc_warning: None,
+            vesc_stop_reason: None,
             voltage: Some(VoltageReading {
                 value: Voltage { value: 95_000 },
                 source: MobileValueSourceDto::Reported,

@@ -1314,6 +1314,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let speedQuality: ReadbackQuality?
     public let operatingState: RideOperatingState
     public let vescWarning: VescRideWarning?
+    public let vescStopReason: VescRideStopReason?
     public let voltage: Voltage?
     public let batteryCurrent: BatteryCurrent?
     public let motorCurrent: PhaseCurrent?
@@ -1342,6 +1343,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         speedQuality: ReadbackQuality? = nil,
         operatingState: RideOperatingState = .unknown,
         vescWarning: VescRideWarning? = nil,
+        vescStopReason: VescRideStopReason? = nil,
         voltage: Voltage? = nil,
         batteryCurrent: BatteryCurrent? = nil,
         motorCurrent: PhaseCurrent? = nil,
@@ -1369,6 +1371,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.speedQuality = speedQuality
         self.operatingState = operatingState
         self.vescWarning = vescWarning
+        self.vescStopReason = vescStopReason
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
         self.motorCurrent = motorCurrent
@@ -1403,6 +1406,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             speedQuality: dto.speed.map { ReadbackQuality($0.quality) },
             operatingState: dto.operatingState,
             vescWarning: dto.vescWarning.map(VescRideWarning.init),
+            vescStopReason: dto.vescStopReason.map(VescRideStopReason.init),
             voltage: dto.voltage?.value,
             batteryCurrent: dto.batteryCurrent?.value,
             motorCurrent: dto.motorCurrent?.value,
@@ -1681,6 +1685,28 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
     }
 }
 
+public enum VescRideStopReason: Equatable, Hashable, Sendable {
+    case none
+    case pitch
+    case roll
+    case switchHalf
+    case switchFull
+    case reverse
+    case quickStop
+
+    fileprivate init(_ dto: MobileVescRideStopReasonDto) {
+        switch dto {
+        case .none: self = .none
+        case .pitch: self = .pitch
+        case .roll: self = .roll
+        case .switchHalf: self = .switchHalf
+        case .switchFull: self = .switchFull
+        case .reverse: self = .reverse
+        case .quickStop: self = .quickStop
+        }
+    }
+}
+
 public enum VescVehicleKind: Equatable, Hashable, Sendable {
     case float
     case bike
@@ -1783,6 +1809,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
     public let controllerState: VescControllerState
     public let operatingState: RideOperatingState
     public let warning: VescRideWarning
+    public let stopReason: VescRideStopReason
     public let boardSpeed: Speed?
     public let dutyCycle: DutyCycle?
     public let dutyHeadroom: BatteryLevel?
@@ -1807,6 +1834,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         controllerState: VescControllerState,
         operatingState: RideOperatingState = .unknown,
         warning: VescRideWarning = .unknown,
+        stopReason: VescRideStopReason = .none,
         boardSpeed: Speed? = nil,
         dutyCycle: DutyCycle? = nil,
         dutyHeadroom: BatteryLevel? = nil,
@@ -1830,6 +1858,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
         self.controllerState = controllerState
         self.operatingState = operatingState
         self.warning = warning
+        self.stopReason = stopReason
         self.boardSpeed = boardSpeed
         self.dutyCycle = dutyCycle
         self.dutyHeadroom = dutyHeadroom
@@ -1859,6 +1888,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             controllerState: .unknown,
             operatingState: telemetry.operatingState,
             warning: telemetry.vescWarning ?? .unknown,
+            stopReason: telemetry.vescStopReason ?? .none,
             boardSpeed: telemetry.speed,
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
