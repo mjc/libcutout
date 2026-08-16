@@ -1818,6 +1818,31 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility()
     }
 
+    func testVescStaleWarningPrecedesMetricsInLandscapeAtAccessibilityDynamicType() {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
+            return
+        }
+
+        let warning = screen.descendants(matching: .any)["vesc.warning.telemetry-stale"]
+        let voltage = screen.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "voltage")
+        ).firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !voltage.exists {
+            let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .fast, thenHoldForDuration: 0)
+        }
+        XCTAssertTrue(voltage.waitForExistence(timeout: 5))
+        XCTAssertLessThan(
+            warning.frame.minY,
+            voltage.frame.minY,
+            "The stale safety warning must appear before ordinary metrics"
+        )
+    }
+
     func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
         try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }

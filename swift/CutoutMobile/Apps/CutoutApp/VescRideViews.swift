@@ -165,7 +165,15 @@ struct VescRideScreenView: View {
     }
 
     private var prioritizesMetrics: Bool {
-        dynamicTypeSize.isAccessibilitySize && verticalSizeClass == .compact
+        guard dynamicTypeSize.isAccessibilitySize && verticalSizeClass == .compact else {
+            return false
+        }
+        switch dashboardSupport {
+        case .telemetryStale, .telemetryPending:
+            return false
+        case .dutyHeadroom, .none:
+            return warningCard == nil
+        }
     }
 
     private var boardAngleDetail: String? {
