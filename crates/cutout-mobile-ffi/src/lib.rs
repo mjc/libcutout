@@ -40,15 +40,16 @@ use cutout_core::{
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
     RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingStateDto, SemanticEventCountDto, SeriesCount, SessionInputDto, SessionOutputDto,
-    SettingsEntry, SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
-    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
-    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
-    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
-    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
-    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
+    RideOperatingStateDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
+    Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
+    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
+    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
+    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
+    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
+    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
+    WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
@@ -2309,6 +2310,9 @@ pub struct MobileTelemetrySnapshotDto {
     /// Conservative operating state inferred from currently available telemetry.
     pub operating_state: RideOperatingState,
 
+    /// Protocol-decoded VESC ride warning, when the active protocol reports one.
+    pub vesc_warning: Option<MobileVescRideWarningDto>,
+
     /// Reported voltage.
     pub voltage: Option<VoltageReading>,
 
@@ -2472,11 +2476,17 @@ pub enum MobileVescRideWarningDto {
     /// No ride warning is active.
     None,
 
-    /// Duty or authority data indicates pushback soon.
-    PushbackSoon,
+    /// The controller is applying duty-based pushback.
+    DutyPushback,
+}
 
-    /// Warning state is unknown.
-    Unknown,
+impl From<RideWarningDto> for MobileVescRideWarningDto {
+    fn from(warning: RideWarningDto) -> Self {
+        match warning {
+            RideWarningDto::None => Self::None,
+            RideWarningDto::DutyPushback => Self::DutyPushback,
+        }
+    }
 }
 
 /// VESC vehicle category independent of the installed protocol package.
@@ -5433,6 +5443,7 @@ impl From<TelemetrySnapshotDto> for MobileTelemetrySnapshotDto {
                 .map(MobileMonotonicMillisDto::from_core_ffi_timestamp),
             speed: snapshot.speed.map(Into::into),
             operating_state,
+            vesc_warning: snapshot.ride_warning.map(Into::into),
             voltage: snapshot.voltage.map(Into::into),
             battery_current: snapshot.battery_current.map(Into::into),
             charge_mode: snapshot.charge_mode.map(Into::into),
@@ -8576,7 +8587,7 @@ mod tests {
     fn refloat_realtime_data_frame() -> Vec<u8> {
         let mut payload = vec![101, 31, 0x4, 0];
         payload.extend_from_slice(&42_u32.to_be_bytes());
-        payload.extend_from_slice(&[0x13, 0xc1, 0xa6, 8]);
+        payload.extend_from_slice(&[0x13, 0xc1, 0xa6, 6]);
         for half in [
             0x3c00_u16, // 1.0 m/s
             0x4400_u16, // 4 degrees pitch
@@ -8894,6 +8905,10 @@ mod tests {
         vesc_notification(&session, 3, &refloat_realtime_data_frame());
 
         let refloat_snapshot = session.current_snapshot();
+        assert_eq!(
+            refloat_snapshot.vesc_warning,
+            Some(MobileVescRideWarningDto::DutyPushback)
+        );
         assert_eq!(
             refloat_snapshot.pitch,
             Some(AngleReading {
@@ -9431,6 +9446,7 @@ mod tests {
             at_ms: Some(MobileMonotonicMillisDto { milliseconds: at }),
             speed: None,
             operating_state: RideOperatingState::Charging,
+            vesc_warning: None,
             voltage: Some(VoltageReading {
                 value: Voltage { value: 95_000 },
                 source: MobileValueSourceDto::Reported,

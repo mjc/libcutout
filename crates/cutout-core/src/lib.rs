@@ -5966,6 +5966,16 @@ pub enum RideOperatingState {
     Charging,
 }
 
+/// Protocol-decoded ride warning whose meaning is independent of presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideWarning {
+    /// No ride warning is active.
+    None,
+
+    /// The controller is applying duty-based pushback.
+    DutyPushback,
+}
+
 impl core::fmt::Display for ChargeMode {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -6423,6 +6433,9 @@ pub struct TelemetryDelta {
     /// Ride operating state decoded from protocol-specific status fields.
     pub operating_state: Option<RideOperatingState>,
 
+    /// Ride warning decoded from a protocol-owned status field.
+    pub ride_warning: Option<RideWarning>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
 
@@ -6474,6 +6487,7 @@ impl TelemetryDelta {
             battery_current: None,
             charge_mode: None,
             operating_state: None,
+            ride_warning: None,
             motor_current: None,
             power: None,
             controller_temperature: None,
@@ -6544,6 +6558,9 @@ pub struct TelemetrySnapshot {
     /// Latest known ride operating state.
     pub operating_state: Option<RideOperatingState>,
 
+    /// Latest protocol-decoded ride warning.
+    pub ride_warning: Option<RideWarning>,
+
     /// Latest known motor/phase current in milliamps.
     pub motor_current: Option<Measured<PhaseCurrent>>,
 
@@ -6603,6 +6620,9 @@ impl TelemetrySnapshot {
         }
         if delta.operating_state.is_some() {
             self.operating_state = delta.operating_state;
+        }
+        if delta.ride_warning.is_some() {
+            self.ride_warning = delta.ride_warning;
         }
         if delta.motor_current.is_some() {
             self.motor_current = delta.motor_current;

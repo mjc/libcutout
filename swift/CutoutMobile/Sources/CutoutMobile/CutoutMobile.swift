@@ -1313,6 +1313,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let speedSource: ReadbackSource?
     public let speedQuality: ReadbackQuality?
     public let operatingState: RideOperatingState
+    public let vescWarning: VescRideWarning?
     public let voltage: Voltage?
     public let batteryCurrent: BatteryCurrent?
     public let motorCurrent: PhaseCurrent?
@@ -1340,6 +1341,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         speedSource: ReadbackSource? = nil,
         speedQuality: ReadbackQuality? = nil,
         operatingState: RideOperatingState = .unknown,
+        vescWarning: VescRideWarning? = nil,
         voltage: Voltage? = nil,
         batteryCurrent: BatteryCurrent? = nil,
         motorCurrent: PhaseCurrent? = nil,
@@ -1366,6 +1368,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.speedSource = speedSource
         self.speedQuality = speedQuality
         self.operatingState = operatingState
+        self.vescWarning = vescWarning
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
         self.motorCurrent = motorCurrent
@@ -1399,6 +1402,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             speedSource: dto.speed.map { ReadbackSource($0.source) },
             speedQuality: dto.speed.map { ReadbackQuality($0.quality) },
             operatingState: dto.operatingState,
+            vescWarning: dto.vescWarning.map(VescRideWarning.init),
             voltage: dto.voltage?.value,
             batteryCurrent: dto.batteryCurrent?.value,
             motorCurrent: dto.motorCurrent?.value,
@@ -1637,17 +1641,15 @@ public enum VescControllerState: Equatable, Hashable, Sendable {
 
 public enum VescRideWarning: Equatable, Hashable, Sendable {
     case none
-    case pushbackSoon
+    case dutyPushback
     case unknown
 
     fileprivate init(_ dto: MobileVescRideWarningDto) {
         switch dto {
         case .none:
             self = .none
-        case .pushbackSoon:
-            self = .pushbackSoon
-        case .unknown:
-            self = .unknown
+        case .dutyPushback:
+            self = .dutyPushback
         }
     }
 }
@@ -1829,7 +1831,7 @@ public struct VescRideSnapshot: Equatable, Hashable, Sendable {
             subProtocol: .generic,
             controllerState: .unknown,
             operatingState: telemetry.operatingState,
-            warning: .unknown,
+            warning: telemetry.vescWarning ?? .unknown,
             boardSpeed: telemetry.speed,
             dutyCycle: telemetry.pwm,
             dutyHeadroom: telemetry.dutyHeadroom,
@@ -2148,7 +2150,7 @@ private func rideHeroSeverity(_ severity: EucRideWarningSeverity) -> RideHeroSev
 private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     switch warning {
     case .none: .nominal
-    case .pushbackSoon: .caution
+    case .dutyPushback: .caution
     case .unknown: .unavailable
     }
 }

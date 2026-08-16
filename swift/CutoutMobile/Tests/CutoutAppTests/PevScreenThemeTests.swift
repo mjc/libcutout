@@ -664,7 +664,7 @@ final class PevScreenThemeTests: XCTestCase {
             vehicleKind: .float,
             subProtocol: .refloat,
             controllerState: .unknown,
-            warning: .pushbackSoon,
+            warning: .dutyPushback,
             boardSpeed: Speed(value: 19_000),
             lastUpdate: MonotonicMilliseconds(1_000)
         )

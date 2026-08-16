@@ -618,7 +618,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             vehicleKind: .float,
             subProtocol: .refloat,
             controllerState: .unknown,
-            warning: .pushbackSoon,
+            warning: .dutyPushback,
             boardSpeed: speedValue(19_000),
             dutyCycle: dutyCycle(820),
             dutyHeadroom: batteryLevelValue(18),
@@ -633,7 +633,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.vehicleKind, .float)
         XCTAssertEqual(snapshot.subProtocol, .refloat)
         XCTAssertEqual(snapshot.controllerState, .unknown)
-        XCTAssertEqual(snapshot.warning, .pushbackSoon)
+        XCTAssertEqual(snapshot.warning, .dutyPushback)
         XCTAssertEqual(snapshot.boardSpeed, speedValue(19_000))
         XCTAssertEqual(snapshot.dutyCycle, dutyCycle(820))
         XCTAssertEqual(snapshot.dutyHeadroom, batteryLevelValue(18))
@@ -643,6 +643,21 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.boardAngle, angleValue(-18))
         XCTAssertEqual(snapshot.controllerTemperature, temperatureValue(54_000))
         XCTAssertEqual(snapshot.motorTemperature, temperatureValue(49_000))
+    }
+
+    func testVescRideSnapshotUsesProtocolDecodedDutyPushback() throws {
+        let snapshot = try XCTUnwrap(VescRideSnapshot(
+            displayState: RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    speed: speedValue(19_000),
+                    operatingState: .riding,
+                    vescWarning: .dutyPushback
+                )
+            ),
+            title: nil
+        ))
+
+        XCTAssertEqual(snapshot.warning, .dutyPushback)
     }
 
     func testVescRideSnapshotOwnsBatteryReadbackFormatting() {
@@ -698,7 +713,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             vehicleKind: .float,
             subProtocol: .refloat,
             controllerState: .unknown,
-            warning: .pushbackSoon,
+            warning: .dutyPushback,
             boardSpeed: speedValue(19_000),
             lastUpdate: MonotonicMilliseconds(1_000)
         )

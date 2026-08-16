@@ -230,8 +230,8 @@ extension EucRideWarningSeverity {
 extension VescRideWarning {
     var accessibilityAnnouncement: String? {
         switch self {
-        case .pushbackSoon:
-            localizedAppText("accessibility.vesc_warning.pushback")
+        case .dutyPushback:
+            localizedAppText("accessibility.vesc_warning.duty_pushback")
         case .none, .unknown:
             nil
         }

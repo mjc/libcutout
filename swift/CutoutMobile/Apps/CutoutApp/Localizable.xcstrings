@@ -33,9 +33,9 @@
       "comment" : "VoiceOver announcement when the rider should reduce acceleration.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Reduce acceleration." } } }
     },
-    "accessibility.vesc_warning.pushback" : {
-      "comment" : "VoiceOver announcement for an impending VESC pushback warning.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Pushback soon." } } }
+    "accessibility.vesc_warning.duty_pushback" : {
+      "comment" : "VoiceOver announcement when a VESC reports duty-based pushback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Pushback soon. Reduce acceleration." } } }
     },
     "euc.metric.gps_speed" : {
       "comment" : "EUC ride dashboard metric label for phone GPS speed.",
@@ -929,8 +929,8 @@
       "comment" : "VESC pushback warning fallback detail when no footpad summary is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live telemetry." } } }
     },
-    "vesc.warning.pushback_soon" : {
-      "comment" : "VESC warning-card title when pushback is imminent.",
+    "vesc.warning.duty_pushback" : {
+      "comment" : "VESC warning-card title when the controller reports duty-based pushback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pushback soon" } } }
     },
     "vesc.warning.telemetry_stale" : {

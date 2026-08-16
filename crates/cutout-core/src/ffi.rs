@@ -10,7 +10,7 @@ use crate::{
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingState, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
+    RideOperatingState, RideWarning, SafetyClass, SemanticEventCount, SessionInput, SessionOutput,
     SettingsEntry, SettingsReadback, SettingsReadbackAvailability, Speed, TelemetryDelta,
     TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
     ValueSource, VerificationStatus, Voltage, WriteMode,
@@ -552,6 +552,25 @@ impl From<RideOperatingState> for RideOperatingStateDto {
             RideOperatingState::Standing => Self::Standing,
             RideOperatingState::Riding => Self::Riding,
             RideOperatingState::Charging => Self::Charging,
+        }
+    }
+}
+
+/// UniFFI-ready protocol-decoded ride warning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RideWarningDto {
+    /// No ride warning is active.
+    None,
+
+    /// The controller is applying duty-based pushback.
+    DutyPushback,
+}
+
+impl From<RideWarning> for RideWarningDto {
+    fn from(warning: RideWarning) -> Self {
+        match warning {
+            RideWarning::None => Self::None,
+            RideWarning::DutyPushback => Self::DutyPushback,
         }
     }
 }
@@ -1986,6 +2005,9 @@ pub struct TelemetrySnapshotDto {
     /// Ride operating state decoded from protocol-specific status fields.
     pub operating_state: Option<RideOperatingStateDto>,
 
+    /// Protocol-decoded ride warning.
+    pub ride_warning: Option<RideWarningDto>,
+
     /// Motor/phase current in milliamps.
     pub motor_current: Option<PhaseCurrentReadingDto>,
 
@@ -2035,6 +2057,7 @@ impl From<TelemetrySnapshot> for TelemetrySnapshotDto {
             battery_current: snapshot.battery_current.map(Into::into),
             charge_mode: snapshot.charge_mode.map(Into::into),
             operating_state: snapshot.operating_state.map(Into::into),
+            ride_warning: snapshot.ride_warning.map(Into::into),
             motor_current: snapshot.motor_current.map(Into::into),
             power: snapshot.power.map(Into::into),
             controller_temperature: snapshot.controller_temperature.map(Into::into),
@@ -2595,6 +2618,7 @@ mod tests {
             battery_current: None,
             charge_mode: Some(Measured::reported(ChargeMode::Charging)),
             operating_state: Some(RideOperatingState::Charging),
+            ride_warning: Some(RideWarning::DutyPushback),
             motor_current: Some(Measured::reported(PhaseCurrent::from_milliamps(-1_500))),
             power: None,
             controller_temperature: Some(Measured::reported(Temperature::from_millicelsius(
@@ -2630,6 +2654,10 @@ mod tests {
         assert_eq!(
             dto.operating_state.expect("operating state"),
             RideOperatingStateDto::Charging
+        );
+        assert_eq!(
+            dto.ride_warning.expect("ride warning"),
+            RideWarningDto::DutyPushback
         );
         assert_eq!(dto.motor_current.expect("current").value, -1_500);
         assert_eq!(

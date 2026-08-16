@@ -382,7 +382,10 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("accessibility.euc_warning.limp_home"),
             "Critical warning. Slow down and stop safely."
         )
-        XCTAssertEqual(localizedAppText("accessibility.vesc_warning.pushback"), "Warning. Pushback soon.")
+        XCTAssertEqual(
+            localizedAppText("accessibility.vesc_warning.duty_pushback"),
+            "Warning. Pushback soon. Reduce acceleration."
+        )
         XCTAssertEqual(
             localizedAppText("accessibility.bms_alert.warning"),
             "Battery warning. Check BMS details."
@@ -426,7 +429,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertNil(EucRideWarningSeverity.failed.accessibilityAnnouncement)
 
         XCTAssertNil(VescRideWarning.none.accessibilityAnnouncement)
-        XCTAssertEqual(VescRideWarning.pushbackSoon.accessibilityAnnouncement, "Warning. Pushback soon.")
+        XCTAssertEqual(
+            VescRideWarning.dutyPushback.accessibilityAnnouncement,
+            "Warning. Pushback soon. Reduce acceleration."
+        )
         XCTAssertNil(VescRideWarning.unknown.accessibilityAnnouncement)
     }
 

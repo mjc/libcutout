@@ -1,8 +1,8 @@
 use arrayvec::{ArrayString, ArrayVec};
 use cutout_core::{
     Angle, BatteryCurrent, DutyCycle, FootpadContactState, FootpadTelemetry, Measured,
-    MonotonicTimestamp, PhaseCurrent, RideOperatingState, Speed, TelemetryDelta, Temperature,
-    Voltage,
+    MonotonicTimestamp, PhaseCurrent, RideOperatingState, RideWarning, Speed, TelemetryDelta,
+    Temperature, Voltage,
 };
 use thiserror::Error;
 
@@ -35,6 +35,7 @@ const FRAME_START_LONG: u8 = 3;
 const REFLOAT_MAX_FRAME_LEN: usize = 512;
 const INFO_STRING_LEN: usize = 20;
 const INFO_V2_BODY_LEN: usize = 58;
+const REFLOAT_BEEP_DUTY: u8 = 6;
 
 /// Refloat read-only package request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -165,8 +166,8 @@ pub struct RefloatRealtimeData {
     /// Setpoint adjustment type nibble.
     pub sat: u8,
 
-    /// Last alert reason.
-    pub alert_reason: u8,
+    /// Active Refloat beep reason.
+    pub beep_reason: u8,
 
     /// Always-present dynamic values.
     pub values: ArrayVec<RefloatRealtimeValue, REFLOAT_MAX_REALTIME_FIELDS>,
@@ -231,6 +232,11 @@ impl RefloatRealtimeData {
                 .value("imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
+            ride_warning: Some(if self.beep_reason == REFLOAT_BEEP_DUTY {
+                RideWarning::DutyPushback
+            } else {
+                RideWarning::None
+            }),
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
                 contact_state: refloat_footpad_contact_state(self.footpad_state),
@@ -652,7 +658,7 @@ fn parse_realtime_data(
     let state_and_mode = cursor.read_u8()?;
     let flags_and_footpad = cursor.read_u8()?;
     let stop_cond_and_sat = cursor.read_u8()?;
-    let alert_reason = cursor.read_u8()?;
+    let beep_reason = cursor.read_u8()?;
     let values = read_values(&mut cursor, &ids.always)?;
     let runtime_values = if mask & 0x1 == 0x1 {
         read_values(&mut cursor, &ids.runtime)?
@@ -690,7 +696,7 @@ fn parse_realtime_data(
         wheelslip: flags_and_footpad & 0x01 == 0x01,
         stop_condition: stop_cond_and_sat & 0x0f,
         sat: stop_cond_and_sat >> 4,
-        alert_reason,
+        beep_reason,
         values,
         runtime_values,
         charging_current,
@@ -1002,7 +1008,7 @@ mod tests {
         assert_eq!(data.footpad_state, 3);
         assert_eq!(data.stop_condition, 6);
         assert_eq!(data.sat, 10);
-        assert_eq!(data.alert_reason, 8);
+        assert_eq!(data.beep_reason, 8);
         assert_eq!(data.values.len(), 2);
         assert_eq!(
             data.values.first().map(|value| value.id.as_str()),
@@ -1148,8 +1154,8 @@ mod tests {
     }
 
     #[test]
-    fn realtime_data_maps_refloat_ready_state_to_parked() {
-        let data = RefloatRealtimeData {
+    fn realtime_data_maps_refloat_state_and_duty_warning() {
+        let mut data = RefloatRealtimeData {
             mask: 0,
             extra_flags: 0,
             time_ticks: 0,
@@ -1161,7 +1167,7 @@ mod tests {
             wheelslip: false,
             stop_condition: 0,
             sat: 0,
-            alert_reason: 0,
+            beep_reason: 0,
             values: ArrayVec::new(),
             runtime_values: ArrayVec::new(),
             charging_current: None,
@@ -1174,6 +1180,14 @@ mod tests {
         let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(42), false);
 
         assert_eq!(delta.operating_state, Some(RideOperatingState::Parked));
+        assert_eq!(delta.ride_warning, Some(RideWarning::None));
+
+        data.package_state = 3;
+        data.beep_reason = REFLOAT_BEEP_DUTY;
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(43), false);
+
+        assert_eq!(delta.operating_state, Some(RideOperatingState::Riding));
+        assert_eq!(delta.ride_warning, Some(RideWarning::DutyPushback));
     }
 
     #[test]

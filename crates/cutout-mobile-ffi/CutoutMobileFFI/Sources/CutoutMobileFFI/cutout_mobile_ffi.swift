@@ -8148,6 +8148,10 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
      */
     public var operatingState: RideOperatingState
     /**
+     * Protocol-decoded VESC ride warning, when the active protocol reports one.
+     */
+    public var vescWarning: MobileVescRideWarningDto?
+    /**
      * Reported voltage.
      */
     public var voltage: VoltageReading?
@@ -8237,6 +8241,9 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
          * Conservative operating state inferred from currently available telemetry.
          */operatingState: RideOperatingState,
         /**
+         * Protocol-decoded VESC ride warning, when the active protocol reports one.
+         */vescWarning: MobileVescRideWarningDto?,
+        /**
          * Reported voltage.
          */voltage: VoltageReading?,
         /**
@@ -8296,6 +8303,7 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
         self.atMs = atMs
         self.speed = speed
         self.operatingState = operatingState
+        self.vescWarning = vescWarning
         self.voltage = voltage
         self.batteryCurrent = batteryCurrent
         self.chargeMode = chargeMode
@@ -8336,6 +8344,7 @@ public struct FfiConverterTypeMobileTelemetrySnapshotDto: FfiConverterRustBuffer
                 atMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf),
                 speed: FfiConverterOptionTypeSpeedReading.read(from: &buf),
                 operatingState: FfiConverterTypeRideOperatingState.read(from: &buf),
+                vescWarning: FfiConverterOptionTypeMobileVescRideWarningDto.read(from: &buf),
                 voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf),
                 batteryCurrent: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf),
                 chargeMode: FfiConverterOptionTypeMobileChargeModeReadingDto.read(from: &buf),
@@ -8362,6 +8371,7 @@ public struct FfiConverterTypeMobileTelemetrySnapshotDto: FfiConverterRustBuffer
         FfiConverterOptionTypeMobileMonotonicMillisDto.write(value.atMs, into: &buf)
         FfiConverterOptionTypeSpeedReading.write(value.speed, into: &buf)
         FfiConverterTypeRideOperatingState.write(value.operatingState, into: &buf)
+        FfiConverterOptionTypeMobileVescRideWarningDto.write(value.vescWarning, into: &buf)
         FfiConverterOptionTypeVoltageReading.write(value.voltage, into: &buf)
         FfiConverterOptionTypeBatteryCurrentReading.write(value.batteryCurrent, into: &buf)
         FfiConverterOptionTypeMobileChargeModeReadingDto.write(value.chargeMode, into: &buf)
@@ -13594,13 +13604,9 @@ public enum MobileVescRideWarningDto: Equatable, Hashable {
      */
     case none
     /**
-     * Duty or authority data indicates pushback soon.
+     * The controller is applying duty-based pushback.
      */
-    case pushbackSoon
-    /**
-     * Warning state is unknown.
-     */
-    case unknown
+    case dutyPushback
 
 
 
@@ -13624,9 +13630,7 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
 
         case 1: return .none
 
-        case 2: return .pushbackSoon
-
-        case 3: return .unknown
+        case 2: return .dutyPushback
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13640,12 +13644,8 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .pushbackSoon:
+        case .dutyPushback:
             writeInt(&buf, Int32(2))
-
-
-        case .unknown:
-            writeInt(&buf, Int32(3))
 
         }
     }
@@ -15732,6 +15732,30 @@ fileprivate struct FfiConverterOptionTypeMobileVerificationStatusDto: FfiConvert
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVescRideWarningDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileVescRideWarningDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileVescRideWarningDto.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

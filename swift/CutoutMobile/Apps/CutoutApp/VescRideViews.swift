@@ -51,9 +51,9 @@ struct VescRideScreenView: View {
     private var warningCard: PevWarningCard? {
         guard let liveSnapshot else { return nil }
         switch liveSnapshot.warning {
-        case .pushbackSoon:
+        case .dutyPushback:
             return PevWarningCard(
-                title: localizedAppText("vesc.warning.pushback_soon"),
+                title: localizedAppText("vesc.warning.duty_pushback"),
                 detail: footpadText ?? localizedAppText("vesc.warning.live_telemetry")
             )
         case .none, .unknown:
