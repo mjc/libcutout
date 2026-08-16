@@ -5989,6 +5989,9 @@ pub enum RideWarning {
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
 
+    /// The controller reports active wheel slip.
+    Wheelslip,
+
     /// The controller reports a sensor warning.
     Sensors,
     /// The package reports a low battery warning.

@@ -245,6 +245,8 @@ impl RefloatRealtimeData {
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
             ride_warning: Some(if self.fatal_error.is_some() {
                 RideWarning::Error
+            } else if self.wheelslip {
+                RideWarning::Wheelslip
             } else if stop_reason != RideStopReason::None {
                 RideWarning::None
             } else {
@@ -1288,6 +1290,11 @@ mod tests {
         assert_eq!(delta.ride_warning, Some(RideWarning::Error));
 
         data.fatal_error = None;
+        data.wheelslip = true;
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(45), false);
+        assert_eq!(delta.ride_warning, Some(RideWarning::Wheelslip));
+
+        data.wheelslip = false;
         for (sat, warning) in [
             (6, RideWarning::DutyPushback),
             (10, RideWarning::HighVoltage),

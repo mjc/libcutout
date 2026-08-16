@@ -2494,6 +2494,8 @@ pub enum MobileVescRideWarningDto {
     DutyPushback,
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
+    /// The controller reports active wheel slip.
+    Wheelslip,
     /// The controller reports a sensor warning.
     Sensors,
     /// The package reports a low battery warning.
@@ -2546,6 +2548,7 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
             RideWarningDto::Current => Self::Current,
             RideWarningDto::DutyPushback => Self::DutyPushback,
             RideWarningDto::TemperaturePushback => Self::TemperaturePushback,
+            RideWarningDto::Wheelslip => Self::Wheelslip,
             RideWarningDto::Sensors => Self::Sensors,
             RideWarningDto::LowBattery => Self::LowBattery,
             RideWarningDto::Error => Self::Error,
@@ -8649,10 +8652,14 @@ mod tests {
         custom_app_frame(&payload)
     }
 
-    fn refloat_realtime_data_frame(stop_and_sat: u8, beep_reason: u8) -> Vec<u8> {
+    fn refloat_realtime_data_frame(
+        flags_and_footpad: u8,
+        stop_and_sat: u8,
+        beep_reason: u8,
+    ) -> Vec<u8> {
         let mut payload = vec![101, 31, 0x4, 0];
         payload.extend_from_slice(&42_u32.to_be_bytes());
-        payload.extend_from_slice(&[0x13, 0xc1, stop_and_sat, beep_reason]);
+        payload.extend_from_slice(&[0x13, flags_and_footpad, stop_and_sat, beep_reason]);
         for half in [
             0x3c00_u16, // 1.0 m/s
             0x4400_u16, // 4 degrees pitch
@@ -8967,12 +8974,12 @@ mod tests {
         assert_eq!(link_result.error, None);
 
         vesc_notification(&session, 2, &refloat_realtime_ids_frame());
-        vesc_notification(&session, 3, &refloat_realtime_data_frame(0, 6));
+        vesc_notification(&session, 3, &refloat_realtime_data_frame(0xc1, 0, 6));
 
         let refloat_snapshot = session.current_snapshot();
         assert_eq!(
             refloat_snapshot.vesc_warning,
-            Some(MobileVescRideWarningDto::DutyPushback)
+            Some(MobileVescRideWarningDto::Wheelslip)
         );
         assert_eq!(
             refloat_snapshot.vesc_stop_reason,
@@ -8997,7 +9004,7 @@ mod tests {
             })
         );
 
-        vesc_notification(&session, 4, &refloat_realtime_data_frame(1, 6));
+        vesc_notification(&session, 4, &refloat_realtime_data_frame(0xc0, 1, 6));
         let stopped_snapshot = session.current_snapshot();
         assert_eq!(
             stopped_snapshot.vesc_warning,

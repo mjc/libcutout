@@ -1652,6 +1652,7 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
     case current
     case dutyPushback
     case temperaturePushback
+    case wheelslip
     case sensors
     case lowBattery
     case error
@@ -1675,6 +1676,8 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
             self = .dutyPushback
         case .temperaturePushback:
             self = .temperaturePushback
+        case .wheelslip:
+            self = .wheelslip
         case .sensors:
             self = .sensors
         case .lowBattery:
@@ -2208,7 +2211,7 @@ private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     switch warning {
     case .none: .nominal
     case .lowVoltage, .highVoltage, .mosfetTemperature, .motorTemperature,
-         .current, .dutyPushback, .temperaturePushback, .sensors, .lowBattery:
+         .current, .dutyPushback, .temperaturePushback, .wheelslip, .sensors, .lowBattery:
         .caution
     case .error: .critical
     case .unknown: .unavailable

@@ -386,6 +386,7 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("accessibility.vesc_warning.duty_pushback"),
             "Warning. Pushback soon. Reduce acceleration."
         )
+        XCTAssertEqual(localizedAppText("vesc.warning.wheelslip"), "Wheel slip")
         let stopCopy: [(String, String)] = [
             ("vesc.stop.pitch", "Stopped: pitch"),
             ("vesc.stop.roll", "Stopped: roll"),
@@ -449,6 +450,7 @@ final class CutoutAppRouteTests: XCTestCase {
             (.current, "Warning. Current limit reached. Reduce acceleration."),
             (.dutyPushback, "Warning. Pushback soon. Reduce acceleration."),
             (.temperaturePushback, "Warning. Temperature pushback. Stop safely and let the board cool."),
+            (.wheelslip, "Warning. Wheel slip detected. Reduce acceleration and regain control."),
             (.sensors, "Warning. Stop safely and check the board sensors."),
             (.lowBattery, "Warning. Battery is low. Slow down and stop safely."),
             (.error, "Critical warning. Controller error. Stop safely."),

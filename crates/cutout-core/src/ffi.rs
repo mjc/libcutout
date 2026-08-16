@@ -577,6 +577,8 @@ pub enum RideWarningDto {
     DutyPushback,
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
+    /// The controller reports active wheel slip.
+    Wheelslip,
     /// The controller reports a sensor warning.
     Sensors,
     /// The package reports a low battery warning.
@@ -629,6 +631,7 @@ impl From<RideWarning> for RideWarningDto {
             RideWarning::Current => Self::Current,
             RideWarning::DutyPushback => Self::DutyPushback,
             RideWarning::TemperaturePushback => Self::TemperaturePushback,
+            RideWarning::Wheelslip => Self::Wheelslip,
             RideWarning::Sensors => Self::Sensors,
             RideWarning::LowBattery => Self::LowBattery,
             RideWarning::Error => Self::Error,

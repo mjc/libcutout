@@ -41,6 +41,10 @@
       "comment" : "VoiceOver announcement when a VESC reports duty-based pushback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Pushback soon. Reduce acceleration." } } }
     },
+    "accessibility.vesc_warning.wheelslip" : {
+      "comment" : "VoiceOver announcement when a VESC reports active wheel slip.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Wheel slip detected. Reduce acceleration and regain control." } } }
+    },
     "accessibility.vesc_warning.error" : {
       "comment" : "VoiceOver announcement when a VESC package reports an error.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical warning. Controller error. Stop safely." } } }
@@ -996,6 +1000,10 @@
     "vesc.warning.duty_pushback" : {
       "comment" : "VESC warning-card title when the controller reports duty-based pushback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pushback soon" } } }
+    },
+    "vesc.warning.wheelslip" : {
+      "comment" : "VESC warning-card title when the controller reports active wheel slip.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel slip" } } }
     },
     "vesc.warning.error" : {
       "comment" : "VESC warning-card title when the package reports an error.",
