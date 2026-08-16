@@ -242,6 +242,8 @@ extension VescRideWarning {
             localizedAppText("accessibility.vesc_warning.current")
         case .dutyPushback:
             localizedAppText("accessibility.vesc_warning.duty_pushback")
+        case .temperaturePushback:
+            localizedAppText("accessibility.vesc_warning.temperature_pushback")
         case .sensors:
             localizedAppText("accessibility.vesc_warning.sensors")
         case .lowBattery:

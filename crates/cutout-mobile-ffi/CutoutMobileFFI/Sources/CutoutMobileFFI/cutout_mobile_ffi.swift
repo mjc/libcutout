@@ -13628,6 +13628,10 @@ public enum MobileVescRideWarningDto: Equatable, Hashable {
      */
     case dutyPushback
     /**
+     * The controller is applying temperature-based pushback.
+     */
+    case temperaturePushback
+    /**
      * The controller reports a sensor warning.
      */
     case sensors
@@ -13674,11 +13678,13 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
 
         case 7: return .dutyPushback
 
-        case 8: return .sensors
+        case 8: return .temperaturePushback
 
-        case 9: return .lowBattery
+        case 9: return .sensors
 
-        case 10: return .error
+        case 10: return .lowBattery
+
+        case 11: return .error
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13716,16 +13722,20 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
 
 
-        case .sensors:
+        case .temperaturePushback:
             writeInt(&buf, Int32(8))
 
 
-        case .lowBattery:
+        case .sensors:
             writeInt(&buf, Int32(9))
 
 
-        case .error:
+        case .lowBattery:
             writeInt(&buf, Int32(10))
+
+
+        case .error:
+            writeInt(&buf, Int32(11))
 
         }
     }

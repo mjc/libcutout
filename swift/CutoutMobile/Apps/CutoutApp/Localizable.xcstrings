@@ -69,6 +69,10 @@
       "comment" : "VoiceOver announcement when a VESC reports a sensor warning.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Stop safely and check the board sensors." } } }
     },
+    "accessibility.vesc_warning.temperature_pushback" : {
+      "comment" : "VoiceOver announcement when Refloat reports temperature-based pushback without identifying the hot component.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Temperature pushback. Stop safely and let the board cool." } } }
+    },
     "euc.metric.gps_speed" : {
       "comment" : "EUC ride dashboard metric label for phone GPS speed.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS speed" } } }
@@ -996,6 +1000,10 @@
     "vesc.warning.sensors" : {
       "comment" : "VESC warning-card title when the package reports a sensor warning.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sensor warning" } } }
+    },
+    "vesc.warning.temperature_pushback" : {
+      "comment" : "VESC warning-card title when Refloat reports temperature-based pushback without identifying the hot component.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Temperature pushback" } } }
     },
     "vesc.warning.telemetry_stale" : {
       "comment" : "VESC warning-card title when telemetry is stale.",

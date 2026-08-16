@@ -245,7 +245,7 @@ impl RefloatRealtimeData {
             ride_warning: Some(if self.fatal_error.is_some() {
                 RideWarning::Error
             } else {
-                refloat_ride_warning(self.beep_reason)
+                refloat_ride_warning(self.sat, self.beep_reason)
             }),
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
@@ -276,7 +276,14 @@ const fn refloat_footpad_contact_state(state: u8) -> Option<FootpadContactState>
     }
 }
 
-const fn refloat_ride_warning(beep_reason: u8) -> RideWarning {
+const fn refloat_ride_warning(sat: u8, beep_reason: u8) -> RideWarning {
+    match sat {
+        6 => return RideWarning::DutyPushback,
+        10 => return RideWarning::HighVoltage,
+        11 => return RideWarning::LowVoltage,
+        12 => return RideWarning::TemperaturePushback,
+        _ => {}
+    }
     match beep_reason {
         1 => RideWarning::LowVoltage,
         2 => RideWarning::HighVoltage,
@@ -1239,6 +1246,18 @@ mod tests {
         data.fatal_error = Some(RefloatFatalError::FirmwareFault);
         let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(44), false);
         assert_eq!(delta.ride_warning, Some(RideWarning::Error));
+
+        data.fatal_error = None;
+        for (sat, warning) in [
+            (6, RideWarning::DutyPushback),
+            (10, RideWarning::HighVoltage),
+            (11, RideWarning::LowVoltage),
+            (12, RideWarning::TemperaturePushback),
+        ] {
+            data.sat = sat;
+            let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(45), false);
+            assert_eq!(delta.ride_warning, Some(warning), "SAT {sat}");
+        }
     }
 
     #[test]

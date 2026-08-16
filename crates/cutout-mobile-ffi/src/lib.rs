@@ -2489,6 +2489,8 @@ pub enum MobileVescRideWarningDto {
 
     /// The controller is applying duty-based pushback.
     DutyPushback,
+    /// The controller is applying temperature-based pushback.
+    TemperaturePushback,
     /// The controller reports a sensor warning.
     Sensors,
     /// The package reports a low battery warning.
@@ -2507,6 +2509,7 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
             RideWarningDto::MotorTemperature => Self::MotorTemperature,
             RideWarningDto::Current => Self::Current,
             RideWarningDto::DutyPushback => Self::DutyPushback,
+            RideWarningDto::TemperaturePushback => Self::TemperaturePushback,
             RideWarningDto::Sensors => Self::Sensors,
             RideWarningDto::LowBattery => Self::LowBattery,
             RideWarningDto::Error => Self::Error,
@@ -8612,7 +8615,7 @@ mod tests {
     fn refloat_realtime_data_frame() -> Vec<u8> {
         let mut payload = vec![101, 31, 0x4, 0];
         payload.extend_from_slice(&42_u32.to_be_bytes());
-        payload.extend_from_slice(&[0x13, 0xc1, 0xa6, 6]);
+        payload.extend_from_slice(&[0x13, 0xc1, 0, 6]);
         for half in [
             0x3c00_u16, // 1.0 m/s
             0x4400_u16, // 4 degrees pitch

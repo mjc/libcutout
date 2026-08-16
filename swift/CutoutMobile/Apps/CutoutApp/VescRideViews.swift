@@ -63,6 +63,8 @@ struct VescRideScreenView: View {
             return warningCard("vesc.warning.current")
         case .dutyPushback:
             return warningCard("vesc.warning.duty_pushback", showsFootpad: true)
+        case .temperaturePushback:
+            return warningCard("vesc.warning.temperature_pushback")
         case .sensors:
             return warningCard("vesc.warning.sensors", showsFootpad: true)
         case .lowBattery:
