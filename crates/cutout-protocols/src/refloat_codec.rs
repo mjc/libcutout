@@ -154,6 +154,9 @@ pub struct RefloatRealtimeData {
     /// Charging flag.
     pub charging: bool,
 
+    /// Active Refloat fatal error.
+    pub fatal_error: Option<RefloatFatalError>,
+
     /// Darkride flag.
     pub darkride: bool,
 
@@ -189,6 +192,13 @@ pub struct RefloatRealtimeData {
 
     /// VESC firmware fault code, present when mask bit 2 is set.
     pub firmware_fault_code: Option<u8>,
+}
+
+/// Fatal condition reported by Refloat realtime state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RefloatFatalError {
+    /// Refloat currently uses the fatal bit for firmware faults.
+    FirmwareFault,
 }
 
 impl RefloatRealtimeData {
@@ -232,7 +242,11 @@ impl RefloatRealtimeData {
                 .value("imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
-            ride_warning: Some(refloat_ride_warning(self.beep_reason)),
+            ride_warning: Some(if self.fatal_error.is_some() {
+                RideWarning::Error
+            } else {
+                refloat_ride_warning(self.beep_reason)
+            }),
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
                 contact_state: refloat_footpad_contact_state(self.footpad_state),
@@ -703,6 +717,7 @@ fn parse_realtime_data(
         package_mode: (state_and_mode >> 4) & 0x0f,
         footpad_state: flags_and_footpad >> 6,
         charging: flags_and_footpad & 0x20 == 0x20,
+        fatal_error: (flags_and_footpad & 0x10 == 0x10).then_some(RefloatFatalError::FirmwareFault),
         darkride: flags_and_footpad & 0x02 == 0x02,
         wheelslip: flags_and_footpad & 0x01 == 0x01,
         stop_condition: stop_cond_and_sat & 0x0f,
@@ -1017,6 +1032,7 @@ mod tests {
         assert_eq!(data.package_state, 3);
         assert_eq!(data.package_mode, 1);
         assert_eq!(data.footpad_state, 3);
+        assert_eq!(data.fatal_error, Some(RefloatFatalError::FirmwareFault));
         assert_eq!(data.stop_condition, 6);
         assert_eq!(data.sat, 10);
         assert_eq!(data.beep_reason, 8);
@@ -1174,6 +1190,7 @@ mod tests {
             package_mode: 0,
             footpad_state: 0,
             charging: false,
+            fatal_error: None,
             darkride: false,
             wheelslip: false,
             stop_condition: 0,
@@ -1217,6 +1234,11 @@ mod tests {
                 "beep reason {beep_reason}"
             );
         }
+
+        data.beep_reason = 0;
+        data.fatal_error = Some(RefloatFatalError::FirmwareFault);
+        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(44), false);
+        assert_eq!(delta.ride_warning, Some(RideWarning::Error));
     }
 
     #[test]
@@ -1279,7 +1301,7 @@ mod tests {
             .try_extend_from_slice(&42_u32.to_be_bytes())
             .expect("time fits");
         payload
-            .try_extend_from_slice(&[0x13, 0xc1, 0xa6, 8])
+            .try_extend_from_slice(&[0x13, 0xd1, 0xa6, 8])
             .expect("state fits");
         payload
             .try_extend_from_slice(&0x3c00_u16.to_be_bytes())
