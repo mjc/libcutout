@@ -1641,15 +1641,39 @@ public enum VescControllerState: Equatable, Hashable, Sendable {
 
 public enum VescRideWarning: Equatable, Hashable, Sendable {
     case none
+    case lowVoltage
+    case highVoltage
+    case mosfetTemperature
+    case motorTemperature
+    case current
     case dutyPushback
+    case sensors
+    case lowBattery
+    case error
     case unknown
 
     fileprivate init(_ dto: MobileVescRideWarningDto) {
         switch dto {
         case .none:
             self = .none
+        case .lowVoltage:
+            self = .lowVoltage
+        case .highVoltage:
+            self = .highVoltage
+        case .mosfetTemperature:
+            self = .mosfetTemperature
+        case .motorTemperature:
+            self = .motorTemperature
+        case .current:
+            self = .current
         case .dutyPushback:
             self = .dutyPushback
+        case .sensors:
+            self = .sensors
+        case .lowBattery:
+            self = .lowBattery
+        case .error:
+            self = .error
         }
     }
 }
@@ -2150,7 +2174,10 @@ private func rideHeroSeverity(_ severity: EucRideWarningSeverity) -> RideHeroSev
 private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     switch warning {
     case .none: .nominal
-    case .dutyPushback: .caution
+    case .lowVoltage, .highVoltage, .mosfetTemperature, .motorTemperature,
+         .current, .dutyPushback, .sensors, .lowBattery:
+        .caution
+    case .error: .critical
     case .unknown: .unavailable
     }
 }

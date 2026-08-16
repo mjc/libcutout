@@ -230,8 +230,24 @@ extension EucRideWarningSeverity {
 extension VescRideWarning {
     var accessibilityAnnouncement: String? {
         switch self {
+        case .lowVoltage:
+            localizedAppText("accessibility.vesc_warning.low_voltage")
+        case .highVoltage:
+            localizedAppText("accessibility.vesc_warning.high_voltage")
+        case .mosfetTemperature:
+            localizedAppText("accessibility.vesc_warning.mosfet_temperature")
+        case .motorTemperature:
+            localizedAppText("accessibility.vesc_warning.motor_temperature")
+        case .current:
+            localizedAppText("accessibility.vesc_warning.current")
         case .dutyPushback:
             localizedAppText("accessibility.vesc_warning.duty_pushback")
+        case .sensors:
+            localizedAppText("accessibility.vesc_warning.sensors")
+        case .lowBattery:
+            localizedAppText("accessibility.vesc_warning.low_battery")
+        case .error:
+            localizedAppText("accessibility.vesc_warning.error")
         case .none, .unknown:
             nil
         }

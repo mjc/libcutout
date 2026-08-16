@@ -51,14 +51,36 @@ struct VescRideScreenView: View {
     private var warningCard: PevWarningCard? {
         guard let liveSnapshot else { return nil }
         switch liveSnapshot.warning {
+        case .lowVoltage:
+            return warningCard("vesc.warning.low_voltage")
+        case .highVoltage:
+            return warningCard("vesc.warning.high_voltage")
+        case .mosfetTemperature:
+            return warningCard("vesc.warning.mosfet_temperature")
+        case .motorTemperature:
+            return warningCard("vesc.warning.motor_temperature")
+        case .current:
+            return warningCard("vesc.warning.current")
         case .dutyPushback:
-            return PevWarningCard(
-                title: localizedAppText("vesc.warning.duty_pushback"),
-                detail: footpadText ?? localizedAppText("vesc.warning.live_telemetry")
-            )
+            return warningCard("vesc.warning.duty_pushback", showsFootpad: true)
+        case .sensors:
+            return warningCard("vesc.warning.sensors", showsFootpad: true)
+        case .lowBattery:
+            return warningCard("vesc.warning.low_battery")
+        case .error:
+            return warningCard("vesc.warning.error")
         case .none, .unknown:
             return nil
         }
+    }
+
+    private func warningCard(_ titleKey: String, showsFootpad: Bool = false) -> PevWarningCard {
+        PevWarningCard(
+            title: localizedAppText(titleKey),
+            detail: showsFootpad
+                ? footpadText ?? localizedAppText("vesc.warning.live_telemetry")
+                : localizedAppText("vesc.warning.live_telemetry")
+        )
     }
 
     private var footpadText: String? {

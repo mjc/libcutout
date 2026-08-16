@@ -13604,9 +13604,41 @@ public enum MobileVescRideWarningDto: Equatable, Hashable {
      */
     case none
     /**
+     * Controller input voltage is below its configured warning threshold.
+     */
+    case lowVoltage
+    /**
+     * Controller input voltage is above its configured warning threshold.
+     */
+    case highVoltage
+    /**
+     * Controller MOSFET temperature reached its warning threshold.
+     */
+    case mosfetTemperature
+    /**
+     * Motor temperature reached its warning threshold.
+     */
+    case motorTemperature
+    /**
+     * Motor current reached its configured warning threshold.
+     */
+    case current
+    /**
      * The controller is applying duty-based pushback.
      */
     case dutyPushback
+    /**
+     * The controller reports a sensor warning.
+     */
+    case sensors
+    /**
+     * The package reports a low battery warning.
+     */
+    case lowBattery
+    /**
+     * The package reports an error warning.
+     */
+    case error
 
 
 
@@ -13630,7 +13662,23 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
 
         case 1: return .none
 
-        case 2: return .dutyPushback
+        case 2: return .lowVoltage
+
+        case 3: return .highVoltage
+
+        case 4: return .mosfetTemperature
+
+        case 5: return .motorTemperature
+
+        case 6: return .current
+
+        case 7: return .dutyPushback
+
+        case 8: return .sensors
+
+        case 9: return .lowBattery
+
+        case 10: return .error
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13644,8 +13692,40 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
             writeInt(&buf, Int32(1))
 
 
-        case .dutyPushback:
+        case .lowVoltage:
             writeInt(&buf, Int32(2))
+
+
+        case .highVoltage:
+            writeInt(&buf, Int32(3))
+
+
+        case .mosfetTemperature:
+            writeInt(&buf, Int32(4))
+
+
+        case .motorTemperature:
+            writeInt(&buf, Int32(5))
+
+
+        case .current:
+            writeInt(&buf, Int32(6))
+
+
+        case .dutyPushback:
+            writeInt(&buf, Int32(7))
+
+
+        case .sensors:
+            writeInt(&buf, Int32(8))
+
+
+        case .lowBattery:
+            writeInt(&buf, Int32(9))
+
+
+        case .error:
+            writeInt(&buf, Int32(10))
 
         }
     }

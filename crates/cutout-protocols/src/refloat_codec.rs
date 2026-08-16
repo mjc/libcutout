@@ -232,11 +232,7 @@ impl RefloatRealtimeData {
                 .value("imu.roll")
                 .map(|degrees| Measured::reported(Angle::from_millidegrees(milliscale(degrees)))),
             operating_state: Some(refloat_operating_state(self.package_state, self.charging)),
-            ride_warning: Some(if self.beep_reason == REFLOAT_BEEP_DUTY {
-                RideWarning::DutyPushback
-            } else {
-                RideWarning::None
-            }),
+            ride_warning: Some(refloat_ride_warning(self.beep_reason)),
             footpad: Some(FootpadTelemetry {
                 state: self.footpad_state,
                 contact_state: refloat_footpad_contact_state(self.footpad_state),
@@ -263,6 +259,21 @@ const fn refloat_footpad_contact_state(state: u8) -> Option<FootpadContactState>
         2 => Some(FootpadContactState::Right),
         3 => Some(FootpadContactState::Both),
         _ => None,
+    }
+}
+
+const fn refloat_ride_warning(beep_reason: u8) -> RideWarning {
+    match beep_reason {
+        1 => RideWarning::LowVoltage,
+        2 => RideWarning::HighVoltage,
+        3 => RideWarning::MosfetTemperature,
+        4 => RideWarning::MotorTemperature,
+        5 => RideWarning::Current,
+        REFLOAT_BEEP_DUTY => RideWarning::DutyPushback,
+        7 => RideWarning::Sensors,
+        8 => RideWarning::LowBattery,
+        10 => RideWarning::Error,
+        _ => RideWarning::None,
     }
 }
 
@@ -1154,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn realtime_data_maps_refloat_state_and_duty_warning() {
+    fn realtime_data_maps_refloat_state_and_documented_warnings() {
         let mut data = RefloatRealtimeData {
             mask: 0,
             extra_flags: 0,
@@ -1183,11 +1194,29 @@ mod tests {
         assert_eq!(delta.ride_warning, Some(RideWarning::None));
 
         data.package_state = 3;
-        data.beep_reason = REFLOAT_BEEP_DUTY;
-        let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(43), false);
-
-        assert_eq!(delta.operating_state, Some(RideOperatingState::Riding));
-        assert_eq!(delta.ride_warning, Some(RideWarning::DutyPushback));
+        let warnings = [
+            (1, RideWarning::LowVoltage),
+            (2, RideWarning::HighVoltage),
+            (3, RideWarning::MosfetTemperature),
+            (4, RideWarning::MotorTemperature),
+            (5, RideWarning::Current),
+            (REFLOAT_BEEP_DUTY, RideWarning::DutyPushback),
+            (7, RideWarning::Sensors),
+            (8, RideWarning::LowBattery),
+            (9, RideWarning::None),
+            (10, RideWarning::Error),
+            (u8::MAX, RideWarning::None),
+        ];
+        for (beep_reason, warning) in warnings {
+            data.beep_reason = beep_reason;
+            let delta = data.to_delta(MonotonicTimestamp::from_milliseconds(43), false);
+            assert_eq!(delta.operating_state, Some(RideOperatingState::Riding));
+            assert_eq!(
+                delta.ride_warning,
+                Some(warning),
+                "beep reason {beep_reason}"
+            );
+        }
     }
 
     #[test]

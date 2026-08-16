@@ -33,9 +33,41 @@
       "comment" : "VoiceOver announcement when the rider should reduce acceleration.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Reduce acceleration." } } }
     },
+    "accessibility.vesc_warning.current" : {
+      "comment" : "VoiceOver announcement when a VESC reports its current warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Current limit reached. Reduce acceleration." } } }
+    },
     "accessibility.vesc_warning.duty_pushback" : {
       "comment" : "VoiceOver announcement when a VESC reports duty-based pushback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Pushback soon. Reduce acceleration." } } }
+    },
+    "accessibility.vesc_warning.error" : {
+      "comment" : "VoiceOver announcement when a VESC package reports an error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical warning. Controller error. Stop safely." } } }
+    },
+    "accessibility.vesc_warning.high_voltage" : {
+      "comment" : "VoiceOver announcement when a VESC reports high input voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Controller voltage is high. Stop safely." } } }
+    },
+    "accessibility.vesc_warning.low_battery" : {
+      "comment" : "VoiceOver announcement when a VESC package reports low battery.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Battery is low. Slow down and stop safely." } } }
+    },
+    "accessibility.vesc_warning.low_voltage" : {
+      "comment" : "VoiceOver announcement when a VESC reports low input voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Controller voltage is low. Slow down and stop safely." } } }
+    },
+    "accessibility.vesc_warning.mosfet_temperature" : {
+      "comment" : "VoiceOver announcement when a VESC reports high controller temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Controller temperature is high. Stop safely and let it cool." } } }
+    },
+    "accessibility.vesc_warning.motor_temperature" : {
+      "comment" : "VoiceOver announcement when a VESC reports high motor temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Motor temperature is high. Stop safely and let it cool." } } }
+    },
+    "accessibility.vesc_warning.sensors" : {
+      "comment" : "VoiceOver announcement when a VESC reports a sensor warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Warning. Stop safely and check the board sensors." } } }
     },
     "euc.metric.gps_speed" : {
       "comment" : "EUC ride dashboard metric label for phone GPS speed.",
@@ -929,9 +961,41 @@
       "comment" : "VESC pushback warning fallback detail when no footpad summary is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live telemetry." } } }
     },
+    "vesc.warning.current" : {
+      "comment" : "VESC warning-card title when the controller reports its current warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current limit" } } }
+    },
     "vesc.warning.duty_pushback" : {
       "comment" : "VESC warning-card title when the controller reports duty-based pushback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pushback soon" } } }
+    },
+    "vesc.warning.error" : {
+      "comment" : "VESC warning-card title when the package reports an error.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controller error" } } }
+    },
+    "vesc.warning.high_voltage" : {
+      "comment" : "VESC warning-card title for high input voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High voltage" } } }
+    },
+    "vesc.warning.low_battery" : {
+      "comment" : "VESC warning-card title when the package reports low battery.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low battery" } } }
+    },
+    "vesc.warning.low_voltage" : {
+      "comment" : "VESC warning-card title for low input voltage.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low voltage" } } }
+    },
+    "vesc.warning.mosfet_temperature" : {
+      "comment" : "VESC warning-card title for high controller temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Controller overheating" } } }
+    },
+    "vesc.warning.motor_temperature" : {
+      "comment" : "VESC warning-card title for high motor temperature.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Motor overheating" } } }
+    },
+    "vesc.warning.sensors" : {
+      "comment" : "VESC warning-card title when the package reports a sensor warning.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Sensor warning" } } }
     },
     "vesc.warning.telemetry_stale" : {
       "comment" : "VESC warning-card title when telemetry is stale.",

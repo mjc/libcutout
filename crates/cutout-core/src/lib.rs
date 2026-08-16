@@ -5972,8 +5972,26 @@ pub enum RideWarning {
     /// No ride warning is active.
     None,
 
+    /// Controller input voltage is below its configured warning threshold.
+    LowVoltage,
+    /// Controller input voltage is above its configured warning threshold.
+    HighVoltage,
+    /// Controller MOSFET temperature reached its warning threshold.
+    MosfetTemperature,
+    /// Motor temperature reached its warning threshold.
+    MotorTemperature,
+    /// Motor current reached its configured warning threshold.
+    Current,
+
     /// The controller is applying duty-based pushback.
     DutyPushback,
+
+    /// The controller reports a sensor warning.
+    Sensors,
+    /// The package reports a low battery warning.
+    LowBattery,
+    /// The package reports an error warning.
+    Error,
 }
 
 impl core::fmt::Display for ChargeMode {

@@ -429,10 +429,20 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertNil(EucRideWarningSeverity.failed.accessibilityAnnouncement)
 
         XCTAssertNil(VescRideWarning.none.accessibilityAnnouncement)
-        XCTAssertEqual(
-            VescRideWarning.dutyPushback.accessibilityAnnouncement,
-            "Warning. Pushback soon. Reduce acceleration."
-        )
+        let vescAnnouncements: [(VescRideWarning, String)] = [
+            (.lowVoltage, "Warning. Controller voltage is low. Slow down and stop safely."),
+            (.highVoltage, "Warning. Controller voltage is high. Stop safely."),
+            (.mosfetTemperature, "Warning. Controller temperature is high. Stop safely and let it cool."),
+            (.motorTemperature, "Warning. Motor temperature is high. Stop safely and let it cool."),
+            (.current, "Warning. Current limit reached. Reduce acceleration."),
+            (.dutyPushback, "Warning. Pushback soon. Reduce acceleration."),
+            (.sensors, "Warning. Stop safely and check the board sensors."),
+            (.lowBattery, "Warning. Battery is low. Slow down and stop safely."),
+            (.error, "Critical warning. Controller error. Stop safely."),
+        ]
+        for (warning, announcement) in vescAnnouncements {
+            XCTAssertEqual(warning.accessibilityAnnouncement, announcement)
+        }
         XCTAssertNil(VescRideWarning.unknown.accessibilityAnnouncement)
     }
 
