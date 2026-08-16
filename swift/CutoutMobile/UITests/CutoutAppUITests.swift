@@ -1818,7 +1818,8 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility()
     }
 
-    func testVescStaleWarningPrecedesMetricsInLandscapeAtAccessibilityDynamicType() {
+    func testVescStaleTelemetryWarningPrecedesMetricsInLandscapeAtAccessibilityDynamicType() {
+        XCTAssertEqual(fixture, .vescStale)
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
             XCTFail("The deterministic stale VESC fixture did not open its Ride screen")
@@ -2355,7 +2356,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private var fixture: Fixture { Fixture.testFixture(for: name) }
 
-    private enum Fixture {
+    private enum Fixture: Equatable {
         case unknownDevice
         case unknownDeviceFinishFailure
         case probeDevice
