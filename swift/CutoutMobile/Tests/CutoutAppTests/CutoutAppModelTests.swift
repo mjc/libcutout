@@ -1262,14 +1262,19 @@ final class CutoutAppModelTests: XCTestCase {
             CutoutUITestSessionFixture(value: "vesc-wheelslip")?.testScript.telemetry?.vescWarning,
             .wheelslip
         )
-        XCTAssertEqual(
-            CutoutUITestSessionFixture(value: "vesc-pitch-stop")?.testScript.telemetry?.vescStopReason,
-            .pitch
-        )
-        XCTAssertEqual(
-            CutoutUITestSessionFixture(value: "vesc-pitch-stop")?.testScript.telemetry?.vescWarning,
-            VescRideWarning.none
-        )
+        let stopFixtures: [(String, VescRideStopReason)] = [
+            ("vesc-pitch-stop", .pitch),
+            ("vesc-roll-stop", .roll),
+            ("vesc-switch-half-stop", .switchHalf),
+            ("vesc-switch-full-stop", .switchFull),
+            ("vesc-reverse-stop", .reverse),
+            ("vesc-quick-stop", .quickStop),
+        ]
+        for (fixture, stopReason) in stopFixtures {
+            let telemetry = CutoutUITestSessionFixture(value: fixture)?.testScript.telemetry
+            XCTAssertEqual(telemetry?.vescStopReason, stopReason)
+            XCTAssertEqual(telemetry?.vescWarning, VescRideWarning.none)
+        }
         XCTAssertEqual(
             CutoutUITestSessionFixture(value: "vesc-handtest")?.testScript.telemetry?.vescOperatingMode,
             .handtest

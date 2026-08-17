@@ -1775,6 +1775,26 @@ final class CutoutAppUITests: XCTestCase {
         assertVescTypedWarning(label: "Stopped: pitch")
     }
 
+    func testVescRollStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Stopped: roll")
+    }
+
+    func testVescSwitchHalfStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Half-footpad stop")
+    }
+
+    func testVescSwitchFullStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Footpad stop")
+    }
+
+    func testVescReverseStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Reverse stop")
+    }
+
+    func testVescQuickStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Quick stop")
+    }
+
     func testVescHandtestModeIsVisibleAtAccessibilityDynamicType() {
         assertVescOperatingMode(label: "Hand test")
     }
@@ -2435,6 +2455,11 @@ final class CutoutAppUITests: XCTestCase {
         case vescDynamic
         case vescWheelslip
         case vescPitchStop
+        case vescRollStop
+        case vescSwitchHalfStop
+        case vescSwitchFullStop
+        case vescReverseStop
+        case vescQuickStop
         case vescHandtest
         case vescDarkride
         case vescFlywheel
@@ -2493,6 +2518,11 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("PendingTelemetry") { return .vescPending }
             if testName.contains("VescWheelslip") { return .vescWheelslip }
             if testName.contains("VescPitchStop") { return .vescPitchStop }
+            if testName.contains("VescRollStop") { return .vescRollStop }
+            if testName.contains("VescSwitchHalfStop") { return .vescSwitchHalfStop }
+            if testName.contains("VescSwitchFullStop") { return .vescSwitchFullStop }
+            if testName.contains("VescReverseStop") { return .vescReverseStop }
+            if testName.contains("VescQuickStop") { return .vescQuickStop }
             if testName.contains("VescHandtest") { return .vescHandtest }
             if testName.contains("VescDarkride") { return .vescDarkride }
             if testName.contains("VescFlywheel") { return .vescFlywheel }
@@ -2539,6 +2569,11 @@ final class CutoutAppUITests: XCTestCase {
             case .vescDynamic: "vesc-dynamic"
             case .vescWheelslip: "vesc-wheelslip"
             case .vescPitchStop: "vesc-pitch-stop"
+            case .vescRollStop: "vesc-roll-stop"
+            case .vescSwitchHalfStop: "vesc-switch-half-stop"
+            case .vescSwitchFullStop: "vesc-switch-full-stop"
+            case .vescReverseStop: "vesc-reverse-stop"
+            case .vescQuickStop: "vesc-quick-stop"
             case .vescHandtest: "vesc-handtest"
             case .vescDarkride: "vesc-darkride"
             case .vescFlywheel: "vesc-flywheel"

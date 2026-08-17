@@ -904,6 +904,11 @@ enum CutoutUITestSessionFixture {
     case dynamicVesc
     case wheelslipVesc
     case pitchStopVesc
+    case rollStopVesc
+    case switchHalfStopVesc
+    case switchFullStopVesc
+    case reverseStopVesc
+    case quickStopVesc
     case handtestVesc
     case darkrideVesc
     case flywheelVesc
@@ -942,6 +947,11 @@ enum CutoutUITestSessionFixture {
         case "vesc-dynamic": self = .dynamicVesc
         case "vesc-wheelslip": self = .wheelslipVesc
         case "vesc-pitch-stop": self = .pitchStopVesc
+        case "vesc-roll-stop": self = .rollStopVesc
+        case "vesc-switch-half-stop": self = .switchHalfStopVesc
+        case "vesc-switch-full-stop": self = .switchFullStopVesc
+        case "vesc-reverse-stop": self = .reverseStopVesc
+        case "vesc-quick-stop": self = .quickStopVesc
         case "vesc-handtest": self = .handtestVesc
         case "vesc-darkride": self = .darkrideVesc
         case "vesc-flywheel": self = .flywheelVesc
@@ -1027,7 +1037,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .wheelslipVesc, .pitchStopVesc, .handtestVesc, .darkrideVesc, .flywheelVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .wheelslipVesc, .pitchStopVesc, .rollStopVesc, .switchHalfStopVesc, .switchFullStopVesc, .reverseStopVesc, .quickStopVesc, .handtestVesc, .darkrideVesc, .flywheelVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1088,13 +1098,25 @@ enum CutoutUITestSessionFixture {
     }
 
     private var refreshesVescSafetyState: Bool {
-        self == .wheelslipVesc || self == .pitchStopVesc
+        self == .wheelslipVesc || testVescStopReason != nil
     }
 
     private var testVescWarning: VescRideWarning? {
         switch self {
         case .wheelslipVesc: .wheelslip
-        case .pitchStopVesc: VescRideWarning.none
+        case _ where testVescStopReason != nil: VescRideWarning.none
+        default: nil
+        }
+    }
+
+    private var testVescStopReason: VescRideStopReason? {
+        switch self {
+        case .pitchStopVesc: .pitch
+        case .rollStopVesc: .roll
+        case .switchHalfStopVesc: .switchHalf
+        case .switchFullStopVesc: .switchFull
+        case .reverseStopVesc: .reverse
+        case .quickStopVesc: .quickStop
         default: nil
         }
     }
@@ -1167,7 +1189,7 @@ enum CutoutUITestSessionFixture {
             operatingState: .riding,
             vescOperatingMode: testVescOperatingMode,
             vescWarning: testVescWarning,
-            vescStopReason: self == .pitchStopVesc ? .pitch : nil,
+            vescStopReason: testVescStopReason,
             voltage: Voltage(value: 50_400),
             batteryCurrent: BatteryCurrent(value: 12_000),
             controllerTemperature: Temperature(value: 32_000),
