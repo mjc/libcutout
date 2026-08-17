@@ -1257,6 +1257,25 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertFalse(fixture?.startsLive ?? true)
     }
 
+    func testRefloatSafetyAndModeFixturesPublishTypedRideState() {
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "vesc-wheelslip")?.testScript.telemetry?.vescWarning,
+            .wheelslip
+        )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "vesc-pitch-stop")?.testScript.telemetry?.vescStopReason,
+            .pitch
+        )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "vesc-pitch-stop")?.testScript.telemetry?.vescWarning,
+            VescRideWarning.none
+        )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "vesc-handtest")?.testScript.telemetry?.vescOperatingMode,
+            .handtest
+        )
+    }
+
     func testEucReconnectFixtureKeepsTheEucRoute() {
         let fixture = CutoutUITestSessionFixture(value: "euc-reconnect")
 

@@ -902,6 +902,9 @@ enum CutoutUITestSessionFixture {
     case bluetoothPermissionDenied
     case vesc
     case dynamicVesc
+    case wheelslipVesc
+    case pitchStopVesc
+    case handtestVesc
     case pendingVesc
     case staleVesc
     case failedVesc
@@ -935,6 +938,9 @@ enum CutoutUITestSessionFixture {
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
         case "vesc-dynamic": self = .dynamicVesc
+        case "vesc-wheelslip": self = .wheelslipVesc
+        case "vesc-pitch-stop": self = .pitchStopVesc
+        case "vesc-handtest": self = .handtestVesc
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
@@ -1017,7 +1023,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .wheelslipVesc, .pitchStopVesc, .handtestVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1077,6 +1083,18 @@ enum CutoutUITestSessionFixture {
             || self == .eucUnknownTopology
     }
 
+    private var refreshesVescSafetyState: Bool {
+        self == .wheelslipVesc || self == .pitchStopVesc
+    }
+
+    private var testVescWarning: VescRideWarning? {
+        switch self {
+        case .wheelslipVesc: .wheelslip
+        case .pitchStopVesc: VescRideWarning.none
+        default: nil
+        }
+    }
+
     private var testBmsSnapshot: BmsSnapshot? {
         switch self {
         case .euc: eucBmsSnapshot
@@ -1087,11 +1105,12 @@ enum CutoutUITestSessionFixture {
     }
 
     var testScript: CutoutSessionTestScript {
-        CutoutSessionTestScript(
+        let telemetryUpdate = refreshesVescSafetyState ? telemetry : dynamicTelemetryUpdate
+        return CutoutSessionTestScript(
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
-            telemetryUpdate: dynamicTelemetryUpdate,
-            telemetryUpdateDelayMilliseconds: dynamicTelemetryUpdate == nil ? 0 : 1_500,
+            telemetryUpdate: telemetryUpdate,
+            telemetryUpdateDelayMilliseconds: telemetryUpdate == nil ? 0 : 1_500,
             bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
             initialBluetoothState: initialBluetoothState,
@@ -1133,6 +1152,9 @@ enum CutoutUITestSessionFixture {
             speedSource: .reported,
             speedQuality: .known,
             operatingState: .riding,
+            vescOperatingMode: self == .handtestVesc ? .handtest : nil,
+            vescWarning: testVescWarning,
+            vescStopReason: self == .pitchStopVesc ? .pitch : nil,
             voltage: Voltage(value: 50_400),
             batteryCurrent: BatteryCurrent(value: 12_000),
             controllerTemperature: Temperature(value: 32_000),

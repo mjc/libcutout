@@ -1767,6 +1767,52 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescStaleTelemetryAccessibility()
     }
 
+    func testVescWheelslipIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Wheel slip")
+    }
+
+    func testVescPitchStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Stopped: pitch")
+    }
+
+    func testVescHandtestModeIsVisibleAtAccessibilityDynamicType() {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic hand-test fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let status = app.descendants(matching: .any)["ride.hero.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(status.label.contains("Hand test"), status.debugDescription)
+        XCTAssertTrue(status.isHittable)
+    }
+
+    private func assertVescTypedWarning(label: String) {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
+        guard let screen = connectedScreen(timeout: 20) else {
+            XCTFail("The deterministic Refloat warning fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let warning = screen.descendants(matching: .any)["vesc.warning.active"]
+        XCTAssertTrue(warning.waitForExistence(timeout: 5), screen.debugDescription)
+        XCTAssertEqual(warning.label, label)
+        XCTAssertFalse((warning.value as? String ?? "").isEmpty)
+
+        let speed = screen.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5))
+        let ordered = screen.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier == 'ride.hero.speed' OR identifier == 'vesc.warning.active'"
+            )
+        )
+        XCTAssertEqual(ordered.count, 2, screen.debugDescription)
+        XCTAssertEqual(ordered.element(boundBy: 0).identifier, "vesc.warning.active")
+    }
+
     func testVescStaleTelemetryPrioritizesWarningForAccessibilityAtAccessibilityDynamicType() {
         assertWarningPrecedesSpeed(
             for: .vesc,
@@ -2375,6 +2421,9 @@ final class CutoutAppUITests: XCTestCase {
         case eucUnknownTopology
         case vesc
         case vescDynamic
+        case vescWheelslip
+        case vescPitchStop
+        case vescHandtest
         case vescPending
         case vescStale
         case vescFailure
@@ -2428,6 +2477,9 @@ final class CutoutAppUITests: XCTestCase {
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
+            if testName.contains("VescWheelslip") { return .vescWheelslip }
+            if testName.contains("VescPitchStop") { return .vescPitchStop }
+            if testName.contains("VescHandtest") { return .vescHandtest }
             if testName.contains("DutyHeadroom") { return .vescDynamic }
             if testName.localizedCaseInsensitiveContains("Euc"), testName.contains("DynamicTelemetry") {
                 return .eucDynamic
@@ -2469,6 +2521,9 @@ final class CutoutAppUITests: XCTestCase {
             case .eucUnknownTopology: "euc-unknown-topology"
             case .vesc: "vesc"
             case .vescDynamic: "vesc-dynamic"
+            case .vescWheelslip: "vesc-wheelslip"
+            case .vescPitchStop: "vesc-pitch-stop"
+            case .vescHandtest: "vesc-handtest"
             case .vescPending: "vesc-pending"
             case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"

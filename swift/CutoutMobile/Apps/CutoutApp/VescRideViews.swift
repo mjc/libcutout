@@ -315,6 +315,7 @@ struct VescRideScreenView: View {
                     detail: warningCard.detail,
                     tone: .vesc
                 )
+                    .accessibilityIdentifier("vesc.warning.active")
                     .padding(.top, 10)
             }
 
