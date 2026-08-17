@@ -1771,6 +1771,46 @@ final class CutoutAppUITests: XCTestCase {
         assertVescTypedWarning(label: "Wheel slip")
     }
 
+    func testVescLowVoltageIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Low voltage")
+    }
+
+    func testVescHighVoltageIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "High voltage")
+    }
+
+    func testVescMosfetTemperatureIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Controller overheating")
+    }
+
+    func testVescMotorTemperatureIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Motor overheating")
+    }
+
+    func testVescCurrentLimitIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Current limit")
+    }
+
+    func testVescDutyPushbackIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Pushback soon")
+    }
+
+    func testVescTemperaturePushbackIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Temperature pushback")
+    }
+
+    func testVescSensorWarningIsAccessibleAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Sensor warning")
+    }
+
+    func testVescLowBatteryIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Low battery")
+    }
+
+    func testVescControllerErrorIsAnAccessibleWarningAtAccessibilityDynamicType() {
+        assertVescTypedWarning(label: "Controller error")
+    }
+
     func testVescPitchStopIsAnAccessibleWarningAtAccessibilityDynamicType() {
         assertVescTypedWarning(label: "Stopped: pitch")
     }
@@ -2453,7 +2493,17 @@ final class CutoutAppUITests: XCTestCase {
         case eucUnknownTopology
         case vesc
         case vescDynamic
+        case vescLowVoltage
+        case vescHighVoltage
+        case vescMosfetTemperature
+        case vescMotorTemperature
+        case vescCurrent
+        case vescDutyPushback
+        case vescTemperaturePushback
         case vescWheelslip
+        case vescSensors
+        case vescLowBattery
+        case vescError
         case vescPitchStop
         case vescRollStop
         case vescSwitchHalfStop
@@ -2516,7 +2566,17 @@ final class CutoutAppUITests: XCTestCase {
             if testName.localizedCaseInsensitiveContains("EucReconnect") { return .eucReconnect }
             if testName.contains("Reconnect") { return .vescReconnect }
             if testName.contains("PendingTelemetry") { return .vescPending }
+            if testName.contains("VescLowVoltage") { return .vescLowVoltage }
+            if testName.contains("VescHighVoltage") { return .vescHighVoltage }
+            if testName.contains("VescMosfetTemperature") { return .vescMosfetTemperature }
+            if testName.contains("VescMotorTemperature") { return .vescMotorTemperature }
+            if testName.contains("VescCurrentLimit") { return .vescCurrent }
+            if testName.contains("VescDutyPushback") { return .vescDutyPushback }
+            if testName.contains("VescTemperaturePushback") { return .vescTemperaturePushback }
             if testName.contains("VescWheelslip") { return .vescWheelslip }
+            if testName.contains("VescSensorWarning") { return .vescSensors }
+            if testName.contains("VescLowBattery") { return .vescLowBattery }
+            if testName.contains("VescControllerError") { return .vescError }
             if testName.contains("VescPitchStop") { return .vescPitchStop }
             if testName.contains("VescRollStop") { return .vescRollStop }
             if testName.contains("VescSwitchHalfStop") { return .vescSwitchHalfStop }
@@ -2567,7 +2627,17 @@ final class CutoutAppUITests: XCTestCase {
             case .eucUnknownTopology: "euc-unknown-topology"
             case .vesc: "vesc"
             case .vescDynamic: "vesc-dynamic"
+            case .vescLowVoltage: "vesc-low-voltage"
+            case .vescHighVoltage: "vesc-high-voltage"
+            case .vescMosfetTemperature: "vesc-mosfet-temperature"
+            case .vescMotorTemperature: "vesc-motor-temperature"
+            case .vescCurrent: "vesc-current"
+            case .vescDutyPushback: "vesc-duty-pushback"
+            case .vescTemperaturePushback: "vesc-temperature-pushback"
             case .vescWheelslip: "vesc-wheelslip"
+            case .vescSensors: "vesc-sensors"
+            case .vescLowBattery: "vesc-low-battery"
+            case .vescError: "vesc-error"
             case .vescPitchStop: "vesc-pitch-stop"
             case .vescRollStop: "vesc-roll-stop"
             case .vescSwitchHalfStop: "vesc-switch-half-stop"

@@ -938,7 +938,17 @@ enum CutoutUITestSessionFixture: Equatable {
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
         case "vesc-dynamic": self = .dynamicVesc
+        case "vesc-low-voltage": self = .warningVesc(.lowVoltage)
+        case "vesc-high-voltage": self = .warningVesc(.highVoltage)
+        case "vesc-mosfet-temperature": self = .warningVesc(.mosfetTemperature)
+        case "vesc-motor-temperature": self = .warningVesc(.motorTemperature)
+        case "vesc-current": self = .warningVesc(.current)
+        case "vesc-duty-pushback": self = .warningVesc(.dutyPushback)
+        case "vesc-temperature-pushback": self = .warningVesc(.temperaturePushback)
         case "vesc-wheelslip": self = .warningVesc(.wheelslip)
+        case "vesc-sensors": self = .warningVesc(.sensors)
+        case "vesc-low-battery": self = .warningVesc(.lowBattery)
+        case "vesc-error": self = .warningVesc(.error)
         case "vesc-pitch-stop": self = .stopVesc(.pitch)
         case "vesc-roll-stop": self = .stopVesc(.roll)
         case "vesc-switch-half-stop": self = .stopVesc(.switchHalf)

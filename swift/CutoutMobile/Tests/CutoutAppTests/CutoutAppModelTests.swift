@@ -1258,10 +1258,25 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     func testRefloatSafetyAndModeFixturesPublishTypedRideState() {
-        XCTAssertEqual(
-            CutoutUITestSessionFixture(value: "vesc-wheelslip")?.testScript.telemetry?.vescWarning,
-            .wheelslip
-        )
+        let warningFixtures: [(String, VescRideWarning)] = [
+            ("vesc-low-voltage", .lowVoltage),
+            ("vesc-high-voltage", .highVoltage),
+            ("vesc-mosfet-temperature", .mosfetTemperature),
+            ("vesc-motor-temperature", .motorTemperature),
+            ("vesc-current", .current),
+            ("vesc-duty-pushback", .dutyPushback),
+            ("vesc-temperature-pushback", .temperaturePushback),
+            ("vesc-wheelslip", .wheelslip),
+            ("vesc-sensors", .sensors),
+            ("vesc-low-battery", .lowBattery),
+            ("vesc-error", .error),
+        ]
+        for (fixture, warning) in warningFixtures {
+            XCTAssertEqual(
+                CutoutUITestSessionFixture(value: fixture)?.testScript.telemetry?.vescWarning,
+                warning
+            )
+        }
         let stopFixtures: [(String, VescRideStopReason)] = [
             ("vesc-pitch-stop", .pitch),
             ("vesc-roll-stop", .roll),
