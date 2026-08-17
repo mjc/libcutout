@@ -890,7 +890,7 @@ enum CaptureQuickLabel: CaseIterable, Hashable, Identifiable {
 }
 
 #if DEBUG
-enum CutoutUITestSessionFixture {
+enum CutoutUITestSessionFixture: Equatable {
     case unknownDevice
     case unknownDeviceFinishFailure
     case probeDevice
@@ -902,16 +902,9 @@ enum CutoutUITestSessionFixture {
     case bluetoothPermissionDenied
     case vesc
     case dynamicVesc
-    case wheelslipVesc
-    case pitchStopVesc
-    case rollStopVesc
-    case switchHalfStopVesc
-    case switchFullStopVesc
-    case reverseStopVesc
-    case quickStopVesc
-    case handtestVesc
-    case darkrideVesc
-    case flywheelVesc
+    case warningVesc(VescRideWarning)
+    case stopVesc(VescRideStopReason)
+    case operatingModeVesc(VescRideOperatingMode)
     case pendingVesc
     case staleVesc
     case failedVesc
@@ -945,16 +938,16 @@ enum CutoutUITestSessionFixture {
         case "bluetooth-permission-denied": self = .bluetoothPermissionDenied
         case "vesc": self = .vesc
         case "vesc-dynamic": self = .dynamicVesc
-        case "vesc-wheelslip": self = .wheelslipVesc
-        case "vesc-pitch-stop": self = .pitchStopVesc
-        case "vesc-roll-stop": self = .rollStopVesc
-        case "vesc-switch-half-stop": self = .switchHalfStopVesc
-        case "vesc-switch-full-stop": self = .switchFullStopVesc
-        case "vesc-reverse-stop": self = .reverseStopVesc
-        case "vesc-quick-stop": self = .quickStopVesc
-        case "vesc-handtest": self = .handtestVesc
-        case "vesc-darkride": self = .darkrideVesc
-        case "vesc-flywheel": self = .flywheelVesc
+        case "vesc-wheelslip": self = .warningVesc(.wheelslip)
+        case "vesc-pitch-stop": self = .stopVesc(.pitch)
+        case "vesc-roll-stop": self = .stopVesc(.roll)
+        case "vesc-switch-half-stop": self = .stopVesc(.switchHalf)
+        case "vesc-switch-full-stop": self = .stopVesc(.switchFull)
+        case "vesc-reverse-stop": self = .stopVesc(.reverse)
+        case "vesc-quick-stop": self = .stopVesc(.quickStop)
+        case "vesc-handtest": self = .operatingModeVesc(.handtest)
+        case "vesc-darkride": self = .operatingModeVesc(.darkride)
+        case "vesc-flywheel": self = .operatingModeVesc(.flywheel)
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
@@ -1037,7 +1030,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .wheelslipVesc, .pitchStopVesc, .rollStopVesc, .switchHalfStopVesc, .switchFullStopVesc, .reverseStopVesc, .quickStopVesc, .handtestVesc, .darkrideVesc, .flywheelVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1098,34 +1091,27 @@ enum CutoutUITestSessionFixture {
     }
 
     private var refreshesVescSafetyState: Bool {
-        self == .wheelslipVesc || testVescStopReason != nil
+        testVescWarning != nil || testVescStopReason != nil
     }
 
     private var testVescWarning: VescRideWarning? {
         switch self {
-        case .wheelslipVesc: .wheelslip
-        case _ where testVescStopReason != nil: VescRideWarning.none
+        case .warningVesc(let warning): warning
+        case .stopVesc: VescRideWarning.none
         default: nil
         }
     }
 
     private var testVescStopReason: VescRideStopReason? {
         switch self {
-        case .pitchStopVesc: .pitch
-        case .rollStopVesc: .roll
-        case .switchHalfStopVesc: .switchHalf
-        case .switchFullStopVesc: .switchFull
-        case .reverseStopVesc: .reverse
-        case .quickStopVesc: .quickStop
+        case .stopVesc(let stopReason): stopReason
         default: nil
         }
     }
 
     private var testVescOperatingMode: VescRideOperatingMode? {
         switch self {
-        case .handtestVesc: .handtest
-        case .darkrideVesc: .darkride
-        case .flywheelVesc: .flywheel
+        case .operatingModeVesc(let operatingMode): operatingMode
         default: nil
         }
     }
