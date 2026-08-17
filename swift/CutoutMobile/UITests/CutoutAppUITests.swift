@@ -1929,7 +1929,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility()
+        try assertVescStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
@@ -1963,11 +1963,17 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
+        try assertVescStaleTelemetryAccessibility(
+            usesLocalizedText: true,
+            ignoringNilElementContrastWarning: true
+        )
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
+        try assertVescStaleTelemetryAccessibility(
+            usesLocalizedText: true,
+            ignoringNilElementContrastWarning: true
+        )
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
@@ -2093,7 +2099,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertVescStaleTelemetryAccessibility(
-        usesLocalizedText: Bool = false
+        usesLocalizedText: Bool = false,
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -2123,7 +2130,9 @@ final class CutoutAppUITests: XCTestCase {
                 "The stale warning must expose its elapsed-telemetry detail: \(String(describing: warning.value))"
             )
         }
-        try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
+        try performVisibleLayoutAccessibilityAudit(
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
     }
 
     private func scrollSafetyWarningAboveNavigation(
