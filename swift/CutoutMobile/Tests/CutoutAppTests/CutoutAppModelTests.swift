@@ -185,6 +185,35 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testDelayedDiscoveryPhasesCannotDemoteAConnectedRide() {
+        let driver = SessionDriverSpy(
+            rows: [
+                DevicePickerRow(
+                    id: "vesc-1234",
+                    title: "VESC",
+                    subtitle: "VESC Onewheel",
+                    detail: "Device 1234",
+                    state: DevicePickerRowState(action: .use),
+                    symbolName: "circle.hexagongrid.circle",
+                    connectionRoute: .vescOnewheel
+                ),
+            ]
+        )
+        let model = CutoutAppModel(core: driver)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: "vesc-1234"))
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+
+        driver.onPhaseChange?(.starting)
+        driver.onPhaseChange?(.scanning)
+
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertEqual(model.connectionState.navigationIntent(isRecordOnlyCapture: false), .openRide(.vescOnewheel))
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, ["vesc-1234"])
+    }
+
+    @MainActor
     func testStoredDeviceAutoPairingUsesTheCandidateRideRoute() {
         let cases: [(id: String, route: DevicePickerConnectionRoute)] = [
             ("euc-1234", .electricUnicycle),
