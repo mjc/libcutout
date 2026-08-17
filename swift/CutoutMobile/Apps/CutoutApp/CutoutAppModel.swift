@@ -905,6 +905,8 @@ enum CutoutUITestSessionFixture {
     case wheelslipVesc
     case pitchStopVesc
     case handtestVesc
+    case darkrideVesc
+    case flywheelVesc
     case pendingVesc
     case staleVesc
     case failedVesc
@@ -941,6 +943,8 @@ enum CutoutUITestSessionFixture {
         case "vesc-wheelslip": self = .wheelslipVesc
         case "vesc-pitch-stop": self = .pitchStopVesc
         case "vesc-handtest": self = .handtestVesc
+        case "vesc-darkride": self = .darkrideVesc
+        case "vesc-flywheel": self = .flywheelVesc
         case "vesc-pending": self = .pendingVesc
         case "vesc-stale": self = .staleVesc
         case "vesc-failure": self = .failedVesc
@@ -1023,7 +1027,7 @@ enum CutoutUITestSessionFixture {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .wheelslipVesc, .pitchStopVesc, .handtestVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .wheelslipVesc, .pitchStopVesc, .handtestVesc, .darkrideVesc, .flywheelVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1095,6 +1099,15 @@ enum CutoutUITestSessionFixture {
         }
     }
 
+    private var testVescOperatingMode: VescRideOperatingMode? {
+        switch self {
+        case .handtestVesc: .handtest
+        case .darkrideVesc: .darkride
+        case .flywheelVesc: .flywheel
+        default: nil
+        }
+    }
+
     private var testBmsSnapshot: BmsSnapshot? {
         switch self {
         case .euc: eucBmsSnapshot
@@ -1152,7 +1165,7 @@ enum CutoutUITestSessionFixture {
             speedSource: .reported,
             speedQuality: .known,
             operatingState: .riding,
-            vescOperatingMode: self == .handtestVesc ? .handtest : nil,
+            vescOperatingMode: testVescOperatingMode,
             vescWarning: testVescWarning,
             vescStopReason: self == .pitchStopVesc ? .pitch : nil,
             voltage: Voltage(value: 50_400),

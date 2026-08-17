@@ -1274,6 +1274,14 @@ final class CutoutAppModelTests: XCTestCase {
             CutoutUITestSessionFixture(value: "vesc-handtest")?.testScript.telemetry?.vescOperatingMode,
             .handtest
         )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "vesc-darkride")?.testScript.telemetry?.vescOperatingMode,
+            .darkride
+        )
+        XCTAssertEqual(
+            CutoutUITestSessionFixture(value: "vesc-flywheel")?.testScript.telemetry?.vescOperatingMode,
+            .flywheel
+        )
     }
 
     func testEucReconnectFixtureKeepsTheEucRoute() {

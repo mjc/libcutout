@@ -1776,16 +1776,28 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescHandtestModeIsVisibleAtAccessibilityDynamicType() {
+        assertVescOperatingMode(label: "Hand test")
+    }
+
+    func testVescDarkrideModeIsVisibleAtAccessibilityDynamicType() {
+        assertVescOperatingMode(label: "Darkride")
+    }
+
+    func testVescFlywheelModeIsVisibleAtAccessibilityDynamicType() {
+        assertVescOperatingMode(label: "Flywheel test")
+    }
+
+    private func assertVescOperatingMode(label: String) {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard connectedScreen(timeout: 20) != nil else {
-            XCTFail("The deterministic hand-test fixture did not open its Ride screen")
+            XCTFail("The deterministic Refloat mode fixture did not open its Ride screen")
             return
         }
         defer { disconnectIfConnected() }
 
         let status = app.descendants(matching: .any)["ride.hero.status"]
         XCTAssertTrue(status.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(status.label.contains("Hand test"), status.debugDescription)
+        XCTAssertTrue(status.label.contains(label), status.debugDescription)
         XCTAssertTrue(status.isHittable)
     }
 
@@ -2424,6 +2436,8 @@ final class CutoutAppUITests: XCTestCase {
         case vescWheelslip
         case vescPitchStop
         case vescHandtest
+        case vescDarkride
+        case vescFlywheel
         case vescPending
         case vescStale
         case vescFailure
@@ -2480,6 +2494,8 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("VescWheelslip") { return .vescWheelslip }
             if testName.contains("VescPitchStop") { return .vescPitchStop }
             if testName.contains("VescHandtest") { return .vescHandtest }
+            if testName.contains("VescDarkride") { return .vescDarkride }
+            if testName.contains("VescFlywheel") { return .vescFlywheel }
             if testName.contains("DutyHeadroom") { return .vescDynamic }
             if testName.localizedCaseInsensitiveContains("Euc"), testName.contains("DynamicTelemetry") {
                 return .eucDynamic
@@ -2524,6 +2540,8 @@ final class CutoutAppUITests: XCTestCase {
             case .vescWheelslip: "vesc-wheelslip"
             case .vescPitchStop: "vesc-pitch-stop"
             case .vescHandtest: "vesc-handtest"
+            case .vescDarkride: "vesc-darkride"
+            case .vescFlywheel: "vesc-flywheel"
             case .vescPending: "vesc-pending"
             case .vescStale: "vesc-stale"
             case .vescFailure: "vesc-failure"
