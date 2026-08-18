@@ -827,7 +827,6 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(recordButton.isHittable)
         restoreAdvancedCaptureViewport(advancedCapture, captureKind: captureKind)
         try performVisibleLayoutAccessibilityAudit(
-            ignoringSystemToolbarContrastWarning: true,
             ignoringSystemToolbarDynamicTypeWarning: true,
             ignoringAdvancedCaptureTitleContrastWarning: ignoringAdvancedCaptureTitleContrastWarning
         )
@@ -2870,7 +2869,6 @@ final class CutoutAppUITests: XCTestCase {
 
     private func performVisibleLayoutAccessibilityAudit(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        ignoringSystemToolbarContrastWarning: Bool = false,
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
@@ -2890,14 +2888,6 @@ final class CutoutAppUITests: XCTestCase {
                 // that are clipped by or outside the rendered app window.
                 // Their screenshots do not contain the complete foreground
                 // and background pair needed for a meaningful contrast check.
-                return true
-            }
-            if ignoringSystemToolbarContrastWarning,
-               issue.auditType == .contrast,
-               [
-                "device-picker.capture-kind.done",
-                "device-picker.capture-kind.cancel",
-               ].contains(issue.element?.identifier) {
                 return true
             }
             if ignoringSystemToolbarDynamicTypeWarning,
