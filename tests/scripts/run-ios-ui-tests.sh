@@ -14,6 +14,16 @@ assert_equal() {
   fi
 }
 
+help_output="$("$root/scripts/run-ios-ui-tests.sh" --help)"
+if ! grep -q -- "--smoke" <<<"$help_output"; then
+  echo "expected UI test runner help to document the smoke lane" >&2
+  exit 1
+fi
+if ! grep -q -- "--verbose" <<<"$help_output"; then
+  echo "expected UI test runner help to document verbose diagnostics" >&2
+  exit 1
+fi
+
 mkdir -p "$tmp/derived-data/.run-ios-ui-tests.lock"
 if CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/derived-data" \
   "$root/scripts/run-ios-ui-tests.sh" --no-build >"$tmp/no-build.log" 2>&1

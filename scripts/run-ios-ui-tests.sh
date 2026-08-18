@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [xcodebuild options]"
+  echo "  --smoke    Run the six production-root transition and accessibility checks."
+  echo "  --verbose  Show full xcodebuild output instead of the bounded default."
+}
+
+if [[ "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
