@@ -17,6 +17,7 @@ cutout_use_xcode_developer_dir
 mode="test"
 clean=false
 smoke=false
+quiet=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clean)
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --smoke)
       smoke=true
+      shift
+      ;;
+    --verbose)
+      quiet=false
       shift
       ;;
     --no-build)
@@ -145,6 +150,9 @@ if [[ "$destination" == platform=iOS,* ]]; then
   )
 fi
 xcodebuild_args+=("$@")
+if [[ "$quiet" == true ]]; then
+  xcodebuild_args+=(-quiet)
+fi
 
 if [[ "$smoke" == true ]]; then
   smoke_tests=(
@@ -207,6 +215,7 @@ if [[ "$mode" == "test" ]]; then
       echo "iOS UI test completed without executing a test; refusing to report a green result" >&2
       exit 1
     fi
+    echo "iOS UI tests passed: $test_count ($result_bundle)"
   fi
 
   exit "$test_status"
