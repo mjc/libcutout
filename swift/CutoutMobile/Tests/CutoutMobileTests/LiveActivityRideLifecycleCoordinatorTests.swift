@@ -18,7 +18,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(first), .update(second), .end(.disconnected)])
     }
 
-    func testReconcileDoesNotStartWithoutSnapshot() async {
+    func testReconcileWithoutSnapshotClearsAnOrphanedActivityOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
 
@@ -26,7 +26,7 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         await coordinator.reconcile(requestID: 2, snapshot: nil, shouldBeActive: false, endReason: .sessionEnded)
 
         let events = await manager.recordedEvents()
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(events, [.end(.sessionEnded)])
     }
 
     func testEndStopsActiveActivityOnce() async {
@@ -65,14 +65,14 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         )
     }
 
-    func testEndDoesNothingWithoutPriorStart() async {
+    func testEndReconcilesAnOrphanedActivityWithoutPriorProcessState() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
 
         await coordinator.end(requestID: 1, reason: .sessionEnded)
 
         let events = await manager.recordedEvents()
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(events, [.end(.sessionEnded)])
     }
 
     func testLiveSnapshotCanEnterThePipeline() async {

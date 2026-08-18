@@ -1287,6 +1287,23 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(endReason, .unavailable)
     }
 
+    @MainActor
+    func testScanningLaunchClearsAnOrphanedLiveActivity() async {
+        let driver = SessionDriverSpy(rows: [])
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+
+        model.start()
+        driver.onPhaseChange?(.scanning)
+        for _ in 0 ..< 20 {
+            if await manager.lastEndReason != nil { break }
+            await Task.yield()
+        }
+
+        let endReason = await manager.lastEndReason
+        XCTAssertEqual(endReason, .disconnected)
+    }
+
     func testStandardUIFixtureLaunchArgumentSelectsEucFixture() {
         let fixture = CutoutUITestSessionFixture.resolve(
             persistedValue: nil,

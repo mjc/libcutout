@@ -39,6 +39,7 @@ func liveActivityRideReconciliation(
 public actor LiveActivityRideLifecycleCoordinator {
     private let manager: any LiveActivityRideLifecycleManaging
     private var isActive = false
+    private var hasReconciledInactiveState = false
     private var lastSnapshot: LiveActivityRideSnapshot?
     public private(set) var lastError: LiveActivityRideLifecycleError?
     private var latestRequestID: UInt64 = 0
@@ -132,10 +133,12 @@ public actor LiveActivityRideLifecycleCoordinator {
         do {
             try await manager.start(snapshot: snapshot)
             isActive = true
+            hasReconciledInactiveState = false
             lastSnapshot = snapshot
             lastError = nil
         } catch {
             isActive = false
+            hasReconciledInactiveState = true
             lastSnapshot = nil
             lastError = Self.lifecycleError(from: error)
         }
@@ -146,7 +149,7 @@ public actor LiveActivityRideLifecycleCoordinator {
     }
 
     private func endIfNeeded(reason: LiveActivityRideLifecycleEndReason) async {
-        guard isActive else {
+        guard hasReconciledInactiveState == false else {
             lastSnapshot = nil
             return
         }
@@ -155,6 +158,7 @@ public actor LiveActivityRideLifecycleCoordinator {
             try await manager.end(reason: reason)
             lastError = nil
             isActive = false
+            hasReconciledInactiveState = true
             lastSnapshot = nil
         } catch {
             lastError = Self.lifecycleError(from: error)
@@ -252,10 +256,11 @@ private actor LiveActivityRideActivityKitState {
     }
 
     func end(reason _: LiveActivityRideLifecycleEndReason) async throws {
-        let currentActivity = activity
-
-        if let currentActivity {
-            let finalContent = lastSnapshot.map(content(snapshot:)) ?? currentActivity.content
+        let currentActivityID = activity?.id
+        for currentActivity in Activity<LiveActivityRideAttributes>.activities {
+            let finalContent = currentActivity.id == currentActivityID
+                ? lastSnapshot.map(content(snapshot:)) ?? currentActivity.content
+                : currentActivity.content
             await currentActivity.end(finalContent, dismissalPolicy: .immediate)
         }
 
