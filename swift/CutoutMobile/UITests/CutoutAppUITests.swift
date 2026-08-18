@@ -2874,7 +2874,6 @@ final class CutoutAppUITests: XCTestCase {
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
         ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
-        ignoringVisualProgressLabelContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
         ignoringClippedBmsDetailBoundaryWarnings: Bool = false
     ) throws {
@@ -2924,15 +2923,6 @@ final class CutoutAppUITests: XCTestCase {
                ["Capture unknown device", "Device kind for capture"].contains(issue.element?.label) {
                 // Xcode 27 reports these white-on-dark visual heading children
                 // only in the Dark advanced-capture cell. Every other finding stays fatal.
-                return true
-            }
-            if ignoringVisualProgressLabelContrastWarning,
-               issue.auditType == .contrast,
-               issue.detailedDescription == "Contrast failed for SwiftUI.AccessibilityNode",
-               issue.element?.label == "sag-adjusted energy" {
-                // The progress bar already exposes this same typed label and
-                // value on its parent. Xcode 27 reports its black-on-white
-                // visual child only in this RTL simulator audit.
                 return true
             }
             if ignoringVisibleBmsDetailBackControlContrastWarning,
