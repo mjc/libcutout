@@ -185,6 +185,7 @@ fi
 if [[ "$mode" == "test" ]]; then
   result_bundle="$(cutout_create_ios_ui_test_result_bundle "$derived_data")"
   test_status=0
+  test_started_at=$SECONDS
   if timeout --foreground --kill-after=30 "$ui_test_run_timeout" \
     /usr/bin/xcrun xcodebuild \
     "${xcodebuild_args[@]}" \
@@ -215,7 +216,11 @@ if [[ "$mode" == "test" ]]; then
       echo "iOS UI test completed without executing a test; refusing to report a green result" >&2
       exit 1
     fi
-    echo "iOS UI tests passed: $test_count ($result_bundle)"
+    if [[ "$smoke" == true && "$test_count" -ne "${#smoke_tests[@]}" ]]; then
+      echo "iOS UI smoke lane executed $test_count of ${#smoke_tests[@]} tests" >&2
+      exit 1
+    fi
+    echo "iOS UI tests passed: $test_count in $((SECONDS - test_started_at))s ($result_bundle)"
   fi
 
   exit "$test_status"
