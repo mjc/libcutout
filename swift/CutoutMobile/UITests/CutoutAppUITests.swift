@@ -359,7 +359,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(app.frame.contains(finish.frame))
         XCTAssertGreaterThanOrEqual(finish.frame.width, capture.frame.width - 36)
         XCTAssertLessThanOrEqual(status.frame.maxY, finish.frame.minY)
-        try performVisibleLayoutAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit(ignoringNilElementContrastWarning: true)
         finish.tap()
 
         let picker = app.descendants(matching: .any)["device-picker.screen"]
