@@ -954,6 +954,43 @@ final class CutoutAppUITests: XCTestCase {
         try assertVescLiveActivityAutoFixture()
     }
 
+    func testVescLiveActivityContinuesUpdatingWhileBackgrounded() {
+        let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+        let foregroundSpeed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(foregroundSpeed.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(
+            (foregroundSpeed.value as? String)?.contains("17.9") == true,
+            foregroundSpeed.debugDescription
+        )
+        defer {
+            app.activate()
+            disconnectIfConnected()
+        }
+
+        XCUIDevice.shared.press(.home)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissLocationPromptIfNeeded(in: springboard)
+        XCUIDevice.shared.press(.home)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.01))
+            .press(
+                forDuration: 0.1,
+                thenDragTo: springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.8))
+            )
+
+        let speed = springboard.descendants(matching: .any)["Speed"]
+        XCTAssertTrue(speed.waitForExistence(timeout: 5), springboard.debugDescription)
+        let updated = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "35.8"),
+            object: speed
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [updated], timeout: 12),
+            .completed,
+            speed.debugDescription
+        )
+    }
+
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
         try assertVescLiveActivityAutoFixture()
     }
@@ -2524,6 +2561,7 @@ final class CutoutAppUITests: XCTestCase {
         case eucConnecting
         case vescLiveActivity
         case vescLiveActivityAuto
+        case vescDynamicLiveActivityAuto
         case vescCriticalLiveActivityAuto
         case vescUnavailableLiveActivityAuto
         case vescStaleLiveActivityAuto
@@ -2541,6 +2579,9 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("BluetoothUnavailableAfterLive") { return .vescBluetoothLoss }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
             if testName.contains("BluetoothPermissionDenied") { return .bluetoothPermissionDenied }
+            if testName.contains("LiveActivityContinuesUpdatingWhileBackgrounded") {
+                return .vescDynamicLiveActivityAuto
+            }
             if testName.contains("CriticalLiveActivityAutoFixture")
                 || testName.contains("CriticalLiveActivityLockScreen")
             {
@@ -2658,6 +2699,7 @@ final class CutoutAppUITests: XCTestCase {
             case .eucConnecting: "euc-connecting"
             case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
+            case .vescDynamicLiveActivityAuto: "vesc-live-activity-dynamic-auto"
             case .vescCriticalLiveActivityAuto: "vesc-live-activity-critical-auto"
             case .vescUnavailableLiveActivityAuto: "vesc-live-activity-unavailable-auto"
             case .vescStaleLiveActivityAuto: "vesc-live-activity-stale-auto"

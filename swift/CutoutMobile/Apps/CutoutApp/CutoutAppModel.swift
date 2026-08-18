@@ -928,6 +928,7 @@ enum CutoutUITestSessionFixture: Equatable {
     case eucUnknownTopology
     case vescLiveActivity
     case autoVescLiveActivity
+    case autoDynamicVescLiveActivity
     case autoCriticalVescLiveActivity
     case autoUnavailableVescLiveActivity
     case autoStaleVescLiveActivity
@@ -981,6 +982,7 @@ enum CutoutUITestSessionFixture: Equatable {
         case "euc-unknown-topology": self = .eucUnknownTopology
         case "vesc-live-activity": self = .vescLiveActivity
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
+        case "vesc-live-activity-dynamic-auto": self = .autoDynamicVescLiveActivity
         case "vesc-live-activity-critical-auto": self = .autoCriticalVescLiveActivity
         case "vesc-live-activity-unavailable-auto": self = .autoUnavailableVescLiveActivity
         case "vesc-live-activity-stale-auto": self = .autoStaleVescLiveActivity
@@ -1047,7 +1049,7 @@ enum CutoutUITestSessionFixture: Equatable {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
@@ -1062,6 +1064,7 @@ enum CutoutUITestSessionFixture: Equatable {
 
     var startsLive: Bool {
         self == .autoVescLiveActivity
+            || self == .autoDynamicVescLiveActivity
             || self == .autoCriticalVescLiveActivity
             || self == .autoUnavailableVescLiveActivity
             || self == .autoStaleVescLiveActivity
@@ -1148,7 +1151,7 @@ enum CutoutUITestSessionFixture: Equatable {
             candidate: candidate,
             telemetry: emitsPendingTelemetry ? nil : telemetry,
             telemetryUpdate: telemetryUpdate,
-            telemetryUpdateDelayMilliseconds: telemetryUpdate == nil ? 0 : 1_500,
+            telemetryUpdateDelayMilliseconds: telemetryUpdateDelayMilliseconds,
             bmsSnapshot: testBmsSnapshot,
             startsLive: startsLive,
             initialBluetoothState: initialBluetoothState,
@@ -1170,6 +1173,11 @@ enum CutoutUITestSessionFixture: Equatable {
         case .connectingVesc, .connectingEuc: 5_000
         default: 1_000
         }
+    }
+
+    private var telemetryUpdateDelayMilliseconds: UInt64 {
+        guard dynamicTelemetryUpdate != nil || refreshesVescSafetyState else { return 0 }
+        return self == .autoDynamicVescLiveActivity ? 8_000 : 1_500
     }
 
     private var telemetry: TelemetrySnapshot {
@@ -1203,7 +1211,7 @@ enum CutoutUITestSessionFixture: Equatable {
 
     private var dynamicTelemetryUpdate: TelemetrySnapshot? {
         switch self {
-        case .dynamicVesc:
+        case .dynamicVesc, .autoDynamicVescLiveActivity:
             TelemetrySnapshot(
                 speed: Speed(value: 16_000),
                 speedSource: .reported,
