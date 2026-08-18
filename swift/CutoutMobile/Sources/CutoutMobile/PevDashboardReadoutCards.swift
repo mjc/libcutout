@@ -220,12 +220,9 @@ public struct PevDashboardHeroCard: View {
                 stroke: PevDashboardColors.cardStroke
             )
         )
-        .accessibilityRepresentation {
-            ProgressView(value: clampedProgress)
-                .tint(PevDashboardColors.primaryText)
-                .accessibilityLabel(eyebrow)
-                .accessibilityValue(accessibilityValueText)
-        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(eyebrow)
+        .accessibilityValue(accessibilityValueText)
     }
 }
 
