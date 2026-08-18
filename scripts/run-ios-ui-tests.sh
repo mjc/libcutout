@@ -16,6 +16,7 @@ cutout_use_xcode_developer_dir
 
 mode="test"
 clean=false
+smoke=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clean)
@@ -24,6 +25,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-only)
       mode="build-for-testing"
+      shift
+      ;;
+    --smoke)
+      smoke=true
       shift
       ;;
     --no-build)
@@ -141,12 +146,28 @@ if [[ "$destination" == platform=iOS,* ]]; then
 fi
 xcodebuild_args+=("$@")
 
+if [[ "$smoke" == true ]]; then
+  smoke_tests=(
+    testPickerExposesAccessibleCaptureControls
+    testVescUseShowsConnectingBeforeRide
+    testVescRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType
+    testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType
+    testEucBmsDiagnosticsExposeStableAccessibleDataRows
+    testVescCriticalLiveActivityLockScreenPreservesSafetySemantics
+  )
+  for test_name in "${smoke_tests[@]}"; do
+    xcodebuild_args+=("-only-testing:CutoutAppUITests/CutoutAppUITests/$test_name")
+  done
+fi
+
 if [[ "$clean" == true ]]; then
   /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" clean
 fi
 
 if [[ -n "${CUTOUT_IOS_UI_TEST_RUN_TIMEOUT:-}" ]]; then
   ui_test_run_timeout="$CUTOUT_IOS_UI_TEST_RUN_TIMEOUT"
+elif [[ "$smoke" == true ]]; then
+  ui_test_run_timeout=420
 elif [[ " ${xcodebuild_args[*]} " == *" -only-testing:"* ]]; then
   ui_test_run_timeout=150
 else
