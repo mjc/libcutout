@@ -135,7 +135,6 @@ public actor LiveActivityRideLifecycleCoordinator {
             lastSnapshot = snapshot
             lastError = nil
         } catch {
-            hasReconciledInactiveState = true
             lastSnapshot = nil
             lastError = Self.lifecycleError(from: error)
         }

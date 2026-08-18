@@ -118,12 +118,15 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
 
         await coordinator.reconcile(requestID: 1, snapshot: snapshot, shouldBeActive: true)
+        let startError = await coordinator.lastError
+        XCTAssertEqual(startError, .requestFailed)
+
         await coordinator.end(requestID: 2, reason: .sessionEnded)
 
-        let error = await coordinator.lastError
-        XCTAssertEqual(error, .requestFailed)
+        let recoveredError = await coordinator.lastError
+        XCTAssertNil(recoveredError)
         let events = await manager.recordedEvents()
-        XCTAssertEqual(events, [.start(snapshot)])
+        XCTAssertEqual(events, [.start(snapshot), .end(.sessionEnded)])
     }
 
     func testFailedUpdateKeepsActivityActiveForRetry() async {
