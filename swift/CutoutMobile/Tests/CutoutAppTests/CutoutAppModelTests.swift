@@ -160,6 +160,10 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testDelayedScanningPhaseCannotOverwriteAnActiveConnectionAttempt() {
+        let suiteName = #function
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let driver = SessionDriverSpy(
             rows: [
                 DevicePickerRow(
@@ -173,7 +177,10 @@ final class CutoutAppModelTests: XCTestCase {
                 ),
             ]
         )
-        let model = CutoutAppModel(core: driver)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: DevicePickerSelectionStore(defaults: defaults)
+        )
         model.start()
 
         XCTAssertTrue(model.pair(platformIdentifier: "vesc-1234"))
