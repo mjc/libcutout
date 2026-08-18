@@ -191,6 +191,27 @@ private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
     }
 }
 
+enum CoreBluetoothRestorationPolicy {
+    static let restorationIdentifier = "io.cutout.central"
+
+    static var centralManagerOptions: [String: Any] {
+        [CBCentralManagerOptionRestoreIdentifierKey: restorationIdentifier]
+    }
+
+    static func selectedPlatformIdentifier(
+        savedPlatformIdentifier: String?,
+        restoredPlatformIdentifiers: [String]
+    ) -> String? {
+        guard
+            let savedPlatformIdentifier,
+            restoredPlatformIdentifiers.contains(savedPlatformIdentifier)
+        else {
+            return nil
+        }
+        return savedPlatformIdentifier
+    }
+}
+
 #if DEBUG
 public enum CutoutSessionTestInitialBluetoothState: Sendable {
     case scanning
@@ -316,6 +337,7 @@ public final class CutoutSessionCore: NSObject {
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth", qos: .userInitiated)
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
+    private let selectedDeviceStore: DevicePickerSelectionStore
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var advertisement: CoreBluetoothAdvertisement?
@@ -375,7 +397,8 @@ public final class CutoutSessionCore: NSObject {
         clock: MonotonicClock,
         testScript: CutoutSessionTestScript? = nil,
         reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
-        reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) }
+        reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
     ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
@@ -388,11 +411,15 @@ public final class CutoutSessionCore: NSObject {
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
+        self.selectedDeviceStore = selectedDeviceStore
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
 #else
-    init(clock: MonotonicClock) {
+    init(
+        clock: MonotonicClock,
+        selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
+    ) {
         let rustSessionState = CutoutSessionStateHandle()
         self.rustSessionState = rustSessionState
         let deviceDetectionSession = DeviceDetectionSession(sessionState: rustSessionState)
@@ -403,6 +430,7 @@ public final class CutoutSessionCore: NSObject {
         self.clock = clock
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
+        self.selectedDeviceStore = selectedDeviceStore
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -420,7 +448,15 @@ public final class CutoutSessionCore: NSObject {
             guard central == nil else {
                 return
             }
+            #if os(iOS)
+            central = CBCentralManager(
+                delegate: self,
+                queue: bleQueue,
+                options: CoreBluetoothRestorationPolicy.centralManagerOptions
+            )
+            #else
             central = CBCentralManager(delegate: self, queue: bleQueue)
+            #endif
         }
     }
 
@@ -1764,7 +1800,136 @@ private extension CoreBluetoothAdvertisement {
     }
 }
 
+private extension CutoutSessionCore {
+    func restoreSelectedPeripheral(from restoredPeripherals: [CBPeripheral]) {
+        assertOnBleQueue()
+        let restoredIdentifiers = restoredPeripherals.map(\.identifier.uuidString)
+        guard
+            let selectedIdentifier = CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+                savedPlatformIdentifier: selectedDeviceStore.platformIdentifier,
+                restoredPlatformIdentifiers: restoredIdentifiers
+            ),
+            let restoredPeripheral = restoredPeripherals.first(where: {
+                $0.identifier.uuidString == selectedIdentifier
+            })
+        else {
+            record("central_restore=no_selected_peripheral")
+            return
+        }
+
+        let restoredAdvertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier(selectedIdentifier),
+            localName: restoredPeripheral.name,
+            advertisedServiceUuids: (restoredPeripheral.services ?? [])
+                .compactMap { BluetoothUuid(coreBluetoothUuid: $0.uuid) }
+        ).withVescNordicUartFallbackName()
+        let discovery = rustSessionState.observeDiscovery(
+            observation: DiscoveryObservation(restoredAdvertisement)
+        )
+        let selectedDiscovery = rustSessionState.selectDiscoveredPlatform(
+            platformIdentifier: selectedIdentifier
+        )
+        let support = selectedDiscovery.pickerCandidates
+            .first(where: { $0.platformIdentifier == selectedIdentifier })
+            .map(DevicePickerCandidateSupport.init)
+        let route = support?.connectionRoute
+            ?? (restoredAdvertisement.advertisedServiceUuids.contains(.vescNordicUartService)
+                ? .vescOnewheel
+                : nil)
+        guard let route else {
+            record("central_restore=unsupported_selected_peripheral")
+            return
+        }
+        if case .electricUnicycle = route, support?.electricUnicycleModel == nil {
+            record("central_restore=missing_euc_model")
+            return
+        }
+
+        discoveredPeripherals[restoredAdvertisement.peripheralIdentifier] = restoredPeripheral
+        advertisement = restoredAdvertisement
+        peripheral = restoredPeripheral
+        selectedRoute = route
+        selectedModel = support?.electricUnicycleModel
+        isRecordOnly = false
+        isProbeOnly = false
+        suppressReconnect = false
+        restoredPeripheral.delegate = self
+        deviceDetectionSession.reset()
+        _ = deviceDetectionSession.observeAdvertisement(
+            name: restoredAdvertisement.localName.map { Data($0.utf8) }
+        )
+        record("central_restore=selected state=\(restoredPeripheral.state.rawValue) observations=\(discovery.observations.count)")
+
+        switch restoredPeripheral.state {
+        case .connected:
+            prepareRestoredRide(route: route)
+            if central?.state == .poweredOn {
+                resumeConnectedPeripheral(restoredPeripheral)
+            } else {
+                setPhase(.discoveringServices)
+            }
+        case .connecting:
+            prepareRestoredRide(route: route)
+            setPhase(.discoveringServices)
+        case .disconnected, .disconnecting:
+            record("central_restore=selected_not_connected")
+            peripheral = nil
+            advertisement = nil
+            selectedRoute = nil
+            selectedModel = nil
+        @unknown default:
+            record("central_restore=unknown_peripheral_state")
+        }
+    }
+
+    func prepareRestoredRide(route: DevicePickerConnectionRoute) {
+        startCapture(reason: "restore", annotations: ["route=\(route)"])
+        clearSettingsReadback()
+        clearFaultHistoryReadback()
+        clearBmsSnapshot()
+        clearProtocolIdentityCandidate()
+    }
+
+    func resumeConnectedPeripheral(_ peripheral: CBPeripheral) {
+        assertOnBleQueue()
+        guard liveOwner == nil else { return }
+        setPhase(.discoveringServices)
+        let services = peripheral.services ?? []
+        guard !services.isEmpty else {
+            peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
+            return
+        }
+
+        pendingServiceDiscoveries = Set(services.map(\.uuid))
+        for service in services {
+            guard let characteristics = service.characteristics, !characteristics.isEmpty else {
+                peripheral.discoverCharacteristics(nil, for: service)
+                continue
+            }
+            for characteristic in characteristics {
+                if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
+                    subscribedCharacteristics[channel] = characteristic
+                }
+            }
+            pendingServiceDiscoveries.remove(service.uuid)
+        }
+        if pendingServiceDiscoveries.isEmpty {
+            buildOwner(for: peripheral)
+        }
+    }
+}
+
 extension CutoutSessionCore: CBCentralManagerDelegate {
+    public func centralManager(
+        _: CBCentralManager,
+        willRestoreState dict: [String: Any]
+    ) {
+        assertOnBleQueue()
+        let restoredPeripherals = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+        record("central_restore=callback peripherals=\(restoredPeripherals.count)")
+        restoreSelectedPeripheral(from: restoredPeripherals)
+    }
+
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         handleCentralState(central.state) {
             central.scanForPeripherals(withServices: nil)
@@ -1792,6 +1957,21 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
                     : .bluetoothUnavailable(rawState: state.rawValue)
             )
             return
+        }
+        if let peripheral, selectedRoute != nil {
+            switch peripheral.state {
+            case .connected:
+                resumeConnectedPeripheral(peripheral)
+                record("central_state=restored_session")
+                return
+            case .connecting:
+                record("central_state=restored_session")
+                return
+            case .disconnected, .disconnecting:
+                break
+            @unknown default:
+                break
+            }
         }
         scanState = DevicePickerScanState(
             status: .scanning,

@@ -6,6 +6,29 @@ import CoreBluetooth
 @testable import CutoutMobile
 
 final class CutoutSessionCoreTests: XCTestCase {
+    #if canImport(CoreBluetooth)
+    func testCoreBluetoothRestorationPolicyOptsInAndSelectsOnlySavedDevice() {
+        XCTAssertEqual(
+            CoreBluetoothRestorationPolicy.centralManagerOptions[CBCentralManagerOptionRestoreIdentifierKey]
+                as? String,
+            "io.cutout.central"
+        )
+        XCTAssertEqual(
+            CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+                savedPlatformIdentifier: "wheel-b",
+                restoredPlatformIdentifiers: ["wheel-a", "wheel-b"]
+            ),
+            "wheel-b"
+        )
+        XCTAssertNil(
+            CoreBluetoothRestorationPolicy.selectedPlatformIdentifier(
+                savedPlatformIdentifier: "wheel-c",
+                restoredPlatformIdentifiers: ["wheel-a", "wheel-b"]
+            )
+        )
+    }
+    #endif
+
     func testBoundedDiagnosticLogRetainsNewestRecordsAndCountsDroppedHistory() {
         var log = BoundedDiagnosticLog(capacity: 3)
 
