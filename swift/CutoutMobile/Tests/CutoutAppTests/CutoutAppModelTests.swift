@@ -71,6 +71,36 @@ final class CutoutAppModelTests: XCTestCase {
         })
     }
 
+    @MainActor
+    func testCaptureProgressInvalidatesOnlyTheCaptureRoute() {
+        func observesProgressChange(_ render: (CutoutAppModel) -> Void) -> Bool {
+            let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+            let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
+            model.applyCaptureEvent(.started(fileURL: fileURL))
+            model.applyCaptureEvent(.progress(Self.priorCaptureProgress))
+
+            return observesChange({ render(model) }) {
+                model.applyCaptureEvent(.progress(CaptureProgress(
+                    elapsedMilliseconds: 64_000,
+                    notificationCount: 42,
+                    fileSizeBytes: 16_384,
+                    queuedMessageCount: 1,
+                    writerError: nil
+                )))
+            }
+        }
+
+        XCTAssertTrue(observesProgressChange {
+            _ = CaptureRouteView(model: $0, finishCapture: {}).body
+        })
+        XCTAssertFalse(observesProgressChange {
+            _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
+        })
+        XCTAssertFalse(observesProgressChange {
+            _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
+        })
+    }
+
     func testCaptureQuickLabelProvidesOneStatefulActionName() {
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: false), "Start Ride")
         XCTAssertEqual(CaptureQuickLabel.ride.actionTitle(isActive: true), "Stop Ride")
