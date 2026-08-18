@@ -38,7 +38,6 @@ func liveActivityRideReconciliation(
 
 public actor LiveActivityRideLifecycleCoordinator {
     private let manager: any LiveActivityRideLifecycleManaging
-    private var isActive = false
     private var hasReconciledInactiveState = false
     private var lastSnapshot: LiveActivityRideSnapshot?
     public private(set) var lastError: LiveActivityRideLifecycleError?
@@ -71,7 +70,7 @@ public actor LiveActivityRideLifecycleCoordinator {
             return
         }
 
-        if isActive == false {
+        if lastSnapshot == nil {
             await start(snapshot: snapshot)
             return
         }
@@ -132,12 +131,10 @@ public actor LiveActivityRideLifecycleCoordinator {
     private func start(snapshot: LiveActivityRideSnapshot) async {
         do {
             try await manager.start(snapshot: snapshot)
-            isActive = true
             hasReconciledInactiveState = false
             lastSnapshot = snapshot
             lastError = nil
         } catch {
-            isActive = false
             hasReconciledInactiveState = true
             lastSnapshot = nil
             lastError = Self.lifecycleError(from: error)
@@ -157,7 +154,6 @@ public actor LiveActivityRideLifecycleCoordinator {
         do {
             try await manager.end(reason: reason)
             lastError = nil
-            isActive = false
             hasReconciledInactiveState = true
             lastSnapshot = nil
         } catch {
