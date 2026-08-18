@@ -9,7 +9,7 @@ private enum PevSystemColors {
     #if os(iOS)
     static let pageBackground = Color(uiColor: .systemBackground)
     static let disabledFill = pageBackground
-    static let yellow = Color(uiColor: .systemYellow)
+    static let yellow = Color(red: 1, green: 0.8, blue: 0)
     static let cyan = Color(uiColor: .systemCyan)
     static let orange = Color(uiColor: .systemOrange)
     static let red = Color(uiColor: .systemRed)
@@ -28,7 +28,7 @@ private enum PevSystemColors {
     #elseif os(macOS)
     static let pageBackground = Color(nsColor: .windowBackgroundColor)
     static let disabledFill = pageBackground
-    static let yellow = Color(nsColor: .systemYellow)
+    static let yellow = Color(red: 1, green: 0.8, blue: 0)
     static let cyan = Color(nsColor: .systemCyan)
     static let orange = Color(nsColor: .systemOrange)
     static let red = Color(nsColor: .systemRed)
