@@ -2005,8 +2005,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucStaleTelemetryAccessibility(
-        usesLocalizedText: Bool = false,
-        ignoringVisualProgressLabelContrastWarning: Bool = false
+        usesLocalizedText: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -2040,9 +2039,7 @@ final class CutoutAppUITests: XCTestCase {
         }
         scrollSafetyWarningAboveNavigation(warning, in: screen)
         XCTAssertTrue(warning.isHittable, "The EUC stale warning cannot be reached by scrolling")
-        try performVisibleLayoutAccessibilityAudit(
-            ignoringVisualProgressLabelContrastWarning: ignoringVisualProgressLabelContrastWarning
-        )
+        try performVisibleLayoutAccessibilityAudit()
     }
 
     func testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
