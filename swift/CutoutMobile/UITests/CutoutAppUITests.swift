@@ -2001,9 +2001,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
-        try assertEucStaleTelemetryAccessibility(
-            ignoringVisualProgressLabelContrastWarning: true
-        )
+        try assertEucStaleTelemetryAccessibility()
     }
 
     private func assertEucStaleTelemetryAccessibility(
