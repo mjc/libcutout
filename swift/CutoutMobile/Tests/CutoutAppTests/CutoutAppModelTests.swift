@@ -1247,6 +1247,15 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNotNil(fixture?.testScript.telemetry)
     }
 
+    func testBackgroundLiveActivityFixtureDelaysAnIndependentTelemetryUpdate() {
+        let fixture = CutoutUITestSessionFixture(value: "vesc-live-activity-dynamic-auto")
+
+        XCTAssertTrue(fixture?.startsLive ?? false)
+        XCTAssertEqual(fixture?.testScript.telemetry?.speed, Speed(value: 8_000))
+        XCTAssertEqual(fixture?.testScript.telemetryUpdate?.speed, Speed(value: 16_000))
+        XCTAssertEqual(fixture?.testScript.telemetryUpdateDelayMilliseconds, 8_000)
+    }
+
     @MainActor
     func testAutoLiveActivityUsesTheCandidateDisplayName() async {
         let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
