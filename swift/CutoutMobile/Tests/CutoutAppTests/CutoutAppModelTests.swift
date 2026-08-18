@@ -73,8 +73,24 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testCaptureProgressInvalidatesOnlyTheCaptureRoute() {
-        func observesProgressChange(_ render: (CutoutAppModel) -> Void) -> Bool {
-            let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
+        func observesProgressChange(
+            withAvailableBms: Bool = false,
+            _ render: (CutoutAppModel) -> Void
+        ) -> Bool {
+            let driver = SessionDriverSpy(rows: [])
+            let model = CutoutAppModel(core: driver)
+            if withAvailableBms {
+                driver.onBmsSnapshotChange?(BmsSnapshot(
+                    topology: BmsTopology(
+                        layoutLabel: "20S1P",
+                        seriesGroupCount: 20,
+                        parallelCount: 1,
+                        packCount: 1,
+                        bmsCount: 1,
+                        confidence: .verified
+                    )
+                ))
+            }
             let fileURL = URL(fileURLWithPath: "/tmp/ride.cutout")
             model.applyCaptureEvent(.started(fileURL: fileURL))
             model.applyCaptureEvent(.progress(Self.priorCaptureProgress))
@@ -97,6 +113,9 @@ final class CutoutAppModelTests: XCTestCase {
             _ = DevicePickerRouteView(model: $0, pair: { _ in }, navigate: { _ in }).body
         })
         XCTAssertFalse(observesProgressChange {
+            _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
+        })
+        XCTAssertFalse(observesProgressChange(withAvailableBms: true) {
             _ = EucPackRouteView(model: $0, packScreen: .root, selectedGroupIndex: nil, navigate: { _ in }).body
         })
     }
