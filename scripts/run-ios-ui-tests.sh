@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [xcodebuild options]"
-  echo "  --smoke    Run the six production-root transition and accessibility checks."
+  echo "  --smoke    Run the seven production-root transition and accessibility checks."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
 }
 
@@ -173,6 +173,7 @@ if [[ "$smoke" == true ]]; then
     testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType
     testEucBmsDiagnosticsExposeStableAccessibleDataRows
     testVescCriticalLiveActivityLockScreenPreservesSafetySemantics
+    testVescLiveActivityContinuesUpdatingWhileBackgrounded
   )
   for test_name in "${smoke_tests[@]}"; do
     xcodebuild_args+=("-only-testing:CutoutAppUITests/CutoutAppUITests/$test_name")
