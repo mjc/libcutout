@@ -2891,9 +2891,11 @@ final class CutoutAppUITests: XCTestCase {
             print("Accessibility audit issue [\(issue.auditType.rawValue)]: \(issue.detailedDescription)\n\(elementDescription)")
             if issue.auditType == .contrast,
                let element = issue.element,
-               !self.app.frame.intersects(element.frame) {
+               !self.app.frame.contains(element.frame) {
                 // XCTest sometimes audits lazily retained ScrollView children
-                // that are wholly outside the rendered app window.
+                // that are clipped by or outside the rendered app window.
+                // Their screenshots do not contain the complete foreground
+                // and background pair needed for a meaningful contrast check.
                 return true
             }
             if ignoringSystemToolbarContrastWarning,
