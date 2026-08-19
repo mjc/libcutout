@@ -1991,7 +1991,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
+        try assertVescStaleTelemetryAccessibility()
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
@@ -2025,17 +2025,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility(
-            usesLocalizedText: true,
-            ignoringNilElementContrastWarning: true
-        )
+        try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType() throws {
-        try assertVescStaleTelemetryAccessibility(
-            usesLocalizedText: true,
-            ignoringNilElementContrastWarning: true
-        )
+        try assertVescStaleTelemetryAccessibility(usesLocalizedText: true)
     }
 
     func testVescStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
@@ -2047,11 +2041,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
-        try assertEucStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
+        try assertEucStaleTelemetryAccessibility()
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertEucStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
+        try assertEucStaleTelemetryAccessibility()
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
@@ -2063,12 +2057,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInRightToLeftLayout() throws {
-        try assertEucStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
+        try assertEucStaleTelemetryAccessibility()
     }
 
     private func assertEucStaleTelemetryAccessibility(
-        usesLocalizedText: Bool = false,
-        ignoringNilElementContrastWarning: Bool = false
+        usesLocalizedText: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -2103,7 +2096,7 @@ final class CutoutAppUITests: XCTestCase {
         scrollSafetyWarningAboveNavigation(warning, in: screen)
         XCTAssertTrue(warning.isHittable, "The EUC stale warning cannot be reached by scrolling")
         try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+            ignoringNilElementContrastWarning: true
         )
     }
 
@@ -2166,8 +2159,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertVescStaleTelemetryAccessibility(
-        usesLocalizedText: Bool = false,
-        ignoringNilElementContrastWarning: Bool = false
+        usesLocalizedText: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.vesc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -2198,7 +2190,7 @@ final class CutoutAppUITests: XCTestCase {
             )
         }
         try performVisibleLayoutAccessibilityAudit(
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+            ignoringNilElementContrastWarning: true
         )
     }
 
