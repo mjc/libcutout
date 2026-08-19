@@ -23,7 +23,7 @@ if ! grep -q -- "--verbose" <<<"$help_output"; then
   echo "expected UI test runner help to document verbose diagnostics" >&2
   exit 1
 fi
-for option in --appearance --increase-contrast --content-size --enumerate-tests; do
+for option in --appearance --increase-contrast --content-size --enumerate-tests --timeout; do
   if ! grep -q -- "$option" <<<"$help_output"; then
     echo "expected UI test runner help to document $option" >&2
     exit 1
@@ -37,6 +37,17 @@ for option in --appearance --increase-contrast --content-size --enumerate-tests;
     exit 1
   fi
 done
+
+if "$root/scripts/run-ios-ui-tests.sh" --timeout nope \
+  -only-testing:CutoutAppUITests/CutoutAppUITests/testExample >"$tmp/invalid-timeout.log" 2>&1
+then
+  echo "expected a non-numeric UI test timeout to be rejected" >&2
+  exit 1
+fi
+if ! grep -q "positive integer" "$tmp/invalid-timeout.log"; then
+  cat "$tmp/invalid-timeout.log" >&2
+  exit 1
+fi
 
 conflicting_options=(
   "--appearance light -only-testing:CutoutAppUITests/CutoutAppUITests/testExampleInDarkAppearance"

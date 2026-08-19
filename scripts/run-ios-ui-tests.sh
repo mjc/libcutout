@@ -2,10 +2,11 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
+  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--timeout seconds] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
   echo "  --smoke    Run the seven production-root transition and accessibility checks."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
   echo "  --enumerate-tests writes Xcode's compiled test graph without executing tests."
+  echo "  --timeout sets the outer deadline for this build-and-test invocation."
   echo "  --appearance, --increase-contrast, and --content-size apply and verify simulator settings for this run, then restore them."
   echo "  Test runs require --smoke or at least one -only-testing selector; an unqualified run mixes incompatible settings cells."
 }
@@ -36,6 +37,7 @@ quiet=true
 requested_appearance="${CUTOUT_IOS_SIMULATOR_APPEARANCE:-}"
 requested_increase_contrast="${CUTOUT_IOS_SIMULATOR_INCREASE_CONTRAST:-}"
 requested_content_size="${CUTOUT_IOS_SIMULATOR_CONTENT_SIZE:-}"
+requested_timeout="${CUTOUT_IOS_UI_TEST_RUN_TIMEOUT:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clean)
@@ -58,6 +60,11 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "--enumerate-tests requires an output JSON path" >&2; exit 2; }
       mode="enumerate-tests"
       enumeration_output="$2"
+      shift 2
+      ;;
+    --timeout)
+      [[ $# -ge 2 ]] || { echo "--timeout requires a positive integer number of seconds" >&2; exit 2; }
+      requested_timeout="$2"
       shift 2
       ;;
     --appearance)
@@ -85,6 +92,10 @@ done
 
 if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
   echo "CUTOUT_IOS_UI_TEST_SKIP_BUILD is unsupported; an incremental test build is required" >&2
+  exit 2
+fi
+if [[ -n "$requested_timeout" && ! "$requested_timeout" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--timeout must be a positive integer number of seconds" >&2
   exit 2
 fi
 
@@ -286,8 +297,8 @@ if [[ "$mode" == "enumerate-tests" ]]; then
   exit 0
 fi
 
-if [[ -n "${CUTOUT_IOS_UI_TEST_RUN_TIMEOUT:-}" ]]; then
-  ui_test_run_timeout="$CUTOUT_IOS_UI_TEST_RUN_TIMEOUT"
+if [[ -n "$requested_timeout" ]]; then
+  ui_test_run_timeout="$requested_timeout"
 elif [[ "$smoke" == true ]]; then
   ui_test_run_timeout=420
 elif [[ " ${xcodebuild_args[*]} " == *" -only-testing:"* ]]; then
