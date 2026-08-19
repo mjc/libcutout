@@ -38,6 +38,22 @@ for option in --appearance --increase-contrast --content-size; do
   fi
 done
 
+conflicting_options=(
+  "--appearance light -only-testing:CutoutAppUITests/CutoutAppUITests/testExampleInDarkAppearance"
+  "--content-size large -only-testing:CutoutAppUITests/CutoutAppUITests/testExampleAtAccessibilityDynamicType"
+  "--increase-contrast disabled -only-testing:CutoutAppUITests/CutoutAppUITests/testExampleWithIncreasedContrast"
+)
+for arguments in "${conflicting_options[@]}"; do
+  if "$root/scripts/run-ios-ui-tests.sh" $arguments >"$tmp/conflicting-settings.log" 2>&1; then
+    echo "expected conflicting inferred simulator settings to be rejected: $arguments" >&2
+    exit 1
+  fi
+  if ! grep -q "conflicts" "$tmp/conflicting-settings.log"; then
+    cat "$tmp/conflicting-settings.log" >&2
+    exit 1
+  fi
+done
+
 mkdir -p "$tmp/derived-data/.run-ios-ui-tests.lock"
 if CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/derived-data" \
   "$root/scripts/run-ios-ui-tests.sh" --no-build >"$tmp/no-build.log" 2>&1

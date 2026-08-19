@@ -2474,15 +2474,6 @@ final class CutoutAppUITests: XCTestCase {
 
     private var launchArguments: [String] {
         var arguments = fixture.launchArguments
-        if name.contains("InLightAppearance") {
-            arguments += ["-AppleInterfaceStyle", "Light"]
-        }
-        if name.contains("InDarkAppearance") {
-            arguments += ["-AppleInterfaceStyle", "Dark"]
-        }
-        if name.contains("IncreasedContrast") {
-            arguments += ["-UIAccessibilityDarkerSystemColorsEnabled", "YES"]
-        }
         if name.contains("Pseudolocalized") {
             arguments += ["-NSDoubleLocalizedStrings", "YES"]
         }
@@ -2490,17 +2481,6 @@ final class CutoutAppUITests: XCTestCase {
             arguments += [
                 "-AppleLanguages", "(ar)",
                 "-AppleLocale", "ar_SA",
-            ]
-        }
-        if name.contains("AccessibilityDynamicType") || name.contains("RightToLeft") {
-            arguments += [
-                "-UIPreferredContentSizeCategoryName",
-                "UICTContentSizeCategoryAccessibilityXXXL",
-            ]
-        } else if name.contains("ExtraExtraExtraLarge") {
-            arguments += [
-                "-UIPreferredContentSizeCategoryName",
-                "UICTContentSizeCategoryXXXL",
             ]
         }
 

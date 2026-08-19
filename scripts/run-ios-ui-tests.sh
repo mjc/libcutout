@@ -78,6 +78,48 @@ if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
   echo "CUTOUT_IOS_UI_TEST_SKIP_BUILD is unsupported; an incremental test build is required" >&2
   exit 2
 fi
+
+selected_tests="$*"
+if [[ "$selected_tests" == *InLightAppearance* && "$selected_tests" == *InDarkAppearance* ]]; then
+  echo "Light and Dark UI tests require separate runner invocations" >&2
+  exit 2
+fi
+if [[ "$selected_tests" == *InLightAppearance* ]]; then
+  [[ -z "$requested_appearance" || "$requested_appearance" == light ]] || {
+    echo "the selected Light test conflicts with --appearance $requested_appearance" >&2
+    exit 2
+  }
+  requested_appearance=light
+elif [[ "$selected_tests" == *InDarkAppearance* ]]; then
+  [[ -z "$requested_appearance" || "$requested_appearance" == dark ]] || {
+    echo "the selected Dark test conflicts with --appearance $requested_appearance" >&2
+    exit 2
+  }
+  requested_appearance=dark
+fi
+
+if [[ "$selected_tests" == *AccessibilityDynamicType* || "$selected_tests" == *RightToLeft* || "$smoke" == true ]]; then
+  [[ -z "$requested_content_size" || "$requested_content_size" == accessibility-extra-extra-extra-large ]] || {
+    echo "the selected Accessibility Dynamic Type test conflicts with --content-size $requested_content_size" >&2
+    exit 2
+  }
+  requested_content_size=accessibility-extra-extra-extra-large
+elif [[ "$selected_tests" == *ExtraExtraExtraLarge* ]]; then
+  [[ -z "$requested_content_size" || "$requested_content_size" == extra-extra-extra-large ]] || {
+    echo "the selected XXXL test conflicts with --content-size $requested_content_size" >&2
+    exit 2
+  }
+  requested_content_size=extra-extra-extra-large
+fi
+
+if [[ "$selected_tests" == *IncreasedContrast* ]]; then
+  [[ -z "$requested_increase_contrast" || "$requested_increase_contrast" == enabled ]] || {
+    echo "the selected Increased Contrast test conflicts with --increase-contrast $requested_increase_contrast" >&2
+    exit 2
+  }
+  requested_increase_contrast=enabled
+fi
+
 destination="${CUTOUT_IOS_TEST_DESTINATION:-${CUTOUT_IOS_SIMULATOR_DESTINATION:-platform=iOS Simulator,name=Cutout iPhone 15 iOS 27,OS=latest}}"
 project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
 scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
