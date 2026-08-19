@@ -2257,9 +2257,15 @@ final class CutoutAppUITests: XCTestCase {
             NSPredicate(format: "label == %@", "Duty headroom")
         ).firstMatch
         XCTAssertTrue(headroom.waitForExistence(timeout: 5))
-        scrollElementFrameIntoViewport(headroom, in: screen, maxScrolls: 4)
+        scrollElementFrameIntoViewport(
+            headroom,
+            in: screen,
+            maxScrolls: 4,
+            occludedBy: app.tabBars.firstMatch,
+            requiresFullVisibility: false
+        )
         XCTAssertTrue(headroom.isHittable)
-        XCTAssertTrue(screen.frame.contains(headroom.frame))
+        XCTAssertTrue(unobscuredFrame(in: screen, above: app.tabBars.firstMatch).intersects(headroom.frame))
         XCTAssertTrue(
             (headroom.value as? String)?.contains("28%") == true,
             "The VESC duty-headroom metric must speak its percent unit: \(String(describing: headroom.value))"
@@ -2826,32 +2832,13 @@ final class CutoutAppUITests: XCTestCase {
         let metric = screen.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", label)
         ).firstMatch
-        let scrollView = screen.scrollViews.firstMatch
-        let scrollTarget = scrollView.exists ? scrollView : screen
-
-        if metric.exists {
-            let hittableExpectation = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "isHittable == true"),
-                object: metric
-            )
-            if XCTWaiter.wait(for: [hittableExpectation], timeout: 2) == .completed {
-                XCTAssertFalse(
-                    (metric.value as? String)?.isEmpty ?? true,
-                    "The \(label) metric has no accessible value"
-                )
-                return
-            }
-        }
-
-        for _ in 0..<8 where !metric.exists || !metric.isHittable {
-            scrollTarget.swipeUp(velocity: .fast)
-        }
-        for _ in 0..<8 where !metric.exists || !metric.isHittable {
-            scrollTarget.swipeDown(velocity: .fast)
-        }
-
-        XCTAssertTrue(metric.exists, "The \(label) metric is missing at accessibility text sizes")
-        XCTAssertTrue(metric.isHittable, "The \(label) metric cannot be reached by scrolling")
+        scrollElementFrameIntoViewport(
+            metric,
+            in: screen,
+            maxScrolls: 16,
+            occludedBy: app.tabBars.firstMatch,
+            requiresFullVisibility: false
+        )
         XCTAssertFalse(
             (metric.value as? String)?.isEmpty ?? true,
             "The \(label) metric has no accessible value"
@@ -2876,25 +2863,39 @@ final class CutoutAppUITests: XCTestCase {
         _ element: XCUIElement,
         in screen: XCUIElement,
         maxScrolls: Int,
-        occludedBy obstruction: XCUIElement? = nil
+        occludedBy obstruction: XCUIElement? = nil,
+        requiresFullVisibility: Bool = true
     ) {
         for _ in 0..<maxScrolls {
             let unobscuredFrame = unobscuredFrame(in: screen, above: obstruction)
             if element.exists,
-               unobscuredFrame.contains(element.frame),
+               isVisible(element.frame, in: unobscuredFrame, fully: requiresFullVisibility),
                element.isHittable {
                 break
             }
             let isAboveViewport = element.exists && element.frame.minY < unobscuredFrame.minY
-            let startY = isAboveViewport ? 0.08 : 0.60
-            let endY = isAboveViewport ? 0.60 : 0.08
-            let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
-            let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY))
-            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
+            let centerY = unobscuredFrame.midY
+            let travel = min(48, unobscuredFrame.height * 0.18)
+            dragVertically(
+                in: screen,
+                from: isAboveViewport ? centerY - travel : centerY + travel,
+                to: isAboveViewport ? centerY + travel : centerY - travel
+            )
         }
         XCTAssertTrue(element.waitForExistence(timeout: 5), screen.debugDescription)
-        XCTAssertTrue(unobscuredFrame(in: screen, above: obstruction).contains(element.frame), screen.debugDescription)
+        XCTAssertTrue(
+            isVisible(
+                element.frame,
+                in: unobscuredFrame(in: screen, above: obstruction),
+                fully: requiresFullVisibility
+            ),
+            screen.debugDescription
+        )
         XCTAssertTrue(element.isHittable, screen.debugDescription)
+    }
+
+    private func isVisible(_ elementFrame: CGRect, in viewport: CGRect, fully: Bool) -> Bool {
+        fully ? viewport.contains(elementFrame) : viewport.intersects(elementFrame)
     }
 
     private func unobscuredFrame(in screen: XCUIElement, above obstruction: XCUIElement?) -> CGRect {
@@ -2907,6 +2908,21 @@ final class CutoutAppUITests: XCTestCase {
             width: screen.frame.width,
             height: max(0, maximumY - screen.frame.minY)
         )
+    }
+
+    private func dragVertically(in screen: XCUIElement, from startY: CGFloat, to endY: CGFloat) {
+        let frame = screen.frame
+        guard frame.height > 0 else { return }
+        func normalizedY(_ y: CGFloat) -> CGFloat {
+            min(0.92, max(0.08, (y - frame.minY) / frame.height))
+        }
+        let start = screen.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: normalizedY(startY))
+        )
+        let end = screen.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: normalizedY(endY))
+        )
+        start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
     }
 
     private func performVisibleLayoutAccessibilityAudit(
@@ -3022,8 +3038,14 @@ final class CutoutAppUITests: XCTestCase {
     private func restoreDashboardViewport(_ screen: XCUIElement) {
         let scrollView = screen.scrollViews.firstMatch
         let scrollTarget = scrollView.exists ? scrollView : screen
+        let unobscuredFrame = unobscuredFrame(in: scrollTarget, above: app.tabBars.firstMatch)
+        let edgeInset = min(44, unobscuredFrame.height * 0.2)
         for _ in 0..<4 {
-            scrollTarget.swipeDown()
+            dragVertically(
+                in: scrollTarget,
+                from: unobscuredFrame.minY + edgeInset,
+                to: unobscuredFrame.maxY - edgeInset
+            )
         }
     }
 

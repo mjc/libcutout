@@ -59,6 +59,7 @@ private extension RideHeroSeverity {
 
 struct PevRideHeroSection: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @ScaledMetric(relativeTo: .largeTitle) private var eucSpeedFontSize = PevRideHeroStyle.electricUnicycleSpeedPointSize
     @ScaledMetric(relativeTo: .largeTitle) private var vescSpeedFontSize = PevRideHeroStyle.vescOnewheelSpeedPointSize
     @ScaledMetric(relativeTo: .title2) private var speedUnitFontSize = PevRideHeroStyle.unitPointSize
@@ -73,7 +74,7 @@ struct PevRideHeroSection: View {
 
     var body: some View {
         Group {
-            if dynamicTypeSize.isAccessibilitySize {
+            if dynamicTypeSize.isAccessibilitySize && verticalSizeClass != .compact {
                 VStack(alignment: .leading, spacing: 8) {
                     titleText
                     PevDashboardStatusPill(title: subtitle, tone: statusTone)
