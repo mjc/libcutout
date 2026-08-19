@@ -2738,7 +2738,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
         XCTAssertEqual(
             stale.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)),
-            EucRideWarningState(severity: .caution, title: "Telemetry stale", detail: "Last update 3000 ms ago")
+            EucRideWarningState(severity: .caution, title: "Telemetry stale", detail: "Last update 3 seconds ago")
         )
         XCTAssertEqual(
             fresh.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)).severity,
@@ -2761,7 +2761,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(stale.warningState.severity, .reduceAcceleration)
         XCTAssertEqual(
             stale.warningState(at: MonotonicMilliseconds(4_000), staleAfter: MonotonicMilliseconds(2_000)),
-            EucRideWarningState(severity: .caution, title: "Telemetry stale", detail: "Last update 3000 ms ago")
+            EucRideWarningState(severity: .caution, title: "Telemetry stale", detail: "Last update 3 seconds ago")
         )
     }
 

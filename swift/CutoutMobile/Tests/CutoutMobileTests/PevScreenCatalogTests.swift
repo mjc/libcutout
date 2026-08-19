@@ -161,7 +161,7 @@ final class PevScreenCatalogTests: XCTestCase {
         XCTAssertEqual(pevLocalizedText("euc.warning.waiting_for_live_telemetry"), "Waiting for live telemetry")
         XCTAssertEqual(pevLocalizedText("euc.warning.screen_inactive"), "Ride screen is not active yet")
         XCTAssertEqual(pevLocalizedText("euc.warning.telemetry_stale"), "Telemetry stale")
-        XCTAssertEqual(pevLocalizedText("euc.warning.last_update", "3000"), "Last update 3000 ms ago")
+        XCTAssertEqual(pevLocalizedText("euc.warning.last_update", "3 seconds"), "Last update 3 seconds ago")
         XCTAssertEqual(pevLocalizedText("euc.status.parked"), "Parked")
         XCTAssertEqual(pevLocalizedText("euc.status.standing"), "Standing")
         XCTAssertEqual(pevLocalizedText("euc.status.riding"), "Riding")

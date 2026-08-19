@@ -4055,10 +4055,18 @@ public struct EucRideScreenState: Equatable, Hashable, Sendable {
     ) -> EucRideWarningState {
         let age = updateAge(at: now, staleAfter: staleThreshold)
         if phase == .live, age.freshness == .stale, let elapsed = age.elapsed {
+            let elapsedDescription = Duration.seconds(Double(elapsed.rawValue) / 1_000)
+                .formatted(
+                    .units(
+                        allowed: [.hours, .minutes, .seconds],
+                        width: .wide,
+                        maximumUnitCount: 1
+                    )
+                )
             return EucRideWarningState(
                 severity: .caution,
                 title: pevLocalizedText("euc.warning.telemetry_stale"),
-                detail: pevLocalizedText("euc.warning.last_update", String(elapsed.rawValue))
+                detail: pevLocalizedText("euc.warning.last_update", elapsedDescription)
             )
         }
         return warningState

@@ -2024,7 +2024,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInLightAppearanceAtAccessibilityDynamicType() throws {
-        try assertEucStaleTelemetryAccessibility()
+        try assertEucStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {

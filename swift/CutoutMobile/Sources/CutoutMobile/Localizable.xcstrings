@@ -426,8 +426,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Connection failed" } } }
     },
     "euc.warning.last_update" : {
-      "comment" : "Stale telemetry warning detail. The placeholder is elapsed milliseconds since the last update.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last update %@ ms ago" } } }
+      "comment" : "Stale telemetry warning detail. The placeholder is a localized elapsed duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last update %@ ago" } } }
     },
     "euc.warning.live_telemetry_detail" : {
       "comment" : "Ride warning detail explaining that current telemetry came from the typed Rust/FFI layer.",
