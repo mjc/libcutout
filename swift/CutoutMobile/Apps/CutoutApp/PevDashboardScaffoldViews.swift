@@ -58,6 +58,7 @@ struct PevDashboardScaffold<Content: View>: View {
 }
 
 struct PevAppShell<Content: View>: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     let sectionTitle: String
@@ -80,7 +81,12 @@ struct PevAppShell<Content: View>: View {
                 sectionTitle: sectionTitle
             ) {
                 Button(action: disconnect) {
-                    Text(localizedAppText("ride.action.disconnect"))
+                    if verticalSizeClass == .compact && dynamicTypeSize.isAccessibilitySize {
+                        Image(systemName: "xmark")
+                            .accessibilityHidden(true)
+                    } else {
+                        Text(localizedAppText("ride.action.disconnect"))
+                    }
                 }
                 .font(.callout.weight(.bold))
                 .foregroundStyle(PevDashboardColors.primaryText)
@@ -88,6 +94,7 @@ struct PevAppShell<Content: View>: View {
                 .frame(minWidth: 44, minHeight: 44)
                 .background(PevDashboardCardBackground(cornerRadius: 8))
                 .buttonStyle(.plain)
+                .accessibilityLabel(localizedAppText("ride.action.disconnect"))
                 .accessibilityIdentifier("dashboard.disconnect")
             }
             .padding(.horizontal, 24)
