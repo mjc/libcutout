@@ -48,7 +48,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(advancedCapture.waitForExistence(timeout: 5))
         XCTAssertTrue(captureKind.waitForExistence(timeout: 5))
         XCTAssertEqual(captureKind.label, "Device kind for capture")
-        XCTAssertTrue(captureKind.isHittable)
+        scrollElementFrameIntoViewport(captureKind, in: advancedCapture, maxScrolls: 8)
         XCTAssertTrue(finishEditing.exists)
         XCTAssertEqual(finishEditing.label, "Done")
         XCTAssertTrue(cancelCapture.exists)
