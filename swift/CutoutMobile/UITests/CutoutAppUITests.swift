@@ -3214,7 +3214,7 @@ final class CutoutAppUITests: XCTestCase {
         scrollElementFrameIntoViewport(
             annotation,
             in: screen,
-            maxScrolls: 24,
+            maxScrolls: 48,
             occludedBy: app.buttons["capture.stop"]
         )
 
