@@ -422,6 +422,12 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(capture.waitForExistence(timeout: 5))
         XCTAssertTrue(capture.isHittable)
         XCTAssertTrue(status.isHittable, "Capture failure must be visible without scrolling")
+        let scrollView = capture.scrollViews.firstMatch
+        XCTAssertTrue(scrollView.exists)
+        XCTAssertTrue(
+            scrollView.frame.contains(status.frame),
+            "The complete capture failure strip must fit above the fixed Finish action"
+        )
         XCTAssertTrue(finish.isHittable, "Finish capture must remain usable after a failure")
         if !usesLocalizedText {
             XCTAssertEqual(status.label, "Capture failed")
