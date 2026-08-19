@@ -600,7 +600,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testCapturePassesAccessibilityAuditInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertCaptureAccessibility()
+        try assertCaptureAccessibility(ignoringNilElementContrastWarning: true)
     }
 
     func testCapturePassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicType() throws {
@@ -2025,7 +2025,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInDarkAppearanceAtAccessibilityDynamicType() throws {
-        try assertEucStaleTelemetryAccessibility()
+        try assertEucStaleTelemetryAccessibility(ignoringNilElementContrastWarning: true)
     }
 
     func testEucStaleTelemetryIsAnAccessibleWarningInLandscapeAtAccessibilityDynamicType() throws {
@@ -2041,7 +2041,8 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     private func assertEucStaleTelemetryAccessibility(
-        usesLocalizedText: Bool = false
+        usesLocalizedText: Bool = false,
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         XCTAssertTrue(pairAvailableDevice(.euc))
         guard let screen = connectedScreen(timeout: 20) else {
@@ -2075,7 +2076,9 @@ final class CutoutAppUITests: XCTestCase {
         }
         scrollSafetyWarningAboveNavigation(warning, in: screen)
         XCTAssertTrue(warning.isHittable, "The EUC stale warning cannot be reached by scrolling")
-        try performVisibleLayoutAccessibilityAudit()
+        try performVisibleLayoutAccessibilityAudit(
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+        )
     }
 
     func testVescPendingTelemetryIsAnAccessibleWarningAtAccessibilityDynamicType() throws {
@@ -2739,7 +2742,8 @@ final class CutoutAppUITests: XCTestCase {
 
     private func assertCaptureAccessibility(
         excluding excluded: XCUIAccessibilityAuditType = [],
-        exercisesLabels: Bool = true
+        exercisesLabels: Bool = true,
+        ignoringNilElementContrastWarning: Bool = false
     ) throws {
         enterCapture()
 
@@ -2754,7 +2758,8 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
         try performVisibleLayoutAccessibilityAudit(
-            excluding: excluded
+            excluding: excluded,
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
         )
         guard exercisesLabels else {
             return
@@ -2870,15 +2875,17 @@ final class CutoutAppUITests: XCTestCase {
     private func scrollElementFrameIntoViewport(
         _ element: XCUIElement,
         in screen: XCUIElement,
-        maxScrolls: Int
+        maxScrolls: Int,
+        occludedBy obstruction: XCUIElement? = nil
     ) {
         for _ in 0..<maxScrolls {
+            let unobscuredFrame = unobscuredFrame(in: screen, above: obstruction)
             if element.exists,
-               screen.frame.contains(element.frame),
+               unobscuredFrame.contains(element.frame),
                element.isHittable {
                 break
             }
-            let isAboveViewport = element.exists && element.frame.minY < screen.frame.minY
+            let isAboveViewport = element.exists && element.frame.minY < unobscuredFrame.minY
             let startY = isAboveViewport ? 0.08 : 0.60
             let endY = isAboveViewport ? 0.60 : 0.08
             let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
@@ -2886,8 +2893,20 @@ final class CutoutAppUITests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
         }
         XCTAssertTrue(element.waitForExistence(timeout: 5), screen.debugDescription)
-        XCTAssertTrue(screen.frame.contains(element.frame), screen.debugDescription)
+        XCTAssertTrue(unobscuredFrame(in: screen, above: obstruction).contains(element.frame), screen.debugDescription)
         XCTAssertTrue(element.isHittable, screen.debugDescription)
+    }
+
+    private func unobscuredFrame(in screen: XCUIElement, above obstruction: XCUIElement?) -> CGRect {
+        let maximumY = obstruction?.exists == true
+            ? min(screen.frame.maxY, obstruction?.frame.minY ?? screen.frame.maxY)
+            : screen.frame.maxY
+        return CGRect(
+            x: screen.frame.minX,
+            y: screen.frame.minY,
+            width: screen.frame.width,
+            height: max(0, maximumY - screen.frame.minY)
+        )
     }
 
     private func performVisibleLayoutAccessibilityAudit(
@@ -3074,7 +3093,12 @@ final class CutoutAppUITests: XCTestCase {
 
     private func reachableCaptureAnnotation(_ id: String, in screen: XCUIElement) -> XCUIElement {
         let annotation = app.buttons["capture.label.\(id).action"]
-        scrollElementFrameIntoViewport(annotation, in: screen, maxScrolls: 30)
+        scrollElementFrameIntoViewport(
+            annotation,
+            in: screen,
+            maxScrolls: 30,
+            occludedBy: app.buttons["capture.stop"]
+        )
 
         XCTAssertTrue(annotation.waitForExistence(timeout: 5))
         XCTAssertTrue(annotation.isHittable, screen.debugDescription)

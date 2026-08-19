@@ -133,6 +133,8 @@ struct ContentView: View {
                 }
             }
             .tint(tabAccent)
+            .toolbarBackground(PevColors.pageBackground, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
         }
     }
 
