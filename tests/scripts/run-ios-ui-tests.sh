@@ -54,6 +54,18 @@ for arguments in "${conflicting_options[@]}"; do
   fi
 done
 
+mkdir -p "$tmp/unqualified-derived-data/.run-ios-ui-tests.lock"
+if CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/unqualified-derived-data" \
+  "$root/scripts/run-ios-ui-tests.sh" >"$tmp/unqualified-run.log" 2>&1
+then
+  echo "expected an unqualified all-tests run to be rejected" >&2
+  exit 1
+fi
+if ! grep -q "require --smoke or at least one -only-testing selector" "$tmp/unqualified-run.log"; then
+  cat "$tmp/unqualified-run.log" >&2
+  exit 1
+fi
+
 mkdir -p "$tmp/derived-data/.run-ios-ui-tests.lock"
 if CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/derived-data" \
   "$root/scripts/run-ios-ui-tests.sh" --no-build >"$tmp/no-build.log" 2>&1

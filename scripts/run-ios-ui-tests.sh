@@ -6,6 +6,7 @@ usage() {
   echo "  --smoke    Run the seven production-root transition and accessibility checks."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
   echo "  --appearance, --increase-contrast, and --content-size apply and verify simulator settings for this run, then restore them."
+  echo "  Test runs require --smoke or at least one -only-testing selector; an unqualified run mixes incompatible settings cells."
 }
 
 if [[ "${1:-}" == "--help" ]]; then
@@ -80,6 +81,17 @@ if [[ "${CUTOUT_IOS_UI_TEST_SKIP_BUILD:-}" == "1" ]]; then
 fi
 
 selected_tests="$*"
+has_selected_test=false
+for argument in "$@"; do
+  if [[ "$argument" == -only-testing || "$argument" == -only-testing:* ]]; then
+    has_selected_test=true
+    break
+  fi
+done
+if [[ "$mode" == test && "$smoke" == false && "$has_selected_test" == false ]]; then
+  echo "iOS UI test runs require --smoke or at least one -only-testing selector; an unqualified run mixes incompatible simulator settings" >&2
+  exit 2
+fi
 if [[ "$selected_tests" == *InLightAppearance* && "$selected_tests" == *InDarkAppearance* ]]; then
   echo "Light and Dark UI tests require separate runner invocations" >&2
   exit 2
