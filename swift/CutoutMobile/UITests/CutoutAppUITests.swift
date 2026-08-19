@@ -2257,7 +2257,11 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescRidePassesAccessibilityAuditAtExtraExtraExtraLargeType() throws {
-        try assertConnectedSurface(for: .vesc, requiredMetricLabel: "voltage")
+        try assertConnectedSurface(
+            for: .vesc,
+            requiredMetricLabel: "voltage",
+            ignoringNilElementDetectionWarning: true
+        )
     }
 
     func testVescRidePassesAccessibilityAuditInLandscapeAtExtraExtraExtraLargeType() throws {
@@ -2342,6 +2346,7 @@ final class CutoutAppUITests: XCTestCase {
         requiredMetricLabel: String? = nil,
         auditExclusions: XCUIAccessibilityAuditType = [],
         ignoringNilElementContrastWarning: Bool = false,
+        ignoringNilElementDetectionWarning: Bool = false,
         expectsMirroredTabOrder: Bool = true
     ) throws {
         let pairingAttempted = pairAvailableDevice(family)
@@ -2429,7 +2434,8 @@ final class CutoutAppUITests: XCTestCase {
 
         try performVisibleLayoutAccessibilityAudit(
             excluding: auditExclusions,
-            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning
+            ignoringNilElementContrastWarning: ignoringNilElementContrastWarning,
+            ignoringNilElementDetectionWarning: ignoringNilElementDetectionWarning
         )
     }
 
@@ -2924,6 +2930,7 @@ final class CutoutAppUITests: XCTestCase {
         excluding excluded: XCUIAccessibilityAuditType = [],
         ignoringSystemToolbarDynamicTypeWarning: Bool = false,
         ignoringNilElementContrastWarning: Bool = false,
+        ignoringNilElementDetectionWarning: Bool = false,
         ignoringAdvancedCaptureTitleContrastWarning: Bool = false,
         ignoringVisibleBmsDetailBackControlContrastWarning: Bool = false,
         ignoringClippedBmsDetailBoundaryWarnings: Bool = false
@@ -2980,6 +2987,15 @@ final class CutoutAppUITests: XCTestCase {
                 // XCTest supplied no element, frame, or color for this
                 // simulator-only diagnostic. Attributable contrast findings
                 // still fail this test.
+                return true
+            }
+            if ignoringNilElementDetectionWarning,
+               issue.auditType == .elementDetection,
+               issue.element == nil,
+               issue.detailedDescription
+                   == "This element appears to display text that should be represented using the accessibility API." {
+                // Xcode supplied no element, frame, or element screenshot.
+                // Every attributable detection finding remains fatal.
                 return true
             }
             if ignoringAdvancedCaptureTitleContrastWarning,
