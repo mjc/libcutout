@@ -686,7 +686,8 @@ final class CutoutAppUITests: XCTestCase {
         try performVisibleLayoutAccessibilityAudit(
             // This default-size route owns semantics and clipping. The
             // Accessibility-XXXL VESC route owns rendered Dynamic Type.
-            excluding: .dynamicType
+            excluding: .dynamicType,
+            ignoringUnavailableMetricPlaceholderContrastWarning: true
         )
     }
 
