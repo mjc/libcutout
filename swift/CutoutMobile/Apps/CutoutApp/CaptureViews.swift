@@ -49,41 +49,43 @@ struct CaptureRecordingScreen: View {
     let stopCaptureLabel: (CaptureQuickLabel) -> Void
 
     var body: some View {
-        PevDashboardScaffold(
-            sectionTitle: localizedAppText("capture.section.record"),
-            bottomPadding: 24,
-            allowsVerticalScroll: true,
-            contentSpacing: 16,
-            horizontalPadding: 18,
-            showsHeader: false
-        ) {
-            PevScreenTitleBlock(
-                title: deviceKind ?? localizedAppText("capture.session"),
-                subtitle: localizedAppText("capture.session")
-            )
+        VStack(spacing: 0) {
+            PevDashboardScaffold(
+                sectionTitle: localizedAppText("capture.section.record"),
+                bottomPadding: 24,
+                allowsVerticalScroll: true,
+                contentSpacing: 16,
+                horizontalPadding: 18,
+                showsHeader: false
+            ) {
+                PevScreenTitleBlock(
+                    title: deviceKind ?? localizedAppText("capture.session"),
+                    subtitle: localizedAppText("capture.session")
+                )
 
-            PevStatusStrip(
-                text: captureStatusText ?? localizedAppText("capture.status.recording_locally_without_file"),
-                tone: captureStatusTone
-            )
-            .accessibilityIdentifier("capture.status")
+                PevStatusStrip(
+                    text: captureStatusText ?? localizedAppText("capture.status.recording_locally_without_file"),
+                    tone: captureStatusTone
+                )
+                .accessibilityIdentifier("capture.status")
 
-            if let captureProgress {
-                PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))
+                if let captureProgress {
+                    PevDashboardKeyValueRows(rows: captureSessionDetailRows(progress: captureProgress))
+                }
+
+                CaptureLabelControls(
+                    activeLabels: activeLabels,
+                    startCaptureLabel: startCaptureLabel,
+                    stopCaptureLabel: stopCaptureLabel
+                )
             }
 
-            CaptureLabelControls(
-                activeLabels: activeLabels,
-                startCaptureLabel: startCaptureLabel,
-                stopCaptureLabel: stopCaptureLabel
-            )
-        }
-        .safeAreaInset(edge: .bottom) {
             stopCaptureButton
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
                 .background(PevColors.pageBackground)
         }
+        .background(PevColors.pageBackground)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("capture.screen")
     }
