@@ -119,7 +119,7 @@ struct ContentView: View {
             }
             .accessibilityFocused($focusedRoute, equals: destination)
         } else {
-            TabView(selection: tabSelection) {
+            let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
                     if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
@@ -133,8 +133,13 @@ struct ContentView: View {
                 }
             }
             .tint(tabAccent)
-            .toolbarBackground(PevColors.pageBackground, for: .tabBar)
-            .toolbarBackground(.visible, for: .tabBar)
+#if os(iOS)
+            tabs
+                .toolbarBackground(PevColors.pageBackground, for: .tabBar)
+                .toolbarBackground(.visible, for: .tabBar)
+#else
+            tabs
+#endif
         }
     }
 
