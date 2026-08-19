@@ -23,7 +23,7 @@ if ! grep -q -- "--verbose" <<<"$help_output"; then
   echo "expected UI test runner help to document verbose diagnostics" >&2
   exit 1
 fi
-for option in --appearance --increase-contrast --content-size; do
+for option in --appearance --increase-contrast --content-size --enumerate-tests; do
   if ! grep -q -- "$option" <<<"$help_output"; then
     echo "expected UI test runner help to document $option" >&2
     exit 1

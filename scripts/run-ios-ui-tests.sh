@@ -2,9 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
+  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
   echo "  --smoke    Run the seven production-root transition and accessibility checks."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
+  echo "  --enumerate-tests writes Xcode's compiled test graph without executing tests."
   echo "  --appearance, --increase-contrast, and --content-size apply and verify simulator settings for this run, then restore them."
   echo "  Test runs require --smoke or at least one -only-testing selector; an unqualified run mixes incompatible settings cells."
 }
@@ -28,6 +29,7 @@ fi
 cutout_use_xcode_developer_dir
 
 mode="test"
+enumeration_output=""
 clean=false
 smoke=false
 quiet=true
@@ -51,6 +53,12 @@ while [[ $# -gt 0 ]]; do
     --verbose)
       quiet=false
       shift
+      ;;
+    --enumerate-tests)
+      [[ $# -ge 2 ]] || { echo "--enumerate-tests requires an output JSON path" >&2; exit 2; }
+      mode="enumerate-tests"
+      enumeration_output="$2"
+      shift 2
       ;;
     --appearance)
       [[ $# -ge 2 ]] || { echo "--appearance requires light or dark" >&2; exit 2; }
@@ -252,6 +260,30 @@ fi
 
 if [[ "$clean" == true ]]; then
   /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" clean
+fi
+
+if [[ "$mode" == "enumerate-tests" ]]; then
+  if [[ -e "$enumeration_output" ]]; then
+    echo "test enumeration output already exists: $enumeration_output" >&2
+    exit 2
+  fi
+  mkdir -p "$(dirname "$enumeration_output")"
+  /usr/bin/xcrun xcodebuild \
+    "${xcodebuild_args[@]}" \
+    -parallel-testing-enabled NO \
+    -enumerate-tests \
+    -test-enumeration-style flat \
+    -test-enumeration-format json \
+    -test-enumeration-output-path "$enumeration_output" \
+    test
+  enumeration_errors="$(jq '[.errors[]?] | length' "$enumeration_output")"
+  enumerated_test_count="$(jq '[.values[].enabledTests | length] | add // 0' "$enumeration_output")"
+  if [[ "$enumeration_errors" -ne 0 || "$enumerated_test_count" -eq 0 ]]; then
+    echo "Xcode test enumeration returned $enumerated_test_count tests and $enumeration_errors errors" >&2
+    exit 1
+  fi
+  echo "Enumerated $enumerated_test_count iOS UI tests ($enumeration_output)"
+  exit 0
 fi
 
 if [[ -n "${CUTOUT_IOS_UI_TEST_RUN_TIMEOUT:-}" ]]; then
