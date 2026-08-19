@@ -2,9 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [xcodebuild options]"
+  echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
   echo "  --smoke    Run the seven production-root transition and accessibility checks."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
+  echo "  --appearance, --increase-contrast, and --content-size apply and verify simulator settings for this run, then restore them."
 }
 
 if [[ "${1:-}" == "--help" ]]; then
@@ -29,6 +30,9 @@ mode="test"
 clean=false
 smoke=false
 quiet=true
+requested_appearance="${CUTOUT_IOS_SIMULATOR_APPEARANCE:-}"
+requested_increase_contrast="${CUTOUT_IOS_SIMULATOR_INCREASE_CONTRAST:-}"
+requested_content_size="${CUTOUT_IOS_SIMULATOR_CONTENT_SIZE:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --clean)
@@ -46,6 +50,21 @@ while [[ $# -gt 0 ]]; do
     --verbose)
       quiet=false
       shift
+      ;;
+    --appearance)
+      [[ $# -ge 2 ]] || { echo "--appearance requires light or dark" >&2; exit 2; }
+      requested_appearance="$2"
+      shift 2
+      ;;
+    --increase-contrast)
+      [[ $# -ge 2 ]] || { echo "--increase-contrast requires enabled or disabled" >&2; exit 2; }
+      requested_increase_contrast="$2"
+      shift 2
+      ;;
+    --content-size)
+      [[ $# -ge 2 ]] || { echo "--content-size requires a simctl content-size value" >&2; exit 2; }
+      requested_content_size="$2"
+      shift 2
       ;;
     --no-build)
       echo "--no-build is unsupported; an incremental test build is required" >&2
@@ -93,9 +112,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-requested_appearance="${CUTOUT_IOS_SIMULATOR_APPEARANCE:-}"
-requested_increase_contrast="${CUTOUT_IOS_SIMULATOR_INCREASE_CONTRAST:-}"
-requested_content_size="${CUTOUT_IOS_SIMULATOR_CONTENT_SIZE:-}"
 if [[ -n "$requested_appearance$requested_increase_contrast$requested_content_size" ]]; then
   if [[ "$destination" != platform=iOS\ Simulator,* ]]; then
     echo "simulator UI settings require an iOS Simulator destination" >&2

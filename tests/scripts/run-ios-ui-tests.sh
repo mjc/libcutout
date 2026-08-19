@@ -23,6 +23,20 @@ if ! grep -q -- "--verbose" <<<"$help_output"; then
   echo "expected UI test runner help to document verbose diagnostics" >&2
   exit 1
 fi
+for option in --appearance --increase-contrast --content-size; do
+  if ! grep -q -- "$option" <<<"$help_output"; then
+    echo "expected UI test runner help to document $option" >&2
+    exit 1
+  fi
+  if "$root/scripts/run-ios-ui-tests.sh" "$option" >"$tmp/missing-option-value.log" 2>&1; then
+    echo "expected $option without a value to be rejected" >&2
+    exit 1
+  fi
+  if ! grep -q "requires" "$tmp/missing-option-value.log"; then
+    cat "$tmp/missing-option-value.log" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$tmp/derived-data/.run-ios-ui-tests.lock"
 if CUTOUT_IOS_UI_TEST_DERIVED_DATA="$tmp/derived-data" \
