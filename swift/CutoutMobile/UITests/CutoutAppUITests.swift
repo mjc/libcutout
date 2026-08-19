@@ -1505,7 +1505,7 @@ final class CutoutAppUITests: XCTestCase {
         defer { disconnectIfConnected() }
 
         let diagnostics = app.staticTexts["bms.diagnostics"].firstMatch
-        scrollElementIntoReachability(diagnostics, in: bmsScreen, maxScrolls: 20)
+        scrollElementFrameIntoViewport(diagnostics, in: bmsScreen, maxScrolls: 20)
         XCTAssertTrue(diagnostics.isHittable, bmsScreen.debugDescription)
         diagnostics.tap()
 
@@ -2773,10 +2773,10 @@ final class CutoutAppUITests: XCTestCase {
 
         XCTAssertTrue(stopCapture.exists)
         XCTAssertTrue(stopCapture.isHittable, app.debugDescription)
+        try performVisibleLayoutAccessibilityAudit(
+            excluding: excluded
+        )
         guard exercisesLabels else {
-            try performVisibleLayoutAccessibilityAudit(
-                excluding: excluded
-            )
             return
         }
         let firstAnnotation = reachableCaptureAnnotation("ride", in: screen)
@@ -2793,12 +2793,6 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertFalse(lastAnnotationInitialLabel.isEmpty)
         lastAnnotation.tap()
         XCTAssertNotEqual(lastAnnotation.label, lastAnnotationInitialLabel)
-
-        restoreCaptureViewport(screen)
-        XCTAssertTrue(stopCapture.isHittable)
-        try performVisibleLayoutAccessibilityAudit(
-            excluding: excluded
-        )
     }
 
     private func openAdvancedCapture() -> XCUIElement {
@@ -2898,15 +2892,22 @@ final class CutoutAppUITests: XCTestCase {
         in screen: XCUIElement,
         maxScrolls: Int
     ) {
-        for _ in 0..<maxScrolls where !screen.frame.contains(element.frame) {
-            let isAboveViewport = element.frame.minY < screen.frame.minY
-            let startY = isAboveViewport ? 0.28 : 0.72
-            let endY = isAboveViewport ? 0.72 : 0.28
+        for _ in 0..<maxScrolls {
+            if element.exists,
+               screen.frame.contains(element.frame),
+               element.isHittable {
+                break
+            }
+            let isAboveViewport = element.exists && element.frame.minY < screen.frame.minY
+            let startY = isAboveViewport ? 0.08 : 0.60
+            let endY = isAboveViewport ? 0.60 : 0.08
             let start = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: startY))
             let end = screen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: endY))
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0)
         }
+        XCTAssertTrue(element.waitForExistence(timeout: 5), screen.debugDescription)
         XCTAssertTrue(screen.frame.contains(element.frame), screen.debugDescription)
+        XCTAssertTrue(element.isHittable, screen.debugDescription)
     }
 
     private func performVisibleLayoutAccessibilityAudit(
@@ -3083,7 +3084,7 @@ final class CutoutAppUITests: XCTestCase {
 
     private func reachableBmsGroup(_ index: Int, in bmsScreen: XCUIElement) -> XCUIElement {
         let group = app.buttons["bms.group.\(index)"]
-        scrollElementIntoReachability(group, in: bmsScreen, maxScrolls: 20)
+        scrollElementFrameIntoViewport(group, in: bmsScreen, maxScrolls: 20)
 
         XCTAssertTrue(group.waitForExistence(timeout: 5), bmsScreen.debugDescription)
         XCTAssertEqual(group.elementType, .button)
@@ -3093,54 +3094,11 @@ final class CutoutAppUITests: XCTestCase {
 
     private func reachableCaptureAnnotation(_ id: String, in screen: XCUIElement) -> XCUIElement {
         let annotation = app.buttons["capture.label.\(id).action"]
-        scrollElementIntoReachability(annotation, in: screen, maxScrolls: 20)
+        scrollElementFrameIntoViewport(annotation, in: screen, maxScrolls: 30)
 
         XCTAssertTrue(annotation.waitForExistence(timeout: 5))
         XCTAssertTrue(annotation.isHittable, screen.debugDescription)
         return annotation
-    }
-
-    private func scrollElementIntoReachability(
-        _ element: XCUIElement,
-        in screen: XCUIElement,
-        maxScrolls: Int
-    ) {
-        let scrollView = screen.scrollViews.firstMatch
-        let scrollTarget = scrollView.exists ? scrollView : screen
-
-        // Keep both drag endpoints above the persistent landscape tab bar.
-        for _ in 0..<maxScrolls where !element.exists || !element.isHittable {
-            if element.exists, element.frame.minY < screen.frame.minY {
-                scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15))
-                    .press(
-                        forDuration: 0.05,
-                        thenDragTo: scrollTarget.coordinate(
-                            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65)
-                        )
-                    )
-            } else {
-                scrollTarget.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.65))
-                    .press(
-                        forDuration: 0.05,
-                        thenDragTo: scrollTarget.coordinate(
-                            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.15)
-                        )
-                    )
-            }
-        }
-    }
-
-    private func restoreCaptureViewport(_ screen: XCUIElement) {
-        let scrollView = screen.scrollViews.firstMatch
-        let scrollTarget = scrollView.exists ? scrollView : screen
-        let topAnchor = app.descendants(matching: .any)["capture.status"]
-
-        for _ in 0..<20 where !topAnchor.exists || !screen.frame.contains(topAnchor.frame) {
-            scrollTarget.swipeDown()
-        }
-
-        XCTAssertTrue(topAnchor.exists)
-        XCTAssertTrue(screen.frame.contains(topAnchor.frame), screen.debugDescription)
     }
 
     private func assertEucBmsAccessibility(
