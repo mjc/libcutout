@@ -112,6 +112,40 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         )
     }
 
+    func testIdentityChangeDoesNotStartReplacementUntilPreviousActivityEnds() async {
+        let manager = RecordingLiveActivityRideLifecycleManager(endError: .activityUnavailable)
+        let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
+        let first = liveSnapshot(label: "First ride", speedMph: 19.8)
+        let replacement = liveSnapshot(label: "Second ride", speedMph: 19.8)
+
+        await coordinator.reconcile(requestID: 1, snapshot: first, shouldBeActive: true)
+        await coordinator.reconcile(requestID: 2, snapshot: replacement, shouldBeActive: true)
+
+        let error = await coordinator.lastError
+        let eventsAfterFailure = await manager.recordedEvents()
+        XCTAssertEqual(error, .activityUnavailable)
+        XCTAssertEqual(
+            eventsAfterFailure,
+            [.start(first), .end(.sessionEnded)]
+        )
+
+        await manager.setEndError(nil)
+        await coordinator.reconcile(requestID: 3, snapshot: replacement, shouldBeActive: true)
+
+        let recoveredError = await coordinator.lastError
+        let recoveredEvents = await manager.recordedEvents()
+        XCTAssertNil(recoveredError)
+        XCTAssertEqual(
+            recoveredEvents,
+            [
+                .start(first),
+                .end(.sessionEnded),
+                .end(.sessionEnded),
+                .start(replacement),
+            ]
+        )
+    }
+
     func testFailedStartDoesNotMakeTheCoordinatorActive() async {
         let manager = RecordingLiveActivityRideLifecycleManager(startError: .requestFailed)
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)

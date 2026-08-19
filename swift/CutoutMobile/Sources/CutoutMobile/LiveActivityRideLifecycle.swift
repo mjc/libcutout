@@ -61,12 +61,12 @@ public actor LiveActivityRideLifecycleCoordinator {
         guard requestID == latestRequestID else { return }
 
         guard shouldBeActive else {
-            await endIfNeeded(reason: endReason)
+            _ = await endIfNeeded(reason: endReason)
             return
         }
 
         guard let snapshot else {
-            await endIfNeeded(reason: endReason)
+            _ = await endIfNeeded(reason: endReason)
             return
         }
 
@@ -76,7 +76,7 @@ public actor LiveActivityRideLifecycleCoordinator {
         }
 
         if lastSnapshot?.identity != snapshot.identity {
-            await endIfNeeded(reason: .sessionEnded)
+            guard await endIfNeeded(reason: .sessionEnded) else { return }
             await start(snapshot: snapshot)
             return
         }
@@ -99,7 +99,7 @@ public actor LiveActivityRideLifecycleCoordinator {
         await beginOperation()
         defer { finishOperation() }
         guard requestID == latestRequestID else { return }
-        await endIfNeeded(reason: reason)
+        _ = await endIfNeeded(reason: reason)
     }
 
     private func accept(requestID: UInt64) -> Bool {
@@ -144,10 +144,10 @@ public actor LiveActivityRideLifecycleCoordinator {
         (error as? LiveActivityRideLifecycleError) ?? .requestFailed
     }
 
-    private func endIfNeeded(reason: LiveActivityRideLifecycleEndReason) async {
+    private func endIfNeeded(reason: LiveActivityRideLifecycleEndReason) async -> Bool {
         guard hasReconciledInactiveState == false else {
             lastSnapshot = nil
-            return
+            return true
         }
 
         do {
@@ -155,8 +155,10 @@ public actor LiveActivityRideLifecycleCoordinator {
             lastError = nil
             hasReconciledInactiveState = true
             lastSnapshot = nil
+            return true
         } catch {
             lastError = Self.lifecycleError(from: error)
+            return false
         }
     }
 }
