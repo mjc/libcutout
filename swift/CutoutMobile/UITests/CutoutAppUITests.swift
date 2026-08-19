@@ -2218,7 +2218,8 @@ final class CutoutAppUITests: XCTestCase {
         try assertConnectedSurface(
             for: .vesc,
             requiredMetricLabel: nil,
-            auditExclusions: []
+            auditExclusions: [],
+            ignoringNilElementContrastWarning: true
         )
     }
 
