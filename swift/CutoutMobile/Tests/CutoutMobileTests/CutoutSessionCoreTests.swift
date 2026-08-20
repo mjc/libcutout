@@ -1163,6 +1163,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
     func testVescLiveOwnerRetriesTelemetryAfterLinkUp() throws {
         let sink = RecordingOperationSink()
+        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.retry")
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
             advertisement: CoreBluetoothAdvertisement(
@@ -1173,7 +1174,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             writeLimit: TransportWriteLimitBytes(20),
             operationSink: sink,
             retryCommandOnLinkUp: .requestTelemetry,
-            retryDelay: .milliseconds(10)
+            retryDelay: .milliseconds(10),
+            executionQueue: executionQueue
         )
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
@@ -1198,6 +1200,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
     func testVescLiveOwnerUsesCurrentMonotonicTimeForTelemetryRetry() throws {
         let sink = RecordingOperationSink()
+        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.monotonic")
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
             advertisement: CoreBluetoothAdvertisement(
@@ -1210,6 +1213,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             retryCommandOnLinkUp: .requestTelemetry,
             maximumRetryAttempts: 1,
             retryDelay: .milliseconds(10),
+            executionQueue: executionQueue,
             monotonicClock: MonotonicClock {
                 MonotonicMilliseconds(41)
             }
@@ -1235,6 +1239,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
     func testVescLiveOwnerBoundsTelemetryRetries() throws {
         let sink = RecordingOperationSink()
+        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.bounds")
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
             advertisement: CoreBluetoothAdvertisement(
@@ -1246,7 +1251,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             operationSink: sink,
             retryCommandOnLinkUp: .requestTelemetry,
             maximumRetryAttempts: 2,
-            retryDelay: .milliseconds(10)
+            retryDelay: .milliseconds(10),
+            executionQueue: executionQueue
         )
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))
@@ -1268,6 +1274,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
 
     func testVescLiveOwnerRetriesAfterNonRealtimeNotification() throws {
         let sink = RecordingOperationSink()
+        let executionQueue = DispatchQueue(label: "cutout.vesc-live-owner.notification")
         let owner = CoreBluetoothLiveSessionOwner(
             session: .vescOnewheel(),
             advertisement: CoreBluetoothAdvertisement(
@@ -1278,7 +1285,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             writeLimit: TransportWriteLimitBytes(20),
             operationSink: sink,
             retryCommandOnLinkUp: .requestTelemetry,
-            retryDelay: .milliseconds(10)
+            retryDelay: .milliseconds(10),
+            executionQueue: executionQueue
         )
 
         _ = try owner.handleLinkUp(at: MonotonicMilliseconds(1))

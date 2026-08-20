@@ -5433,20 +5433,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             guard let self else {
                 return
             }
-            let runRetry = {
-                self.runRetryCommandIfNeeded(
-                    retryCommandOnLinkUp,
-                    generation: generation
-                )
-            }
-            if let executionQueue = self.executionQueue {
-                executionQueue.async(execute: DispatchWorkItem(block: runRetry))
-            } else {
-                runRetry()
-            }
+            self.runRetryCommandIfNeeded(
+                retryCommandOnLinkUp,
+                generation: generation
+            )
         }
         pendingRetry = retry
-        DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay, execute: retry)
+        (executionQueue ?? DispatchQueue.main)
+            .asyncAfter(deadline: .now() + retryDelay, execute: retry)
     }
 
     private func runRetryCommandIfNeeded(
