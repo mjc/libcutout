@@ -169,6 +169,10 @@ pub enum RideSessionInput {
     UserStopped,
     /// The transport retry policy can no longer continue this logical ride.
     ReconnectExhausted,
+    /// The app explicitly reset its logical ride session.
+    AppReset,
+    /// The logical ride cannot recover from a session failure.
+    UnrecoverableSessionFailure,
 }
 
 /// Single platform effect requested by one reducer transition.
@@ -273,6 +277,10 @@ impl RideSessionLifecycle {
             RideSessionInput::UserStopped => self.end(RideSessionEndReason::UserStop),
             RideSessionInput::ReconnectExhausted => {
                 self.end(RideSessionEndReason::ReconnectExhausted)
+            }
+            RideSessionInput::AppReset => self.end(RideSessionEndReason::AppReset),
+            RideSessionInput::UnrecoverableSessionFailure => {
+                self.end(RideSessionEndReason::UnrecoverableSessionFailure)
             }
         }
     }
@@ -868,5 +876,35 @@ mod tests {
             ending.state().phase(),
             &RideSessionPhase::Ending(RideSessionEndReason::ReconnectExhausted)
         );
+    }
+
+    #[test]
+    fn explicit_session_failures_preserve_their_typed_terminal_reasons() {
+        for (input, reason) in [
+            (RideSessionInput::AppReset, RideSessionEndReason::AppReset),
+            (
+                RideSessionInput::UnrecoverableSessionFailure,
+                RideSessionEndReason::UnrecoverableSessionFailure,
+            ),
+        ] {
+            let identity = RideSessionIdentity::new("vesc-1".to_owned(), Uuid::from_u128(9));
+            let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+                identity: identity.clone(),
+            });
+            let active = started
+                .state()
+                .transition(RideSessionInput::ActivityStarted {
+                    identity: identity.clone(),
+                    activity_id: "activity-1".to_owned(),
+                });
+
+            let ending = active.state().transition(input);
+
+            assert_eq!(
+                ending.effect(),
+                &RideSessionEffect::EndActivity { identity, reason }
+            );
+            assert_eq!(ending.state().phase(), &RideSessionPhase::Ending(reason));
+        }
     }
 }

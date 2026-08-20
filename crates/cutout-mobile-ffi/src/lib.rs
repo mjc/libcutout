@@ -457,6 +457,10 @@ pub enum MobileRideSessionInputDto {
     UserStopped,
     /// The transport retry policy can no longer continue this logical ride.
     ReconnectExhausted,
+    /// The app explicitly reset its logical ride session.
+    AppReset,
+    /// The logical ride cannot recover from a session failure.
+    UnrecoverableSessionFailure,
 }
 
 /// One Apple-platform effect requested by the Rust reducer.
@@ -647,6 +651,10 @@ impl TryFrom<MobileRideSessionInputDto> for CoreRideSessionInput {
             MobileRideSessionInputDto::UserDisconnected => Self::UserDisconnected,
             MobileRideSessionInputDto::UserStopped => Self::UserStopped,
             MobileRideSessionInputDto::ReconnectExhausted => Self::ReconnectExhausted,
+            MobileRideSessionInputDto::AppReset => Self::AppReset,
+            MobileRideSessionInputDto::UnrecoverableSessionFailure => {
+                Self::UnrecoverableSessionFailure
+            }
         })
     }
 }
@@ -7036,6 +7044,47 @@ mod tests {
                 reason: MobileRideSessionEndReasonDto::ReconnectExhausted,
             }
         );
+    }
+
+    #[test]
+    fn mobile_ride_lifecycle_preserves_explicit_session_failure_reasons() {
+        for (input, reason) in [
+            (
+                MobileRideSessionInputDto::AppReset,
+                MobileRideSessionEndReasonDto::AppReset,
+            ),
+            (
+                MobileRideSessionInputDto::UnrecoverableSessionFailure,
+                MobileRideSessionEndReasonDto::UnrecoverableSessionFailure,
+            ),
+        ] {
+            let handle = CutoutSessionStateHandle::new();
+            let started = handle
+                .reduce_ride_session(MobileRideSessionInputDto::Start {
+                    platform_identifier: "vesc-1".to_owned(),
+                })
+                .expect("Rust should create a valid ride identity");
+            let identity = started.snapshot.identity.expect("started ride identity");
+            handle
+                .reduce_ride_session(MobileRideSessionInputDto::ActivityStarted {
+                    identity: identity.clone(),
+                    activity_id: "activity-1".to_owned(),
+                })
+                .expect("the generated identity should round-trip");
+
+            let ending = handle
+                .reduce_ride_session(input)
+                .expect("typed terminal events have no fallible payload");
+
+            assert_eq!(
+                ending.snapshot.phase,
+                MobileRideSessionPhaseDto::Ending { reason }
+            );
+            assert_eq!(
+                ending.effect,
+                MobileRideSessionEffectDto::EndActivity { identity, reason }
+            );
+        }
     }
 
     #[test]
