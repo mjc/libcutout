@@ -31,7 +31,6 @@ enum CutoutUITestSessionFixture: Equatable {
     case eucOverview
     case eucNoBms
     case eucUnknownTopology
-    case vescLiveActivity
     case autoVescLiveActivity
     case autoDynamicVescLiveActivity
     case autoCriticalVescLiveActivity
@@ -85,7 +84,6 @@ enum CutoutUITestSessionFixture: Equatable {
         case "euc-overview": self = .eucOverview
         case "euc-no-bms": self = .eucNoBms
         case "euc-unknown-topology": self = .eucUnknownTopology
-        case "vesc-live-activity": self = .vescLiveActivity
         case "vesc-live-activity-auto": self = .autoVescLiveActivity
         case "vesc-live-activity-dynamic-auto": self = .autoDynamicVescLiveActivity
         case "vesc-live-activity-critical-auto": self = .autoCriticalVescLiveActivity
@@ -154,7 +152,7 @@ enum CutoutUITestSessionFixture: Equatable {
                 ),
                 symbolName: "circle.hexagongrid.circle"
             )
-        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .vescLiveActivity, .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
+        case .bluetoothUnavailable, .bluetoothPermissionDenied, .vesc, .dynamicVesc, .warningVesc, .stopVesc, .operatingModeVesc, .pendingVesc, .staleVesc, .failedVesc, .reconnectingVesc, .bluetoothLossVesc, .connectingVesc, .autoVescLiveActivity, .autoDynamicVescLiveActivity, .autoCriticalVescLiveActivity, .autoUnavailableVescLiveActivity, .autoStaleVescLiveActivity:
             DevicePickerDiscoveryCandidate(
                 platformIdentifier: "ui-test-vesc",
                 displayName: "Refloat VESC",
