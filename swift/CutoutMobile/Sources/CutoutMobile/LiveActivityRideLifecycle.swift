@@ -650,8 +650,8 @@ private actor LiveActivityRideActivityKitState {
         staleAfterMilliseconds: UInt64
     ) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
         let staleAt = Date().addingTimeInterval(TimeInterval(staleAfterMilliseconds) / 1_000)
-        ActivityContent(
-            state: .init(
+        return ActivityContent(
+            state: LiveActivityRideAttributes.ContentState(
                 snapshot: snapshot,
                 staleAt: staleAt
             ),
