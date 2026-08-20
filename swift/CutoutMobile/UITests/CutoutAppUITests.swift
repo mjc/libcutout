@@ -2692,6 +2692,7 @@ final class CutoutAppUITests: XCTestCase {
             if testName.contains("ProbeConflictingEvidence") { return .probeConflictingEvidence }
             if testName.contains("ProbeUnsupported") { return .probeUnsupported }
             if testName.contains("ProbeAction") { return .probeDevice }
+            if testName.contains("PickerSurface") { return .unknownDevice }
             if testName.contains("Capture") || testName.contains("Advanced") { return .unknownDevice }
             if testName.contains("BluetoothUnavailableAfterLive") { return .vescBluetoothLoss }
             if testName.contains("BluetoothUnavailable") { return .bluetoothUnavailable }
