@@ -10,7 +10,6 @@ final class CutoutAppUITests: XCTestCase {
         try skipLiveActivityTestsOnSimulator()
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
-        app.terminate()
         app.launchArguments = launchArguments
         app.launchEnvironment = fixture.launchEnvironment
         app.launch()
