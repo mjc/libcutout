@@ -7,7 +7,6 @@ final class CutoutAppUITests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         continueAfterFailure = false
-        try skipLiveActivityTestsOnSimulator()
         XCUIDevice.shared.orientation = isLandscapeTest ? .landscapeLeft : .portrait
         app = XCUIApplication()
         app.launchArguments = launchArguments
@@ -950,17 +949,6 @@ final class CutoutAppUITests: XCTestCase {
                 "Ride tab is clipped by the viewport: \(identifier) \(tab.frame)"
             )
         }
-    }
-
-    func testVescLiveActivityFixtureStartsFromAnAccessibleRide() throws {
-        XCTAssertTrue(pairAvailableDevice(.vesc))
-        let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
-        XCTAssertTrue(screen.waitForExistence(timeout: 20))
-        let speed = app.descendants(matching: .any)["ride.hero.speed"]
-        XCTAssertTrue(speed.waitForExistence(timeout: 5))
-        XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
-        // XCTest disconnects before termination so it cannot prove persistence.
-        // Use scripts/run-ios-app-on-phone.sh for physical ActivityKit inspection.
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
@@ -2639,7 +2627,6 @@ final class CutoutAppUITests: XCTestCase {
         case vescBluetoothLoss
         case vescConnecting
         case eucConnecting
-        case vescLiveActivity
         case vescLiveActivityAuto
         case vescDynamicLiveActivityAuto
         case vescCriticalLiveActivityAuto
@@ -2681,7 +2668,6 @@ final class CutoutAppUITests: XCTestCase {
             }
             if testName.contains("LiveActivityLockScreen") { return .vescLiveActivityAuto }
             if testName.contains("LiveActivityAutoFixture") { return .vescLiveActivityAuto }
-            if testName.contains("LiveActivityFixture") { return .vescLiveActivity }
             if testName.contains("FailedVescConnection") { return .vescFailure }
             if testName.localizedCaseInsensitiveContains("EucUseShowsConnecting") { return .eucConnecting }
             if testName.contains("UseShowsConnecting") { return .vescConnecting }
@@ -2777,7 +2763,6 @@ final class CutoutAppUITests: XCTestCase {
             case .vescBluetoothLoss: "vesc-bluetooth-loss"
             case .vescConnecting: "vesc-connecting"
             case .eucConnecting: "euc-connecting"
-            case .vescLiveActivity: "vesc-live-activity"
             case .vescLiveActivityAuto: "vesc-live-activity-auto"
             case .vescDynamicLiveActivityAuto: "vesc-live-activity-dynamic-auto"
             case .vescCriticalLiveActivityAuto: "vesc-live-activity-critical-auto"
@@ -2785,13 +2770,6 @@ final class CutoutAppUITests: XCTestCase {
             case .vescStaleLiveActivityAuto: "vesc-live-activity-stale-auto"
             }
         }
-    }
-
-    private func skipLiveActivityTestsOnSimulator() throws {
-        guard name.contains("LiveActivityFixture"),
-              ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != nil
-        else { return }
-        throw XCTSkip("Live Activity inspection is reserved for a physical-device ActivityKit run")
     }
 
     private func enterCapture() {
