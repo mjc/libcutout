@@ -13666,6 +13666,14 @@ public enum MobileRideSessionInputDto: Equatable, Hashable {
      * The transport retry policy can no longer continue this logical ride.
      */
     case reconnectExhausted
+    /**
+     * The app explicitly reset its logical ride session.
+     */
+    case appReset
+    /**
+     * The logical ride cannot recover from a session failure.
+     */
+    case unrecoverableSessionFailure
 
 
 
@@ -13719,6 +13727,10 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
         case 12: return .userStopped
 
         case 13: return .reconnectExhausted
+
+        case 14: return .appReset
+
+        case 15: return .unrecoverableSessionFailure
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13787,6 +13799,14 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
 
         case .reconnectExhausted:
             writeInt(&buf, Int32(13))
+
+
+        case .appReset:
+            writeInt(&buf, Int32(14))
+
+
+        case .unrecoverableSessionFailure:
+            writeInt(&buf, Int32(15))
 
         }
     }
