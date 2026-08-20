@@ -39,6 +39,7 @@
 		300000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */; };
 		300000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */; };
 		300000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */; };
+		300000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */; };
 		300000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */; };
 		300000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */; };
 		30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */; };
@@ -113,6 +114,7 @@
 		400000000000000000000016 /* Apps/CutoutApp/VescDebugViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescDebugViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000017 /* Apps/CutoutApp/VescRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000023 /* Apps/CutoutApp/VescRideScreenPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/VescRideScreenPresentation.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsDetailLayout.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000018 /* Apps/CutoutApp/PevRideHeroSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideHeroSection.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000019 /* Apps/CutoutApp/PevRideDashboardShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevRideDashboardShell.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutUITestSessionFixture.swift; sourceTree = SOURCE_ROOT; };
@@ -185,6 +187,7 @@
 				111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */,
 				400000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift */,
 				400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */,
+				400000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift */,
 				400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */,
 				400000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift */,
 				400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */,
@@ -409,6 +412,7 @@
 				111111111111111111111129 /* Apps/CutoutApp/CutoutAppRoute.swift in Sources */,
 				300000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift in Sources */,
 				300000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift in Sources */,
+				300000000000000000000024 /* Apps/CutoutApp/BmsDetailLayout.swift in Sources */,
 				300000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift in Sources */,
 				300000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift in Sources */,
 				300000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift in Sources */,
