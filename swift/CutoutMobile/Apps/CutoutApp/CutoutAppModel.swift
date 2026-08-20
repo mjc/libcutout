@@ -113,7 +113,10 @@ final class CutoutAppModel {
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
-        liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(manager: liveActivityManager)
+        liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
+            manager: liveActivityManager,
+            sessionState: core.rideSessionStateHandle
+        )
         self.selectedDeviceStore = selectedDeviceStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
@@ -505,9 +508,13 @@ final class CutoutAppModel {
         guard shouldReconcileLiveActivity(snapshot: snapshot, shouldBeActive: shouldBeActive) else { return }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
+        let platformIdentifier = connectionState.selection?.platformIdentifier
+        let monotonicTimeMs = core.now().rawValue
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.reconcile(
                 requestID: requestID,
+                platformIdentifier: platformIdentifier,
+                monotonicTimeMs: monotonicTimeMs,
                 snapshot: snapshot,
                 shouldBeActive: shouldBeActive,
                 endReason: endReason

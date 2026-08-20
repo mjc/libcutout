@@ -308,6 +308,7 @@ struct BoundedDiagnosticLog {
 }
 
 public final class CutoutSessionCore: NSObject {
+    public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
     public var records: [String] { diagnosticLog.values }

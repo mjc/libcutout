@@ -3,6 +3,28 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
+    func testCoordinatorPublishesActivityKitStartIntoSharedRustLifecycle() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let sessionState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: sessionState
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+
+        let rustSnapshot = sessionState.rideSessionSnapshot()
+        XCTAssertEqual(rustSnapshot.identity?.platformIdentifier, "vesc-platform-id")
+        XCTAssertEqual(rustSnapshot.phase, .active)
+        XCTAssertEqual(rustSnapshot.activity, .active(activityId: "activity-1"))
+    }
+
     func testReconcileStartsUpdatesAndEndsOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
@@ -317,25 +339,29 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
         self.blockFirstStart = blockFirstStart
     }
 
-    func start(snapshot: LiveActivityRideSnapshot) async throws {
+    func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
         events.append(.start(snapshot))
         if let startError { throw startError }
 
-        guard blockFirstStart, firstStartBlocked == false else { return }
-        firstStartBlocked = true
-        firstStartBlockedWaiter?.resume()
-        firstStartBlockedWaiter = nil
-        await withCheckedContinuation { firstStartWaiter = $0 }
+        if blockFirstStart, firstStartBlocked == false {
+            firstStartBlocked = true
+            firstStartBlockedWaiter?.resume()
+            firstStartBlockedWaiter = nil
+            await withCheckedContinuation { firstStartWaiter = $0 }
+        }
+        return .started(activityID: "activity-1")
     }
 
-    func update(snapshot: LiveActivityRideSnapshot) throws {
+    func update(snapshot: LiveActivityRideSnapshot) throws -> LiveActivityRideUpdateOutcome {
         events.append(.update(snapshot))
         if let updateError { throw updateError }
+        return LiveActivityRideUpdateOutcome(activityID: "activity-1")
     }
 
-    func end(reason: LiveActivityRideLifecycleEndReason) throws {
+    func end(reason: LiveActivityRideLifecycleEndReason) throws -> LiveActivityRideEndOutcome {
         events.append(.end(reason))
         if let endError { throw endError }
+        return LiveActivityRideEndOutcome(activityIDs: ["activity-1"])
     }
 
     func recordedEvents() -> [Event] { events }

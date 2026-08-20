@@ -1,6 +1,7 @@
 import XCTest
 @testable import CutoutApp
 import CutoutMobile
+import CutoutMobileFFI
 import Observation
 import Synchronization
 
@@ -1495,16 +1496,20 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
         self.error = error
     }
 
-    func start(snapshot: LiveActivityRideSnapshot) async throws {
+    func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
         startCount += 1
         lastStartedSnapshot = snapshot
         if let error { throw error }
+        return .started(activityID: "activity-1")
     }
 
-    func update(snapshot _: LiveActivityRideSnapshot) async throws {}
+    func update(snapshot _: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
+        LiveActivityRideUpdateOutcome(activityID: "activity-1")
+    }
 
-    func end(reason: LiveActivityRideLifecycleEndReason) async throws {
+    func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
         lastEndReason = reason
+        return LiveActivityRideEndOutcome(activityIDs: ["activity-1"])
     }
 
     func setError(_ error: LiveActivityRideLifecycleError?) {
@@ -1514,6 +1519,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 
 @MainActor
 private final class SessionDriverSpy: CutoutSessionDriving {
+    let rideSessionStateHandle = CutoutSessionStateHandle()
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?

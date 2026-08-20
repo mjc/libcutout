@@ -1,7 +1,9 @@
 import CutoutMobile
+import CutoutMobileFFI
 
 @MainActor
 protocol CutoutSessionDriving: AnyObject {
+    var rideSessionStateHandle: CutoutSessionStateHandle { get }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
