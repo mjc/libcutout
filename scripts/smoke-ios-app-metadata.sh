@@ -3,6 +3,34 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
 
+usage() {
+  echo "Usage: scripts/smoke-ios-app-metadata.sh [--configuration Debug|Release]"
+}
+
+configuration=Debug
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --help)
+      usage
+      exit 0
+      ;;
+    --configuration)
+      [[ $# -ge 2 ]] || { echo "--configuration requires Debug or Release" >&2; exit 2; }
+      configuration="$2"
+      shift 2
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+case "$configuration" in
+  Debug|Release) ;;
+  *) echo "--configuration must be Debug or Release" >&2; exit 2 ;;
+esac
+
 root="$(cutout_repo_root)"
 cd "$root"
 
@@ -14,7 +42,7 @@ fi
 export DEVELOPER_DIR="${CUTOUT_DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}"
 unset SDKROOT
 
-product="${CUTOUT_IOS_METADATA_PRODUCT:-$(cutout_build_ios_app_bundle)}"
+product="${CUTOUT_IOS_METADATA_PRODUCT:-$(cutout_build_ios_app_bundle "$configuration")}"
 
 python3 - "$product/Info.plist" <<'PY'
 import plistlib
@@ -46,4 +74,5 @@ for key in ("UISupportedInterfaceOrientations",):
 PY
 
 echo "ios_app_metadata=ok"
+echo "ios_app_configuration=$configuration"
 echo "ios_app_product=$product"

@@ -202,13 +202,21 @@ PY
 }
 
 cutout_build_ios_app_bundle() {
-  local root project scheme destination derived_data product
+  local root project scheme destination derived_data product configuration
   root="$(cutout_repo_root)"
   project="${CUTOUT_IOS_APP_PROJECT:-swift/CutoutMobile/CutoutApp.xcodeproj}"
   scheme="${CUTOUT_IOS_APP_SCHEME:-CutoutApp}"
   destination="${CUTOUT_IOS_APP_BUILD_DESTINATION:-platform=macOS,id=00008103-001935121A8A001E}"
   derived_data="${CUTOUT_IOS_APP_DERIVED_DATA:-$root/target/xcode-designed-for-iphone}"
-  product="$derived_data/Build/Products/Debug-iphoneos/CutoutApp.app"
+  configuration="${1:-Debug}"
+  case "$configuration" in
+    Debug|Release) ;;
+    *)
+      echo "iOS app build configuration must be Debug or Release" >&2
+      return 2
+      ;;
+  esac
+  product="$derived_data/Build/Products/$configuration-iphoneos/CutoutApp.app"
 
   cutout_use_xcode_developer_dir
   cutout_require_swift_ffi_build_input "$root"
@@ -220,6 +228,7 @@ cutout_build_ios_app_bundle() {
       -scheme "$scheme" \
       -destination "$destination" \
       -derivedDataPath "$derived_data" \
+      -configuration "$configuration" \
       build >&2; then
     rm -rf "$product"
     return 1
