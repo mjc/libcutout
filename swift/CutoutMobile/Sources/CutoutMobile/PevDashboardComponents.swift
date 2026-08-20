@@ -85,6 +85,31 @@ nonisolated func pevDashboardResolvedForegroundColor(
     return colorScheme == .dark ? .white : .black
 }
 
+private struct PevDashboardAccessibleForegroundStyle: ViewModifier {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
+    @Environment(\.colorScheme) private var colorScheme
+
+    let color: Color
+
+    func body(content: Content) -> some View {
+        content.foregroundStyle(
+            pevDashboardResolvedForegroundColor(
+                color,
+                contrast: colorSchemeContrast,
+                differentiateWithoutColor: differentiateWithoutColor,
+                colorScheme: colorScheme
+            )
+        )
+    }
+}
+
+extension View {
+    func pevDashboardAccessibleForegroundStyle(_ color: Color) -> some View {
+        modifier(PevDashboardAccessibleForegroundStyle(color: color))
+    }
+}
+
 public struct PevDashboardCardBackground: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 

@@ -22,8 +22,6 @@ public enum PevDashboardMetricTileProminence: Sendable, Equatable {
 }
 
 public struct PevDashboardMetricTile: View {
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
     @Environment(\.colorScheme) private var colorScheme
     let label: String
     let metricValue: PevDashboardMetricValue
@@ -45,17 +43,8 @@ public struct PevDashboardMetricTile: View {
         case .unavailable:
             colorScheme == .dark ? .white : .black
         case .available, .status:
-            resolvedColor(PevDashboardColors.primaryText)
+            PevDashboardColors.primaryText
         }
-    }
-
-    private func resolvedColor(_ color: Color) -> Color {
-        pevDashboardResolvedForegroundColor(
-            color,
-            contrast: colorSchemeContrast,
-            differentiateWithoutColor: differentiateWithoutColor,
-            colorScheme: colorScheme
-        )
     }
 
     public init(
@@ -109,20 +98,20 @@ public struct PevDashboardMetricTile: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(label)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(resolvedColor(PevDashboardColors.mutedText))
+                .pevDashboardAccessibleForegroundStyle(PevDashboardColors.mutedText)
                 .accessibilityHidden(true)
 
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value)
                     .font(.title3.weight(.black))
-                    .foregroundStyle(resolvedValueColor)
+                    .pevDashboardAccessibleForegroundStyle(resolvedValueColor)
                     .monospacedDigit()
                     .accessibilityHidden(true)
                 Spacer(minLength: 4)
                 if !unit.isEmpty {
                     Text(unit)
                         .font(.subheadline.weight(.black))
-                        .foregroundStyle(resolvedColor(PevDashboardColors.primaryText))
+                        .pevDashboardAccessibleForegroundStyle(PevDashboardColors.primaryText)
                         .accessibilityHidden(true)
                 }
             }
@@ -130,7 +119,7 @@ public struct PevDashboardMetricTile: View {
             if !detail.isEmpty {
                 Text(detail)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(resolvedColor(detailColor))
+                    .pevDashboardAccessibleForegroundStyle(detailColor)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityHidden(true)
             }

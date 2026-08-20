@@ -132,9 +132,6 @@ public enum PevDashboardWarningCardTone: Sendable, Equatable {
 }
 
 public struct PevDashboardWarningCard: View {
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiateWithoutColor
-    @Environment(\.colorScheme) private var colorScheme
     let title: String
     let detail: String
     let accent: Color
@@ -186,12 +183,12 @@ public struct PevDashboardWarningCard: View {
                     .accessibilityHidden(true)
                 Text(title)
                     .font(.title3.weight(.black))
-                    .foregroundStyle(resolvedColor(PevDashboardColors.primaryText))
+                    .pevDashboardAccessibleForegroundStyle(PevDashboardColors.primaryText)
                     .accessibilityHidden(true)
             }
             Text(detail)
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(resolvedColor(detailColor))
+                .pevDashboardAccessibleForegroundStyle(detailColor)
                 .accessibilityHidden(true)
         }
         .padding(.horizontal, 22)
@@ -210,12 +207,4 @@ public struct PevDashboardWarningCard: View {
         .accessibilitySortPriority(2)
     }
 
-    private func resolvedColor(_ color: Color) -> Color {
-        pevDashboardResolvedForegroundColor(
-            color,
-            contrast: colorSchemeContrast,
-            differentiateWithoutColor: differentiateWithoutColor,
-            colorScheme: colorScheme
-        )
-    }
 }
