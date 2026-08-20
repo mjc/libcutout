@@ -1182,6 +1182,7 @@ final class CutoutAppUITests: XCTestCase {
                 stateName: "Critical",
                 speed: "17.9",
                 headroom: "reduce acceleration",
+                compactPwm: "85",
                 compactTrailingLabel: "Headroom",
                 compactTrailingValue: "reduce acceleration",
                 connectionStates: ["connected", "stale"]
@@ -1191,6 +1192,7 @@ final class CutoutAppUITests: XCTestCase {
                 stateName: "Unavailable",
                 speed: "unavailable",
                 headroom: "unavailable",
+                compactPwm: nil as String?,
                 compactTrailingLabel: "Battery",
                 compactTrailingValue: "unavailable",
                 connectionStates: ["waiting for telemetry"]
@@ -1200,6 +1202,7 @@ final class CutoutAppUITests: XCTestCase {
                 stateName: "Stale",
                 speed: "stale",
                 headroom: "good",
+                compactPwm: "23",
                 compactTrailingLabel: "Battery",
                 compactTrailingValue: "72",
                 connectionStates: ["stale"]
@@ -1209,6 +1212,7 @@ final class CutoutAppUITests: XCTestCase {
                 stateName: "Nominal",
                 speed: "17.9",
                 headroom: "good",
+                compactPwm: "23",
                 compactTrailingLabel: "Battery",
                 compactTrailingValue: "72",
                 connectionStates: ["connected", "stale"]
@@ -1221,6 +1225,17 @@ final class CutoutAppUITests: XCTestCase {
             (compactSpeed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true,
             compactSpeed.debugDescription
         )
+        if let compactPwm = expectation.compactPwm {
+            XCTAssertTrue(
+                (compactSpeed.value as? String)?.localizedCaseInsensitiveContains(compactPwm) == true,
+                compactSpeed.debugDescription
+            )
+        } else {
+            XCTAssertFalse(
+                (compactSpeed.value as? String)?.localizedCaseInsensitiveContains("PWM") == true,
+                compactSpeed.debugDescription
+            )
+        }
         let compactTrailingValue = springboard.descendants(matching: .any)[expectation.compactTrailingLabel]
         XCTAssertTrue(compactTrailingValue.waitForExistence(timeout: 5), springboard.debugDescription)
         XCTAssertTrue(
