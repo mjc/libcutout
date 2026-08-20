@@ -46,7 +46,8 @@ use cutout_core::{
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
-    RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionPhase as CoreRideSessionPhase,
+    RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
+    RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
     SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
@@ -510,6 +511,30 @@ pub enum MobileRideSessionInputError {
     InvalidSessionIdentifier,
 }
 
+/// Invalid persisted ride-session marker data presented by the mobile platform.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRideSessionMarkerError {
+    /// Bytes do not match the marker schema.
+    #[error("invalid ride session marker encoding")]
+    InvalidEncoding,
+    /// The marker schema version is not supported by this build.
+    #[error("unsupported ride session marker version")]
+    UnsupportedVersion,
+    /// The marker does not carry a valid logical ride identity.
+    #[error("invalid ride session marker identity")]
+    InvalidIdentity,
+}
+
+impl From<CoreRideSessionMarkerError> for MobileRideSessionMarkerError {
+    fn from(error: CoreRideSessionMarkerError) -> Self {
+        match error {
+            CoreRideSessionMarkerError::InvalidEncoding => Self::InvalidEncoding,
+            CoreRideSessionMarkerError::UnsupportedVersion => Self::UnsupportedVersion,
+            CoreRideSessionMarkerError::InvalidIdentity => Self::InvalidIdentity,
+        }
+    }
+}
+
 impl From<&CoreRideSessionIdentity> for MobileRideSessionIdentityDto {
     fn from(identity: &CoreRideSessionIdentity) -> Self {
         Self {
@@ -904,6 +929,42 @@ impl CutoutSessionStateHandle {
         let decision = mobile.state.ride_session.transition(input);
         let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
         mobile.state.ride_session = state;
+        Ok(output)
+    }
+
+    /// Returns the opaque Rust-owned marker for a ride that can be reconciled after relaunch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error only when Rust cannot encode its own marker schema.
+    pub fn export_ride_session_marker(
+        &self,
+    ) -> Result<Option<Vec<u8>>, MobileRideSessionMarkerError> {
+        self.lock_inner()
+            .state
+            .ride_session
+            .marker()
+            .map(|marker| marker.encode().map_err(Into::into))
+            .transpose()
+    }
+
+    /// Reconciles a persisted marker with the platform identity restored by `CoreBluetooth`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the persisted bytes are invalid or unsupported. Invalid bytes do not
+    /// mutate the current Rust-owned session state.
+    #[allow(clippy::needless_pass_by_value)] // UniFFI exports own boundary values.
+    pub fn recover_ride_session_marker(
+        &self,
+        marker: Vec<u8>,
+        restored_platform_identifier: Option<String>,
+    ) -> Result<MobileRideSessionDecisionDto, MobileRideSessionMarkerError> {
+        let marker = CoreRideSessionMarker::decode(&marker)?;
+        let decision =
+            CoreRideSessionLifecycle::recover(marker, restored_platform_identifier.as_deref());
+        let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
+        self.lock_inner().state.ride_session = state;
         Ok(output)
     }
 
@@ -7084,6 +7145,83 @@ mod tests {
                 MobileRideSessionEffectDto::EndActivity { identity, reason }
             );
         }
+    }
+
+    #[test]
+    fn mobile_ride_marker_recovers_the_same_identity_for_the_restored_platform() {
+        let source = CutoutSessionStateHandle::new();
+        let started = source
+            .reduce_ride_session(MobileRideSessionInputDto::Start {
+                platform_identifier: "vesc-1".to_owned(),
+            })
+            .expect("Rust should create a valid ride identity");
+        let identity = started.snapshot.identity.expect("started ride identity");
+        let marker = source
+            .export_ride_session_marker()
+            .expect("active marker should encode")
+            .expect("active rides are restorable");
+
+        let restored = CutoutSessionStateHandle::new();
+        let recovered = restored
+            .recover_ride_session_marker(marker, Some("vesc-1".to_owned()))
+            .expect("valid marker should recover");
+
+        assert_eq!(recovered.snapshot.identity, Some(identity.clone()));
+        assert_eq!(
+            recovered.snapshot.phase,
+            MobileRideSessionPhaseDto::Starting
+        );
+        assert_eq!(
+            recovered.effect,
+            MobileRideSessionEffectDto::StartActivity { identity }
+        );
+        assert_eq!(restored.ride_session_snapshot(), recovered.snapshot);
+    }
+
+    #[test]
+    fn mobile_ride_marker_ends_as_app_reset_without_a_restored_platform() {
+        let source = CutoutSessionStateHandle::new();
+        let started = source
+            .reduce_ride_session(MobileRideSessionInputDto::Start {
+                platform_identifier: "vesc-1".to_owned(),
+            })
+            .expect("Rust should create a valid ride identity");
+        let identity = started.snapshot.identity.expect("started ride identity");
+        let marker = source
+            .export_ride_session_marker()
+            .expect("active marker should encode")
+            .expect("active rides are restorable");
+
+        let restored = CutoutSessionStateHandle::new();
+        let recovered = restored
+            .recover_ride_session_marker(marker, None)
+            .expect("valid marker should reconcile");
+
+        assert_eq!(
+            recovered.snapshot.phase,
+            MobileRideSessionPhaseDto::Ending {
+                reason: MobileRideSessionEndReasonDto::AppReset,
+            }
+        );
+        assert_eq!(
+            recovered.effect,
+            MobileRideSessionEffectDto::EndActivity {
+                identity,
+                reason: MobileRideSessionEndReasonDto::AppReset,
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_mobile_ride_marker_does_not_mutate_session_state() {
+        let handle = CutoutSessionStateHandle::new();
+        let before = handle.ride_session_snapshot();
+
+        assert_eq!(
+            handle.recover_ride_session_marker(vec![0xff], Some("vesc-1".to_owned())),
+            Err(MobileRideSessionMarkerError::InvalidEncoding)
+        );
+        assert_eq!(handle.ride_session_snapshot(), before);
     }
 
     #[test]

@@ -40,6 +40,90 @@ impl RideSessionIdentity {
     }
 }
 
+const RIDE_SESSION_MARKER_VERSION: u8 = 1;
+
+/// Minimal durable identity used to reconcile a system-owned Live Activity after relaunch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RideSessionMarker {
+    identity: RideSessionIdentity,
+}
+
+impl RideSessionMarker {
+    /// Creates a marker for one Rust-owned logical ride identity.
+    #[must_use]
+    pub const fn new(identity: RideSessionIdentity) -> Self {
+        Self { identity }
+    }
+
+    /// Returns the logical ride identity carried by this marker.
+    #[must_use]
+    pub const fn identity(&self) -> &RideSessionIdentity {
+        &self.identity
+    }
+
+    /// Serializes the versioned marker schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RideSessionMarkerError::InvalidEncoding`] if serialization fails.
+    #[cfg(feature = "serde")]
+    pub fn encode(&self) -> Result<Vec<u8>, RideSessionMarkerError> {
+        serde_json::to_vec(&RideSessionMarkerWire {
+            version: RIDE_SESSION_MARKER_VERSION,
+            platform_identifier: self.identity.platform_identifier.clone(),
+            session_id: self.identity.session_id.to_string(),
+        })
+        .map_err(|_| RideSessionMarkerError::InvalidEncoding)
+    }
+
+    /// Parses and validates the versioned marker schema.
+    ///
+    /// # Errors
+    ///
+    /// Returns the matching [`RideSessionMarkerError`] for malformed bytes, unsupported schema
+    /// versions, or invalid identity fields.
+    #[cfg(feature = "serde")]
+    pub fn decode(bytes: &[u8]) -> Result<Self, RideSessionMarkerError> {
+        let wire: RideSessionMarkerWire =
+            serde_json::from_slice(bytes).map_err(|_| RideSessionMarkerError::InvalidEncoding)?;
+        if wire.version != RIDE_SESSION_MARKER_VERSION {
+            return Err(RideSessionMarkerError::UnsupportedVersion);
+        }
+        if wire.platform_identifier.trim().is_empty() {
+            return Err(RideSessionMarkerError::InvalidIdentity);
+        }
+        let session_id = Uuid::parse_str(&wire.session_id)
+            .map_err(|_| RideSessionMarkerError::InvalidIdentity)?;
+        Ok(Self::new(RideSessionIdentity::new(
+            wire.platform_identifier,
+            session_id,
+        )))
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct RideSessionMarkerWire {
+    version: u8,
+    platform_identifier: String,
+    session_id: String,
+}
+
+/// Invalid or unsupported persisted ride-session marker data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum RideSessionMarkerError {
+    /// Bytes do not match the marker JSON schema.
+    #[error("invalid ride session marker encoding")]
+    InvalidEncoding,
+    /// The marker schema version is not supported by this build.
+    #[error("unsupported ride session marker version")]
+    UnsupportedVersion,
+    /// The marker does not carry a valid logical ride identity.
+    #[error("invalid ride session marker identity")]
+    InvalidIdentity,
+}
+
 /// Whether the app process is currently presenting foreground UI.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -223,6 +307,55 @@ pub struct RideSessionLifecycle {
 }
 
 impl RideSessionLifecycle {
+    /// Returns the minimal marker for a ride that can still be reconciled after relaunch.
+    #[must_use]
+    pub fn marker(&self) -> Option<RideSessionMarker> {
+        if matches!(
+            self.phase,
+            RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
+        ) {
+            return None;
+        }
+        self.identity.clone().map(RideSessionMarker::new)
+    }
+
+    /// Restores the marked ride only when `CoreBluetooth` restored the same platform identity.
+    #[must_use]
+    pub fn recover(
+        marker: RideSessionMarker,
+        restored_platform_identifier: Option<&str>,
+    ) -> RideSessionDecision {
+        let identity = marker.identity;
+        if restored_platform_identifier == Some(identity.platform_identifier()) {
+            return RideSessionDecision::new(
+                Self {
+                    phase: RideSessionPhase::Starting,
+                    identity: Some(identity.clone()),
+                    pending_identity: None,
+                    activity: ActivityProjectionState::Starting,
+                    last_telemetry_at: None,
+                    app_presence: RideSessionAppPresence::Foreground,
+                },
+                RideSessionEffect::StartActivity { identity },
+            );
+        }
+
+        RideSessionDecision::new(
+            Self {
+                phase: RideSessionPhase::Ending(RideSessionEndReason::AppReset),
+                identity: Some(identity.clone()),
+                pending_identity: None,
+                activity: ActivityProjectionState::Ending,
+                last_telemetry_at: None,
+                app_presence: RideSessionAppPresence::Foreground,
+            },
+            RideSessionEffect::EndActivity {
+                identity,
+                reason: RideSessionEndReason::AppReset,
+            },
+        )
+    }
+
     /// Returns the logical ride phase.
     #[must_use]
     pub const fn phase(&self) -> &RideSessionPhase {
@@ -904,5 +1037,60 @@ mod tests {
             );
             assert_eq!(ending.state().phase(), &RideSessionPhase::Ending(reason));
         }
+    }
+
+    #[test]
+    fn persisted_marker_recovery_resumes_only_the_restored_platform() {
+        let identity = RideSessionIdentity::new("vesc-1".to_owned(), Uuid::from_u128(10));
+        let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+            identity: identity.clone(),
+        });
+        let marker = started.state().marker().expect("active ride marker");
+
+        let resumed = RideSessionLifecycle::recover(marker.clone(), Some("vesc-1"));
+        assert_eq!(
+            resumed.effect(),
+            &RideSessionEffect::StartActivity {
+                identity: identity.clone(),
+            }
+        );
+        assert_eq!(resumed.state().identity(), Some(&identity));
+        assert_eq!(resumed.state().phase(), &RideSessionPhase::Starting);
+
+        for restored_platform_identifier in [None, Some("aero-2")] {
+            let reset = RideSessionLifecycle::recover(marker.clone(), restored_platform_identifier);
+            assert_eq!(
+                reset.effect(),
+                &RideSessionEffect::EndActivity {
+                    identity: identity.clone(),
+                    reason: RideSessionEndReason::AppReset,
+                }
+            );
+            assert_eq!(
+                reset.state().phase(),
+                &RideSessionPhase::Ending(RideSessionEndReason::AppReset)
+            );
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn persisted_marker_schema_round_trips_and_rejects_unknown_versions() {
+        let marker = RideSessionMarker::new(RideSessionIdentity::new(
+            "vesc-1".to_owned(),
+            Uuid::from_u128(11),
+        ));
+
+        let encoded = marker.encode().expect("supported marker schema");
+        assert_eq!(
+            RideSessionMarker::decode(&encoded).expect("valid marker bytes"),
+            marker
+        );
+        assert_eq!(
+            RideSessionMarker::decode(
+                br#"{"version":2,"platform_identifier":"vesc-1","session_id":"00000000-0000-0000-0000-00000000000b"}"#
+            ),
+            Err(RideSessionMarkerError::UnsupportedVersion)
+        );
     }
 }
