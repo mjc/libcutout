@@ -952,7 +952,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.nominal)
     }
 
     func testVescLiveActivityContinuesUpdatingWhileBackgrounded() {
@@ -993,31 +993,31 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
-        try assertVescLiveActivityAutoFixture(assertsLockScreen: true)
+        try assertVescLiveActivityAutoFixture(.critical, assertsLockScreen: true)
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRideInLandscape() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.nominal)
     }
 
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRideInLandscape() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.critical)
     }
 
     func testVescUnavailableLiveActivityAutoFixturePreservesUnavailableSemantics() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.unavailable)
     }
 
     func testVescUnavailableLiveActivityAutoFixturePreservesUnavailableSemanticsInLandscape() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.unavailable)
     }
 
     func testVescStaleLiveActivityAutoFixturePreservesStaleSemantics() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.stale)
     }
 
     func testVescStaleLiveActivityAutoFixturePreservesStaleSemanticsInLandscape() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(.stale)
     }
 
     func testVescCriticalLiveActivityLockScreenPreservesSafetySemantics() {
@@ -1167,7 +1167,57 @@ final class CutoutAppUITests: XCTestCase {
         attachScreenshot(of: springboard, named: "\(stateName) Lock Screen Live Activity")
     }
 
-    private func assertVescLiveActivityAutoFixture(assertsLockScreen: Bool = false) throws {
+    private struct LiveActivitySurfaceExpectation {
+        let stateName: String
+        let speed: String
+        let headroom: String
+        let compactPwm: String?
+        let compactTrailingLabel: String
+        let compactTrailingValue: String
+        let connectionStates: [String]
+
+        static let nominal = Self(
+            stateName: "Nominal",
+            speed: "17.9",
+            headroom: "good",
+            compactPwm: "23",
+            compactTrailingLabel: "Battery",
+            compactTrailingValue: "72",
+            connectionStates: ["connected", "stale"]
+        )
+        static let critical = Self(
+            stateName: "Critical",
+            speed: "17.9",
+            headroom: "reduce acceleration",
+            compactPwm: "85",
+            compactTrailingLabel: "Headroom",
+            compactTrailingValue: "reduce acceleration",
+            connectionStates: ["connected", "stale"]
+        )
+        static let unavailable = Self(
+            stateName: "Unavailable",
+            speed: "unavailable",
+            headroom: "unavailable",
+            compactPwm: nil,
+            compactTrailingLabel: "Battery",
+            compactTrailingValue: "unavailable",
+            connectionStates: ["waiting for telemetry"]
+        )
+        static let stale = Self(
+            stateName: "Stale",
+            speed: "stale",
+            headroom: "good",
+            compactPwm: "23",
+            compactTrailingLabel: "Battery",
+            compactTrailingValue: "72",
+            connectionStates: ["stale"]
+        )
+    }
+
+    private func assertVescLiveActivityAutoFixture(
+        _ expectation: LiveActivitySurfaceExpectation,
+        assertsLockScreen: Bool = false
+    ) throws {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
         defer {
@@ -1182,47 +1232,6 @@ final class CutoutAppUITests: XCTestCase {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         dismissLocationPromptIfNeeded(in: springboard)
         XCUIDevice.shared.press(.home)
-        let expectation = if name.contains("Critical") {
-            (
-                stateName: "Critical",
-                speed: "17.9",
-                headroom: "reduce acceleration",
-                compactPwm: "85",
-                compactTrailingLabel: "Headroom",
-                compactTrailingValue: "reduce acceleration",
-                connectionStates: ["connected", "stale"]
-            )
-        } else if name.contains("Unavailable") {
-            (
-                stateName: "Unavailable",
-                speed: "unavailable",
-                headroom: "unavailable",
-                compactPwm: nil as String?,
-                compactTrailingLabel: "Battery",
-                compactTrailingValue: "unavailable",
-                connectionStates: ["waiting for telemetry"]
-            )
-        } else if name.contains("Stale") {
-            (
-                stateName: "Stale",
-                speed: "stale",
-                headroom: "good",
-                compactPwm: "23",
-                compactTrailingLabel: "Battery",
-                compactTrailingValue: "72",
-                connectionStates: ["stale"]
-            )
-        } else {
-            (
-                stateName: "Nominal",
-                speed: "17.9",
-                headroom: "good",
-                compactPwm: "23",
-                compactTrailingLabel: "Battery",
-                compactTrailingValue: "72",
-                connectionStates: ["connected", "stale"]
-            )
-        }
         let stateName = expectation.stateName
         let compactSpeed = springboard.descendants(matching: .any)["Speed"]
         XCTAssertTrue(compactSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
