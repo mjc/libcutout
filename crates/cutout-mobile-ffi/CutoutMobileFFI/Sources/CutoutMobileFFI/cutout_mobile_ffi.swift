@@ -13662,6 +13662,10 @@ public enum MobileRideSessionInputDto: Equatable, Hashable {
      * Rider explicitly stopped the ride.
      */
     case userStopped
+    /**
+     * The transport retry policy can no longer continue this logical ride.
+     */
+    case reconnectExhausted
 
 
 
@@ -13713,6 +13717,8 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
         case 11: return .userDisconnected
 
         case 12: return .userStopped
+
+        case 13: return .reconnectExhausted
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -13777,6 +13783,10 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
 
         case .userStopped:
             writeInt(&buf, Int32(12))
+
+
+        case .reconnectExhausted:
+            writeInt(&buf, Int32(13))
 
         }
     }
