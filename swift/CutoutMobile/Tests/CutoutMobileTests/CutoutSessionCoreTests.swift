@@ -1187,11 +1187,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
         XCTAssertEqual(sink.writes.count, 3)
 
-        let retryExpectation = expectation(description: "vesc telemetry retries")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
-            retryExpectation.fulfill()
-        }
-        wait(for: [retryExpectation], timeout: 1.0)
+        waitForWrites(9, in: sink)
 
         XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
         XCTAssertEqual(sink.writes.count % 3, 0)
@@ -1262,11 +1258,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             error: nil
         )
 
-        let retriesFinish = expectation(description: "bounded VESC telemetry retries")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
-            retriesFinish.fulfill()
-        }
-        wait(for: [retriesFinish], timeout: 1.0)
+        waitForWrites(9, in: sink)
 
         XCTAssertEqual(sink.writes.count, 9)
     }
@@ -1301,11 +1293,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             at: MonotonicMilliseconds(2)
         )
 
-        let retryExpectation = expectation(description: "bounded VESC telemetry retries after generic notification")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
-            retryExpectation.fulfill()
-        }
-        wait(for: [retryExpectation], timeout: 1.0)
+        waitForWrites(9, in: sink)
 
         XCTAssertGreaterThanOrEqual(sink.writes.count, 9)
     }
@@ -2879,19 +2867,48 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
         case write
     }
 
-    var writes: [Data] = []
-    var events: [Event] = []
+    private let lock = NSLock()
+    private var recordedWrites: [Data] = []
+    private var recordedEvents: [Event] = []
+
+    var writes: [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedWrites
+    }
+
+    var events: [Event] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedEvents
+    }
 
     func subscribe(channel: BluetoothUuid) {
-        events.append(.subscribe)
+        lock.lock()
+        defer { lock.unlock() }
+        recordedEvents.append(.subscribe)
     }
 
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
-        writes.append(bytes)
-        events.append(.write)
+        lock.lock()
+        defer { lock.unlock() }
+        recordedWrites.append(bytes)
+        recordedEvents.append(.write)
     }
 
     func disconnect() {}
+}
+
+private func waitForWrites(_ expectedCount: Int, in sink: RecordingOperationSink) {
+    let expectation = XCTestExpectation(description: "operation sink reaches (expectedCount) writes")
+    DispatchQueue.global().async {
+        let deadline = Date().addingTimeInterval(1.5)
+        while sink.writes.count < expectedCount, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        expectation.fulfill()
+    }
+    _ = XCTWaiter().wait(for: [expectation], timeout: 2.0)
 }
 
 private func speedValue(_ value: Int32) -> Speed {
