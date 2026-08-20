@@ -304,10 +304,20 @@ final class CutoutAppModelTests: XCTestCase {
                 symbolName: "circle.hexagongrid.circle",
                 connectionRoute: testCase.route
             )
-            let driver = SessionDriverSpy(rows: [row])
-            let model = CutoutAppModel(core: driver, selectedDeviceStore: store)
+            let driver = SessionDriverSpy(
+                rows: [row],
+                notifyBluetoothRestorationOnStart: false
+            )
+            let markerStore = RideSessionMarkerStore(defaults: defaults)
+            let model = CutoutAppModel(
+                core: driver,
+                selectedDeviceStore: store,
+                rideSessionMarkerStore: markerStore
+            )
 
             model.start()
+            XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+            driver.onBluetoothRestorationResolved?(nil)
 
             XCTAssertEqual(driver.pairedPlatformIdentifiers, [testCase.id])
             XCTAssertEqual(model.selectedConnectionRoute, testCase.route)

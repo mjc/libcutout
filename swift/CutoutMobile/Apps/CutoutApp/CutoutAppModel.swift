@@ -173,6 +173,7 @@ final class CutoutAppModel {
     }
 
     func start() {
+        permitsStoredDeviceAutoPairing = false
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
@@ -461,6 +462,14 @@ final class CutoutAppModel {
     private func handleScanStateChange(_ scanState: DevicePickerScanState) {
         devicePickerScanState = scanState
         guard phase == .starting || phase == .scanning else { return }
+        switch rideSessionRestorationState {
+        case .complete:
+            break
+        case let .awaitingSnapshot(platformIdentifier):
+            guard selectedDeviceStore.platformIdentifier == platformIdentifier else { return }
+        case .awaitingBluetooth, .recovering:
+            return
+        }
         guard permitsStoredDeviceAutoPairing else { return }
         guard let platformIdentifier = selectedDeviceStore.platformIdentifier else { return }
         guard scanState.storedSupportedRow(platformIdentifier: platformIdentifier) != nil else { return }
@@ -531,7 +540,11 @@ final class CutoutAppModel {
         guard case .awaitingBluetooth = rideSessionRestorationState else { return }
         let marker = restorationMarkerAtLaunch
         guard platformIdentifier != nil || marker != nil else {
+            permitsStoredDeviceAutoPairing = true
             rideSessionRestorationState = .complete
+            if let scanState = devicePickerScanState {
+                handleScanStateChange(scanState)
+            }
             return
         }
         if platformIdentifier != nil, marker == nil {
