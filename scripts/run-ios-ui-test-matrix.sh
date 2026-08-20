@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   echo "Usage: scripts/run-ios-ui-test-matrix.sh [--smoke] [--plan-from enumeration.json] [--only-group \"appearance contrast content-size\"]"
   echo "  With no arguments, enumerate the compiled UI tests and run every test in settings-compatible groups."
-  echo "  --smoke selects the eight production-root smoke tests and runs them in compatible settings groups."
+  echo "  --smoke selects the seven production-root smoke tests and runs them in compatible settings groups."
   echo "  --plan-from prints the groups in an existing Xcode enumeration without running tests."
   echo "  --only-group runs or prints one exact settings group from the compiled enumeration."
 }
@@ -74,7 +74,6 @@ is_smoke_test() {
       */testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType | \
       */testEucBmsDiagnosticsExposeStableAccessibleDataRows | \
       */testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide | \
-      */testVescCriticalLiveActivityLockScreenPreservesSafetySemantics | \
       */testVescLiveActivityContinuesUpdatingWhileBackgrounded)
       return 0
       ;;

@@ -1005,7 +1005,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
-        try assertVescLiveActivityAutoFixture()
+        try assertVescLiveActivityAutoFixture(assertsLockScreen: true)
     }
 
     func testVescLiveActivityAutoFixtureStartsAnAccessibleRideInLandscape() throws {
@@ -1118,6 +1118,16 @@ final class CutoutAppUITests: XCTestCase {
 
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        openLockScreen(in: springboard)
+        assertVescLiveActivityLockScreenSemantics(
+            in: springboard,
+            speed: expectedSpeed,
+            headroom: expectedHeadroom,
+            stateName: stateName
+        )
+    }
+
+    private func openLockScreen(in springboard: XCUIApplication) {
         dismissLocationPromptIfNeeded(in: springboard)
         XCUIDevice.shared.press(.home)
         springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.01))
@@ -1144,7 +1154,14 @@ final class CutoutAppUITests: XCTestCase {
             alwaysAllowLiveActivities.waitForExistence(timeout: 2),
             "The continuing Live Activity permission prompt still obscures rendered Lock Screen evidence"
         )
+    }
 
+    private func assertVescLiveActivityLockScreenSemantics(
+        in springboard: XCUIApplication,
+        speed expectedSpeed: String,
+        headroom expectedHeadroom: String,
+        stateName: String
+    ) {
         let activity = springboard.descendants(matching: .any)["CutOut ride"]
         XCTAssertTrue(activity.waitForExistence(timeout: 5), springboard.debugDescription)
         let speed = springboard.descendants(matching: .any)["Speed"]
@@ -1162,7 +1179,7 @@ final class CutoutAppUITests: XCTestCase {
         attachScreenshot(of: springboard, named: "\(stateName) Lock Screen Live Activity")
     }
 
-    private func assertVescLiveActivityAutoFixture() throws {
+    private func assertVescLiveActivityAutoFixture(assertsLockScreen: Bool = false) throws {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
         defer {
@@ -1290,6 +1307,16 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertEqual(orderedSafetyValues.count, 2)
         XCTAssertEqual(orderedSafetyValues.element(boundBy: 0).label, stateName == "Critical" ? "Headroom" : "Speed")
         attachScreenshot(of: springboard, named: "\(stateName) Expanded Dynamic Island")
+        if assertsLockScreen {
+            XCUIDevice.shared.press(.home)
+            openLockScreen(in: springboard)
+            assertVescLiveActivityLockScreenSemantics(
+                in: springboard,
+                speed: expectation.speed,
+                headroom: expectation.headroom,
+                stateName: stateName
+            )
+        }
     }
 
     private func dismissLocationPromptIfNeeded(in springboard: XCUIApplication) {

@@ -66,8 +66,8 @@ printf '%s\n' '{
 
 smoke_plan="$($matrix_runner --plan-from "$tmp/smoke-enumeration.json" --smoke)"
 grep -q "light disabled accessibility-extra-extra-extra-large: 2 tests" <<<"$smoke_plan"
-grep -q "light disabled large: 6 tests" <<<"$smoke_plan"
-grep -q "8 tests across 2 simulator-settings groups" <<<"$smoke_plan"
+grep -q "light disabled large: 5 tests" <<<"$smoke_plan"
+grep -q "7 tests across 2 simulator-settings groups" <<<"$smoke_plan"
 if grep -q "testUnrelated" <<<"$smoke_plan"; then
   echo "--smoke retained a test outside the smoke lane" >&2
   exit 1
