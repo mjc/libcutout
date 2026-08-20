@@ -948,6 +948,22 @@ impl CutoutSessionStateHandle {
             .transpose()
     }
 
+    /// Compares an opaque persisted marker with a platform identity without exposing marker
+    /// parsing to Swift.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the persisted bytes are invalid or unsupported.
+    #[allow(clippy::needless_pass_by_value)] // UniFFI exports own boundary values.
+    pub fn ride_session_marker_matches_platform_identifier(
+        &self,
+        marker: Vec<u8>,
+        platform_identifier: String,
+    ) -> Result<bool, MobileRideSessionMarkerError> {
+        let marker = CoreRideSessionMarker::decode(&marker)?;
+        Ok(marker.identity().platform_identifier() == platform_identifier)
+    }
+
     /// Reconciles a persisted marker with the platform identity restored by `CoreBluetooth`.
     ///
     /// # Errors
@@ -7209,6 +7225,34 @@ mod tests {
                 identity,
                 reason: MobileRideSessionEndReasonDto::AppReset,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_ride_marker_can_be_compared_with_a_restored_platform_without_leaving_rust() {
+        let source = CutoutSessionStateHandle::new();
+        source
+            .reduce_ride_session(MobileRideSessionInputDto::Start {
+                platform_identifier: "vesc-1".to_owned(),
+            })
+            .expect("Rust should create a valid ride identity");
+        let marker = source
+            .export_ride_session_marker()
+            .expect("active marker should encode")
+            .expect("active rides are restorable");
+
+        assert!(
+            source
+                .ride_session_marker_matches_platform_identifier(
+                    marker.clone(),
+                    "vesc-1".to_owned()
+                )
+                .expect("valid marker should compare")
+        );
+        assert!(
+            !source
+                .ride_session_marker_matches_platform_identifier(marker, "aero-2".to_owned())
+                .expect("valid marker should compare")
         );
     }
 

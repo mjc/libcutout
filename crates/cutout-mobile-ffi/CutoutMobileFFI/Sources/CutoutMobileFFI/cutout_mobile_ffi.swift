@@ -952,6 +952,16 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
     func resolution()  -> DeviceDetectionResolutionRecord
 
     /**
+     * Compares an opaque persisted marker with a platform identity without exposing marker
+     * parsing to Swift.
+     *
+     * # Errors
+     *
+     * Returns an error when the persisted bytes are invalid or unsupported.
+     */
+    func rideSessionMarkerMatchesPlatformIdentifier(marker: Data, platformIdentifier: String) throws  -> Bool
+
+    /**
      * Returns the current Rust-owned ride-session snapshot.
      */
     func rideSessionSnapshot()  -> MobileRideSessionSnapshotDto
@@ -1304,6 +1314,24 @@ open func resolution() -> DeviceDetectionResolutionRecord  {
     return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_resolution(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Compares an opaque persisted marker with a platform identity without exposing marker
+     * parsing to Swift.
+     *
+     * # Errors
+     *
+     * Returns an error when the persisted bytes are invalid or unsupported.
+     */
+open func rideSessionMarkerMatchesPlatformIdentifier(marker: Data, platformIdentifier: String)throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeMobileRideSessionMarkerError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_ride_session_marker_matches_platform_identifier(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(marker),
+        FfiConverterString.lower(platformIdentifier),$0
     )
 })
 }
@@ -18136,6 +18164,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_resolution() != 10155) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_ride_session_marker_matches_platform_identifier() != 44309) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_ride_session_snapshot() != 50980) {
