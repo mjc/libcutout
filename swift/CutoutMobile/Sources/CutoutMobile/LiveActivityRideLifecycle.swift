@@ -63,9 +63,13 @@ public struct LiveActivityRideSessionIdentity: Codable, Equatable, Hashable, Sen
 public protocol LiveActivityRideLifecycleManaging: Sendable {
     func start(
         snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity: LiveActivityRideSessionIdentity
+        rideSessionIdentity: LiveActivityRideSessionIdentity,
+        staleAfterMilliseconds: UInt64
     ) async throws -> LiveActivityRideStartOutcome
-    func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome
+    func update(
+        snapshot: LiveActivityRideSnapshot,
+        staleAfterMilliseconds: UInt64
+    ) async throws -> LiveActivityRideUpdateOutcome
     func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome
 }
 
@@ -282,6 +286,7 @@ public actor LiveActivityRideLifecycleCoordinator {
                 effect: decision.effect,
                 snapshot: snapshot,
                 endReason: endReason,
+                staleAfterMilliseconds: decision.snapshot.staleAfterMs,
                 captureFlush: captureFlush
             )
         } catch {
@@ -293,6 +298,7 @@ public actor LiveActivityRideLifecycleCoordinator {
         effect: MobileRideSessionEffectDto,
         snapshot: LiveActivityRideSnapshot,
         endReason: LiveActivityRideLifecycleEndReason,
+        staleAfterMilliseconds: UInt64,
         captureFlush: (@Sendable () async -> Bool)? = nil
     ) async {
         switch effect {
@@ -302,7 +308,8 @@ public actor LiveActivityRideLifecycleCoordinator {
             do {
                 let outcome = try await manager.start(
                     snapshot: snapshot,
-                    rideSessionIdentity: LiveActivityRideSessionIdentity(identity)
+                    rideSessionIdentity: LiveActivityRideSessionIdentity(identity),
+                    staleAfterMilliseconds: staleAfterMilliseconds
                 )
                 hasReconciledInactiveState = false
                 lastSnapshot = snapshot
@@ -319,7 +326,16 @@ public actor LiveActivityRideLifecycleCoordinator {
             }
         case .updateActivity, .markActivityStale:
             do {
-                _ = try await manager.update(snapshot: snapshot)
+                let updateStaleAfterMilliseconds: UInt64 = switch effect {
+                case .markActivityStale:
+                    0
+                default:
+                    staleAfterMilliseconds
+                }
+                _ = try await manager.update(
+                    snapshot: snapshot,
+                    staleAfterMilliseconds: updateStaleAfterMilliseconds
+                )
                 lastSnapshot = snapshot
                 lastError = nil
             } catch {
@@ -369,7 +385,12 @@ public actor LiveActivityRideLifecycleCoordinator {
             do {
                 let decision = try sessionState.reduceRideSession(input: input)
                 if decision.effect != .none {
-                    await execute(effect: decision.effect, snapshot: snapshot, endReason: reason)
+                    await execute(
+                        effect: decision.effect,
+                        snapshot: snapshot,
+                        endReason: reason,
+                        staleAfterMilliseconds: decision.snapshot.staleAfterMs
+                    )
                     return lastError == nil
                 }
             } catch {
@@ -429,13 +450,24 @@ public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManagi
 
     public func start(
         snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity: LiveActivityRideSessionIdentity
+        rideSessionIdentity: LiveActivityRideSessionIdentity,
+        staleAfterMilliseconds: UInt64
     ) async throws -> LiveActivityRideStartOutcome {
-        try await state.start(snapshot: snapshot, rideSessionIdentity: rideSessionIdentity)
+        try await state.start(
+            snapshot: snapshot,
+            rideSessionIdentity: rideSessionIdentity,
+            staleAfterMilliseconds: staleAfterMilliseconds
+        )
     }
 
-    public func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
-        try await state.update(snapshot: snapshot)
+    public func update(
+        snapshot: LiveActivityRideSnapshot,
+        staleAfterMilliseconds: UInt64
+    ) async throws -> LiveActivityRideUpdateOutcome {
+        try await state.update(
+            snapshot: snapshot,
+            staleAfterMilliseconds: staleAfterMilliseconds
+        )
     }
 
     public func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {
@@ -450,7 +482,8 @@ private actor LiveActivityRideActivityKitState {
 
     func start(
         snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity: LiveActivityRideSessionIdentity
+        rideSessionIdentity: LiveActivityRideSessionIdentity,
+        staleAfterMilliseconds: UInt64
     ) async throws -> LiveActivityRideStartOutcome {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             throw LiveActivityRideLifecycleError.authorizationDenied
@@ -468,7 +501,10 @@ private actor LiveActivityRideActivityKitState {
 
         if let adoptedIndex = reconciliation.adoptedIndex {
             activity = existingActivities[adoptedIndex]
-            _ = try await update(snapshot: snapshot)
+            _ = try await update(
+                snapshot: snapshot,
+                staleAfterMilliseconds: staleAfterMilliseconds
+            )
             return .adopted(activityID: existingActivities[adoptedIndex].id)
         }
 
@@ -479,7 +515,10 @@ private actor LiveActivityRideActivityKitState {
                     identity: snapshot.identity,
                     rideSessionIdentity: rideSessionIdentity
                 ),
-                content: content(snapshot: snapshot),
+                content: content(
+                    snapshot: snapshot,
+                    staleAfterMilliseconds: staleAfterMilliseconds
+                ),
                 pushType: nil
             )
             activity = startedActivity
@@ -492,12 +531,20 @@ private actor LiveActivityRideActivityKitState {
         }
     }
 
-    func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
+    func update(
+        snapshot: LiveActivityRideSnapshot,
+        staleAfterMilliseconds: UInt64
+    ) async throws -> LiveActivityRideUpdateOutcome {
         guard let activity else {
             throw LiveActivityRideLifecycleError.activityUnavailable
         }
 
-        await activity.update(content(snapshot: snapshot))
+        await activity.update(
+            content(
+                snapshot: snapshot,
+                staleAfterMilliseconds: staleAfterMilliseconds
+            )
+        )
         lastSnapshot = snapshot
         return LiveActivityRideUpdateOutcome(activityID: activity.id)
     }
@@ -507,7 +554,9 @@ private actor LiveActivityRideActivityKitState {
         let activities = Activity<LiveActivityRideAttributes>.activities
         for currentActivity in activities {
             let finalContent = currentActivity.id == currentActivityID
-                ? lastSnapshot.map(content(snapshot:)) ?? currentActivity.content
+                ? lastSnapshot.map {
+                    content(snapshot: $0, staleAfterMilliseconds: 0)
+                } ?? currentActivity.content
                 : currentActivity.content
             await currentActivity.end(finalContent, dismissalPolicy: .immediate)
         }
@@ -517,10 +566,13 @@ private actor LiveActivityRideActivityKitState {
         return LiveActivityRideEndOutcome(activityIDs: activities.map(\.id))
     }
 
-    private func content(snapshot: LiveActivityRideSnapshot) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
+    private func content(
+        snapshot: LiveActivityRideSnapshot,
+        staleAfterMilliseconds: UInt64
+    ) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
         ActivityContent(
             state: .init(snapshot: snapshot),
-            staleDate: LiveActivityRideFreshnessPolicy.staleDate(after: Date())
+            staleDate: Date().addingTimeInterval(TimeInterval(staleAfterMilliseconds) / 1_000)
         )
     }
 }
@@ -530,12 +582,16 @@ public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManagi
 
     public func start(
         snapshot _: LiveActivityRideSnapshot,
-        rideSessionIdentity _: LiveActivityRideSessionIdentity
+        rideSessionIdentity _: LiveActivityRideSessionIdentity,
+        staleAfterMilliseconds _: UInt64
     ) async throws -> LiveActivityRideStartOutcome {
         throw LiveActivityRideLifecycleError.activityUnavailable
     }
 
-    public func update(snapshot _: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
+    public func update(
+        snapshot _: LiveActivityRideSnapshot,
+        staleAfterMilliseconds _: UInt64
+    ) async throws -> LiveActivityRideUpdateOutcome {
         throw LiveActivityRideLifecycleError.activityUnavailable
     }
 

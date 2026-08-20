@@ -26,6 +26,8 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let activityIdentity = await manager.startedRideSessionIdentity()
         XCTAssertEqual(activityIdentity?.platformIdentifier, rustSnapshot.identity?.platformIdentifier)
         XCTAssertEqual(activityIdentity?.sessionID, rustSnapshot.identity?.sessionId)
+        let freshnessWindows = await manager.recordedFreshnessWindows()
+        XCTAssertEqual(freshnessWindows, [2_000])
     }
 
     func testTransientDisconnectKeepsRustIdentityAndResumesWithoutDuplicateStart() async {
@@ -60,7 +62,9 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(sessionState.rideSessionSnapshot().phase, .active)
         let events = await manager.recordedEvents()
+        let freshnessWindows = await manager.recordedFreshnessWindows()
         XCTAssertEqual(events, [.start(first), .update(first), .update(resumed)])
+        XCTAssertEqual(freshnessWindows, [2_000, 0, 2_000])
     }
 
     func testBackgroundTransitionExecutesRustRequestedCaptureFlushOnce() async {
@@ -473,6 +477,7 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
 
     private var events: [Event] = []
     private var startedIdentity: LiveActivityRideSessionIdentity?
+    private var freshnessWindows: [UInt64] = []
     private let startError: LiveActivityRideLifecycleError?
     private var updateError: LiveActivityRideLifecycleError?
     private var endError: LiveActivityRideLifecycleError?
@@ -495,10 +500,12 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
 
     func start(
         snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity: LiveActivityRideSessionIdentity
+        rideSessionIdentity: LiveActivityRideSessionIdentity,
+        staleAfterMilliseconds: UInt64
     ) async throws -> LiveActivityRideStartOutcome {
         events.append(.start(snapshot))
         startedIdentity = rideSessionIdentity
+        freshnessWindows.append(staleAfterMilliseconds)
         if let startError { throw startError }
 
         if blockFirstStart, firstStartBlocked == false {
@@ -510,8 +517,12 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
         return .started(activityID: "activity-1")
     }
 
-    func update(snapshot: LiveActivityRideSnapshot) throws -> LiveActivityRideUpdateOutcome {
+    func update(
+        snapshot: LiveActivityRideSnapshot,
+        staleAfterMilliseconds: UInt64
+    ) throws -> LiveActivityRideUpdateOutcome {
         events.append(.update(snapshot))
+        freshnessWindows.append(staleAfterMilliseconds)
         if let updateError { throw updateError }
         return LiveActivityRideUpdateOutcome(activityID: "activity-1")
     }
@@ -525,6 +536,8 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     func recordedEvents() -> [Event] { events }
 
     func startedRideSessionIdentity() -> LiveActivityRideSessionIdentity? { startedIdentity }
+
+    func recordedFreshnessWindows() -> [UInt64] { freshnessWindows }
 
     func setEndError(_ error: LiveActivityRideLifecycleError?) {
         endError = error

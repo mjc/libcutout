@@ -1684,7 +1684,8 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 
     func start(
         snapshot: LiveActivityRideSnapshot,
-        rideSessionIdentity _: LiveActivityRideSessionIdentity
+        rideSessionIdentity _: LiveActivityRideSessionIdentity,
+        staleAfterMilliseconds _: UInt64
     ) async throws -> LiveActivityRideStartOutcome {
         startCount += 1
         lastStartedSnapshot = snapshot
@@ -1692,7 +1693,10 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
         return .started(activityID: "activity-1")
     }
 
-    func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
+    func update(
+        snapshot: LiveActivityRideSnapshot,
+        staleAfterMilliseconds _: UInt64
+    ) async throws -> LiveActivityRideUpdateOutcome {
         lastUpdatedSnapshot = snapshot
         return LiveActivityRideUpdateOutcome(activityID: "activity-1")
     }
