@@ -31,6 +31,7 @@
 		30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */; };
 		30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */; };
 		30000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */; };
+		30000000000000000000000F /* Apps/CutoutApp/CaptureUnknownDeviceSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000F /* Apps/CutoutApp/CaptureUnknownDeviceSheet.swift */; };
 		300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */; };
 		300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */; };
 		300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */; };
@@ -102,6 +103,7 @@
 		40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DeviceGlyphs.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerControls.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/DevicePickerViews.swift; sourceTree = SOURCE_ROOT; };
+		40000000000000000000000F /* Apps/CutoutApp/CaptureUnknownDeviceSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureUnknownDeviceSheet.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/EucRideViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevScreenTitleBlock.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardScaffoldViews.swift; sourceTree = SOURCE_ROOT; };
@@ -190,6 +192,7 @@
 				40000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift */,
 				40000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift */,
 				40000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift */,
+				40000000000000000000000F /* Apps/CutoutApp/CaptureUnknownDeviceSheet.swift */,
 				400000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift */,
 				400000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift */,
 				400000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift */,
@@ -411,6 +414,7 @@
 				30000000000000000000000C /* Apps/CutoutApp/DeviceGlyphs.swift in Sources */,
 				30000000000000000000000D /* Apps/CutoutApp/DevicePickerControls.swift in Sources */,
 				30000000000000000000000E /* Apps/CutoutApp/DevicePickerViews.swift in Sources */,
+				30000000000000000000000F /* Apps/CutoutApp/CaptureUnknownDeviceSheet.swift in Sources */,
 				300000000000000000000011 /* Apps/CutoutApp/EucRideViews.swift in Sources */,
 				300000000000000000000012 /* Apps/CutoutApp/PevScreenTitleBlock.swift in Sources */,
 				300000000000000000000013 /* Apps/CutoutApp/PevDashboardScaffoldViews.swift in Sources */,
