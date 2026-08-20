@@ -334,7 +334,7 @@ public final class CutoutSessionCore: NSObject {
 
     private let clock: MonotonicClock
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
-    private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth", qos: .userInitiated)
+    private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
     private let selectedDeviceStore: DevicePickerSelectionStore
@@ -598,14 +598,26 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    public func flushCapture() -> Bool {
+    public func flushCapture() async -> Bool {
 #if DEBUG
         if let testScript, !testScript.flushCaptureSucceeds {
             return false
         }
 #endif
-        return onBleQueue {
-            captureBuilder?.flushWriter() ?? false
+        if DispatchQueue.getSpecific(key: bleQueueKey) != nil {
+            return captureBuilder?.flushWriter() ?? false
+        }
+        let queuedAt = clock.now()
+        return await withCheckedContinuation { continuation in
+            let workItem = DispatchWorkItem(qos: .default, flags: .enforceQoS) { [self] in
+                let result = captureBuilder?.flushWriter() ?? false
+                let waitMilliseconds = clock.now().elapsed(since: queuedAt).rawValue
+                if waitMilliseconds > 0 {
+                    record("ble_queue_wait_ms=\(waitMilliseconds)")
+                }
+                continuation.resume(returning: result)
+            }
+            bleQueue.async(execute: workItem)
         }
     }
 

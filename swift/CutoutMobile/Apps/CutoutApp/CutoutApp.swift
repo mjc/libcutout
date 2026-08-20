@@ -28,7 +28,7 @@ struct CutoutApp: App {
                 }
                 .onChange(of: scenePhase) {
                     guard scenePhase != .active else { return }
-                    model.flushCapture()
+                    Task { await model.flushCapture() }
                 }
         }
         .commands {

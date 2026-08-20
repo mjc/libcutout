@@ -105,8 +105,10 @@ struct ContentView: View {
     }
 
     private func finishCaptureAndReturnToPicker() {
-        guard model.finishCapture() else { return }
-        navigate(to: .devicePicker)
+        Task { @MainActor in
+            guard await model.finishCapture() else { return }
+            navigate(to: .devicePicker)
+        }
     }
 
     @ViewBuilder

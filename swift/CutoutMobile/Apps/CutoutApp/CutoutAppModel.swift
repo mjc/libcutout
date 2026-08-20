@@ -168,7 +168,7 @@ protocol CutoutSessionDriving: AnyObject {
     func recordOnly(platformIdentifier: String, note: String?, annotations: [String]) -> Bool
     func annotateCapture(label: String)
     func annotateCapture(key: String, value: String)
-    func flushCapture() -> Bool
+    func flushCapture() async -> Bool
     func disconnectAndScan()
     func now() -> MonotonicMilliseconds
 }
@@ -480,8 +480,8 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func flushCapture() -> Bool {
-        let didFlush = core.flushCapture()
+    func flushCapture() async -> Bool {
+        let didFlush = await core.flushCapture()
         if !didFlush, captureStatus?.isRecording == true {
             captureStatus = .failed
         }
@@ -489,11 +489,11 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func finishCapture() -> Bool {
+    func finishCapture() async -> Bool {
         guard !isFinishingCapture else { return false }
         isFinishingCapture = true
 
-        guard flushCapture() else {
+        guard await flushCapture() else {
             captureStatus = .failed
             isFinishingCapture = false
             return false

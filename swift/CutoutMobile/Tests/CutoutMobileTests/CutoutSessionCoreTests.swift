@@ -464,7 +464,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
     }
 
-    func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() throws {
+    func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
         let core = CutoutSessionCore(testScript: CutoutSessionTestScript(
@@ -484,11 +484,12 @@ final class CutoutSessionCoreTests: XCTestCase {
             note: "durability test",
             annotations: ["durability=background"]
         ))
-        wait(for: [started], timeout: 1)
+        await fulfillment(of: [started], timeout: 1)
         let url = try XCTUnwrap(captureURL)
         defer { try? FileManager.default.removeItem(at: url) }
 
-        XCTAssertTrue(core.flushCapture())
+        let flushSucceeded = await core.flushCapture()
+        XCTAssertTrue(flushSucceeded)
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         XCTAssertGreaterThan((attributes[.size] as? NSNumber)?.uint64Value ?? 0, 0)
         let capture = try String(contentsOf: url, encoding: .utf8)

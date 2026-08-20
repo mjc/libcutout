@@ -765,25 +765,28 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testFinishCaptureFlushesOnceBeforeDisconnecting() {
+    func testFinishCaptureFlushesOnceBeforeDisconnecting() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
-        XCTAssertTrue(model.finishCapture())
-        XCTAssertFalse(model.finishCapture())
+        let firstFinishSucceeded = await model.finishCapture()
+        let secondFinishSucceeded = await model.finishCapture()
+        XCTAssertTrue(firstFinishSucceeded)
+        XCTAssertFalse(secondFinishSucceeded)
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.disconnectCount, 1)
     }
 
     @MainActor
-    func testFinishCaptureKeepsTheCaptureRouteWhenWriterFlushFails() {
+    func testFinishCaptureKeepsTheCaptureRouteWhenWriterFlushFails() async {
         let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
-        XCTAssertFalse(model.finishCapture())
+        let finishSucceeded = await model.finishCapture()
+        XCTAssertFalse(finishSucceeded)
 
         XCTAssertEqual(driver.flushCaptureCount, 1)
         XCTAssertEqual(driver.disconnectCount, 0)
@@ -791,15 +794,17 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testFlushFailureMarksOnlyAnActiveCaptureFailed() {
+    func testFlushFailureMarksOnlyAnActiveCaptureFailed() async {
         let driver = SessionDriverSpy(rows: [], flushSucceeds: false)
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.flushCapture())
+        let inactiveFlushSucceeded = await model.flushCapture()
+        XCTAssertFalse(inactiveFlushSucceeded)
         XCTAssertNil(model.captureStatus)
 
         model.applyCaptureEvent(.started(fileURL: URL(fileURLWithPath: "/tmp/capture.jsonl")))
-        XCTAssertFalse(model.flushCapture())
+        let activeFlushSucceeded = await model.flushCapture()
+        XCTAssertFalse(activeFlushSucceeded)
         XCTAssertEqual(model.captureStatus, .failed)
         XCTAssertEqual(driver.flushCaptureCount, 2)
     }
@@ -1562,7 +1567,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         captureAnnotations.append(label)
     }
     func annotateCapture(key _: String, value _: String) {}
-    func flushCapture() -> Bool {
+    func flushCapture() async -> Bool {
         flushCaptureCount += 1
         return flushSucceeds
     }
