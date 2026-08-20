@@ -995,6 +995,17 @@ final class CutoutAppUITests: XCTestCase {
     func testVescLiveActivityAutoFixtureRemainsInspectableAfterAppProcessTerminates() {
         let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
         XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+        let foregroundSpeed = app.descendants(matching: .any)["ride.hero.speed"]
+        XCTAssertTrue(foregroundSpeed.waitForExistence(timeout: 5), app.debugDescription)
+        let connected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS %@", "17.9"),
+            object: foregroundSpeed
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [connected], timeout: 12),
+            .completed,
+            foregroundSpeed.debugDescription
+        )
         defer {
             app.launch()
             disconnectIfConnected()
@@ -1012,9 +1023,7 @@ final class CutoutAppUITests: XCTestCase {
         XCTAssertTrue(device.waitForExistence(timeout: 5), springboard.debugDescription)
         let deviceValue = device.value as? String
         XCTAssertTrue(
-            ["connected", "stale"].contains {
-                deviceValue?.localizedCaseInsensitiveContains($0) == true
-            },
+            deviceValue?.localizedCaseInsensitiveContains("stale") == true,
             device.debugDescription
         )
         XCTAssertFalse(
@@ -1025,17 +1034,13 @@ final class CutoutAppUITests: XCTestCase {
 
         XCUIDevice.shared.press(.home)
         openLockScreen(in: springboard)
-        XCTExpectFailure(
-            "iOS 27 Simulator may remove stale Live Activities from the Lock Screen after the app process terminates; retain this probe until the lifecycle ticket is resolved.",
-            strict: false
-        ) {
-            self.assertVescLiveActivityLockScreenSemantics(
-                in: springboard,
-                speed: "17.9",
-                headroom: "good",
-                stateName: "Terminated process"
-            )
-        }
+        self.assertVescLiveActivityLockScreenSemantics(
+            in: springboard,
+            speed: "17.9",
+            headroom: "good",
+            connectionState: "stale",
+            stateName: "Terminated process"
+        )
     }
 
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
@@ -1194,6 +1199,7 @@ final class CutoutAppUITests: XCTestCase {
         in springboard: XCUIApplication,
         speed expectedSpeed: String,
         headroom expectedHeadroom: String,
+        connectionState expectedConnectionState: String? = nil,
         stateName: String
     ) {
         let activity = springboard.descendants(matching: .any)["CutOut ride"]
@@ -1210,6 +1216,14 @@ final class CutoutAppUITests: XCTestCase {
             (headroom.value as? String)?.localizedCaseInsensitiveContains(expectedHeadroom) == true,
             headroom.debugDescription
         )
+        if let expectedConnectionState {
+            let device = springboard.descendants(matching: .any)["Device"]
+            XCTAssertTrue(device.waitForExistence(timeout: 5), springboard.debugDescription)
+            XCTAssertTrue(
+                (device.value as? String)?.localizedCaseInsensitiveContains(expectedConnectionState) == true,
+                device.debugDescription
+            )
+        }
         attachScreenshot(of: springboard, named: "\(stateName) Lock Screen Live Activity")
     }
 

@@ -39,6 +39,11 @@ private struct CutoutRideLiveActivityWidget: Widget {
                 DynamicIslandExpandedRegion(.trailing) {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 5) {
+                            if context.presentationSnapshot.connectionState != .connected {
+                                Text(context.presentationSnapshot.connectionState.accessibilityValue.localizedCapitalized)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(PevLiveActivityPalette.warning)
+                            }
                             Text(context.presentationSnapshot.identity.label)
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(PevLiveActivityPalette.secondaryText)
@@ -111,7 +116,7 @@ private struct CutoutRideLiveActivityWidget: Widget {
 
 private extension ActivityViewContext where Attributes == LiveActivityRideAttributes {
     var presentationSnapshot: LiveActivityRideSnapshot {
-        state.snapshot.presented(isStale: isStale)
+        state.presentationSnapshot(isStale: isStale, now: Date())
     }
 }
 

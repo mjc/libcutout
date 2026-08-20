@@ -103,6 +103,14 @@ public struct PevLiveActivityHeader: View {
                 PevLiveActivityBrandMark(size: compact ? 16 : 18)
             }
             Spacer(minLength: 8)
+            if snapshot.connectionState != .connected {
+                Text(snapshot.connectionState.accessibilityValue.localizedCapitalized)
+                    .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .semibold))
+                    .foregroundStyle(PevLiveActivityPalette.warning)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .accessibilityHidden(true)
+            }
             Text(snapshot.identity.label)
                 .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
                 .foregroundStyle(PevLiveActivityPalette.secondaryText)

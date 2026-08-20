@@ -497,9 +497,15 @@ public actor LiveActivityRideLifecycleCoordinator {
 public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable, Sendable {
     public struct ContentState: Codable, Hashable, Sendable {
         public let snapshot: LiveActivityRideSnapshot
+        public let staleAt: Date?
 
-        public init(snapshot: LiveActivityRideSnapshot) {
+        public init(snapshot: LiveActivityRideSnapshot, staleAt: Date? = nil) {
             self.snapshot = snapshot
+            self.staleAt = staleAt
+        }
+
+        public func presentationSnapshot(isStale: Bool, now: Date) -> LiveActivityRideSnapshot {
+            snapshot.presented(isStale: isStale || staleAt.map { now >= $0 } == true)
         }
     }
 
@@ -643,9 +649,13 @@ private actor LiveActivityRideActivityKitState {
         snapshot: LiveActivityRideSnapshot,
         staleAfterMilliseconds: UInt64
     ) -> ActivityContent<LiveActivityRideAttributes.ContentState> {
+        let staleAt = Date().addingTimeInterval(TimeInterval(staleAfterMilliseconds) / 1_000)
         ActivityContent(
-            state: .init(snapshot: snapshot),
-            staleDate: Date().addingTimeInterval(TimeInterval(staleAfterMilliseconds) / 1_000)
+            state: .init(
+                snapshot: snapshot,
+                staleAt: staleAt
+            ),
+            staleDate: staleAt
         )
     }
 }
