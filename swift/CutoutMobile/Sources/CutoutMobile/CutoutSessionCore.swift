@@ -332,6 +332,7 @@ public final class CutoutSessionCore: NSObject {
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
     private let clock: MonotonicClock
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
@@ -370,6 +371,7 @@ public final class CutoutSessionCore: NSObject {
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let phoneLocationState = MobilePhoneLocationState()
     private var didRequestAlwaysLocationAuthorization = false
+    private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
     private var testScriptWorkItem: DispatchWorkItem?
@@ -440,6 +442,7 @@ public final class CutoutSessionCore: NSObject {
     public func start() {
 #if DEBUG
         if let testScript {
+            publishOnMain { self.onBluetoothRestorationResolved?(nil) }
             start(testScript: testScript)
             return
         }
@@ -1944,8 +1947,27 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     }
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        resolveBluetoothRestorationIfNeeded()
         handleCentralState(central.state) {
             central.scanForPeripherals(withServices: nil)
+        }
+    }
+
+    private func resolveBluetoothRestorationIfNeeded() {
+        assertOnBleQueue()
+        guard didResolveBluetoothRestoration == false else { return }
+        didResolveBluetoothRestoration = true
+        let restoredPlatformIdentifier: String? = if
+            let peripheral,
+            selectedRoute != nil,
+            peripheral.state == .connected || peripheral.state == .connecting
+        {
+            peripheral.identifier.uuidString
+        } else {
+            nil
+        }
+        publishOnMain {
+            self.onBluetoothRestorationResolved?(restoredPlatformIdentifier)
         }
     }
 

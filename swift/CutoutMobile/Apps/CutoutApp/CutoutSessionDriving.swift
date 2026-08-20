@@ -14,6 +14,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
+    var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
 
     func start()

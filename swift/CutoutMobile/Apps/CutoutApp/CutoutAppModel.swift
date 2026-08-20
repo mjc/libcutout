@@ -3,6 +3,13 @@ import CutoutMobileFFI
 import Foundation
 import Observation
 
+private enum RideSessionRestorationState {
+    case complete
+    case awaitingBluetooth
+    case awaitingSnapshot(platformIdentifier: String)
+    case recovering
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -67,6 +74,7 @@ final class CutoutAppModel {
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
+    private let rideSessionMarkerStore: RideSessionMarkerStore
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
@@ -76,6 +84,7 @@ final class CutoutAppModel {
     private var captureNotificationCount = 0
     private var captureLabel: String?
     private var permitsStoredDeviceAutoPairing = true
+    private var rideSessionRestorationState = RideSessionRestorationState.complete
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -88,6 +97,7 @@ final class CutoutAppModel {
             core: Self.makeSessionDriver(),
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
+            rideSessionMarkerStore: RideSessionMarkerStore(),
             liveActivityManager: LiveActivityRideActivityKitManager()
         )
     }
@@ -95,12 +105,14 @@ final class CutoutAppModel {
     convenience init(
         core: any CutoutSessionDriving,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
+        rideSessionMarkerStore: RideSessionMarkerStore = RideSessionMarkerStore(),
         liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager()
     ) {
         self.init(
             core: core,
             permitsStoredDeviceAutoPairing: true,
             selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: rideSessionMarkerStore,
             liveActivityManager: liveActivityManager
         )
     }
@@ -109,15 +121,18 @@ final class CutoutAppModel {
         core: any CutoutSessionDriving,
         permitsStoredDeviceAutoPairing: Bool,
         selectedDeviceStore: DevicePickerSelectionStore,
+        rideSessionMarkerStore: RideSessionMarkerStore,
         liveActivityManager: any LiveActivityRideLifecycleManaging
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
             manager: liveActivityManager,
-            sessionState: core.rideSessionStateHandle
+            sessionState: core.rideSessionStateHandle,
+            markerStore: rideSessionMarkerStore
         )
         self.selectedDeviceStore = selectedDeviceStore
+        self.rideSessionMarkerStore = rideSessionMarkerStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
@@ -148,12 +163,16 @@ final class CutoutAppModel {
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
+        self.core.onBluetoothRestorationResolved = { [weak self] platformIdentifier in
+            self?.handleBluetoothRestorationResolved(platformIdentifier)
+        }
         self.core.onCaptureEvent = { [weak self] event in
             self?.applyCaptureEvent(event)
         }
     }
 
     func start() {
+        rideSessionRestorationState = .awaitingBluetooth
         core.start()
     }
 
@@ -506,6 +525,78 @@ final class CutoutAppModel {
         connectionState = .retrying(selection, retry: retry)
     }
 
+    private func handleBluetoothRestorationResolved(_ platformIdentifier: String?) {
+        guard case .awaitingBluetooth = rideSessionRestorationState else { return }
+        if let platformIdentifier, let marker = rideSessionMarkerStore.marker {
+            let markerMatches = (try? core.rideSessionStateHandle
+                .rideSessionMarkerMatchesPlatformIdentifier(
+                    marker: marker,
+                    platformIdentifier: platformIdentifier
+                )) == true
+            permitsStoredDeviceAutoPairing = markerMatches
+            if !markerMatches {
+                beginRideSessionRecovery(
+                    restoredPlatformIdentifier: platformIdentifier,
+                    snapshot: nil
+                )
+                return
+            }
+        }
+        guard let platformIdentifier else {
+            beginRideSessionRecovery(restoredPlatformIdentifier: nil, snapshot: nil)
+            return
+        }
+        rideSessionRestorationState = .awaitingSnapshot(platformIdentifier: platformIdentifier)
+        syncLiveActivity()
+    }
+
+    private func beginRideSessionRecovery(
+        restoredPlatformIdentifier: String?,
+        snapshot: LiveActivityRideSnapshot?
+    ) {
+        rideSessionRestorationState = .recovering
+        liveActivityRequestID += 1
+        let requestID = liveActivityRequestID
+        Task { [weak self, liveActivityCoordinator] in
+            let recoveryResult = await liveActivityCoordinator.recoverPersistedRide(
+                requestID: requestID,
+                restoredPlatformIdentifier: restoredPlatformIdentifier,
+                snapshot: snapshot
+            )
+            let error = await liveActivityCoordinator.lastError
+            guard let self else { return }
+            rideSessionRestorationState = .complete
+            liveActivityError = error
+            if case .adopted = recoveryResult,
+               error == nil,
+               core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+            {
+                lastLiveActivitySnapshot = snapshot
+                lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+            }
+            syncLiveActivity()
+        }
+    }
+
+    private func waitForRideSessionRecoveryIfNeeded(
+        snapshot: LiveActivityRideSnapshot?
+    ) -> Bool {
+        switch rideSessionRestorationState {
+        case .complete:
+            return false
+        case .awaitingBluetooth, .recovering:
+            return true
+        case let .awaitingSnapshot(platformIdentifier):
+            if let snapshot {
+                beginRideSessionRecovery(
+                    restoredPlatformIdentifier: platformIdentifier,
+                    snapshot: snapshot
+                )
+            }
+            return true
+        }
+    }
+
     private static func makeSessionDriver() -> any CutoutSessionDriving {
         #if DEBUG
         if let fixture = uiTestFixture {
@@ -527,6 +618,7 @@ final class CutoutAppModel {
 
     private func syncLiveActivity() {
         let snapshot = currentLiveActivitySnapshot()
+        guard waitForRideSessionRecoveryIfNeeded(snapshot: snapshot) == false else { return }
         if case .failed = phase, let snapshot {
             liveActivityRequestID += 1
             let requestID = liveActivityRequestID
@@ -670,6 +762,11 @@ final class CutoutAppModel {
             return true
         }
         guard let snapshot else { return false }
+        if core.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting {
+            lastLiveActivitySnapshot = snapshot
+            lastLiveActivityUpdate = now
+            return true
+        }
         guard snapshot != lastLiveActivitySnapshot else { return false }
         let previousSnapshot = lastLiveActivitySnapshot
         guard

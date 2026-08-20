@@ -15,6 +15,12 @@ public enum LiveActivityRideLifecycleError: Error, Equatable, Sendable {
     case activityUnavailable
 }
 
+public enum LiveActivityRideRecoveryResult: Equatable, Sendable {
+    case noPersistedRide
+    case adopted
+    case ended(requiresUserAction: Bool)
+}
+
 public enum LiveActivityRideStartOutcome: Equatable, Sendable {
     case started(activityID: String)
     case adopted(activityID: String)
@@ -92,6 +98,7 @@ func liveActivityRideReconciliation<Identity: Equatable & Sendable>(
 public actor LiveActivityRideLifecycleCoordinator {
     private let manager: any LiveActivityRideLifecycleManaging
     private let sessionState: CutoutSessionStateHandle
+    private let markerStore: RideSessionMarkerStore
     private var hasReconciledInactiveState = false
     private var lastSnapshot: LiveActivityRideSnapshot?
     public private(set) var lastError: LiveActivityRideLifecycleError?
@@ -101,10 +108,54 @@ public actor LiveActivityRideLifecycleCoordinator {
 
     public init(
         manager: some LiveActivityRideLifecycleManaging,
-        sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle()
+        sessionState: CutoutSessionStateHandle = CutoutSessionStateHandle(),
+        markerStore: RideSessionMarkerStore = RideSessionMarkerStore()
     ) {
         self.manager = manager
         self.sessionState = sessionState
+        self.markerStore = markerStore
+    }
+
+    /// Reconciles an opaque persisted Rust marker with `CoreBluetooth` restoration state.
+    ///
+    /// Reports whether Rust adopted the persisted ride or ended it before user action is required.
+    public func recoverPersistedRide(
+        requestID: UInt64,
+        restoredPlatformIdentifier: String?,
+        snapshot: LiveActivityRideSnapshot?
+    ) async -> LiveActivityRideRecoveryResult {
+        guard accept(requestID: requestID) else { return .noPersistedRide }
+        await beginOperation()
+        defer { finishOperation() }
+        guard requestID == latestRequestID else { return .noPersistedRide }
+        guard let marker = markerStore.marker else { return .noPersistedRide }
+
+        do {
+            let decision = try sessionState.recoverRideSessionMarker(
+                marker: marker,
+                restoredPlatformIdentifier: restoredPlatformIdentifier
+            )
+            let result: LiveActivityRideRecoveryResult = switch decision.effect {
+            case .startActivity:
+                .adopted
+            case .endActivity:
+                .ended(requiresUserAction: restoredPlatformIdentifier != nil)
+            default:
+                .ended(requiresUserAction: false)
+            }
+            persistSessionMarker()
+            await execute(
+                effect: decision.effect,
+                snapshot: snapshot,
+                endReason: .sessionEnded,
+                staleAfterMilliseconds: decision.snapshot.staleAfterMs
+            )
+            return result
+        } catch {
+            markerStore.clear()
+            lastError = Self.lifecycleError(from: error)
+            return .ended(requiresUserAction: false)
+        }
     }
 
     public func reconcile(
@@ -141,11 +192,11 @@ public actor LiveActivityRideLifecycleCoordinator {
             return
         }
 
-        guard lastSnapshot != snapshot else {
-            return
-        }
         if sessionState.rideSessionSnapshot().phase == .reconnecting {
             await apply(input: .bluetoothConnected, snapshot: snapshot, endReason: endReason)
+        }
+        guard lastSnapshot != snapshot else {
+            return
         }
         await apply(
             input: .telemetryObserved(atMs: monotonicTimeMs),
@@ -276,12 +327,12 @@ public actor LiveActivityRideLifecycleCoordinator {
 
     private func apply(
         input: MobileRideSessionInputDto,
-        snapshot: LiveActivityRideSnapshot,
+        snapshot: LiveActivityRideSnapshot?,
         endReason: LiveActivityRideLifecycleEndReason,
         captureFlush: (@Sendable () async -> Bool)? = nil
     ) async {
         do {
-            let decision = try sessionState.reduceRideSession(input: input)
+            let decision = try reduce(input)
             await execute(
                 effect: decision.effect,
                 snapshot: snapshot,
@@ -296,7 +347,7 @@ public actor LiveActivityRideLifecycleCoordinator {
 
     private func execute(
         effect: MobileRideSessionEffectDto,
-        snapshot: LiveActivityRideSnapshot,
+        snapshot: LiveActivityRideSnapshot?,
         endReason: LiveActivityRideLifecycleEndReason,
         staleAfterMilliseconds: UInt64,
         captureFlush: (@Sendable () async -> Bool)? = nil
@@ -305,6 +356,10 @@ public actor LiveActivityRideLifecycleCoordinator {
         case .none:
             return
         case let .startActivity(identity):
+            guard let snapshot else {
+                lastError = .requestFailed
+                return
+            }
             do {
                 let outcome = try await manager.start(
                     snapshot: snapshot,
@@ -322,9 +377,13 @@ public actor LiveActivityRideLifecycleCoordinator {
             } catch {
                 lastSnapshot = nil
                 lastError = Self.lifecycleError(from: error)
-                _ = try? sessionState.reduceRideSession(input: .activityUnavailable(identity: identity))
+                _ = try? reduce(.activityUnavailable(identity: identity))
             }
         case .updateActivity, .markActivityStale:
+            guard let snapshot else {
+                lastError = .requestFailed
+                return
+            }
             do {
                 let updateStaleAfterMilliseconds: UInt64 = switch effect {
                 case .markActivityStale:
@@ -354,7 +413,7 @@ public actor LiveActivityRideLifecycleCoordinator {
                 )
             } catch {
                 lastError = Self.lifecycleError(from: error)
-                _ = try? sessionState.reduceRideSession(input: .activityUnavailable(identity: identity))
+                _ = try? reduce(.activityUnavailable(identity: identity))
             }
         case .requestCaptureFlush:
             _ = await captureFlush?()
@@ -383,7 +442,7 @@ public actor LiveActivityRideLifecycleCoordinator {
         if let snapshot = lastSnapshot {
             let input: MobileRideSessionInputDto = reason == .disconnected ? .userDisconnected : .userStopped
             do {
-                let decision = try sessionState.reduceRideSession(input: input)
+                let decision = try reduce(input)
                 if decision.effect != .none {
                     await execute(
                         effect: decision.effect,
@@ -414,6 +473,20 @@ public actor LiveActivityRideLifecycleCoordinator {
             lastError = Self.lifecycleError(from: error)
             return false
         }
+    }
+
+    private func reduce(_ input: MobileRideSessionInputDto) throws -> MobileRideSessionDecisionDto {
+        let decision = try sessionState.reduceRideSession(input: input)
+        persistSessionMarker()
+        return decision
+    }
+
+    private func persistSessionMarker() {
+        guard let marker = try? sessionState.exportRideSessionMarker() else {
+            markerStore.clear()
+            return
+        }
+        markerStore.save(marker)
     }
 }
 

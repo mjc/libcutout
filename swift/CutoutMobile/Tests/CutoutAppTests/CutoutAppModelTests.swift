@@ -14,6 +14,16 @@ final class CutoutAppModelTests: XCTestCase {
         writerError: nil
     )
 
+    override func setUp() {
+        super.setUp()
+        RideSessionMarkerStore().clear()
+    }
+
+    override func tearDown() {
+        RideSessionMarkerStore().clear()
+        super.tearDown()
+    }
+
     @MainActor
     func testAvailableBmsRouteDoesNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
@@ -1251,9 +1261,9 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
-        for _ in 0 ..< 10 {
+        for _ in 0 ..< 20 {
             if model.liveActivityError != nil { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
 
         XCTAssertEqual(model.liveActivityError, .authorizationDenied)
@@ -1261,9 +1271,9 @@ final class CutoutAppModelTests: XCTestCase {
         await manager.setError(nil)
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
-        for _ in 0 ..< 10 {
+        for _ in 0 ..< 20 {
             if await manager.startCount == 2 { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(1))
         }
 
         let startCount = await manager.startCount
@@ -1485,6 +1495,138 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(reconnectEndReason)
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().identity, identity)
         XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
+    }
+
+    @MainActor
+    func testRestoredSelectedPeripheralReusesThePersistedRustRideIdentity() async throws {
+        let suiteName = "CutoutAppModelTests.restoredRide.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let fixture = CutoutUITestSessionFixture.vesc
+        let platformIdentifier = fixture.candidate.platformIdentifier
+        selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+        let source = CutoutSessionStateHandle()
+        let started = try source.reduceRideSession(
+            input: .start(platformIdentifier: platformIdentifier)
+        )
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let driver = SessionDriverSpy(
+            rows: [fixture.candidate.pickerRow],
+            restoredPlatformIdentifier: platformIdentifier
+        )
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: markerStore,
+            liveActivityManager: manager
+        )
+
+        model.start()
+        for _ in 0 ..< 50 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        for _ in 0 ..< 50 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+
+        XCTAssertEqual(
+            driver.rideSessionStateHandle.rideSessionSnapshot().identity,
+            started.snapshot.identity
+        )
+        XCTAssertEqual(model.phase, .live)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
+        let startCount = await manager.startCount
+        XCTAssertEqual(startCount, 1)
+        XCTAssertNotNil(markerStore.marker)
+    }
+
+    @MainActor
+    func testRestoredPeripheralDifferentFromPersistedRideRequiresUserAction() async throws {
+        let suiteName = "CutoutAppModelTests.replacedRestoredRide.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let fixture = CutoutUITestSessionFixture.vesc
+        let restoredPlatformIdentifier = fixture.candidate.platformIdentifier
+        selectedDeviceStore.save(platformIdentifier: restoredPlatformIdentifier)
+        let source = CutoutSessionStateHandle()
+        _ = try source.reduceRideSession(input: .start(platformIdentifier: "previous-vesc"))
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let driver = SessionDriverSpy(
+            rows: [fixture.candidate.pickerRow],
+            restoredPlatformIdentifier: restoredPlatformIdentifier
+        )
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: markerStore,
+            liveActivityManager: manager
+        )
+
+        model.start()
+        for _ in 0 ..< 50 {
+            if case .ended(reason: .appReset) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+
+        let endReason = await manager.lastEndReason
+        let initialStartCount = await manager.startCount
+        XCTAssertEqual(endReason, .sessionEnded)
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .ended(reason: .appReset))
+        XCTAssertEqual(initialStartCount, 0)
+        XCTAssertNil(markerStore.marker)
+
+        XCTAssertTrue(model.pair(platformIdentifier: restoredPlatformIdentifier))
+        for _ in 0 ..< 50 {
+            if await manager.startCount == 1 { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+        let userActionStartCount = await manager.startCount
+        XCTAssertEqual(userActionStartCount, 1)
+    }
+
+    @MainActor
+    func testLaunchWithoutARestoredPeripheralEndsThePersistedRideAsAppReset() async throws {
+        let suiteName = "CutoutAppModelTests.orphanRide.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let source = CutoutSessionStateHandle()
+        _ = try source.reduceRideSession(input: .start(platformIdentifier: "vesc-platform-id"))
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let driver = SessionDriverSpy(rows: [], restoredPlatformIdentifier: nil)
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: driver,
+            rideSessionMarkerStore: markerStore,
+            liveActivityManager: manager
+        )
+
+        model.start()
+        for _ in 0 ..< 50 {
+            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+
+        XCTAssertEqual(
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase,
+            .ended(reason: .appReset)
+        )
+        let endReason = await manager.lastEndReason
+        XCTAssertEqual(endReason, .sessionEnded)
+        XCTAssertNil(markerStore.marker)
     }
 
     @MainActor
@@ -1724,10 +1866,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
+    var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool
+    private let restoredPlatformIdentifier: String?
     private(set) var pairedPlatformIdentifiers = [String]()
     private(set) var probedPlatformIdentifiers = [String]()
     private(set) var recordedPlatformIdentifiers = [String]()
@@ -1735,13 +1879,20 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
 
-    init(rows: [DevicePickerRow], pairingSucceeds: Bool = true, flushSucceeds: Bool = true) {
+    init(
+        rows: [DevicePickerRow],
+        pairingSucceeds: Bool = true,
+        flushSucceeds: Bool = true,
+        restoredPlatformIdentifier: String? = nil
+    ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
         self.flushSucceeds = flushSucceeds
+        self.restoredPlatformIdentifier = restoredPlatformIdentifier
     }
 
     func start() {
+        onBluetoothRestorationResolved?(restoredPlatformIdentifier)
         onScanStateChange?(scanState)
     }
 

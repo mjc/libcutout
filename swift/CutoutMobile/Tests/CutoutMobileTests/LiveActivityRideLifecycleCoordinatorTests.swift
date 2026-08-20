@@ -3,6 +3,104 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        RideSessionMarkerStore().clear()
+    }
+
+    override func tearDown() {
+        RideSessionMarkerStore().clear()
+        super.tearDown()
+    }
+
+    func testCoordinatorPersistsOnlyTheOpaqueRustMarkerUntilTheRideEnds() async throws {
+        let suiteName = "LiveActivityRideLifecycleCoordinatorTests.marker.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            markerStore: markerStore
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+
+        XCTAssertNotNil(markerStore.marker)
+
+        await coordinator.end(requestID: 2, reason: .disconnected)
+
+        XCTAssertNil(markerStore.marker)
+    }
+
+    func testPersistedRideRecoveryAdoptsTheSameRustIdentity() async throws {
+        let suiteName = "LiveActivityRideLifecycleCoordinatorTests.restore.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let source = CutoutSessionStateHandle()
+        let started = try source.reduceRideSession(
+            input: .start(platformIdentifier: "vesc-platform-id")
+        )
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let restoredState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: restoredState,
+            markerStore: markerStore
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        let recovered = await coordinator.recoverPersistedRide(
+            requestID: 1,
+            restoredPlatformIdentifier: "vesc-platform-id",
+            snapshot: snapshot
+        )
+
+        XCTAssertEqual(recovered, .adopted)
+        XCTAssertEqual(restoredState.rideSessionSnapshot().identity, started.snapshot.identity)
+        XCTAssertEqual(restoredState.rideSessionSnapshot().phase, .active)
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot)])
+        XCTAssertNotNil(markerStore.marker)
+    }
+
+    func testPersistedRideRecoveryEndsTheOrphanWithoutARestoredPeripheral() async throws {
+        let suiteName = "LiveActivityRideLifecycleCoordinatorTests.orphan.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let source = CutoutSessionStateHandle()
+        _ = try source.reduceRideSession(input: .start(platformIdentifier: "vesc-platform-id"))
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let restoredState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: restoredState,
+            markerStore: markerStore
+        )
+
+        let recovered = await coordinator.recoverPersistedRide(
+            requestID: 1,
+            restoredPlatformIdentifier: nil,
+            snapshot: nil
+        )
+
+        XCTAssertEqual(recovered, .ended(requiresUserAction: false))
+        XCTAssertEqual(restoredState.rideSessionSnapshot().phase, .ended(reason: .appReset))
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.end(.sessionEnded)])
+        XCTAssertNil(markerStore.marker)
+    }
+
     func testCoordinatorPublishesActivityKitStartIntoSharedRustLifecycle() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let sessionState = CutoutSessionStateHandle()
@@ -65,6 +163,36 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         let freshnessWindows = await manager.recordedFreshnessWindows()
         XCTAssertEqual(events, [.start(first), .update(first), .update(resumed)])
         XCTAssertEqual(freshnessWindows, [2_000, 0, 2_000])
+    }
+
+    func testReconnectResumesWhenTheTelemetrySnapshotIsUnchanged() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let sessionState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: sessionState
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+        await coordinator.transportDisconnected(requestID: 2, atMs: 200, snapshot: snapshot)
+
+        await coordinator.reconcile(
+            requestID: 3,
+            platformIdentifier: "vesc-platform-id",
+            monotonicTimeMs: 300,
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+
+        XCTAssertEqual(sessionState.rideSessionSnapshot().phase, .active)
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot), .update(snapshot)])
     }
 
     func testBackgroundTransitionExecutesRustRequestedCaptureFlushOnce() async {
