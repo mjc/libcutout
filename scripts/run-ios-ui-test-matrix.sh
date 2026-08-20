@@ -2,14 +2,16 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: scripts/run-ios-ui-test-matrix.sh [--plan-from enumeration.json] [--only-group \"appearance contrast content-size\"]"
+  echo "Usage: scripts/run-ios-ui-test-matrix.sh [--smoke] [--plan-from enumeration.json] [--only-group \"appearance contrast content-size\"]"
   echo "  With no arguments, enumerate the compiled UI tests and run every test in settings-compatible groups."
+  echo "  --smoke selects the seven production-root smoke tests and runs them in compatible settings groups."
   echo "  --plan-from prints the groups in an existing Xcode enumeration without running tests."
   echo "  --only-group runs or prints one exact settings group from the compiled enumeration."
 }
 
 plan_from=""
 only_group=""
+smoke=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --help)
@@ -20,6 +22,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { echo "--plan-from requires one Xcode enumeration JSON path" >&2; exit 2; }
       plan_from="$2"
       shift 2
+      ;;
+    --smoke)
+      smoke=true
+      shift
       ;;
     --only-group)
       [[ $# -ge 2 ]] || { echo "--only-group requires one exact settings group" >&2; exit 2; }
@@ -60,11 +66,30 @@ matrix_rows() {
   ' "$1"
 }
 
+is_smoke_test() {
+  case "$1" in
+    */testPickerExposesAccessibleCaptureControls | \
+      */testVescUseShowsConnectingBeforeRide | \
+      */testVescRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType | \
+      */testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType | \
+      */testEucBmsDiagnosticsExposeStableAccessibleDataRows | \
+      */testVescCriticalLiveActivityLockScreenPreservesSafetySemantics | \
+      */testVescLiveActivityContinuesUpdatingWhileBackgrounded)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 selected_matrix_rows() {
   local appearance contrast content_size identifier key
   while IFS=$'\t' read -r appearance contrast content_size identifier; do
     key="$appearance $contrast $content_size"
-    if [[ -z "$only_group" || "$key" == "$only_group" ]]; then
+    if { [[ -z "$only_group" ]] || [[ "$key" == "$only_group" ]]; } \
+      && { [[ "$smoke" == false ]] || is_smoke_test "$identifier"; }
+    then
       printf '%s\t%s\t%s\t%s\n' "$appearance" "$contrast" "$content_size" "$identifier"
     fi
   done < <(matrix_rows "$1")

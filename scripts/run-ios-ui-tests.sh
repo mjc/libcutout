@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "Usage: scripts/run-ios-ui-tests.sh [--clean] [--build-only] [--smoke] [--verbose] [--enumerate-tests output.json] [--timeout seconds] [--appearance light|dark] [--increase-contrast enabled|disabled] [--content-size size] [xcodebuild options]"
-  echo "  --smoke    Run the seven production-root transition and accessibility checks."
+  echo "  --smoke    Run seven production-root checks in their compatible simulator-settings groups."
   echo "  --verbose  Show full xcodebuild output instead of the bounded default."
   echo "  --enumerate-tests writes Xcode's compiled test graph without executing tests."
   echo "  --timeout sets the outer deadline for this build-and-test invocation."
@@ -16,7 +16,20 @@ if [[ "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/swift-package-common.sh"
+script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+smoke_requested=false
+for argument in "$@"; do
+  [[ "$argument" == "--smoke" ]] && smoke_requested=true
+done
+if [[ "$smoke_requested" == true ]]; then
+  if [[ $# -ne 1 ]]; then
+    echo "--smoke owns its settings and timeout; do not combine it with low-level runner options" >&2
+    exit 2
+  fi
+  exec "$script_directory/run-ios-ui-test-matrix.sh" --smoke
+fi
+
+source "$script_directory/swift-package-common.sh"
 
 root="$(cutout_repo_root)"
 cd "$root"
@@ -32,7 +45,6 @@ cutout_use_xcode_developer_dir
 mode="test"
 enumeration_output=""
 clean=false
-smoke=false
 quiet=true
 requested_appearance="${CUTOUT_IOS_SIMULATOR_APPEARANCE:-}"
 requested_increase_contrast="${CUTOUT_IOS_SIMULATOR_INCREASE_CONTRAST:-}"
@@ -46,10 +58,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-only)
       mode="build-for-testing"
-      shift
-      ;;
-    --smoke)
-      smoke=true
       shift
       ;;
     --verbose)
@@ -107,7 +115,7 @@ for argument in "$@"; do
     break
   fi
 done
-if [[ "$mode" == test && "$smoke" == false && "$has_selected_test" == false ]]; then
+if [[ "$mode" == test && "$has_selected_test" == false ]]; then
   echo "iOS UI test runs require --smoke or at least one -only-testing selector; an unqualified run mixes incompatible simulator settings" >&2
   exit 2
 fi
@@ -129,7 +137,7 @@ elif [[ "$selected_tests" == *InDarkAppearance* ]]; then
   requested_appearance=dark
 fi
 
-if [[ "$selected_tests" == *AccessibilityDynamicType* || "$selected_tests" == *RightToLeft* || "$smoke" == true ]]; then
+if [[ "$selected_tests" == *AccessibilityDynamicType* || "$selected_tests" == *RightToLeft* ]]; then
   [[ -z "$requested_content_size" || "$requested_content_size" == accessibility-extra-extra-extra-large ]] || {
     echo "the selected Accessibility Dynamic Type test conflicts with --content-size $requested_content_size" >&2
     exit 2
@@ -254,21 +262,6 @@ if [[ "$quiet" == true ]]; then
   xcodebuild_args+=(-quiet)
 fi
 
-if [[ "$smoke" == true ]]; then
-  smoke_tests=(
-    testPickerExposesAccessibleCaptureControls
-    testVescUseShowsConnectingBeforeRide
-    testVescRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType
-    testEucRidePublishesDynamicTelemetryAfterRouteMountsAtAccessibilityDynamicType
-    testEucBmsDiagnosticsExposeStableAccessibleDataRows
-    testVescCriticalLiveActivityLockScreenPreservesSafetySemantics
-    testVescLiveActivityContinuesUpdatingWhileBackgrounded
-  )
-  for test_name in "${smoke_tests[@]}"; do
-    xcodebuild_args+=("-only-testing:CutoutAppUITests/CutoutAppUITests/$test_name")
-  done
-fi
-
 if [[ "$clean" == true ]]; then
   /usr/bin/xcrun xcodebuild "${xcodebuild_args[@]}" clean
 fi
@@ -299,8 +292,6 @@ fi
 
 if [[ -n "$requested_timeout" ]]; then
   ui_test_run_timeout="$requested_timeout"
-elif [[ "$smoke" == true ]]; then
-  ui_test_run_timeout=420
 elif [[ " ${xcodebuild_args[*]} " == *" -only-testing:"* ]]; then
   ui_test_run_timeout=150
 else
@@ -339,10 +330,6 @@ if [[ "$mode" == "test" ]]; then
     )"
     if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then
       echo "iOS UI test completed without executing a test; refusing to report a green result" >&2
-      exit 1
-    fi
-    if [[ "$smoke" == true && "$test_count" -ne "${#smoke_tests[@]}" ]]; then
-      echo "iOS UI smoke lane executed $test_count of ${#smoke_tests[@]} tests" >&2
       exit 1
     fi
     echo "iOS UI tests passed: $test_count in $((SECONDS - test_started_at))s ($result_bundle)"

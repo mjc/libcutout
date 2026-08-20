@@ -19,6 +19,14 @@ if ! grep -q -- "--smoke" <<<"$help_output"; then
   echo "expected UI test runner help to document the smoke lane" >&2
   exit 1
 fi
+if "$root/scripts/run-ios-ui-tests.sh" --smoke --timeout 10 >"$tmp/smoke-options.log" 2>&1; then
+  echo "expected the settings-aware smoke lane to reject low-level runner options" >&2
+  exit 1
+fi
+if ! grep -q "owns its settings and timeout" "$tmp/smoke-options.log"; then
+  cat "$tmp/smoke-options.log" >&2
+  exit 1
+fi
 if ! grep -q -- "--verbose" <<<"$help_output"; then
   echo "expected UI test runner help to document verbose diagnostics" >&2
   exit 1
