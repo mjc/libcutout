@@ -992,6 +992,47 @@ final class CutoutAppUITests: XCTestCase {
         )
     }
 
+    func testVescLiveActivityAutoFixtureRemainsInspectableAfterAppProcessTerminates() {
+        let screen = app.descendants(matching: .any)["dashboard.screen.vescRide"]
+        XCTAssertTrue(screen.waitForExistence(timeout: 20), app.debugDescription)
+        defer {
+            app.launch()
+            disconnectIfConnected()
+        }
+
+        app.terminate()
+        XCTAssertEqual(app.state, .notRunning)
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        dismissLocationPromptIfNeeded(in: springboard)
+        XCUIDevice.shared.press(.home)
+        springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
+            .press(forDuration: 1)
+        let device = springboard.descendants(matching: .any)["Device"]
+        XCTAssertTrue(device.waitForExistence(timeout: 5), springboard.debugDescription)
+        let deviceValue = device.value as? String
+        XCTAssertTrue(
+            ["connected", "stale"].contains {
+                deviceValue?.localizedCaseInsensitiveContains($0) == true
+            },
+            device.debugDescription
+        )
+        XCTAssertFalse(
+            deviceValue?.localizedCaseInsensitiveContains("disconnected") == true,
+            device.debugDescription
+        )
+        attachScreenshot(of: springboard, named: "Terminated process Expanded Dynamic Island")
+
+        XCUIDevice.shared.press(.home)
+        openLockScreen(in: springboard)
+        assertVescLiveActivityLockScreenSemantics(
+            in: springboard,
+            speed: "17.9",
+            headroom: "good",
+            stateName: "Terminated process"
+        )
+    }
+
     func testVescCriticalLiveActivityAutoFixtureStartsAnAccessibleRide() throws {
         try assertVescLiveActivityAutoFixture(.critical, assertsLockScreen: true)
     }
