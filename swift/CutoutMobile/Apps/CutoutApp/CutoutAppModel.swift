@@ -542,6 +542,25 @@ final class CutoutAppModel {
             return
         }
 
+        switch phase {
+        case .bluetoothPermissionDenied, .bluetoothUnavailable:
+            guard let snapshot else { break }
+            liveActivityRequestID += 1
+            let requestID = liveActivityRequestID
+            lastLiveActivitySnapshot = nil
+            lastLiveActivityUpdate = nil
+            Task { [weak self, liveActivityCoordinator] in
+                await liveActivityCoordinator.unrecoverableSessionFailure(
+                    requestID: requestID,
+                    snapshot: snapshot
+                )
+                self?.liveActivityError = await liveActivityCoordinator.lastError
+            }
+            return
+        default:
+            break
+        }
+
         let rideLifecyclePhase = core.rideSessionStateHandle.rideSessionSnapshot().phase
         if phase.isReconnectingTransport,
            rideLifecyclePhase == .active || rideLifecyclePhase == .reconnecting,

@@ -133,6 +133,32 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(snapshot), .update(snapshot), .end(.unavailable)])
     }
 
+    func testUnrecoverableSessionFailureEndsOnceWithTheTypedRustReason() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let sessionState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: sessionState
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+        await coordinator.unrecoverableSessionFailure(requestID: 2, snapshot: snapshot)
+        await coordinator.unrecoverableSessionFailure(requestID: 3, snapshot: snapshot)
+
+        XCTAssertEqual(
+            sessionState.rideSessionSnapshot().phase,
+            .ended(reason: .unrecoverableSessionFailure)
+        )
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot), .end(.unavailable)])
+    }
+
     func testReconcileStartsUpdatesAndEndsOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)

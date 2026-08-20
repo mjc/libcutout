@@ -170,12 +170,35 @@ public actor LiveActivityRideLifecycleCoordinator {
         requestID: UInt64,
         snapshot: LiveActivityRideSnapshot
     ) async {
+        await terminate(
+            requestID: requestID,
+            input: .reconnectExhausted,
+            snapshot: snapshot
+        )
+    }
+
+    public func unrecoverableSessionFailure(
+        requestID: UInt64,
+        snapshot: LiveActivityRideSnapshot
+    ) async {
+        await terminate(
+            requestID: requestID,
+            input: .unrecoverableSessionFailure,
+            snapshot: snapshot
+        )
+    }
+
+    private func terminate(
+        requestID: UInt64,
+        input: MobileRideSessionInputDto,
+        snapshot: LiveActivityRideSnapshot
+    ) async {
         guard accept(requestID: requestID) else { return }
         await beginOperation()
         defer { finishOperation() }
         guard requestID == latestRequestID else { return }
         await apply(
-            input: .reconnectExhausted,
+            input: input,
             snapshot: snapshot,
             endReason: .unavailable
         )

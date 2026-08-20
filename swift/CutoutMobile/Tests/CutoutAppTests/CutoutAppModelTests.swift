@@ -1346,7 +1346,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testBluetoothUnavailableEndsLiveActivityAsUnavailable() async {
+    func testBluetoothUnavailableUsesTheTypedRustTerminalReason() async {
         let fixture = CutoutUITestSessionFixture.vesc
         let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
         let manager = FailingLiveActivityManager(error: nil)
@@ -1355,14 +1355,22 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
+        for _ in 0 ..< 20 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+            await Task.yield()
+        }
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
         for _ in 0 ..< 20 {
-            if await manager.lastEndReason != nil { break }
+            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
             await Task.yield()
         }
 
         let endReason = await manager.lastEndReason
+        XCTAssertEqual(
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase,
+            .ended(reason: .unrecoverableSessionFailure)
+        )
         XCTAssertEqual(endReason, .unavailable)
     }
 
