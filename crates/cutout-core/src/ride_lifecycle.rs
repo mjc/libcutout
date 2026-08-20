@@ -363,7 +363,7 @@ impl RideSessionLifecycle {
         if self.identity.as_ref() != Some(identity)
             || matches!(
                 self.phase,
-                RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
+                RideSessionPhase::Idle | RideSessionPhase::Ended(_)
             )
         {
             return self.decision(RideSessionEffect::None);
@@ -507,8 +507,19 @@ impl RideSessionLifecycle {
         };
         if matches!(
             self.phase,
-            RideSessionPhase::Idle | RideSessionPhase::Ending(_) | RideSessionPhase::Ended(_)
+            RideSessionPhase::Idle | RideSessionPhase::Ended(_)
         ) {
+            return self.decision(RideSessionEffect::None);
+        }
+        if let RideSessionPhase::Ending(existing_reason) = self.phase {
+            if existing_reason == reason && self.activity == ActivityProjectionState::Unavailable {
+                let mut state = self.clone();
+                state.activity = ActivityProjectionState::Ending;
+                return RideSessionDecision::new(
+                    state,
+                    RideSessionEffect::EndActivity { identity, reason },
+                );
+            }
             return self.decision(RideSessionEffect::None);
         }
         let mut state = self.clone();
@@ -776,5 +787,46 @@ mod tests {
             });
         assert_eq!(repeated.effect(), &RideSessionEffect::None);
         assert_eq!(repeated.state(), stale.state());
+    }
+
+    #[test]
+    fn failed_activity_end_can_be_retried_without_ending_the_ride_twice() {
+        let identity = RideSessionIdentity::new("vesc-1".to_owned(), Uuid::from_u128(7));
+        let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+            identity: identity.clone(),
+        });
+        let active = started
+            .state()
+            .transition(RideSessionInput::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "activity-1".to_owned(),
+            });
+        let ending = active
+            .state()
+            .transition(RideSessionInput::UserDisconnected);
+        let unavailable = ending
+            .state()
+            .transition(RideSessionInput::ActivityUnavailable {
+                identity: identity.clone(),
+            });
+        let retry = unavailable
+            .state()
+            .transition(RideSessionInput::UserDisconnected);
+
+        assert_eq!(
+            unavailable.state().phase(),
+            &RideSessionPhase::Ending(RideSessionEndReason::UserDisconnect)
+        );
+        assert_eq!(
+            unavailable.state().activity(),
+            &ActivityProjectionState::Unavailable
+        );
+        assert_eq!(
+            retry.effect(),
+            &RideSessionEffect::EndActivity {
+                identity,
+                reason: RideSessionEndReason::UserDisconnect,
+            }
+        );
     }
 }
