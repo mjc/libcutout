@@ -1174,7 +1174,7 @@ impl RegisteredModelSpec for NosfetAeroModel {
         manufacturer: cutout_core::ManufacturerKey::new("NOSFET"),
         model: cutout_core::ModelKey::new(Self::MODEL),
         protocol_family: Self::PROTOCOL,
-        advertised_name_hints: &["NF2557", "Aero", "NOSFET"],
+        advertised_name_hints: &["NF2547", "NF2557", "Aero", "NOSFET"],
         wire_model_id: Some(VerifiedValue {
             value: 43,
             verification: VerificationStatus::HardwareVerified,
@@ -1682,6 +1682,15 @@ mod tests {
              808080808080080000803200364f371e00000100\
              808028062e7964800080801540e23a"
         )
+    }
+
+    #[test]
+    fn nosfet_aero_registry_includes_nf2547_bluetooth_name() {
+        assert!(
+            <NosfetAeroModel as RegisteredModelSpec>::REGISTRY_ENTRY
+                .advertised_name_hints
+                .contains(&"NF2547")
+        );
     }
 
     fn live_aero_selector_0_frame_with_selector(selector: u8) -> [u8; 77] {
