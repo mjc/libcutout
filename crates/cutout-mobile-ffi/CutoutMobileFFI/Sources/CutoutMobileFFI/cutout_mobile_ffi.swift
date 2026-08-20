@@ -913,6 +913,16 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
     func observeNotification(bytes: Data)  -> DeviceDetectionResolutionRecord
 
     /**
+     * Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideSessionInputError::InvalidSessionIdentifier`] when a callback carries
+     * a session identifier that was not produced by this Rust boundary.
+     */
+    func reduceRideSession(input: MobileRideSessionInputDto) throws  -> MobileRideSessionDecisionDto
+
+    /**
      * Clears device-specific detection state while preserving discovery observations.
      */
     func resetDeviceDetection()
@@ -921,6 +931,11 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * Returns the current detection resolution.
      */
     func resolution()  -> DeviceDetectionResolutionRecord
+
+    /**
+     * Returns the current Rust-owned ride-session snapshot.
+     */
+    func rideSessionSnapshot()  -> MobileRideSessionSnapshotDto
 
     /**
      * Selects a discovered platform identifier for this session.
@@ -1204,6 +1219,23 @@ open func observeNotification(bytes: Data) -> DeviceDetectionResolutionRecord  {
 }
 
     /**
+     * Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideSessionInputError::InvalidSessionIdentifier`] when a callback carries
+     * a session identifier that was not produced by this Rust boundary.
+     */
+open func reduceRideSession(input: MobileRideSessionInputDto)throws  -> MobileRideSessionDecisionDto  {
+    return try  FfiConverterTypeMobileRideSessionDecisionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideSessionInputError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_reduce_ride_session(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideSessionInputDto_lower(input),$0
+    )
+})
+}
+
+    /**
      * Clears device-specific detection state while preserving discovery observations.
      */
 open func resetDeviceDetection()  {try! rustCall() {
@@ -1219,6 +1251,17 @@ open func resetDeviceDetection()  {try! rustCall() {
 open func resolution() -> DeviceDetectionResolutionRecord  {
     return try!  FfiConverterTypeDeviceDetectionResolutionRecord_lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_resolution(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the current Rust-owned ride-session snapshot.
+     */
+open func rideSessionSnapshot() -> MobileRideSessionSnapshotDto  {
+    return try!  FfiConverterTypeMobileRideSessionSnapshotDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_ride_session_snapshot(
             self.uniffiCloneHandle(),$0
     )
 })
@@ -7509,6 +7552,243 @@ public func FfiConverterTypeMobileResolvedIdentityDto_lower(_ value: MobileResol
 
 
 /**
+ * Result of applying one ride-session input.
+ */
+public struct MobileRideSessionDecisionDto: Equatable, Hashable {
+    /**
+     * Next immutable Rust-owned state.
+     */
+    public var snapshot: MobileRideSessionSnapshotDto
+    /**
+     * At most one requested Apple-platform effect.
+     */
+    public var effect: MobileRideSessionEffectDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Next immutable Rust-owned state.
+         */snapshot: MobileRideSessionSnapshotDto,
+        /**
+         * At most one requested Apple-platform effect.
+         */effect: MobileRideSessionEffectDto) {
+        self.snapshot = snapshot
+        self.effect = effect
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionDecisionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionDecisionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionDecisionDto {
+        return
+            try MobileRideSessionDecisionDto(
+                snapshot: FfiConverterTypeMobileRideSessionSnapshotDto.read(from: &buf),
+                effect: FfiConverterTypeMobileRideSessionEffectDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideSessionDecisionDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRideSessionSnapshotDto.write(value.snapshot, into: &buf)
+        FfiConverterTypeMobileRideSessionEffectDto.write(value.effect, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionDecisionDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionDecisionDto {
+    return try FfiConverterTypeMobileRideSessionDecisionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionDecisionDto_lower(_ value: MobileRideSessionDecisionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionDecisionDto.lower(value)
+}
+
+
+/**
+ * Stable logical ride identity exposed to Apple-platform adapters.
+ */
+public struct MobileRideSessionIdentityDto: Equatable, Hashable {
+    /**
+     * Platform-local device identifier.
+     */
+    public var platformIdentifier: String
+    /**
+     * Rust-created UUID for this logical ride.
+     */
+    public var sessionId: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Platform-local device identifier.
+         */platformIdentifier: String,
+        /**
+         * Rust-created UUID for this logical ride.
+         */sessionId: String) {
+        self.platformIdentifier = platformIdentifier
+        self.sessionId = sessionId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionIdentityDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionIdentityDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionIdentityDto {
+        return
+            try MobileRideSessionIdentityDto(
+                platformIdentifier: FfiConverterString.read(from: &buf),
+                sessionId: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideSessionIdentityDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.platformIdentifier, into: &buf)
+        FfiConverterString.write(value.sessionId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionIdentityDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionIdentityDto {
+    return try FfiConverterTypeMobileRideSessionIdentityDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionIdentityDto_lower(_ value: MobileRideSessionIdentityDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionIdentityDto.lower(value)
+}
+
+
+/**
+ * Immutable Rust-owned ride-session snapshot.
+ */
+public struct MobileRideSessionSnapshotDto: Equatable, Hashable {
+    /**
+     * Logical ride identity, when a ride exists.
+     */
+    public var identity: MobileRideSessionIdentityDto?
+    /**
+     * Logical ride phase.
+     */
+    public var phase: MobileRideSessionPhaseDto
+    /**
+     * Desired `ActivityKit` projection state.
+     */
+    public var activity: MobileActivityProjectionStateDto
+    /**
+     * Most recent monotonic telemetry timestamp.
+     */
+    public var lastTelemetryAtMs: UInt64?
+    /**
+     * Current app UI presence.
+     */
+    public var appPresence: MobileRideSessionAppPresenceDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Logical ride identity, when a ride exists.
+         */identity: MobileRideSessionIdentityDto?,
+        /**
+         * Logical ride phase.
+         */phase: MobileRideSessionPhaseDto,
+        /**
+         * Desired `ActivityKit` projection state.
+         */activity: MobileActivityProjectionStateDto,
+        /**
+         * Most recent monotonic telemetry timestamp.
+         */lastTelemetryAtMs: UInt64?,
+        /**
+         * Current app UI presence.
+         */appPresence: MobileRideSessionAppPresenceDto) {
+        self.identity = identity
+        self.phase = phase
+        self.activity = activity
+        self.lastTelemetryAtMs = lastTelemetryAtMs
+        self.appPresence = appPresence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionSnapshotDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionSnapshotDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionSnapshotDto {
+        return
+            try MobileRideSessionSnapshotDto(
+                identity: FfiConverterOptionTypeMobileRideSessionIdentityDto.read(from: &buf),
+                phase: FfiConverterTypeMobileRideSessionPhaseDto.read(from: &buf),
+                activity: FfiConverterTypeMobileActivityProjectionStateDto.read(from: &buf),
+                lastTelemetryAtMs: FfiConverterOptionUInt64.read(from: &buf),
+                appPresence: FfiConverterTypeMobileRideSessionAppPresenceDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideSessionSnapshotDto, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeMobileRideSessionIdentityDto.write(value.identity, into: &buf)
+        FfiConverterTypeMobileRideSessionPhaseDto.write(value.phase, into: &buf)
+        FfiConverterTypeMobileActivityProjectionStateDto.write(value.activity, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastTelemetryAtMs, into: &buf)
+        FfiConverterTypeMobileRideSessionAppPresenceDto.write(value.appPresence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionSnapshotDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionSnapshotDto {
+    return try FfiConverterTypeMobileRideSessionSnapshotDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionSnapshotDto_lower(_ value: MobileRideSessionSnapshotDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionSnapshotDto.lower(value)
+}
+
+
+/**
  * Mobile semantic event count.
  */
 public struct MobileSemanticEventCountDto: Equatable, Hashable {
@@ -10602,6 +10882,138 @@ public func FfiConverterTypeDiscoveryElectricUnicycleModel_lower(_ value: Discov
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Current state of the `ActivityKit` projection.
+ */
+
+public enum MobileActivityProjectionStateDto: Equatable, Hashable {
+
+    /**
+     * No activity exists.
+     */
+    case absent
+    /**
+     * `ActivityKit` has been asked to start an activity.
+     */
+    case starting
+    /**
+     * `ActivityKit` confirmed an active activity.
+     */
+    case active(activityId: String
+    )
+    /**
+     * The activity remains visible with stale content.
+     */
+    case stale(activityId: String
+    )
+    /**
+     * `ActivityKit` has been asked to end the activity.
+     */
+    case ending
+    /**
+     * `ActivityKit` confirmed that the activity ended.
+     */
+    case ended
+    /**
+     * `ActivityKit` cannot currently project the ride.
+     */
+    case unavailable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileActivityProjectionStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileActivityProjectionStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileActivityProjectionStateDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileActivityProjectionStateDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .absent
+
+        case 2: return .starting
+
+        case 3: return .active(activityId: try FfiConverterString.read(from: &buf)
+        )
+
+        case 4: return .stale(activityId: try FfiConverterString.read(from: &buf)
+        )
+
+        case 5: return .ending
+
+        case 6: return .ended
+
+        case 7: return .unavailable
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileActivityProjectionStateDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .absent:
+            writeInt(&buf, Int32(1))
+
+
+        case .starting:
+            writeInt(&buf, Int32(2))
+
+
+        case let .active(activityId):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(activityId, into: &buf)
+
+
+        case let .stale(activityId):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(activityId, into: &buf)
+
+
+        case .ending:
+            writeInt(&buf, Int32(5))
+
+
+        case .ended:
+            writeInt(&buf, Int32(6))
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(7))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileActivityProjectionStateDto_lift(_ buf: RustBuffer) throws -> MobileActivityProjectionStateDto {
+    return try FfiConverterTypeMobileActivityProjectionStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileActivityProjectionStateDto_lower(_ value: MobileActivityProjectionStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileActivityProjectionStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * SOC basis used by a charge estimate.
  */
 
@@ -12860,6 +13272,737 @@ public func FfiConverterTypeMobileReadbackAvailabilityDto_lift(_ buf: RustBuffer
 #endif
 public func FfiConverterTypeMobileReadbackAvailabilityDto_lower(_ value: MobileReadbackAvailabilityDto) -> RustBuffer {
     return FfiConverterTypeMobileReadbackAvailabilityDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Whether the app UI is currently foregrounded.
+ */
+
+public enum MobileRideSessionAppPresenceDto: Equatable, Hashable {
+
+    /**
+     * App UI is foregrounded.
+     */
+    case foreground
+    /**
+     * App UI is backgrounded or suspended.
+     */
+    case background
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionAppPresenceDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionAppPresenceDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionAppPresenceDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionAppPresenceDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .foreground
+
+        case 2: return .background
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionAppPresenceDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .foreground:
+            writeInt(&buf, Int32(1))
+
+
+        case .background:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionAppPresenceDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionAppPresenceDto {
+    return try FfiConverterTypeMobileRideSessionAppPresenceDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionAppPresenceDto_lower(_ value: MobileRideSessionAppPresenceDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionAppPresenceDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * One Apple-platform effect requested by the Rust reducer.
+ */
+
+public enum MobileRideSessionEffectDto: Equatable, Hashable {
+
+    /**
+     * No platform work is required.
+     */
+    case none
+    /**
+     * Start or adopt an `ActivityKit` activity.
+     */
+    case startActivity(identity: MobileRideSessionIdentityDto
+    )
+    /**
+     * Update an existing `ActivityKit` activity.
+     */
+    case updateActivity(identity: MobileRideSessionIdentityDto
+    )
+    /**
+     * Mark an existing `ActivityKit` activity stale.
+     */
+    case markActivityStale(identity: MobileRideSessionIdentityDto
+    )
+    /**
+     * End an existing `ActivityKit` activity.
+     */
+    case endActivity(identity: MobileRideSessionIdentityDto, reason: MobileRideSessionEndReasonDto
+    )
+    /**
+     * Flush capture data without ending the ride.
+     */
+    case requestCaptureFlush(identity: MobileRideSessionIdentityDto
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionEffectDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionEffectDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionEffectDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionEffectDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .none
+
+        case 2: return .startActivity(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        )
+
+        case 3: return .updateActivity(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        )
+
+        case 4: return .markActivityStale(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        )
+
+        case 5: return .endActivity(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf), reason: try FfiConverterTypeMobileRideSessionEndReasonDto.read(from: &buf)
+        )
+
+        case 6: return .requestCaptureFlush(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionEffectDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .none:
+            writeInt(&buf, Int32(1))
+
+
+        case let .startActivity(identity):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+
+
+        case let .updateActivity(identity):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+
+
+        case let .markActivityStale(identity):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+
+
+        case let .endActivity(identity,reason):
+            writeInt(&buf, Int32(5))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+            FfiConverterTypeMobileRideSessionEndReasonDto.write(reason, into: &buf)
+
+
+        case let .requestCaptureFlush(identity):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionEffectDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionEffectDto {
+    return try FfiConverterTypeMobileRideSessionEffectDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionEffectDto_lower(_ value: MobileRideSessionEffectDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionEffectDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Terminal reason for a logical ride session.
+ */
+
+public enum MobileRideSessionEndReasonDto: Equatable, Hashable {
+
+    /**
+     * Rider explicitly disconnected the device.
+     */
+    case userDisconnect
+    /**
+     * Rider explicitly stopped the ride.
+     */
+    case userStop
+    /**
+     * Another ride replaced this one.
+     */
+    case replacedByNewSession
+    /**
+     * Reconnection attempts were exhausted.
+     */
+    case reconnectExhausted
+    /**
+     * App explicitly reset its session.
+     */
+    case appReset
+    /**
+     * The logical session cannot recover.
+     */
+    case unrecoverableSessionFailure
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionEndReasonDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionEndReasonDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionEndReasonDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionEndReasonDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .userDisconnect
+
+        case 2: return .userStop
+
+        case 3: return .replacedByNewSession
+
+        case 4: return .reconnectExhausted
+
+        case 5: return .appReset
+
+        case 6: return .unrecoverableSessionFailure
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionEndReasonDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .userDisconnect:
+            writeInt(&buf, Int32(1))
+
+
+        case .userStop:
+            writeInt(&buf, Int32(2))
+
+
+        case .replacedByNewSession:
+            writeInt(&buf, Int32(3))
+
+
+        case .reconnectExhausted:
+            writeInt(&buf, Int32(4))
+
+
+        case .appReset:
+            writeInt(&buf, Int32(5))
+
+
+        case .unrecoverableSessionFailure:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionEndReasonDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionEndReasonDto {
+    return try FfiConverterTypeMobileRideSessionEndReasonDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionEndReasonDto_lower(_ value: MobileRideSessionEndReasonDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionEndReasonDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Typed Apple-platform event submitted to the Rust reducer.
+ */
+
+public enum MobileRideSessionInputDto: Equatable, Hashable {
+
+    /**
+     * Starts a logical ride with a Rust-created UUID.
+     */
+    case start(platformIdentifier: String
+    )
+    /**
+     * `ActivityKit` confirmed a successful start or adoption.
+     */
+    case activityStarted(identity: MobileRideSessionIdentityDto, activityId: String
+    )
+    /**
+     * `ActivityKit` confirmed terminal end.
+     */
+    case activityEnded(identity: MobileRideSessionIdentityDto
+    )
+    /**
+     * `ActivityKit` could not execute the requested projection.
+     */
+    case activityUnavailable(identity: MobileRideSessionIdentityDto
+    )
+    /**
+     * App entered the background.
+     */
+    case appBackgrounded
+    /**
+     * App returned to the foreground.
+     */
+    case appForegrounded
+    /**
+     * Bluetooth transport disconnected without ending the ride.
+     */
+    case bluetoothDisconnected(atMs: UInt64
+    )
+    /**
+     * Bluetooth transport reconnected to the same ride.
+     */
+    case bluetoothConnected
+    /**
+     * Fresh telemetry was observed.
+     */
+    case telemetryObserved(atMs: UInt64
+    )
+    /**
+     * Evaluate telemetry freshness against the Rust-owned deadline.
+     */
+    case freshnessChecked(nowMs: UInt64, staleAfterMs: UInt64
+    )
+    /**
+     * Rider explicitly disconnected the device.
+     */
+    case userDisconnected
+    /**
+     * Rider explicitly stopped the ride.
+     */
+    case userStopped
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionInputDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionInputDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionInputDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .start(platformIdentifier: try FfiConverterString.read(from: &buf)
+        )
+
+        case 2: return .activityStarted(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf), activityId: try FfiConverterString.read(from: &buf)
+        )
+
+        case 3: return .activityEnded(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        )
+
+        case 4: return .activityUnavailable(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        )
+
+        case 5: return .appBackgrounded
+
+        case 6: return .appForegrounded
+
+        case 7: return .bluetoothDisconnected(atMs: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 8: return .bluetoothConnected
+
+        case 9: return .telemetryObserved(atMs: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 10: return .freshnessChecked(nowMs: try FfiConverterUInt64.read(from: &buf), staleAfterMs: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 11: return .userDisconnected
+
+        case 12: return .userStopped
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionInputDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .start(platformIdentifier):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(platformIdentifier, into: &buf)
+
+
+        case let .activityStarted(identity,activityId):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+            FfiConverterString.write(activityId, into: &buf)
+
+
+        case let .activityEnded(identity):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+
+
+        case let .activityUnavailable(identity):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
+
+
+        case .appBackgrounded:
+            writeInt(&buf, Int32(5))
+
+
+        case .appForegrounded:
+            writeInt(&buf, Int32(6))
+
+
+        case let .bluetoothDisconnected(atMs):
+            writeInt(&buf, Int32(7))
+            FfiConverterUInt64.write(atMs, into: &buf)
+
+
+        case .bluetoothConnected:
+            writeInt(&buf, Int32(8))
+
+
+        case let .telemetryObserved(atMs):
+            writeInt(&buf, Int32(9))
+            FfiConverterUInt64.write(atMs, into: &buf)
+
+
+        case let .freshnessChecked(nowMs,staleAfterMs):
+            writeInt(&buf, Int32(10))
+            FfiConverterUInt64.write(nowMs, into: &buf)
+            FfiConverterUInt64.write(staleAfterMs, into: &buf)
+
+
+        case .userDisconnected:
+            writeInt(&buf, Int32(11))
+
+
+        case .userStopped:
+            writeInt(&buf, Int32(12))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionInputDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionInputDto {
+    return try FfiConverterTypeMobileRideSessionInputDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionInputDto_lower(_ value: MobileRideSessionInputDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionInputDto.lower(value)
+}
+
+
+
+/**
+ * Invalid data presented at the mobile ride-session boundary.
+ */
+public enum MobileRideSessionInputError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * A callback did not carry a valid UUID returned by Rust.
+     */
+    case InvalidSessionIdentifier
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionInputError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionInputError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionInputError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionInputError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .InvalidSessionIdentifier
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionInputError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .InvalidSessionIdentifier:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionInputError_lift(_ buf: RustBuffer) throws -> MobileRideSessionInputError {
+    return try FfiConverterTypeMobileRideSessionInputError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionInputError_lower(_ value: MobileRideSessionInputError) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionInputError.lower(value)
+}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Current logical ride phase.
+ */
+
+public enum MobileRideSessionPhaseDto: Equatable, Hashable {
+
+    /**
+     * No logical ride exists.
+     */
+    case idle
+    /**
+     * Ride exists and its `ActivityKit` projection is starting.
+     */
+    case starting
+    /**
+     * Ride is receiving current transport data.
+     */
+    case active
+    /**
+     * Ride is waiting for transport reconnection.
+     */
+    case reconnecting
+    /**
+     * Ride telemetry exceeded its freshness deadline.
+     */
+    case stale
+    /**
+     * Ride is executing terminal effects.
+     */
+    case ending(reason: MobileRideSessionEndReasonDto
+    )
+    /**
+     * Ride completed terminal effects.
+     */
+    case ended(reason: MobileRideSessionEndReasonDto
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionPhaseDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionPhaseDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionPhaseDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionPhaseDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .idle
+
+        case 2: return .starting
+
+        case 3: return .active
+
+        case 4: return .reconnecting
+
+        case 5: return .stale
+
+        case 6: return .ending(reason: try FfiConverterTypeMobileRideSessionEndReasonDto.read(from: &buf)
+        )
+
+        case 7: return .ended(reason: try FfiConverterTypeMobileRideSessionEndReasonDto.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionPhaseDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .idle:
+            writeInt(&buf, Int32(1))
+
+
+        case .starting:
+            writeInt(&buf, Int32(2))
+
+
+        case .active:
+            writeInt(&buf, Int32(3))
+
+
+        case .reconnecting:
+            writeInt(&buf, Int32(4))
+
+
+        case .stale:
+            writeInt(&buf, Int32(5))
+
+
+        case let .ending(reason):
+            writeInt(&buf, Int32(6))
+            FfiConverterTypeMobileRideSessionEndReasonDto.write(reason, into: &buf)
+
+
+        case let .ended(reason):
+            writeInt(&buf, Int32(7))
+            FfiConverterTypeMobileRideSessionEndReasonDto.write(reason, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionPhaseDto_lift(_ buf: RustBuffer) throws -> MobileRideSessionPhaseDto {
+    return try FfiConverterTypeMobileRideSessionPhaseDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionPhaseDto_lower(_ value: MobileRideSessionPhaseDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionPhaseDto.lower(value)
 }
 
 
@@ -15492,6 +16635,30 @@ fileprivate struct FfiConverterOptionTypeMobileReservedPayloadEvidenceDto: FfiCo
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRideSessionIdentityDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionIdentityDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideSessionIdentityDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileSemanticEventCountDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileSemanticEventCountDto?
 
@@ -16771,10 +17938,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_notification() != 64877) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_reduce_ride_session() != 11147) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_reset_device_detection() != 51112) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_resolution() != 10155) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_ride_session_snapshot() != 50980) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_select_discovered_platform() != 48836) {
