@@ -17,8 +17,9 @@ use std::{
 };
 
 use cutout_core::{
-    AngleReadingDto, BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto,
-    BatteryInfoDto, BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
+    ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
+    BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
+    BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, Capacity,
     ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
@@ -40,16 +41,22 @@ use cutout_core::{
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
     RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingModeDto, RideOperatingStateDto, RideStopReasonDto, RideWarningDto,
-    SemanticEventCountDto, SeriesCount, SessionInputDto, SessionOutputDto, SettingsEntry,
-    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
-    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
-    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
-    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
-    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
-    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
+    RideOperatingModeDto, RideOperatingStateDto,
+    RideSessionAppPresence as CoreRideSessionAppPresence,
+    RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
+    RideSessionEndReason as CoreRideSessionEndReason,
+    RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
+    RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionPhase as CoreRideSessionPhase,
+    RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
+    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
+    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
+    Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
+    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
+    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
+    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
+    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
+    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
+    WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
@@ -64,6 +71,7 @@ use cutout_protocols::{
     identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
+use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
 
@@ -321,6 +329,361 @@ pub struct DiscoverySnapshot {
     pub selected_platform_identifier: Option<String>,
 }
 
+/// Stable logical ride identity exposed to Apple-platform adapters.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideSessionIdentityDto {
+    /// Platform-local device identifier.
+    pub platform_identifier: String,
+    /// Rust-created UUID for this logical ride.
+    pub session_id: String,
+}
+
+/// Whether the app UI is currently foregrounded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSessionAppPresenceDto {
+    /// App UI is foregrounded.
+    Foreground,
+    /// App UI is backgrounded or suspended.
+    Background,
+}
+
+/// Terminal reason for a logical ride session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSessionEndReasonDto {
+    /// Rider explicitly disconnected the device.
+    UserDisconnect,
+    /// Rider explicitly stopped the ride.
+    UserStop,
+    /// Another ride replaced this one.
+    ReplacedByNewSession,
+    /// Reconnection attempts were exhausted.
+    ReconnectExhausted,
+    /// App explicitly reset its session.
+    AppReset,
+    /// The logical session cannot recover.
+    UnrecoverableSessionFailure,
+}
+
+/// Current logical ride phase.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSessionPhaseDto {
+    /// No logical ride exists.
+    Idle,
+    /// Ride exists and its `ActivityKit` projection is starting.
+    Starting,
+    /// Ride is receiving current transport data.
+    Active,
+    /// Ride is waiting for transport reconnection.
+    Reconnecting,
+    /// Ride telemetry exceeded its freshness deadline.
+    Stale,
+    /// Ride is executing terminal effects.
+    Ending {
+        reason: MobileRideSessionEndReasonDto,
+    },
+    /// Ride completed terminal effects.
+    Ended {
+        reason: MobileRideSessionEndReasonDto,
+    },
+}
+
+/// Current state of the `ActivityKit` projection.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileActivityProjectionStateDto {
+    /// No activity exists.
+    Absent,
+    /// `ActivityKit` has been asked to start an activity.
+    Starting,
+    /// `ActivityKit` confirmed an active activity.
+    Active { activity_id: String },
+    /// The activity remains visible with stale content.
+    Stale { activity_id: String },
+    /// `ActivityKit` has been asked to end the activity.
+    Ending,
+    /// `ActivityKit` confirmed that the activity ended.
+    Ended,
+    /// `ActivityKit` cannot currently project the ride.
+    Unavailable,
+}
+
+/// Immutable Rust-owned ride-session snapshot.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideSessionSnapshotDto {
+    /// Logical ride identity, when a ride exists.
+    pub identity: Option<MobileRideSessionIdentityDto>,
+    /// Logical ride phase.
+    pub phase: MobileRideSessionPhaseDto,
+    /// Desired `ActivityKit` projection state.
+    pub activity: MobileActivityProjectionStateDto,
+    /// Most recent monotonic telemetry timestamp.
+    pub last_telemetry_at_ms: Option<u64>,
+    /// Current app UI presence.
+    pub app_presence: MobileRideSessionAppPresenceDto,
+}
+
+/// Typed Apple-platform event submitted to the Rust reducer.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSessionInputDto {
+    /// Starts a logical ride with a Rust-created UUID.
+    Start { platform_identifier: String },
+    /// `ActivityKit` confirmed a successful start or adoption.
+    ActivityStarted {
+        identity: MobileRideSessionIdentityDto,
+        activity_id: String,
+    },
+    /// `ActivityKit` confirmed terminal end.
+    ActivityEnded {
+        identity: MobileRideSessionIdentityDto,
+    },
+    /// `ActivityKit` could not execute the requested projection.
+    ActivityUnavailable {
+        identity: MobileRideSessionIdentityDto,
+    },
+    /// App entered the background.
+    AppBackgrounded,
+    /// App returned to the foreground.
+    AppForegrounded,
+    /// Bluetooth transport disconnected without ending the ride.
+    BluetoothDisconnected { at_ms: u64 },
+    /// Bluetooth transport reconnected to the same ride.
+    BluetoothConnected,
+    /// Fresh telemetry was observed.
+    TelemetryObserved { at_ms: u64 },
+    /// Evaluate telemetry freshness against the Rust-owned deadline.
+    FreshnessChecked { now_ms: u64, stale_after_ms: u64 },
+    /// Rider explicitly disconnected the device.
+    UserDisconnected,
+    /// Rider explicitly stopped the ride.
+    UserStopped,
+}
+
+/// One Apple-platform effect requested by the Rust reducer.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSessionEffectDto {
+    /// No platform work is required.
+    None,
+    /// Start or adopt an `ActivityKit` activity.
+    StartActivity {
+        identity: MobileRideSessionIdentityDto,
+    },
+    /// Update an existing `ActivityKit` activity.
+    UpdateActivity {
+        identity: MobileRideSessionIdentityDto,
+    },
+    /// Mark an existing `ActivityKit` activity stale.
+    MarkActivityStale {
+        identity: MobileRideSessionIdentityDto,
+    },
+    /// End an existing `ActivityKit` activity.
+    EndActivity {
+        identity: MobileRideSessionIdentityDto,
+        reason: MobileRideSessionEndReasonDto,
+    },
+    /// Flush capture data without ending the ride.
+    RequestCaptureFlush {
+        identity: MobileRideSessionIdentityDto,
+    },
+}
+
+/// Result of applying one ride-session input.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideSessionDecisionDto {
+    /// Next immutable Rust-owned state.
+    pub snapshot: MobileRideSessionSnapshotDto,
+    /// At most one requested Apple-platform effect.
+    pub effect: MobileRideSessionEffectDto,
+}
+
+/// Invalid data presented at the mobile ride-session boundary.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRideSessionInputError {
+    /// A callback did not carry a valid UUID returned by Rust.
+    #[error("invalid ride session identifier")]
+    InvalidSessionIdentifier,
+}
+
+impl From<&CoreRideSessionIdentity> for MobileRideSessionIdentityDto {
+    fn from(identity: &CoreRideSessionIdentity) -> Self {
+        Self {
+            platform_identifier: identity.platform_identifier().to_owned(),
+            session_id: identity.session_id().to_string(),
+        }
+    }
+}
+
+impl TryFrom<MobileRideSessionIdentityDto> for CoreRideSessionIdentity {
+    type Error = MobileRideSessionInputError;
+
+    fn try_from(identity: MobileRideSessionIdentityDto) -> Result<Self, Self::Error> {
+        let session_id = Uuid::parse_str(&identity.session_id)
+            .map_err(|_| MobileRideSessionInputError::InvalidSessionIdentifier)?;
+        Ok(Self::new(identity.platform_identifier, session_id))
+    }
+}
+
+impl From<CoreRideSessionAppPresence> for MobileRideSessionAppPresenceDto {
+    fn from(presence: CoreRideSessionAppPresence) -> Self {
+        match presence {
+            CoreRideSessionAppPresence::Foreground => Self::Foreground,
+            CoreRideSessionAppPresence::Background => Self::Background,
+            _ => unreachable!("mobile FFI must map every core app-presence variant"),
+        }
+    }
+}
+
+impl From<CoreRideSessionEndReason> for MobileRideSessionEndReasonDto {
+    fn from(reason: CoreRideSessionEndReason) -> Self {
+        match reason {
+            CoreRideSessionEndReason::UserDisconnect => Self::UserDisconnect,
+            CoreRideSessionEndReason::UserStop => Self::UserStop,
+            CoreRideSessionEndReason::ReplacedByNewSession => Self::ReplacedByNewSession,
+            CoreRideSessionEndReason::ReconnectExhausted => Self::ReconnectExhausted,
+            CoreRideSessionEndReason::AppReset => Self::AppReset,
+            CoreRideSessionEndReason::UnrecoverableSessionFailure => {
+                Self::UnrecoverableSessionFailure
+            }
+            _ => unreachable!("mobile FFI must map every core ride-end variant"),
+        }
+    }
+}
+
+impl From<&CoreRideSessionPhase> for MobileRideSessionPhaseDto {
+    fn from(phase: &CoreRideSessionPhase) -> Self {
+        match phase {
+            CoreRideSessionPhase::Idle => Self::Idle,
+            CoreRideSessionPhase::Starting => Self::Starting,
+            CoreRideSessionPhase::Active => Self::Active,
+            CoreRideSessionPhase::Reconnecting => Self::Reconnecting,
+            CoreRideSessionPhase::Stale => Self::Stale,
+            CoreRideSessionPhase::Ending(reason) => Self::Ending {
+                reason: (*reason).into(),
+            },
+            CoreRideSessionPhase::Ended(reason) => Self::Ended {
+                reason: (*reason).into(),
+            },
+            _ => unreachable!("mobile FFI must map every core ride-phase variant"),
+        }
+    }
+}
+
+impl From<&CoreActivityProjectionState> for MobileActivityProjectionStateDto {
+    fn from(activity: &CoreActivityProjectionState) -> Self {
+        match activity {
+            CoreActivityProjectionState::Absent => Self::Absent,
+            CoreActivityProjectionState::Starting => Self::Starting,
+            CoreActivityProjectionState::Active { activity_id } => Self::Active {
+                activity_id: activity_id.clone(),
+            },
+            CoreActivityProjectionState::Stale { activity_id } => Self::Stale {
+                activity_id: activity_id.clone(),
+            },
+            CoreActivityProjectionState::Ending => Self::Ending,
+            CoreActivityProjectionState::Ended => Self::Ended,
+            CoreActivityProjectionState::Unavailable => Self::Unavailable,
+            _ => unreachable!("mobile FFI must map every core activity variant"),
+        }
+    }
+}
+
+impl From<&CoreRideSessionLifecycle> for MobileRideSessionSnapshotDto {
+    fn from(lifecycle: &CoreRideSessionLifecycle) -> Self {
+        Self {
+            identity: lifecycle.identity().map(MobileRideSessionIdentityDto::from),
+            phase: lifecycle.phase().into(),
+            activity: lifecycle.activity().into(),
+            last_telemetry_at_ms: lifecycle
+                .last_telemetry_at()
+                .map(MonotonicTimestamp::as_milliseconds),
+            app_presence: lifecycle.app_presence().into(),
+        }
+    }
+}
+
+impl TryFrom<MobileRideSessionInputDto> for CoreRideSessionInput {
+    type Error = MobileRideSessionInputError;
+
+    fn try_from(input: MobileRideSessionInputDto) -> Result<Self, Self::Error> {
+        Ok(match input {
+            MobileRideSessionInputDto::Start {
+                platform_identifier,
+            } => Self::Start {
+                identity: CoreRideSessionIdentity::new_session(platform_identifier),
+            },
+            MobileRideSessionInputDto::ActivityStarted {
+                identity,
+                activity_id,
+            } => Self::ActivityStarted {
+                identity: identity.try_into()?,
+                activity_id,
+            },
+            MobileRideSessionInputDto::ActivityEnded { identity } => Self::ActivityEnded {
+                identity: identity.try_into()?,
+            },
+            MobileRideSessionInputDto::ActivityUnavailable { identity } => {
+                Self::ActivityUnavailable {
+                    identity: identity.try_into()?,
+                }
+            }
+            MobileRideSessionInputDto::AppBackgrounded => Self::AppBackgrounded,
+            MobileRideSessionInputDto::AppForegrounded => Self::AppForegrounded,
+            MobileRideSessionInputDto::BluetoothDisconnected { at_ms } => {
+                Self::BluetoothDisconnected {
+                    at: MonotonicTimestamp::new(at_ms),
+                }
+            }
+            MobileRideSessionInputDto::BluetoothConnected => Self::BluetoothConnected,
+            MobileRideSessionInputDto::TelemetryObserved { at_ms } => Self::TelemetryObserved {
+                at: MonotonicTimestamp::new(at_ms),
+            },
+            MobileRideSessionInputDto::FreshnessChecked {
+                now_ms,
+                stale_after_ms,
+            } => Self::FreshnessChecked {
+                now: MonotonicTimestamp::new(now_ms),
+                stale_after: CoreDuration::from_milliseconds(stale_after_ms),
+            },
+            MobileRideSessionInputDto::UserDisconnected => Self::UserDisconnected,
+            MobileRideSessionInputDto::UserStopped => Self::UserStopped,
+        })
+    }
+}
+
+impl From<CoreRideSessionEffect> for MobileRideSessionEffectDto {
+    fn from(effect: CoreRideSessionEffect) -> Self {
+        match effect {
+            CoreRideSessionEffect::None => Self::None,
+            CoreRideSessionEffect::StartActivity { identity } => Self::StartActivity {
+                identity: (&identity).into(),
+            },
+            CoreRideSessionEffect::UpdateActivity { identity } => Self::UpdateActivity {
+                identity: (&identity).into(),
+            },
+            CoreRideSessionEffect::MarkActivityStale { identity } => Self::MarkActivityStale {
+                identity: (&identity).into(),
+            },
+            CoreRideSessionEffect::EndActivity { identity, reason } => Self::EndActivity {
+                identity: (&identity).into(),
+                reason: reason.into(),
+            },
+            CoreRideSessionEffect::RequestCaptureFlush { identity } => Self::RequestCaptureFlush {
+                identity: (&identity).into(),
+            },
+            _ => unreachable!("mobile FFI must map every core ride effect"),
+        }
+    }
+}
+
+impl MobileRideSessionDecisionDto {
+    fn from_core(decision: CoreRideSessionDecision) -> (CoreRideSessionLifecycle, Self) {
+        let (state, effect) = decision.into_parts();
+        let output = Self {
+            snapshot: (&state).into(),
+            effect: effect.into(),
+        };
+        (state, output)
+    }
+}
+
 /// Mobile-facing Rust-owned `CutOut` session state handle.
 #[derive(Debug, uniffi::Object)]
 pub struct CutoutSessionStateHandle {
@@ -514,6 +877,30 @@ impl CutoutSessionStateHandle {
     #[must_use]
     pub fn discovery_snapshot(&self) -> DiscoverySnapshot {
         DiscoverySnapshot::from_state(&self.lock_inner().state)
+    }
+
+    /// Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideSessionInputError::InvalidSessionIdentifier`] when a callback carries
+    /// a session identifier that was not produced by this Rust boundary.
+    pub fn reduce_ride_session(
+        &self,
+        input: MobileRideSessionInputDto,
+    ) -> Result<MobileRideSessionDecisionDto, MobileRideSessionInputError> {
+        let input = input.try_into()?;
+        let mut mobile = self.lock_inner();
+        let decision = mobile.state.ride_session.transition(input);
+        let (state, output) = MobileRideSessionDecisionDto::from_core(decision);
+        mobile.state.ride_session = state;
+        Ok(output)
+    }
+
+    /// Returns the current Rust-owned ride-session snapshot.
+    #[must_use]
+    pub fn ride_session_snapshot(&self) -> MobileRideSessionSnapshotDto {
+        (&self.lock_inner().state.ride_session).into()
     }
 }
 
@@ -6521,6 +6908,93 @@ mod tests {
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
         bytes[28..30].copy_from_slice(&(model_id * 1_000).to_be_bytes());
         bytes
+    }
+
+    #[test]
+    fn mobile_ride_lifecycle_keeps_identity_through_background_and_reconnect() {
+        let handle = CutoutSessionStateHandle::new();
+        let started = handle
+            .reduce_ride_session(MobileRideSessionInputDto::Start {
+                platform_identifier: "vesc-1".to_owned(),
+            })
+            .expect("Rust should create a valid ride identity");
+        let identity = started
+            .snapshot
+            .identity
+            .clone()
+            .expect("a started ride has an identity");
+
+        assert_eq!(
+            started.effect,
+            MobileRideSessionEffectDto::StartActivity {
+                identity: identity.clone(),
+            }
+        );
+
+        let active = handle
+            .reduce_ride_session(MobileRideSessionInputDto::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "activity-1".to_owned(),
+            })
+            .expect("the generated identity should round-trip");
+        assert_eq!(active.snapshot.phase, MobileRideSessionPhaseDto::Active);
+
+        let backgrounded = handle
+            .reduce_ride_session(MobileRideSessionInputDto::AppBackgrounded)
+            .expect("backgrounding has no fallible input");
+        assert_eq!(
+            backgrounded.effect,
+            MobileRideSessionEffectDto::RequestCaptureFlush {
+                identity: identity.clone(),
+            }
+        );
+
+        handle
+            .reduce_ride_session(MobileRideSessionInputDto::TelemetryObserved { at_ms: 10 })
+            .expect("telemetry time is already typed");
+        let disconnected = handle
+            .reduce_ride_session(MobileRideSessionInputDto::BluetoothDisconnected { at_ms: 12 })
+            .expect("disconnect time is already typed");
+        assert_eq!(
+            disconnected.snapshot.phase,
+            MobileRideSessionPhaseDto::Reconnecting
+        );
+        assert_eq!(disconnected.snapshot.identity, Some(identity.clone()));
+
+        let reconnected = handle
+            .reduce_ride_session(MobileRideSessionInputDto::BluetoothConnected)
+            .expect("reconnect has no fallible input");
+        assert_eq!(
+            reconnected.snapshot.phase,
+            MobileRideSessionPhaseDto::Active
+        );
+        assert_eq!(reconnected.snapshot.identity, Some(identity));
+        assert_eq!(reconnected.effect, MobileRideSessionEffectDto::None);
+    }
+
+    #[test]
+    fn mobile_ride_lifecycle_rejects_invalid_callback_identity_without_mutating_state() {
+        let handle = CutoutSessionStateHandle::new();
+        let started = handle
+            .reduce_ride_session(MobileRideSessionInputDto::Start {
+                platform_identifier: "vesc-1".to_owned(),
+            })
+            .expect("Rust should create a valid ride identity");
+        let expected = started.snapshot;
+
+        let result = handle.reduce_ride_session(MobileRideSessionInputDto::ActivityStarted {
+            identity: MobileRideSessionIdentityDto {
+                platform_identifier: "vesc-1".to_owned(),
+                session_id: "not-a-uuid".to_owned(),
+            },
+            activity_id: "late-activity".to_owned(),
+        });
+
+        assert_eq!(
+            result,
+            Err(MobileRideSessionInputError::InvalidSessionIdentifier)
+        );
+        assert_eq!(handle.ride_session_snapshot(), expected);
     }
 
     #[test]

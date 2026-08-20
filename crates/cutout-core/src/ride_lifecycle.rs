@@ -9,6 +9,12 @@ pub struct RideSessionIdentity {
 }
 
 impl RideSessionIdentity {
+    /// Creates a new Rust-owned logical ride identity.
+    #[must_use]
+    pub fn new_session(platform_identifier: String) -> Self {
+        Self::new(platform_identifier, Uuid::new_v4())
+    }
+
     /// Creates a logical ride identity from a platform device identifier and durable session ID.
     #[must_use]
     pub const fn new(platform_identifier: String, session_id: Uuid) -> Self {
