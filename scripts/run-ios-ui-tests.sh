@@ -324,14 +324,8 @@ if [[ "$mode" == "test" ]]; then
   fi
 
   if [[ "$test_status" -eq 0 ]]; then
-    test_count="$(
-      /usr/bin/xcrun xcresulttool get test-results summary --path "$result_bundle" \
-        | /usr/bin/plutil -extract totalTestCount raw -
-    )"
-    if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then
-      echo "iOS UI test completed without executing a test; refusing to report a green result" >&2
-      exit 1
-    fi
+    result_summary="$(/usr/bin/xcrun xcresulttool get test-results summary --path "$result_bundle")"
+    test_count="$(cutout_require_complete_ios_ui_test_summary "$result_summary")" || exit 1
     echo "iOS UI tests passed: $test_count in $((SECONDS - test_started_at))s ($result_bundle)"
   fi
 

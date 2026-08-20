@@ -154,6 +154,28 @@ cutout_create_ios_ui_test_result_bundle() {
   printf '%s\n' "$result_directory/Result.xcresult"
 }
 
+cutout_require_complete_ios_ui_test_summary() {
+  local summary_json test_count skipped_count
+  summary_json="$1"
+  test_count="$(jq -er '.totalTestCount' <<<"$summary_json")" || {
+    echo "iOS UI test result has no total test count" >&2
+    return 1
+  }
+  skipped_count="$(jq -er '.skippedTests // 0' <<<"$summary_json")" || {
+    echo "iOS UI test result has no skipped test count" >&2
+    return 1
+  }
+  if ! [[ "$test_count" =~ ^[1-9][0-9]*$ ]]; then
+    echo "iOS UI test completed without executing a test; refusing to report a green result" >&2
+    return 1
+  fi
+  if ! [[ "$skipped_count" =~ ^[0-9]+$ ]] || [[ "$skipped_count" -ne 0 ]]; then
+    echo "iOS UI test result skipped $skipped_count tests; refusing to report complete coverage" >&2
+    return 1
+  fi
+  printf '%s\n' "$test_count"
+}
+
 cutout_xcode_auth_args() {
   if [[ -n "${CUTOUT_APPSTORE_AUTH_KEY_PATH:-}" ]]; then
     printf '%s\0' \

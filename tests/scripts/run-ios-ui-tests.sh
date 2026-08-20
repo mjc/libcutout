@@ -112,3 +112,15 @@ fi
 
 assert_equal "Result.xcresult" "$(basename "$first_result")"
 assert_equal "$tmp/derived-data/TestResults" "$(dirname "$(dirname "$first_result")")"
+
+assert_equal "2" "$(cutout_require_complete_ios_ui_test_summary '{"totalTestCount":2,"skippedTests":0}')"
+if cutout_require_complete_ios_ui_test_summary \
+  '{"totalTestCount":2,"skippedTests":1}' >"$tmp/skipped-result.log" 2>&1
+then
+  echo "expected a completed UI result with a skipped test to be rejected" >&2
+  exit 1
+fi
+if ! grep -q "skipped 1" "$tmp/skipped-result.log"; then
+  cat "$tmp/skipped-result.log" >&2
+  exit 1
+fi
