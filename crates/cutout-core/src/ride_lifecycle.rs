@@ -40,6 +40,7 @@ impl RideSessionIdentity {
     }
 }
 
+#[cfg(feature = "serde")]
 const RIDE_SESSION_MARKER_VERSION: u8 = 1;
 
 /// Minimal durable identity used to reconcile a system-owned Live Activity after relaunch.
