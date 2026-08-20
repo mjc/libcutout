@@ -27,8 +27,16 @@ struct CutoutApp: App {
                     model.start()
                 }
                 .onChange(of: scenePhase) {
-                    guard scenePhase != .active else { return }
-                    Task { await model.flushCapture() }
+                    switch scenePhase {
+                    case .active:
+                        model.appDidBecomeActive()
+                    case .background:
+                        model.appDidEnterBackground()
+                    case .inactive:
+                        break
+                    @unknown default:
+                        break
+                    }
                 }
         }
         .commands {

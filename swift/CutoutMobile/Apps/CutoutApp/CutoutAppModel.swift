@@ -323,6 +323,39 @@ final class CutoutAppModel {
         return didFlush
     }
 
+    func appDidEnterBackground() {
+        guard let snapshot = currentLiveActivitySnapshot() else {
+            guard isRecordOnlyCapture else { return }
+            Task { [weak self] in _ = await self?.flushCapture() }
+            return
+        }
+        liveActivityRequestID += 1
+        let requestID = liveActivityRequestID
+        Task { [weak self, liveActivityCoordinator] in
+            await liveActivityCoordinator.appDidEnterBackground(
+                requestID: requestID,
+                snapshot: snapshot,
+                captureFlush: { [weak self] in
+                    await self?.flushCapture() ?? false
+                }
+            )
+            self?.liveActivityError = await liveActivityCoordinator.lastError
+        }
+    }
+
+    func appDidBecomeActive() {
+        guard let snapshot = currentLiveActivitySnapshot() else { return }
+        liveActivityRequestID += 1
+        let requestID = liveActivityRequestID
+        Task { [weak self, liveActivityCoordinator] in
+            await liveActivityCoordinator.appDidBecomeActive(
+                requestID: requestID,
+                snapshot: snapshot
+            )
+            self?.liveActivityError = await liveActivityCoordinator.lastError
+        }
+    }
+
     @discardableResult
     func finishCapture() async -> Bool {
         guard !isFinishingCapture else { return false }
@@ -493,9 +526,7 @@ final class CutoutAppModel {
     #endif
 
     private func syncLiveActivity() {
-        let snapshot = liveActivityIdentity.map {
-            LiveActivityRideSnapshot(identity: $0, glyph: liveActivityGlyph, rideState: rideState, now: core.now())
-        }
+        let snapshot = currentLiveActivitySnapshot()
         let rideLifecyclePhase = core.rideSessionStateHandle.rideSessionSnapshot().phase
         if phase.isReconnectingTransport,
            rideLifecyclePhase == .active || rideLifecyclePhase == .reconnecting,
@@ -547,6 +578,12 @@ final class CutoutAppModel {
                 self?.lastLiveActivitySnapshot = nil
                 self?.lastLiveActivityUpdate = nil
             }
+        }
+    }
+
+    private func currentLiveActivitySnapshot() -> LiveActivityRideSnapshot? {
+        liveActivityIdentity.map {
+            LiveActivityRideSnapshot(identity: $0, glyph: liveActivityGlyph, rideState: rideState, now: core.now())
         }
     }
 

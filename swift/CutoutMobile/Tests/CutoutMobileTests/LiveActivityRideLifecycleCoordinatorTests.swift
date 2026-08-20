@@ -60,6 +60,49 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(events, [.start(first), .update(first), .update(resumed)])
     }
 
+    func testBackgroundTransitionExecutesRustRequestedCaptureFlushOnce() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let sessionState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: sessionState
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let capture = CaptureFlushSpy()
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+        await coordinator.appDidEnterBackground(
+            requestID: 2,
+            snapshot: snapshot,
+            captureFlush: { await capture.flush() }
+        )
+        await coordinator.appDidEnterBackground(
+            requestID: 3,
+            snapshot: snapshot,
+            captureFlush: { await capture.flush() }
+        )
+
+        let firstBackgroundFlushCount = await capture.count()
+        XCTAssertEqual(sessionState.rideSessionSnapshot().appPresence, .background)
+        XCTAssertEqual(firstBackgroundFlushCount, 1)
+
+        await coordinator.appDidBecomeActive(requestID: 4, snapshot: snapshot)
+        await coordinator.appDidEnterBackground(
+            requestID: 5,
+            snapshot: snapshot,
+            captureFlush: { await capture.flush() }
+        )
+
+        let secondBackgroundFlushCount = await capture.count()
+        XCTAssertEqual(sessionState.rideSessionSnapshot().appPresence, .background)
+        XCTAssertEqual(secondBackgroundFlushCount, 2)
+    }
+
     func testReconcileStartsUpdatesAndEndsOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
@@ -418,6 +461,17 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
         firstStartWaiter?.resume()
         firstStartWaiter = nil
     }
+}
+
+private actor CaptureFlushSpy {
+    private var flushCount = 0
+
+    func flush() -> Bool {
+        flushCount += 1
+        return true
+    }
+
+    func count() -> Int { flushCount }
 }
 
 private func liveSnapshot(label: String, speedMph: Double) -> LiveActivityRideSnapshot {

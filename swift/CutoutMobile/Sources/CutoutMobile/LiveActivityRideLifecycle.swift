@@ -146,6 +146,38 @@ public actor LiveActivityRideLifecycleCoordinator {
         )
     }
 
+    public func appDidEnterBackground(
+        requestID: UInt64,
+        snapshot: LiveActivityRideSnapshot,
+        captureFlush: @escaping @Sendable () async -> Bool
+    ) async {
+        guard accept(requestID: requestID) else { return }
+        await beginOperation()
+        defer { finishOperation() }
+        guard requestID == latestRequestID else { return }
+        await apply(
+            input: .appBackgrounded,
+            snapshot: snapshot,
+            endReason: .sessionEnded,
+            captureFlush: captureFlush
+        )
+    }
+
+    public func appDidBecomeActive(
+        requestID: UInt64,
+        snapshot: LiveActivityRideSnapshot
+    ) async {
+        guard accept(requestID: requestID) else { return }
+        await beginOperation()
+        defer { finishOperation() }
+        guard requestID == latestRequestID else { return }
+        await apply(
+            input: .appForegrounded,
+            snapshot: snapshot,
+            endReason: .sessionEnded
+        )
+    }
+
     public func end(requestID: UInt64, reason: LiveActivityRideLifecycleEndReason) async {
         guard accept(requestID: requestID) else { return }
         await beginOperation()
@@ -183,11 +215,17 @@ public actor LiveActivityRideLifecycleCoordinator {
     private func apply(
         input: MobileRideSessionInputDto,
         snapshot: LiveActivityRideSnapshot,
-        endReason: LiveActivityRideLifecycleEndReason
+        endReason: LiveActivityRideLifecycleEndReason,
+        captureFlush: (@Sendable () async -> Bool)? = nil
     ) async {
         do {
             let decision = try sessionState.reduceRideSession(input: input)
-            await execute(effect: decision.effect, snapshot: snapshot, endReason: endReason)
+            await execute(
+                effect: decision.effect,
+                snapshot: snapshot,
+                endReason: endReason,
+                captureFlush: captureFlush
+            )
         } catch {
             lastError = Self.lifecycleError(from: error)
         }
@@ -196,7 +234,8 @@ public actor LiveActivityRideLifecycleCoordinator {
     private func execute(
         effect: MobileRideSessionEffectDto,
         snapshot: LiveActivityRideSnapshot,
-        endReason: LiveActivityRideLifecycleEndReason
+        endReason: LiveActivityRideLifecycleEndReason,
+        captureFlush: (@Sendable () async -> Bool)? = nil
     ) async {
         switch effect {
         case .none:
@@ -241,7 +280,7 @@ public actor LiveActivityRideLifecycleCoordinator {
                 _ = try? sessionState.reduceRideSession(input: .activityUnavailable(identity: identity))
             }
         case .requestCaptureFlush:
-            return
+            _ = await captureFlush?()
         }
     }
 

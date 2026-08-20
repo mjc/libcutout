@@ -810,6 +810,70 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.flushCaptureCount, 2)
     }
 
+    @MainActor
+    func testSceneBackgroundExecutesRustRequestedCaptureFlushOncePerTransition() async {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        let model = CutoutAppModel(core: driver, liveActivityManager: FailingLiveActivityManager(error: nil))
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onDisplayStateChange?(
+            RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(100),
+                    speed: Speed(value: 8_000),
+                    operatingState: .riding
+                )
+            )
+        )
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        for _ in 0 ..< 20 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+            await Task.yield()
+        }
+
+        model.appDidEnterBackground()
+        for _ in 0 ..< 20 {
+            if driver.flushCaptureCount == 1 { break }
+            await Task.yield()
+        }
+        model.appDidEnterBackground()
+        for _ in 0 ..< 5 { await Task.yield() }
+
+        XCTAssertEqual(driver.flushCaptureCount, 1)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().appPresence, .background)
+
+        model.appDidBecomeActive()
+        for _ in 0 ..< 20 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().appPresence == .foreground { break }
+            await Task.yield()
+        }
+        model.appDidEnterBackground()
+        for _ in 0 ..< 20 {
+            if driver.flushCaptureCount == 2 { break }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(driver.flushCaptureCount, 2)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().appPresence, .background)
+    }
+
+    @MainActor
+    func testRecordOnlyCaptureStillFlushesWhenTheAppEntersBackground() async {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
+
+        model.appDidEnterBackground()
+        for _ in 0 ..< 20 {
+            if driver.flushCaptureCount == 1 { break }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(driver.flushCaptureCount, 1)
+    }
+
     func testUITestFixtureMarksCaptureFinalizationFailure() {
         XCTAssertFalse(CutoutUITestSessionFixture.unknownDeviceFinishFailure.flushCaptureSucceeds)
     }
@@ -1272,7 +1336,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if await manager.lastStartedSnapshot != nil { break }
             await Task.yield()
         }
