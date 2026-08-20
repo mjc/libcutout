@@ -1182,6 +1182,8 @@ final class CutoutAppUITests: XCTestCase {
                 stateName: "Critical",
                 speed: "17.9",
                 headroom: "reduce acceleration",
+                compactTrailingLabel: "Headroom",
+                compactTrailingValue: "reduce acceleration",
                 connectionStates: ["connected", "stale"]
             )
         } else if name.contains("Unavailable") {
@@ -1189,19 +1191,43 @@ final class CutoutAppUITests: XCTestCase {
                 stateName: "Unavailable",
                 speed: "unavailable",
                 headroom: "unavailable",
+                compactTrailingLabel: "Battery",
+                compactTrailingValue: "unavailable",
                 connectionStates: ["waiting for telemetry"]
             )
         } else if name.contains("Stale") {
-            (stateName: "Stale", speed: "stale", headroom: "good", connectionStates: ["stale"])
+            (
+                stateName: "Stale",
+                speed: "stale",
+                headroom: "good",
+                compactTrailingLabel: "Battery",
+                compactTrailingValue: "72",
+                connectionStates: ["stale"]
+            )
         } else {
             (
                 stateName: "Nominal",
                 speed: "17.9",
                 headroom: "good",
+                compactTrailingLabel: "Battery",
+                compactTrailingValue: "72",
                 connectionStates: ["connected", "stale"]
             )
         }
         let stateName = expectation.stateName
+        let compactSpeed = springboard.descendants(matching: .any)["Speed"]
+        XCTAssertTrue(compactSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue(
+            (compactSpeed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true,
+            compactSpeed.debugDescription
+        )
+        let compactTrailingValue = springboard.descendants(matching: .any)[expectation.compactTrailingLabel]
+        XCTAssertTrue(compactTrailingValue.waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue(
+            (compactTrailingValue.value as? String)?.localizedCaseInsensitiveContains(expectation.compactTrailingValue)
+                == true,
+            compactTrailingValue.debugDescription
+        )
         attachScreenshot(of: springboard, named: "\(stateName) Compact Dynamic Island")
         springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.04))
             .press(forDuration: 1)
