@@ -251,9 +251,14 @@ final class CutoutAppModel {
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
+        #if DEBUG
+        let permitsStoredDeviceAutoPairing = Self.uiTestFixture == nil
+        #else
+        let permitsStoredDeviceAutoPairing = true
+        #endif
         self.init(
             core: Self.makeSessionDriver(),
-            permitsStoredDeviceAutoPairing: Self.uiTestFixture == nil,
+            permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
             liveActivityManager: LiveActivityRideActivityKitManager()
         )
@@ -647,17 +652,15 @@ final class CutoutAppModel {
         return CutoutSessionCore()
     }
 
+    #if DEBUG
     private static var uiTestFixture: CutoutUITestSessionFixture? {
-        #if DEBUG
         CutoutUITestSessionFixture.resolve(
             environmentValue: ProcessInfo.processInfo.environment["CUTOUT_UI_TEST_FIXTURE"],
             persistedValue: UserDefaults.standard.string(forKey: "CUTOUT_UI_TEST_FIXTURE"),
             arguments: ProcessInfo.processInfo.arguments
         )
-        #else
-        nil
-        #endif
     }
+    #endif
 
     private func syncLiveActivity() {
         let shouldBeActive = phase.supportsLiveActivity && liveActivityIdentity != nil && isRecordOnlyCapture == false
