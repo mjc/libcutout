@@ -1403,13 +1403,13 @@ final class CutoutAppModelTests: XCTestCase {
         )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
 
         driver.onPhaseChange?(.failed(.connectFailed("retries exhausted")))
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
             await Task.yield()
         }
@@ -1424,10 +1424,18 @@ final class CutoutAppModelTests: XCTestCase {
 
     @MainActor
     func testTransientReconnectKeepsTheLiveActivityStaleAndReusesItsIdentity() async {
+        let suiteName = "CutoutAppModelTests.transientReconnect.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let fixture = CutoutUITestSessionFixture.vesc
         let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
         let manager = FailingLiveActivityManager(error: nil)
-        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: DevicePickerSelectionStore(defaults: defaults),
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults),
+            liveActivityManager: manager
+        )
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
         driver.onDisplayStateChange?(
@@ -1575,6 +1583,43 @@ final class CutoutAppModelTests: XCTestCase {
         let startCount = await manager.startCount
         XCTAssertEqual(startCount, 0)
         XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
+    }
+
+    @MainActor
+    func testLateRestorationCallbackCannotReinterpretAnExplicitPairAsRestored() async throws {
+        let suiteName = "CutoutAppModelTests.lateRestoration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let fixture = CutoutUITestSessionFixture.vesc
+        let platformIdentifier = fixture.candidate.platformIdentifier
+        let driver = SessionDriverSpy(
+            rows: [fixture.candidate.pickerRow],
+            restoredPlatformIdentifier: platformIdentifier,
+            notifyBluetoothRestorationOnStart: false
+        )
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: markerStore,
+            liveActivityManager: manager
+        )
+
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
+        for _ in 0 ..< 200 {
+            if markerStore.marker != nil { break }
+            await Task.yield()
+        }
+
+        driver.onBluetoothRestorationResolved?(platformIdentifier)
+        try? await Task.sleep(for: .milliseconds(10))
+
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+        let endReason = await manager.lastEndReason
+        XCTAssertNil(endReason)
     }
 
     @MainActor
@@ -1902,6 +1947,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool
     private let restoredPlatformIdentifier: String?
+    private let notifyBluetoothRestorationOnStart: Bool
     private(set) var pairedPlatformIdentifiers = [String]()
     private(set) var probedPlatformIdentifiers = [String]()
     private(set) var recordedPlatformIdentifiers = [String]()
@@ -1913,16 +1959,20 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         rows: [DevicePickerRow],
         pairingSucceeds: Bool = true,
         flushSucceeds: Bool = true,
-        restoredPlatformIdentifier: String? = nil
+        restoredPlatformIdentifier: String? = nil,
+        notifyBluetoothRestorationOnStart: Bool = true
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
         self.flushSucceeds = flushSucceeds
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
+        self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
     }
 
     func start() {
-        onBluetoothRestorationResolved?(restoredPlatformIdentifier)
+        if notifyBluetoothRestorationOnStart {
+            onBluetoothRestorationResolved?(restoredPlatformIdentifier)
+        }
         onScanStateChange?(scanState)
     }
 

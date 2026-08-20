@@ -85,6 +85,7 @@ final class CutoutAppModel {
     private var captureLabel: String?
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
+    private var restorationMarkerAtLaunch: Data?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -172,6 +173,7 @@ final class CutoutAppModel {
     }
 
     func start() {
+        restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
     }
@@ -527,16 +529,17 @@ final class CutoutAppModel {
 
     private func handleBluetoothRestorationResolved(_ platformIdentifier: String?) {
         guard case .awaitingBluetooth = rideSessionRestorationState else { return }
-        guard platformIdentifier != nil || rideSessionMarkerStore.marker != nil else {
+        let marker = restorationMarkerAtLaunch
+        guard platformIdentifier != nil || marker != nil else {
             rideSessionRestorationState = .complete
             return
         }
-        if platformIdentifier != nil, rideSessionMarkerStore.marker == nil {
+        if platformIdentifier != nil, marker == nil {
             permitsStoredDeviceAutoPairing = false
             rideSessionRestorationState = .complete
             return
         }
-        if let platformIdentifier, let marker = rideSessionMarkerStore.marker {
+        if let platformIdentifier, let marker {
             let markerMatches = (try? core.rideSessionStateHandle
                 .rideSessionMarkerMatchesPlatformIdentifier(
                     marker: marker,
