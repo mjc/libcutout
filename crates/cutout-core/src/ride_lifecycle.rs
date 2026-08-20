@@ -1,6 +1,9 @@
 use crate::{Duration, MonotonicTimestamp};
 use uuid::Uuid;
 
+/// Maximum telemetry age before a ride and its `ActivityKit` projection become stale.
+pub const RIDE_SESSION_STALE_AFTER: Duration = Duration::from_milliseconds(2_000);
+
 /// Stable identity for one logical ride, including reconnects of the same transport.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct RideSessionIdentity {
@@ -160,8 +163,6 @@ pub enum RideSessionInput {
     FreshnessChecked {
         /// Current monotonic time.
         now: MonotonicTimestamp,
-        /// Maximum permitted age of the latest telemetry.
-        stale_after: Duration,
     },
     /// The rider explicitly disconnected the device.
     UserDisconnected,
@@ -270,8 +271,8 @@ impl RideSessionLifecycle {
             RideSessionInput::BluetoothDisconnected { at } => self.bluetooth_disconnected(at),
             RideSessionInput::BluetoothConnected => self.bluetooth_connected(),
             RideSessionInput::TelemetryObserved { at } => self.telemetry_observed(at),
-            RideSessionInput::FreshnessChecked { now, stale_after } => {
-                self.freshness_checked(now, stale_after)
+            RideSessionInput::FreshnessChecked { now } => {
+                self.freshness_checked(now, RIDE_SESSION_STALE_AFTER)
             }
             RideSessionInput::UserDisconnected => self.end(RideSessionEndReason::UserDisconnect),
             RideSessionInput::UserStopped => self.end(RideSessionEndReason::UserStop),
@@ -772,8 +773,7 @@ mod tests {
         let before_deadline = fresh
             .state()
             .transition(RideSessionInput::FreshnessChecked {
-                now: MonotonicTimestamp::from_milliseconds(1_999),
-                stale_after: Duration::from_milliseconds(1_000),
+                now: MonotonicTimestamp::from_milliseconds(2_999),
             });
         assert_eq!(before_deadline.effect(), &RideSessionEffect::None);
         assert_eq!(before_deadline.state().phase(), &RideSessionPhase::Active);
@@ -781,8 +781,7 @@ mod tests {
         let stale = before_deadline
             .state()
             .transition(RideSessionInput::FreshnessChecked {
-                now: MonotonicTimestamp::from_milliseconds(2_000),
-                stale_after: Duration::from_milliseconds(1_000),
+                now: MonotonicTimestamp::from_milliseconds(3_000),
             });
         assert_eq!(
             stale.effect(),
@@ -795,8 +794,7 @@ mod tests {
         let repeated = stale
             .state()
             .transition(RideSessionInput::FreshnessChecked {
-                now: MonotonicTimestamp::from_milliseconds(3_000),
-                stale_after: Duration::from_milliseconds(1_000),
+                now: MonotonicTimestamp::from_milliseconds(4_000),
             });
         assert_eq!(repeated.effect(), &RideSessionEffect::None);
         assert_eq!(repeated.state(), stale.state());

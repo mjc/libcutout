@@ -39,9 +39,9 @@ use cutout_core::{
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord,
     PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
-    ProtocolFamilyDto, ProtocolTag, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
-    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingModeDto, RideOperatingStateDto,
+    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
+    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -417,6 +417,8 @@ pub struct MobileRideSessionSnapshotDto {
     pub activity: MobileActivityProjectionStateDto,
     /// Most recent monotonic telemetry timestamp.
     pub last_telemetry_at_ms: Option<u64>,
+    /// Rust-owned maximum telemetry age before the activity becomes stale.
+    pub stale_after_ms: u64,
     /// Current app UI presence.
     pub app_presence: MobileRideSessionAppPresenceDto,
 }
@@ -450,7 +452,7 @@ pub enum MobileRideSessionInputDto {
     /// Fresh telemetry was observed.
     TelemetryObserved { at_ms: u64 },
     /// Evaluate telemetry freshness against the Rust-owned deadline.
-    FreshnessChecked { now_ms: u64, stale_after_ms: u64 },
+    FreshnessChecked { now_ms: u64 },
     /// Rider explicitly disconnected the device.
     UserDisconnected,
     /// Rider explicitly stopped the ride.
@@ -600,6 +602,7 @@ impl From<&CoreRideSessionLifecycle> for MobileRideSessionSnapshotDto {
             last_telemetry_at_ms: lifecycle
                 .last_telemetry_at()
                 .map(MonotonicTimestamp::as_milliseconds),
+            stale_after_ms: RIDE_SESSION_STALE_AFTER.as_milliseconds(),
             app_presence: lifecycle.app_presence().into(),
         }
     }
@@ -641,12 +644,8 @@ impl TryFrom<MobileRideSessionInputDto> for CoreRideSessionInput {
             MobileRideSessionInputDto::TelemetryObserved { at_ms } => Self::TelemetryObserved {
                 at: MonotonicTimestamp::new(at_ms),
             },
-            MobileRideSessionInputDto::FreshnessChecked {
-                now_ms,
-                stale_after_ms,
-            } => Self::FreshnessChecked {
+            MobileRideSessionInputDto::FreshnessChecked { now_ms } => Self::FreshnessChecked {
                 now: MonotonicTimestamp::new(now_ms),
-                stale_after: CoreDuration::from_milliseconds(stale_after_ms),
             },
             MobileRideSessionInputDto::UserDisconnected => Self::UserDisconnected,
             MobileRideSessionInputDto::UserStopped => Self::UserStopped,
@@ -7085,6 +7084,13 @@ mod tests {
                 MobileRideSessionEffectDto::EndActivity { identity, reason }
             );
         }
+    }
+
+    #[test]
+    fn mobile_ride_lifecycle_exposes_the_rust_owned_freshness_window() {
+        let snapshot = CutoutSessionStateHandle::new().ride_session_snapshot();
+
+        assert_eq!(snapshot.stale_after_ms, 2_000);
     }
 
     #[test]
