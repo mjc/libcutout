@@ -103,6 +103,33 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(secondBackgroundFlushCount, 2)
     }
 
+    func testReconnectExhaustionEndsOnceWithTheTypedRustReason() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let sessionState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: sessionState
+        )
+        let snapshot = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: snapshot,
+            shouldBeActive: true
+        )
+        await coordinator.transportDisconnected(requestID: 2, atMs: 200, snapshot: snapshot)
+        await coordinator.reconnectExhausted(requestID: 3, snapshot: snapshot)
+        await coordinator.reconnectExhausted(requestID: 4, snapshot: snapshot)
+
+        XCTAssertEqual(
+            sessionState.rideSessionSnapshot().phase,
+            .ended(reason: .reconnectExhausted)
+        )
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(snapshot), .update(snapshot), .end(.unavailable)])
+    }
+
     func testReconcileStartsUpdatesAndEndsOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)

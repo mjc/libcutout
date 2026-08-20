@@ -527,6 +527,21 @@ final class CutoutAppModel {
 
     private func syncLiveActivity() {
         let snapshot = currentLiveActivitySnapshot()
+        if case .failed = phase, let snapshot {
+            liveActivityRequestID += 1
+            let requestID = liveActivityRequestID
+            lastLiveActivitySnapshot = nil
+            lastLiveActivityUpdate = nil
+            Task { [weak self, liveActivityCoordinator] in
+                await liveActivityCoordinator.reconnectExhausted(
+                    requestID: requestID,
+                    snapshot: snapshot
+                )
+                self?.liveActivityError = await liveActivityCoordinator.lastError
+            }
+            return
+        }
+
         let rideLifecyclePhase = core.rideSessionStateHandle.rideSessionSnapshot().phase
         if phase.isReconnectingTransport,
            rideLifecyclePhase == .active || rideLifecyclePhase == .reconnecting,

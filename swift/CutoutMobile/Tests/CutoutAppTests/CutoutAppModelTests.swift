@@ -1367,6 +1367,44 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testExhaustedConnectionFailureUsesTheTypedRustTerminalReason() async {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onDisplayStateChange?(
+            RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(100),
+                    speed: Speed(value: 8_000),
+                    operatingState: .riding
+                )
+            )
+        )
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+        for _ in 0 ..< 20 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+            await Task.yield()
+        }
+
+        driver.onPhaseChange?(.failed(.connectFailed("retries exhausted")))
+        for _ in 0 ..< 20 {
+            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
+            await Task.yield()
+        }
+
+        let endReason = await manager.lastEndReason
+        XCTAssertEqual(
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase,
+            .ended(reason: .reconnectExhausted)
+        )
+        XCTAssertEqual(endReason, .unavailable)
+    }
+
+    @MainActor
     func testTransientReconnectKeepsTheLiveActivityStaleAndReusesItsIdentity() async {
         let fixture = CutoutUITestSessionFixture.vesc
         let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])

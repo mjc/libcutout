@@ -146,6 +146,21 @@ public actor LiveActivityRideLifecycleCoordinator {
         )
     }
 
+    public func reconnectExhausted(
+        requestID: UInt64,
+        snapshot: LiveActivityRideSnapshot
+    ) async {
+        guard accept(requestID: requestID) else { return }
+        await beginOperation()
+        defer { finishOperation() }
+        guard requestID == latestRequestID else { return }
+        await apply(
+            input: .reconnectExhausted,
+            snapshot: snapshot,
+            endReason: .unavailable
+        )
+    }
+
     public func appDidEnterBackground(
         requestID: UInt64,
         snapshot: LiveActivityRideSnapshot,
