@@ -369,6 +369,7 @@ public struct PevLiveActivitySafetyFooter: View {
                 || snapshot.headroomSeverity == .reduceAcceleration ? 2 : 1,
             emphasizesValue: snapshot.headroomSeverity == .reduceAcceleration
         )
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilitySortPriority(
             PevLiveActivityMetricRole.headroom.accessibilitySortPriority(for: snapshot.headroomSeverity)
         )

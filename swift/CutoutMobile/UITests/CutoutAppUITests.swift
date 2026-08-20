@@ -1227,6 +1227,15 @@ final class CutoutAppUITests: XCTestCase {
         )
         let islandHeadroom = springboard.descendants(matching: .any)["Headroom"]
         XCTAssertTrue(islandHeadroom.waitForExistence(timeout: 5), springboard.debugDescription)
+        if stateName == "Nominal" {
+            let islandBeeps = springboard.descendants(matching: .any)["Beeps"]
+            XCTAssertTrue(islandBeeps.waitForExistence(timeout: 5), springboard.debugDescription)
+            XCTAssertGreaterThanOrEqual(
+                islandHeadroom.frame.width,
+                islandBeeps.frame.width + 4,
+                "Expanded Dynamic Island must prioritize Headroom over secondary metrics: \(islandHeadroom.debugDescription)"
+            )
+        }
         XCTAssertTrue(
             (islandHeadroom.value as? String)?.localizedCaseInsensitiveContains(expectation.headroom) == true,
             islandHeadroom.debugDescription
