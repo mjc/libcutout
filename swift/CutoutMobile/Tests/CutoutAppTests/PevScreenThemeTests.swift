@@ -843,6 +843,50 @@ final class PevScreenThemeTests: XCTestCase {
         XCTAssertEqual(localizedAppText("vesc.board_angle.level"), "level")
     }
 
+    func testVescRidePresentationPrioritizesActiveWarningOverStopReason() {
+        let activeWarning = VescRideScreenPresentation(
+            snapshot: VescRideSnapshot(
+                title: "VESC",
+                vehicleKind: .float,
+                subProtocol: .refloat,
+                controllerState: .unknown,
+                warning: .lowVoltage,
+                stopReason: .pitch
+            ),
+            phase: .live,
+            now: MonotonicMilliseconds(1_000),
+            connectionStatusText: nil
+        )
+        XCTAssertEqual(
+            activeWarning.warningCard,
+            PevWarningCard(
+                title: localizedAppText("vesc.warning.low_voltage"),
+                detail: localizedAppText("vesc.warning.live_telemetry")
+            )
+        )
+
+        let stopped = VescRideScreenPresentation(
+            snapshot: VescRideSnapshot(
+                title: "VESC",
+                vehicleKind: .float,
+                subProtocol: .refloat,
+                controllerState: .unknown,
+                warning: .none,
+                stopReason: .pitch
+            ),
+            phase: .live,
+            now: MonotonicMilliseconds(1_000),
+            connectionStatusText: nil
+        )
+        XCTAssertEqual(
+            stopped.warningCard,
+            PevWarningCard(
+                title: localizedAppText("vesc.stop.pitch"),
+                detail: localizedAppText("vesc.stop.detail")
+            )
+        )
+    }
+
     func testVescDashboardUsesTypedUnavailableMetricValues() {
         let snapshot = VescRideSnapshot(
             title: "VESC",
