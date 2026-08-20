@@ -23,6 +23,9 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(rustSnapshot.identity?.platformIdentifier, "vesc-platform-id")
         XCTAssertEqual(rustSnapshot.phase, .active)
         XCTAssertEqual(rustSnapshot.activity, .active(activityId: "activity-1"))
+        let activityIdentity = await manager.startedRideSessionIdentity()
+        XCTAssertEqual(activityIdentity?.platformIdentifier, rustSnapshot.identity?.platformIdentifier)
+        XCTAssertEqual(activityIdentity?.sessionID, rustSnapshot.identity?.sessionId)
     }
 
     func testTransientDisconnectKeepsRustIdentityAndResumesWithoutDuplicateStart() async {
@@ -414,6 +417,25 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
             LiveActivityRideReconciliation(adoptedIndex: nil, staleIndices: [0])
         )
     }
+
+    func testRelaunchReconciliationMatchesRustSessionIdentityNotDisplayIdentity() {
+        let previous = LiveActivityRideSessionIdentity(
+            platformIdentifier: "vesc-platform-id",
+            sessionID: "00000000-0000-0000-0000-000000000001"
+        )
+        let current = LiveActivityRideSessionIdentity(
+            platformIdentifier: "vesc-platform-id",
+            sessionID: "00000000-0000-0000-0000-000000000002"
+        )
+
+        XCTAssertEqual(
+            liveActivityRideReconciliation(
+                existingIdentities: [previous, current, current],
+                desiredIdentity: current
+            ),
+            LiveActivityRideReconciliation(adoptedIndex: 1, staleIndices: [0, 2])
+        )
+    }
 }
 
 private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecycleManaging {
@@ -424,6 +446,7 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     }
 
     private var events: [Event] = []
+    private var startedIdentity: LiveActivityRideSessionIdentity?
     private let startError: LiveActivityRideLifecycleError?
     private var updateError: LiveActivityRideLifecycleError?
     private var endError: LiveActivityRideLifecycleError?
@@ -444,8 +467,12 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
         self.blockFirstStart = blockFirstStart
     }
 
-    func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
+    func start(
+        snapshot: LiveActivityRideSnapshot,
+        rideSessionIdentity: LiveActivityRideSessionIdentity
+    ) async throws -> LiveActivityRideStartOutcome {
         events.append(.start(snapshot))
+        startedIdentity = rideSessionIdentity
         if let startError { throw startError }
 
         if blockFirstStart, firstStartBlocked == false {
@@ -470,6 +497,8 @@ private actor RecordingLiveActivityRideLifecycleManager: LiveActivityRideLifecyc
     }
 
     func recordedEvents() -> [Event] { events }
+
+    func startedRideSessionIdentity() -> LiveActivityRideSessionIdentity? { startedIdentity }
 
     func setEndError(_ error: LiveActivityRideLifecycleError?) {
         endError = error

@@ -1674,7 +1674,10 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
         self.error = error
     }
 
-    func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
+    func start(
+        snapshot: LiveActivityRideSnapshot,
+        rideSessionIdentity _: LiveActivityRideSessionIdentity
+    ) async throws -> LiveActivityRideStartOutcome {
         startCount += 1
         lastStartedSnapshot = snapshot
         if let error { throw error }

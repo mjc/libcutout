@@ -43,8 +43,28 @@ public struct LiveActivityRideEndOutcome: Equatable, Sendable {
     }
 }
 
+public struct LiveActivityRideSessionIdentity: Codable, Equatable, Hashable, Sendable {
+    public let platformIdentifier: String
+    public let sessionID: String
+
+    public init(platformIdentifier: String, sessionID: String) {
+        self.platformIdentifier = platformIdentifier
+        self.sessionID = sessionID
+    }
+
+    init(_ identity: MobileRideSessionIdentityDto) {
+        self.init(
+            platformIdentifier: identity.platformIdentifier,
+            sessionID: identity.sessionId
+        )
+    }
+}
+
 public protocol LiveActivityRideLifecycleManaging: Sendable {
-    func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome
+    func start(
+        snapshot: LiveActivityRideSnapshot,
+        rideSessionIdentity: LiveActivityRideSessionIdentity
+    ) async throws -> LiveActivityRideStartOutcome
     func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome
     func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome
 }
@@ -54,9 +74,9 @@ struct LiveActivityRideReconciliation: Equatable, Sendable {
     let staleIndices: [Int]
 }
 
-func liveActivityRideReconciliation(
-    existingIdentities: [LiveActivityRideIdentity],
-    desiredIdentity: LiveActivityRideIdentity
+func liveActivityRideReconciliation<Identity: Equatable & Sendable>(
+    existingIdentities: [Identity],
+    desiredIdentity: Identity
 ) -> LiveActivityRideReconciliation {
     let adoptedIndex = existingIdentities.firstIndex(of: desiredIdentity)
     return LiveActivityRideReconciliation(
@@ -257,7 +277,10 @@ public actor LiveActivityRideLifecycleCoordinator {
             return
         case let .startActivity(identity):
             do {
-                let outcome = try await manager.start(snapshot: snapshot)
+                let outcome = try await manager.start(
+                    snapshot: snapshot,
+                    rideSessionIdentity: LiveActivityRideSessionIdentity(identity)
+                )
                 hasReconciledInactiveState = false
                 lastSnapshot = snapshot
                 lastError = nil
@@ -364,9 +387,14 @@ public struct LiveActivityRideAttributes: ActivityAttributes, Codable, Hashable,
     }
 
     public let identity: LiveActivityRideIdentity
+    public let rideSessionIdentity: LiveActivityRideSessionIdentity
 
-    public init(identity: LiveActivityRideIdentity) {
+    public init(
+        identity: LiveActivityRideIdentity,
+        rideSessionIdentity: LiveActivityRideSessionIdentity
+    ) {
         self.identity = identity
+        self.rideSessionIdentity = rideSessionIdentity
     }
 }
 
@@ -376,8 +404,11 @@ public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManagi
 
     public init() {}
 
-    public func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
-        try await state.start(snapshot: snapshot)
+    public func start(
+        snapshot: LiveActivityRideSnapshot,
+        rideSessionIdentity: LiveActivityRideSessionIdentity
+    ) async throws -> LiveActivityRideStartOutcome {
+        try await state.start(snapshot: snapshot, rideSessionIdentity: rideSessionIdentity)
     }
 
     public func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
@@ -394,15 +425,18 @@ private actor LiveActivityRideActivityKitState {
     private var activity: Activity<LiveActivityRideAttributes>?
     private var lastSnapshot: LiveActivityRideSnapshot?
 
-    func start(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
+    func start(
+        snapshot: LiveActivityRideSnapshot,
+        rideSessionIdentity: LiveActivityRideSessionIdentity
+    ) async throws -> LiveActivityRideStartOutcome {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             throw LiveActivityRideLifecycleError.authorizationDenied
         }
 
         let existingActivities = Activity<LiveActivityRideAttributes>.activities
         let reconciliation = liveActivityRideReconciliation(
-            existingIdentities: existingActivities.map(\.attributes.identity),
-            desiredIdentity: snapshot.identity
+            existingIdentities: existingActivities.map(\.attributes.rideSessionIdentity),
+            desiredIdentity: rideSessionIdentity
         )
         for staleIndex in reconciliation.staleIndices {
             let staleActivity = existingActivities[staleIndex]
@@ -418,7 +452,10 @@ private actor LiveActivityRideActivityKitState {
         activity = nil
         do {
             let startedActivity = try Activity.request(
-                attributes: LiveActivityRideAttributes(identity: snapshot.identity),
+                attributes: LiveActivityRideAttributes(
+                    identity: snapshot.identity,
+                    rideSessionIdentity: rideSessionIdentity
+                ),
                 content: content(snapshot: snapshot),
                 pushType: nil
             )
@@ -468,7 +505,10 @@ private actor LiveActivityRideActivityKitState {
 public actor LiveActivityRideActivityKitManager: LiveActivityRideLifecycleManaging {
     public init() {}
 
-    public func start(snapshot _: LiveActivityRideSnapshot) async throws -> LiveActivityRideStartOutcome {
+    public func start(
+        snapshot _: LiveActivityRideSnapshot,
+        rideSessionIdentity _: LiveActivityRideSessionIdentity
+    ) async throws -> LiveActivityRideStartOutcome {
         throw LiveActivityRideLifecycleError.activityUnavailable
     }
 
