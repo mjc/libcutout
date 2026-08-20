@@ -7710,6 +7710,10 @@ public struct MobileRideSessionSnapshotDto: Equatable, Hashable {
      */
     public var lastTelemetryAtMs: UInt64?
     /**
+     * Rust-owned maximum telemetry age before the activity becomes stale.
+     */
+    public var staleAfterMs: UInt64
+    /**
      * Current app UI presence.
      */
     public var appPresence: MobileRideSessionAppPresenceDto
@@ -7730,12 +7734,16 @@ public struct MobileRideSessionSnapshotDto: Equatable, Hashable {
          * Most recent monotonic telemetry timestamp.
          */lastTelemetryAtMs: UInt64?,
         /**
+         * Rust-owned maximum telemetry age before the activity becomes stale.
+         */staleAfterMs: UInt64,
+        /**
          * Current app UI presence.
          */appPresence: MobileRideSessionAppPresenceDto) {
         self.identity = identity
         self.phase = phase
         self.activity = activity
         self.lastTelemetryAtMs = lastTelemetryAtMs
+        self.staleAfterMs = staleAfterMs
         self.appPresence = appPresence
     }
 
@@ -7759,6 +7767,7 @@ public struct FfiConverterTypeMobileRideSessionSnapshotDto: FfiConverterRustBuff
                 phase: FfiConverterTypeMobileRideSessionPhaseDto.read(from: &buf),
                 activity: FfiConverterTypeMobileActivityProjectionStateDto.read(from: &buf),
                 lastTelemetryAtMs: FfiConverterOptionUInt64.read(from: &buf),
+                staleAfterMs: FfiConverterUInt64.read(from: &buf),
                 appPresence: FfiConverterTypeMobileRideSessionAppPresenceDto.read(from: &buf)
         )
     }
@@ -7768,6 +7777,7 @@ public struct FfiConverterTypeMobileRideSessionSnapshotDto: FfiConverterRustBuff
         FfiConverterTypeMobileRideSessionPhaseDto.write(value.phase, into: &buf)
         FfiConverterTypeMobileActivityProjectionStateDto.write(value.activity, into: &buf)
         FfiConverterOptionUInt64.write(value.lastTelemetryAtMs, into: &buf)
+        FfiConverterUInt64.write(value.staleAfterMs, into: &buf)
         FfiConverterTypeMobileRideSessionAppPresenceDto.write(value.appPresence, into: &buf)
     }
 }
@@ -13652,7 +13662,7 @@ public enum MobileRideSessionInputDto: Equatable, Hashable {
     /**
      * Evaluate telemetry freshness against the Rust-owned deadline.
      */
-    case freshnessChecked(nowMs: UInt64, staleAfterMs: UInt64
+    case freshnessChecked(nowMs: UInt64
     )
     /**
      * Rider explicitly disconnected the device.
@@ -13719,7 +13729,7 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
         case 9: return .telemetryObserved(atMs: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 10: return .freshnessChecked(nowMs: try FfiConverterUInt64.read(from: &buf), staleAfterMs: try FfiConverterUInt64.read(from: &buf)
+        case 10: return .freshnessChecked(nowMs: try FfiConverterUInt64.read(from: &buf)
         )
 
         case 11: return .userDisconnected
@@ -13783,10 +13793,9 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
             FfiConverterUInt64.write(atMs, into: &buf)
 
 
-        case let .freshnessChecked(nowMs,staleAfterMs):
+        case let .freshnessChecked(nowMs):
             writeInt(&buf, Int32(10))
             FfiConverterUInt64.write(nowMs, into: &buf)
-            FfiConverterUInt64.write(staleAfterMs, into: &buf)
 
 
         case .userDisconnected:
