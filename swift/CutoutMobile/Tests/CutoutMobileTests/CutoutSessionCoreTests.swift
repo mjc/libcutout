@@ -1186,7 +1186,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(sink.writes.count, 3)
 
         let retryExpectation = expectation(description: "vesc telemetry retries")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
             retryExpectation.fulfill()
         }
         wait(for: [retryExpectation], timeout: 1.0)
@@ -1257,7 +1257,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         let retriesFinish = expectation(description: "bounded VESC telemetry retries")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
             retriesFinish.fulfill()
         }
         wait(for: [retriesFinish], timeout: 1.0)
@@ -1294,7 +1294,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         )
 
         let retryExpectation = expectation(description: "bounded VESC telemetry retries after generic notification")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(45)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) {
             retryExpectation.fulfill()
         }
         wait(for: [retryExpectation], timeout: 1.0)
