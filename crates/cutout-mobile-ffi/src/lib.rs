@@ -455,6 +455,8 @@ pub enum MobileRideSessionInputDto {
     UserDisconnected,
     /// Rider explicitly stopped the ride.
     UserStopped,
+    /// The transport retry policy can no longer continue this logical ride.
+    ReconnectExhausted,
 }
 
 /// One Apple-platform effect requested by the Rust reducer.
@@ -644,6 +646,7 @@ impl TryFrom<MobileRideSessionInputDto> for CoreRideSessionInput {
             },
             MobileRideSessionInputDto::UserDisconnected => Self::UserDisconnected,
             MobileRideSessionInputDto::UserStopped => Self::UserStopped,
+            MobileRideSessionInputDto::ReconnectExhausted => Self::ReconnectExhausted,
         })
     }
 }
@@ -6995,6 +6998,44 @@ mod tests {
             Err(MobileRideSessionInputError::InvalidSessionIdentifier)
         );
         assert_eq!(handle.ride_session_snapshot(), expected);
+    }
+
+    #[test]
+    fn mobile_ride_lifecycle_preserves_reconnect_exhaustion_reason() {
+        let handle = CutoutSessionStateHandle::new();
+        let started = handle
+            .reduce_ride_session(MobileRideSessionInputDto::Start {
+                platform_identifier: "vesc-1".to_owned(),
+            })
+            .expect("Rust should create a valid ride identity");
+        let identity = started.snapshot.identity.expect("started ride identity");
+        handle
+            .reduce_ride_session(MobileRideSessionInputDto::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "activity-1".to_owned(),
+            })
+            .expect("the generated identity should round-trip");
+        handle
+            .reduce_ride_session(MobileRideSessionInputDto::BluetoothDisconnected { at_ms: 12 })
+            .expect("disconnect time is already typed");
+
+        let ending = handle
+            .reduce_ride_session(MobileRideSessionInputDto::ReconnectExhausted)
+            .expect("reconnect exhaustion has no fallible input");
+
+        assert_eq!(
+            ending.snapshot.phase,
+            MobileRideSessionPhaseDto::Ending {
+                reason: MobileRideSessionEndReasonDto::ReconnectExhausted,
+            }
+        );
+        assert_eq!(
+            ending.effect,
+            MobileRideSessionEffectDto::EndActivity {
+                identity,
+                reason: MobileRideSessionEndReasonDto::ReconnectExhausted,
+            }
+        );
     }
 
     #[test]

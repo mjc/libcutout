@@ -167,6 +167,8 @@ pub enum RideSessionInput {
     UserDisconnected,
     /// The rider explicitly stopped the ride.
     UserStopped,
+    /// The transport retry policy can no longer continue this logical ride.
+    ReconnectExhausted,
 }
 
 /// Single platform effect requested by one reducer transition.
@@ -269,6 +271,9 @@ impl RideSessionLifecycle {
             }
             RideSessionInput::UserDisconnected => self.end(RideSessionEndReason::UserDisconnect),
             RideSessionInput::UserStopped => self.end(RideSessionEndReason::UserStop),
+            RideSessionInput::ReconnectExhausted => {
+                self.end(RideSessionEndReason::ReconnectExhausted)
+            }
         }
     }
 
@@ -827,6 +832,41 @@ mod tests {
                 identity,
                 reason: RideSessionEndReason::UserDisconnect,
             }
+        );
+    }
+
+    #[test]
+    fn reconnect_exhaustion_ends_the_same_ride_with_the_typed_reason() {
+        let identity = RideSessionIdentity::new("vesc-1".to_owned(), Uuid::from_u128(8));
+        let started = RideSessionLifecycle::default().transition(RideSessionInput::Start {
+            identity: identity.clone(),
+        });
+        let active = started
+            .state()
+            .transition(RideSessionInput::ActivityStarted {
+                identity: identity.clone(),
+                activity_id: "activity-1".to_owned(),
+            });
+        let reconnecting = active
+            .state()
+            .transition(RideSessionInput::BluetoothDisconnected {
+                at: MonotonicTimestamp::from_milliseconds(2_000),
+            });
+
+        let ending = reconnecting
+            .state()
+            .transition(RideSessionInput::ReconnectExhausted);
+
+        assert_eq!(
+            ending.effect(),
+            &RideSessionEffect::EndActivity {
+                identity,
+                reason: RideSessionEndReason::ReconnectExhausted,
+            }
+        );
+        assert_eq!(
+            ending.state().phase(),
+            &RideSessionPhase::Ending(RideSessionEndReason::ReconnectExhausted)
         );
     }
 }
