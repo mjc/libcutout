@@ -75,6 +75,16 @@ nonisolated func pevDashboardResolvedLineWidth(
     contrast == .increased ? max(2, base * 1.5) : base
 }
 
+nonisolated func pevDashboardResolvedForegroundColor(
+    _ color: Color,
+    contrast: ColorSchemeContrast,
+    differentiateWithoutColor: Bool,
+    colorScheme: ColorScheme
+) -> Color {
+    guard contrast == .increased || differentiateWithoutColor else { return color }
+    return colorScheme == .dark ? .white : .black
+}
+
 public struct PevDashboardCardBackground: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 

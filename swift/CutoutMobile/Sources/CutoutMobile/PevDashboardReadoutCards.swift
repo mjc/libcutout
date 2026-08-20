@@ -50,8 +50,12 @@ public struct PevDashboardMetricTile: View {
     }
 
     private func resolvedColor(_ color: Color) -> Color {
-        guard colorSchemeContrast == .increased || differentiateWithoutColor else { return color }
-        return colorScheme == .dark ? .white : .black
+        pevDashboardResolvedForegroundColor(
+            color,
+            contrast: colorSchemeContrast,
+            differentiateWithoutColor: differentiateWithoutColor,
+            colorScheme: colorScheme
+        )
     }
 
     public init(

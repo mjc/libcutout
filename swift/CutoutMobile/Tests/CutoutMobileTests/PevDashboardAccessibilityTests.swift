@@ -318,6 +318,38 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         )
     }
 
+    func testAccessibleForegroundOverridesColorForContrastOrColorDifferentiation() {
+        let original = PevDashboardColors.warningText
+
+        XCTAssertEqual(
+            pevDashboardResolvedForegroundColor(
+                original,
+                contrast: .standard,
+                differentiateWithoutColor: false,
+                colorScheme: .light
+            ),
+            original
+        )
+        XCTAssertEqual(
+            pevDashboardResolvedForegroundColor(
+                original,
+                contrast: .increased,
+                differentiateWithoutColor: false,
+                colorScheme: .light
+            ),
+            .black
+        )
+        XCTAssertEqual(
+            pevDashboardResolvedForegroundColor(
+                original,
+                contrast: .standard,
+                differentiateWithoutColor: true,
+                colorScheme: .dark
+            ),
+            .white
+        )
+    }
+
     func testDashedCardBackgroundKeepsItsSharedDashPattern() {
         let background = PevDashboardCardBackground(
             cornerRadius: 18,

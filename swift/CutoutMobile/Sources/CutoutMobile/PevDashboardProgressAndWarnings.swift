@@ -146,11 +146,6 @@ public struct PevDashboardWarningCard: View {
 
     var accessibilityValueText: String { detail }
 
-    private func resolvedColor(_ color: Color) -> Color {
-        guard colorSchemeContrast == .increased || differentiateWithoutColor else { return color }
-        return colorScheme == .dark ? .white : .black
-    }
-
     public init(
         title: String,
         detail: String,
@@ -213,5 +208,14 @@ public struct PevDashboardWarningCard: View {
         .accessibilityLabel(title)
         .accessibilityValue(accessibilityValueText)
         .accessibilitySortPriority(2)
+    }
+
+    private func resolvedColor(_ color: Color) -> Color {
+        pevDashboardResolvedForegroundColor(
+            color,
+            contrast: colorSchemeContrast,
+            differentiateWithoutColor: differentiateWithoutColor,
+            colorScheme: colorScheme
+        )
     }
 }
