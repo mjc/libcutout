@@ -46,6 +46,7 @@
 		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
 		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
+		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
 		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
 		500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
 		500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
@@ -116,6 +117,7 @@
 		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
@@ -172,6 +174,7 @@
 				40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */,
 				40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */,
 				400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */,
+				400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */,
 				40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */,
 				111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */,
 				400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */,
@@ -392,6 +395,7 @@
 				30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */,
 				30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */,
 				300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */,
+				300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */,
 				30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */,
 				111111111111111111111129 /* Apps/CutoutApp/CutoutAppRoute.swift in Sources */,
 				300000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift in Sources */,
