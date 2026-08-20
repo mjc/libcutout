@@ -22,6 +22,8 @@ mod ffi;
 pub use ffi::*;
 mod session_state;
 pub use session_state::*;
+mod ride_lifecycle;
+pub use ride_lifecycle::*;
 mod energy_estimate;
 pub use energy_estimate::*;
 

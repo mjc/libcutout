@@ -3,7 +3,7 @@
 use crate::{
     BatteryPageMetadata, BatteryPagePayload, BatteryReadback, DeviceEvent, FirmwareInfo,
     GattFingerprint, MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback,
-    ReadOnlyResponse, SessionOutput, TelemetryDelta, TelemetrySnapshot,
+    ReadOnlyResponse, RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
 };
 use arrayvec::ArrayVec;
 use bytes::Bytes;
@@ -11,6 +11,9 @@ use bytes::Bytes;
 /// Rust-owned durable state for one `CutOut` mobile/device session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CutoutSessionState {
+    /// Logical ride and Live Activity lifecycle state.
+    pub ride_session: RideSessionLifecycle,
+
     /// Device identity state accumulated from discovery, protocol, and model evidence.
     pub identity: DeviceIdentityState,
 
