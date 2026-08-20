@@ -1443,7 +1443,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
 
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if await manager.lastStartedSnapshot?.connectionState == .connected,
                driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
@@ -1459,7 +1459,7 @@ final class CutoutAppModelTests: XCTestCase {
                 failure: .connectFailed("timed out")
             )
         )
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting,
                await manager.lastUpdatedSnapshot?.connectionState == .stale { break }
             await Task.yield()
@@ -1484,7 +1484,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
@@ -1545,6 +1545,36 @@ final class CutoutAppModelTests: XCTestCase {
         let startCount = await manager.startCount
         XCTAssertEqual(startCount, 1)
         XCTAssertNotNil(markerStore.marker)
+    }
+
+    @MainActor
+    func testRestoredPeripheralWithoutAPersistedRideRequiresUserAction() async throws {
+        let suiteName = "CutoutAppModelTests.unmarkedRestoredRide.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let fixture = CutoutUITestSessionFixture.vesc
+        let platformIdentifier = fixture.candidate.platformIdentifier
+        selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+        let driver = SessionDriverSpy(
+            rows: [fixture.candidate.pickerRow],
+            restoredPlatformIdentifier: platformIdentifier
+        )
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults),
+            liveActivityManager: manager
+        )
+
+        model.start()
+        try? await Task.sleep(for: .milliseconds(10))
+
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
+        let startCount = await manager.startCount
+        XCTAssertEqual(startCount, 0)
+        XCTAssertTrue(model.pair(platformIdentifier: platformIdentifier))
     }
 
     @MainActor

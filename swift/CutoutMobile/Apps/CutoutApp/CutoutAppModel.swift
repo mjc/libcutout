@@ -527,6 +527,15 @@ final class CutoutAppModel {
 
     private func handleBluetoothRestorationResolved(_ platformIdentifier: String?) {
         guard case .awaitingBluetooth = rideSessionRestorationState else { return }
+        guard platformIdentifier != nil || rideSessionMarkerStore.marker != nil else {
+            rideSessionRestorationState = .complete
+            return
+        }
+        if platformIdentifier != nil, rideSessionMarkerStore.marker == nil {
+            permitsStoredDeviceAutoPairing = false
+            rideSessionRestorationState = .complete
+            return
+        }
         if let platformIdentifier, let marker = rideSessionMarkerStore.marker {
             let markerMatches = (try? core.rideSessionStateHandle
                 .rideSessionMarkerMatchesPlatformIdentifier(
