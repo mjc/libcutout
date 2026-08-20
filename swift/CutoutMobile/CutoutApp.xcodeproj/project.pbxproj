@@ -48,6 +48,7 @@
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
 		300000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */; };
 		300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */; };
+		300000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift */; };
 		444444444444444444444401 /* UITests/CutoutAppUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444444444444444444444411 /* UITests/CutoutAppUITests.swift */; };
 		500000000000000000000101 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
 		500000000000000000000102 /* Apps/Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000201 /* Apps/Localizable.xcstrings */; };
@@ -120,6 +121,7 @@
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000020 /* Apps/CutoutApp/AppLocalization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppLocalization.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/ConnectionPresentation.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsDiagnosticsSection.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444411 /* UITests/CutoutAppUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/CutoutAppUITests.swift; sourceTree = SOURCE_ROOT; };
 		444444444444444444444412 /* CutoutAppUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CutoutAppUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		500000000000000000000201 /* Apps/CutoutApp/Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Apps/CutoutApp/Localizable.xcstrings; sourceTree = SOURCE_ROOT; };
@@ -182,6 +184,7 @@
 				400000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift */,
 				400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */,
 				400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */,
+				400000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift */,
 				400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */,
 				400000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift */,
 				400000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift */,
@@ -404,6 +407,7 @@
 				300000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift in Sources */,
 				300000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift in Sources */,
 				300000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift in Sources */,
+				300000000000000000000022 /* Apps/CutoutApp/BmsDiagnosticsSection.swift in Sources */,
 				300000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift in Sources */,
 				300000000000000000000005 /* Apps/CutoutApp/BmsNoDataComponents.swift in Sources */,
 				300000000000000000000006 /* Apps/CutoutApp/BmsNoDataLayout.swift in Sources */,
