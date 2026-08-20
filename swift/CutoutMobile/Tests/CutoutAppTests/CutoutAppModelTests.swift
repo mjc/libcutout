@@ -1303,6 +1303,81 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testTransientReconnectKeepsTheLiveActivityStaleAndReusesItsIdentity() async {
+        let fixture = CutoutUITestSessionFixture.vesc
+        let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
+        let manager = FailingLiveActivityManager(error: nil)
+        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        model.start()
+        XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onDisplayStateChange?(
+            RideDisplayState(
+                speed: SpeedReadout(millimetersPerSecond: 8_000),
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(100),
+                    speed: Speed(value: 8_000),
+                    operatingState: .riding
+                )
+            )
+        )
+        driver.onPhaseChange?(.subscribing)
+        driver.onPhaseChange?(.live)
+
+        for _ in 0 ..< 20 {
+            if await manager.lastStartedSnapshot?.connectionState == .connected,
+               driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+            await Task.yield()
+        }
+        let identity = driver.rideSessionStateHandle.rideSessionSnapshot().identity
+
+        driver.onPhaseChange?(.discoveringServices)
+        driver.onReconnectScheduled?(
+            SessionConnectionRetry(
+                platformIdentifier: fixture.candidate.platformIdentifier,
+                attempt: 1,
+                deadline: MonotonicMilliseconds(200),
+                failure: .connectFailed("timed out")
+            )
+        )
+        for _ in 0 ..< 20 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting,
+               await manager.lastUpdatedSnapshot?.connectionState == .stale { break }
+            await Task.yield()
+        }
+
+        let endReason = await manager.lastEndReason
+        let updatedConnectionState = await manager.lastUpdatedSnapshot?.connectionState
+        XCTAssertNil(endReason)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().identity, identity)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .reconnecting)
+        XCTAssertEqual(updatedConnectionState, .stale)
+
+        driver.onPhaseChange?(.subscribing)
+        driver.onDisplayStateChange?(
+            RideDisplayState(
+                speed: SpeedReadout(millimetersPerSecond: 9_000),
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(300),
+                    speed: Speed(value: 9_000),
+                    operatingState: .riding
+                )
+            )
+        )
+        driver.onPhaseChange?(.live)
+        for _ in 0 ..< 20 {
+            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
+            await Task.yield()
+        }
+
+        let startCount = await manager.startCount
+        let reconnectEndReason = await manager.lastEndReason
+        XCTAssertEqual(startCount, 1)
+        XCTAssertNil(reconnectEndReason)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().identity, identity)
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
+    }
+
+    @MainActor
     func testScanningLaunchClearsAnOrphanedLiveActivity() async {
         let driver = SessionDriverSpy(rows: [])
         let manager = FailingLiveActivityManager(error: nil)
@@ -1490,6 +1565,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
     private var error: LiveActivityRideLifecycleError?
     private(set) var startCount = 0
     private(set) var lastStartedSnapshot: LiveActivityRideSnapshot?
+    private(set) var lastUpdatedSnapshot: LiveActivityRideSnapshot?
     private(set) var lastEndReason: LiveActivityRideLifecycleEndReason?
 
     init(error: LiveActivityRideLifecycleError?) {
@@ -1503,8 +1579,9 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
         return .started(activityID: "activity-1")
     }
 
-    func update(snapshot _: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
-        LiveActivityRideUpdateOutcome(activityID: "activity-1")
+    func update(snapshot: LiveActivityRideSnapshot) async throws -> LiveActivityRideUpdateOutcome {
+        lastUpdatedSnapshot = snapshot
+        return LiveActivityRideUpdateOutcome(activityID: "activity-1")
     }
 
     func end(reason: LiveActivityRideLifecycleEndReason) async throws -> LiveActivityRideEndOutcome {

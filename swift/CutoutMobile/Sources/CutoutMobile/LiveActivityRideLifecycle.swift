@@ -120,10 +120,29 @@ public actor LiveActivityRideLifecycleCoordinator {
         guard lastSnapshot != snapshot else {
             return
         }
+        if sessionState.rideSessionSnapshot().phase == .reconnecting {
+            await apply(input: .bluetoothConnected, snapshot: snapshot, endReason: endReason)
+        }
         await apply(
             input: .telemetryObserved(atMs: monotonicTimeMs),
             snapshot: snapshot,
             endReason: endReason
+        )
+    }
+
+    public func transportDisconnected(
+        requestID: UInt64,
+        atMs: UInt64,
+        snapshot: LiveActivityRideSnapshot
+    ) async {
+        guard accept(requestID: requestID) else { return }
+        await beginOperation()
+        defer { finishOperation() }
+        guard requestID == latestRequestID else { return }
+        await apply(
+            input: .bluetoothDisconnected(atMs: atMs),
+            snapshot: snapshot,
+            endReason: .sessionEnded
         )
     }
 

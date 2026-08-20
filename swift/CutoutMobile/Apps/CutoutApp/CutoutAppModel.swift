@@ -493,10 +493,32 @@ final class CutoutAppModel {
     #endif
 
     private func syncLiveActivity() {
-        let shouldBeActive = phase.supportsLiveActivity && liveActivityIdentity != nil && isRecordOnlyCapture == false
         let snapshot = liveActivityIdentity.map {
             LiveActivityRideSnapshot(identity: $0, glyph: liveActivityGlyph, rideState: rideState, now: core.now())
         }
+        let rideLifecyclePhase = core.rideSessionStateHandle.rideSessionSnapshot().phase
+        if phase.isReconnectingTransport,
+           rideLifecyclePhase == .active || rideLifecyclePhase == .reconnecting,
+           let previousSnapshot = lastLiveActivitySnapshot {
+            guard rideLifecyclePhase == .active else { return }
+            let staleSnapshot = previousSnapshot.presented(isStale: true)
+            liveActivityRequestID += 1
+            let requestID = liveActivityRequestID
+            let atMs = core.now().rawValue
+            lastLiveActivitySnapshot = staleSnapshot
+            lastLiveActivityUpdate = core.now()
+            Task { [weak self, liveActivityCoordinator] in
+                await liveActivityCoordinator.transportDisconnected(
+                    requestID: requestID,
+                    atMs: atMs,
+                    snapshot: staleSnapshot
+                )
+                self?.liveActivityError = await liveActivityCoordinator.lastError
+            }
+            return
+        }
+
+        let shouldBeActive = phase.supportsLiveActivity && liveActivityIdentity != nil && isRecordOnlyCapture == false
         let endReason: LiveActivityRideLifecycleEndReason = switch phase {
         case .scanning:
             .disconnected
@@ -633,5 +655,14 @@ private extension SessionConnectionPhase {
     var connectingModel: ElectricUnicycleModel? {
         guard case .connecting(let model) = self else { return nil }
         return model
+    }
+
+    var isReconnectingTransport: Bool {
+        switch self {
+        case .connecting, .discoveringServices, .subscribing:
+            true
+        case .starting, .bluetoothPermissionDenied, .bluetoothUnavailable, .scanning, .live, .failed:
+            false
+        }
     }
 }

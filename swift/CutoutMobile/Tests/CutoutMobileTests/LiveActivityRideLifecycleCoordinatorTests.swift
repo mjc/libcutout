@@ -25,6 +25,41 @@ final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
         XCTAssertEqual(rustSnapshot.activity, .active(activityId: "activity-1"))
     }
 
+    func testTransientDisconnectKeepsRustIdentityAndResumesWithoutDuplicateStart() async {
+        let manager = RecordingLiveActivityRideLifecycleManager()
+        let sessionState = CutoutSessionStateHandle()
+        let coordinator = LiveActivityRideLifecycleCoordinator(
+            manager: manager,
+            sessionState: sessionState
+        )
+        let first = liveSnapshot(label: "Connected ride", speedMph: 19.8)
+        let resumed = liveSnapshot(label: "Connected ride", speedMph: 21.6)
+
+        await coordinator.reconcile(
+            requestID: 1,
+            platformIdentifier: "vesc-platform-id",
+            snapshot: first,
+            shouldBeActive: true
+        )
+        let identity = sessionState.rideSessionSnapshot().identity
+        await coordinator.transportDisconnected(requestID: 2, atMs: 200, snapshot: first)
+
+        XCTAssertEqual(sessionState.rideSessionSnapshot().phase, .reconnecting)
+        XCTAssertEqual(sessionState.rideSessionSnapshot().identity, identity)
+
+        await coordinator.reconcile(
+            requestID: 3,
+            platformIdentifier: "vesc-platform-id",
+            monotonicTimeMs: 300,
+            snapshot: resumed,
+            shouldBeActive: true
+        )
+
+        XCTAssertEqual(sessionState.rideSessionSnapshot().phase, .active)
+        let events = await manager.recordedEvents()
+        XCTAssertEqual(events, [.start(first), .update(first), .update(resumed)])
+    }
+
     func testReconcileStartsUpdatesAndEndsOnce() async {
         let manager = RecordingLiveActivityRideLifecycleManager()
         let coordinator = LiveActivityRideLifecycleCoordinator(manager: manager)
