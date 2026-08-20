@@ -55,6 +55,18 @@ public struct PevDashboardProgressBar: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(metricValue.accessibilityText)
+        .accessibilityRepresentation {
+            Group {
+                if let clampedProgress {
+                    ProgressView(value: clampedProgress, total: 1)
+                        .tint(PevDashboardColors.primaryText)
+                } else {
+                    Text(metricValue.accessibilityText)
+                }
+            }
+            .accessibilityLabel(label)
+            .accessibilityValue(metricValue.accessibilityText)
+        }
     }
 }
 
