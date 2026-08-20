@@ -3025,6 +3025,14 @@ final class CutoutAppUITests: XCTestCase {
                     "testProductionPickerPassesAccessibilityAuditInLightAppearanceAtAccessibilityDynamicType",
                     "testProductionPickerPassesAccessibilityAuditInRightToLeftLayout",
                 ],
+                "Choose device Choose device": [
+                    "testDisconnectKeepsSavedDeviceAccessibleWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
+                    "testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
+                    "testProductionPickerPassesAccessibilityAuditWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
+                ],
+                "CutOut · BMS CutOut · BMS": [
+                    "testEucBmsPassesAccessibilityAuditWithPseudolocalizedTextAtAccessibilityDynamicTypeAndIncreasedContrast",
+                ],
                 "CutOut": [
                     "testAdvancedCaptureControlsRemainReachableAtAccessibilityDynamicType",
                     "testAdvancedCaptureControlsRemainReachableInDarkAppearanceAtAccessibilityDynamicType",
@@ -3040,6 +3048,9 @@ final class CutoutAppUITests: XCTestCase {
                     "testFinishCaptureReturnsToAccessiblePickerInLightAppearanceAtAccessibilityDynamicType",
                     "testEucUseShowsConnectingBeforeRideInRightToLeftLayout",
                     "testVescUseShowsConnectingBeforeRideInRightToLeftLayout",
+                ],
+                "Nearby Bluetooth devices Nearby Bluetooth devices": [
+                    "testFinishCaptureReturnsToAccessiblePickerWithPseudolocalizedTextAndIncreasedContrastInLandscapeAtAccessibilityDynamicType",
                 ],
                 "Packets": [
                     "testBackgroundFlushRealWriterRemainsUsableAfterReactivatingCaptureAtAccessibilityDynamicType",
