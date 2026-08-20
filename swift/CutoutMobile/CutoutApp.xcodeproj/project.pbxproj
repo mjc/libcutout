@@ -18,7 +18,7 @@
 		222222222222222222222114 /* Apps/CutoutLiveActivityExtension/Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222127 /* Apps/CutoutLiveActivityExtension/Assets.xcassets */; };
 		222222222222222222222115 /* Apps/CutoutLiveActivityExtension/RideActivityComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222222222222222222222122 /* Apps/CutoutLiveActivityExtension/RideActivityComponents.swift */; };
 		25D83AF12FF58F16005E4B18 /* CutoutMobile in Frameworks */ = {isa = PBXBuildFile; productRef = 111111111111111111111181 /* CutoutMobile */; };
-		300000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */; };
+		300000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift */; };
 		300000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */; };
 		300000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */; };
 		300000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */; };
@@ -89,7 +89,7 @@
 		222222222222222222222124 /* CutoutLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CutoutLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		222222222222222222222126 /* Apps/CutoutLiveActivityExtension/Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Apps/CutoutLiveActivityExtension/Info.plist; sourceTree = SOURCE_ROOT; };
 		222222222222222222222127 /* Apps/CutoutLiveActivityExtension/Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Apps/CutoutLiveActivityExtension/Assets.xcassets; sourceTree = SOURCE_ROOT; };
-		400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/AppDisplayFormatters.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideAccessibilityPresentation.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsCellMapLayouts.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsScreenViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/BmsNoDataCards.swift; sourceTree = SOURCE_ROOT; };
@@ -177,7 +177,7 @@
 				400000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift */,
 				40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */,
 				111111111111111111111128 /* Apps/CutoutApp/CutoutAppRoute.swift */,
-				400000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift */,
+				400000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift */,
 				400000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift */,
 				400000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift */,
 				400000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift */,
@@ -398,7 +398,7 @@
 				300000000000000000000021 /* Apps/CutoutApp/ConnectionPresentation.swift in Sources */,
 				30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */,
 				111111111111111111111129 /* Apps/CutoutApp/CutoutAppRoute.swift in Sources */,
-				300000000000000000000001 /* Apps/CutoutApp/AppDisplayFormatters.swift in Sources */,
+				300000000000000000000001 /* Apps/CutoutApp/RideAccessibilityPresentation.swift in Sources */,
 				300000000000000000000002 /* Apps/CutoutApp/BmsCellMapLayouts.swift in Sources */,
 				300000000000000000000003 /* Apps/CutoutApp/BmsScreenViews.swift in Sources */,
 				300000000000000000000004 /* Apps/CutoutApp/BmsNoDataCards.swift in Sources */,
