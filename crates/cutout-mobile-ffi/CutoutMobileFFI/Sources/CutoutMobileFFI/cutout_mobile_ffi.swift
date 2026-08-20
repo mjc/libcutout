@@ -838,6 +838,15 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
     func expireBegodeProbeResponses(nowMs: UInt64, timeoutMs: UInt64)  -> [MobilePendingProbeDto]
 
     /**
+     * Returns the opaque Rust-owned marker for a ride that can be reconciled after relaunch.
+     *
+     * # Errors
+     *
+     * Returns an error only when Rust cannot encode its own marker schema.
+     */
+    func exportRideSessionMarker() throws  -> Data?
+
+    /**
      * Marks every pending Begode probe as missing.
      */
     func markBegodeProbeResponsesMissing()  -> [MobilePendingProbeDto]
@@ -911,6 +920,16 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * Observes raw notification bytes from the mobile BLE stack.
      */
     func observeNotification(bytes: Data)  -> DeviceDetectionResolutionRecord
+
+    /**
+     * Reconciles a persisted marker with the platform identity restored by `CoreBluetooth`.
+     *
+     * # Errors
+     *
+     * Returns an error when the persisted bytes are invalid or unsupported. Invalid bytes do not
+     * mutate the current Rust-owned session state.
+     */
+    func recoverRideSessionMarker(marker: Data, restoredPlatformIdentifier: String?) throws  -> MobileRideSessionDecisionDto
 
     /**
      * Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
@@ -1041,6 +1060,21 @@ open func expireBegodeProbeResponses(nowMs: UInt64, timeoutMs: UInt64) -> [Mobil
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(nowMs),
         FfiConverterUInt64.lower(timeoutMs),$0
+    )
+})
+}
+
+    /**
+     * Returns the opaque Rust-owned marker for a ride that can be reconciled after relaunch.
+     *
+     * # Errors
+     *
+     * Returns an error only when Rust cannot encode its own marker schema.
+     */
+open func exportRideSessionMarker()throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeMobileRideSessionMarkerError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_export_ride_session_marker(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -1214,6 +1248,24 @@ open func observeNotification(bytes: Data) -> DeviceDetectionResolutionRecord  {
     uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_observe_notification(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(bytes),$0
+    )
+})
+}
+
+    /**
+     * Reconciles a persisted marker with the platform identity restored by `CoreBluetooth`.
+     *
+     * # Errors
+     *
+     * Returns an error when the persisted bytes are invalid or unsupported. Invalid bytes do not
+     * mutate the current Rust-owned session state.
+     */
+open func recoverRideSessionMarker(marker: Data, restoredPlatformIdentifier: String?)throws  -> MobileRideSessionDecisionDto  {
+    return try  FfiConverterTypeMobileRideSessionDecisionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideSessionMarkerError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_cutoutsessionstatehandle_recover_ride_session_marker(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(marker),
+        FfiConverterOptionString.lower(restoredPlatformIdentifier),$0
     )
 })
 }
@@ -13913,6 +13965,100 @@ public func FfiConverterTypeMobileRideSessionInputError_lower(_ value: MobileRid
     return FfiConverterTypeMobileRideSessionInputError.lower(value)
 }
 
+
+/**
+ * Invalid persisted ride-session marker data presented by the mobile platform.
+ */
+public enum MobileRideSessionMarkerError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * Bytes do not match the marker schema.
+     */
+    case InvalidEncoding
+    /**
+     * The marker schema version is not supported by this build.
+     */
+    case UnsupportedVersion
+    /**
+     * The marker does not carry a valid logical ride identity.
+     */
+    case InvalidIdentity
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRideSessionMarkerError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSessionMarkerError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSessionMarkerError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionMarkerError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .InvalidEncoding
+        case 2: return .UnsupportedVersion
+        case 3: return .InvalidIdentity
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSessionMarkerError, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .InvalidEncoding:
+            writeInt(&buf, Int32(1))
+
+
+        case .UnsupportedVersion:
+            writeInt(&buf, Int32(2))
+
+
+        case .InvalidIdentity:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionMarkerError_lift(_ buf: RustBuffer) throws -> MobileRideSessionMarkerError {
+    return try FfiConverterTypeMobileRideSessionMarkerError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSessionMarkerError_lower(_ value: MobileRideSessionMarkerError) -> RustBuffer {
+    return FfiConverterTypeMobileRideSessionMarkerError.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -17932,6 +18078,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_expire_begode_probe_responses() != 6) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_export_ride_session_marker() != 22197) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_mark_begode_probe_responses_missing() != 35052) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -17975,6 +18124,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_observe_notification() != 64877) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_recover_ride_session_marker() != 40995) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_cutoutsessionstatehandle_reduce_ride_session() != 11147) {
