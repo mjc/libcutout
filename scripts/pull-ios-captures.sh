@@ -29,7 +29,10 @@ xcrun devicectl --quiet device info files \
   --subdirectory Documents \
   --json-output "$listing_json" >/dev/null
 
-mapfile -t capture_names < <(python3 - "$listing_json" "$limit" <<'PY'
+capture_names=()
+while IFS= read -r capture_name; do
+  capture_names+=("$capture_name")
+done < <(python3 - "$listing_json" "$limit" <<'PY'
 import json
 import sys
 
