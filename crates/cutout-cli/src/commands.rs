@@ -1,6 +1,8 @@
 use std::{
-    fmt, fs,
+    fmt,
+    fs::{self, File},
     future::{Future, poll_fn},
+    io::BufReader,
     marker::PhantomData,
     sync::mpsc,
     thread,
@@ -26,11 +28,12 @@ use cutout_core::{
     CatalogModelResolution, CommandKind, DeviceCommand, DeviceEvent, DiagnosticError,
     DiagnosticErrorKind, DiagnosticSnapshot, FirmwareInfo, GattChannel, HostSession, Measured,
     ModelCatalog, MonotonicTimestamp, NotificationByteLen, ParserDiagnostics, PevcapCapture,
-    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapRecord, PevcapResolvedIdentity,
-    ProtocolFamily, ProtocolSession, ReadOnlyResponse, ReplayChunkComparison, SessionInput,
-    SessionKey, SessionOutput, SettingsReadback, SettingsReadbackAvailability, TelemetrySnapshot,
-    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus,
-    VerifiedValue, WallClockUnixTimestamp, WriteMode, WritePayload,
+    PevcapDirection, PevcapEncoding, PevcapHeader, PevcapReader, PevcapRecord, PevcapReplayMode,
+    PevcapReplayStats, PevcapResolvedIdentity, ProtocolFamily, ProtocolSession, ReadOnlyResponse,
+    ReplayChunkComparison, SessionInput, SessionKey, SessionOutput, SettingsReadback,
+    SettingsReadbackAvailability, TelemetrySnapshot, TransportAction, TransportWriteLimit,
+    ValueQuality, ValueSource, VerificationStatus, VerifiedValue, WallClockUnixTimestamp,
+    WriteMode, WritePayload,
 };
 #[cfg(test)]
 use cutout_protocols::VETERAN_DATA_CHANNEL;
@@ -171,32 +174,32 @@ const fn pevcap_encoding(format: PevcapFormat) -> PevcapEncoding {
 }
 
 fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
-    let input = fs::read(&args.input)?;
-    let capture = PevcapCapture::decode(&input, pevcap_encoding(args.input_format))?;
+    let header = pevcap_reader(&args.input, args.input_format)?
+        .header()
+        .clone();
     let replay_vesc = matches!(args.profile, PevcapReplayProfile::Vesc)
         || (matches!(args.profile, PevcapReplayProfile::Auto)
-            && capture
-                .header
+            && header
                 .annotations
                 .iter()
                 .any(|annotation| annotation == "route=vesc_onewheel"));
     let report = if replay_vesc {
-        replay_pevcap_with_session(
-            &capture,
+        replay_pevcap_stream_with_session(
+            &args.input,
+            args.input_format,
             ReadOnlySession::<cutout_protocols::VescGenericModel, true>::default(),
         )?
     } else {
-        replay_pevcap_capture(
-            &capture,
-            selected_pevcap_replay_profile(
-                &capture,
-                match args.profile {
-                    PevcapReplayProfile::Auto => SessionProfile::Auto,
-                    PevcapReplayProfile::Aero => SessionProfile::Aero,
-                    PevcapReplayProfile::Falcon => SessionProfile::Falcon,
-                    PevcapReplayProfile::Vesc => unreachable!("VESC replay handled above"),
-                },
-            )?,
+        replay_pevcap_stream(
+            &args.input,
+            args.input_format,
+            &header,
+            match args.profile {
+                PevcapReplayProfile::Auto => SessionProfile::Auto,
+                PevcapReplayProfile::Aero => SessionProfile::Aero,
+                PevcapReplayProfile::Falcon => SessionProfile::Falcon,
+                PevcapReplayProfile::Vesc => unreachable!("VESC replay handled above"),
+            },
         )?
     };
     info!("{}", render_pevcap_replay_report(&report));
@@ -220,6 +223,161 @@ fn pevcap_replay(args: &crate::cli::PevcapReplayArgs) -> Result<()> {
         info!("{firmware}");
     }
     Ok(())
+}
+
+fn pevcap_reader(
+    path: &std::path::Path,
+    format: PevcapFormat,
+) -> Result<PevcapReader<BufReader<File>>> {
+    let file = File::open(path)?;
+    Ok(PevcapReader::new(
+        BufReader::new(file),
+        pevcap_encoding(format),
+    )?)
+}
+
+fn replay_pevcap_stream(
+    path: &std::path::Path,
+    format: PevcapFormat,
+    header: &PevcapHeader,
+    profile: SessionProfile,
+) -> Result<PevcapReplayReport> {
+    let selected = selected_pevcap_replay_profile_from_header(header, profile)?;
+    if selected.is_falcon() {
+        let evidence = falcon_stream_voltage_evidence(path, format)?;
+        let voltage_profile = select_falcon_replay_voltage_profile_from_evidence(header, &evidence);
+        let session = falcon_replay_session_from_evidence(header, &evidence)?;
+        replay_pevcap_stream_with_session(path, format, session).map(|mut report| {
+            report.capacity =
+                select_begode_pack_capacity_from_annotations(header.annotations.iter());
+            report.layout = select_begode_pack_layout_from_annotations(header.annotations.iter());
+            report.pack_evidence_consistency = Some(validate_begode_pack_evidence(
+                voltage_profile,
+                report.capacity,
+                report.layout,
+            ));
+            report
+        })
+    } else {
+        replay_pevcap_stream_with_session(
+            path,
+            format,
+            selected.session_registration()?.construct(),
+        )
+    }
+}
+
+fn replay_pevcap_stream_with_session<S>(
+    path: &std::path::Path,
+    format: PevcapFormat,
+    session: S,
+) -> Result<PevcapReplayReport>
+where
+    S: Clone + ProtocolSession,
+{
+    let mut reader = pevcap_reader(path, format)?;
+    let contains_link_up = pevcap_contains_link_up(path, format)?;
+    let mut host = HostSession::new(session.clone());
+    let mut outputs = Vec::new();
+    let whole_stats = reader.replay_into_host_with_known_link_up(
+        PevcapReplayMode::Whole,
+        &mut host,
+        &mut outputs,
+        contains_link_up,
+    )?;
+    let arbitrary_lengths = whole_stats.arbitrary_notification_chunk_lengths();
+    let whole = pevcap_stream_semantic_events(
+        path,
+        format,
+        session.clone(),
+        PevcapReplayMode::Whole,
+        contains_link_up,
+    )?;
+    let one_byte = pevcap_stream_semantic_events(
+        path,
+        format,
+        session.clone(),
+        PevcapReplayMode::OneByte,
+        contains_link_up,
+    )?;
+    let arbitrary = pevcap_stream_semantic_events(
+        path,
+        format,
+        session,
+        PevcapReplayMode::Lengths(&arbitrary_lengths),
+        contains_link_up,
+    )?;
+    let comparison = ReplayChunkComparison {
+        whole_semantic_events: cutout_core::SemanticEventCount::from_events(whole.0.len()),
+        one_byte_semantic_events: cutout_core::SemanticEventCount::from_events(one_byte.0.len()),
+        arbitrary_semantic_events: cutout_core::SemanticEventCount::from_events(arbitrary.0.len()),
+        one_byte_matches: one_byte.0 == whole.0,
+        arbitrary_matches: arbitrary.0 == whole.0,
+    };
+    Ok(summarize_pevcap_replay(
+        ReplayRecordCount::new(whole_stats.replay_input_count),
+        ReplayChunkPlanLen::new(arbitrary_lengths.len()),
+        &outputs,
+        comparison,
+    ))
+}
+
+fn pevcap_contains_link_up(path: &std::path::Path, format: PevcapFormat) -> Result<bool> {
+    let mut reader = pevcap_reader(path, format)?;
+    while let Some(record) = reader.next_record()? {
+        if record.direction == PevcapDirection::LinkUp {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn pevcap_stream_semantic_events<S>(
+    path: &std::path::Path,
+    format: PevcapFormat,
+    session: S,
+    mode: PevcapReplayMode<'_>,
+    contains_link_up: bool,
+) -> Result<(Vec<DeviceEvent>, PevcapReplayStats)>
+where
+    S: ProtocolSession,
+{
+    Ok(
+        pevcap_reader(path, format)?.replay_semantic_events_with_known_link_up(
+            mode,
+            session,
+            contains_link_up,
+        )?,
+    )
+}
+
+fn falcon_stream_voltage_evidence(
+    path: &std::path::Path,
+    format: PevcapFormat,
+) -> Result<Vec<BegodeVoltageEvidence>> {
+    let mut reader = pevcap_reader(path, format)?;
+    let mut reassembler = BegodeFrameReassembler::default();
+    let mut evidence = Vec::new();
+    while let Some(record) = reader.next_record()? {
+        if record.direction != PevcapDirection::Inbound
+            || record.characteristic != BEGODE_DATA_CHANNEL
+        {
+            continue;
+        }
+        for byte in record.bytes.as_ref() {
+            let Ok(BegodeFrameParseResult::Complete(frame)) =
+                reassembler.feed_byte_result_at(*byte, record.monotonic_ms)
+            else {
+                continue;
+            };
+            if let Ok(summary) = BegodeBmsSummary::decode(&frame) {
+                evidence.push(BegodeVoltageEvidence::ObservedPackVoltage(
+                    summary.pack_voltage,
+                ));
+            }
+        }
+    }
+    Ok(evidence)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -316,6 +474,7 @@ impl<Tag> fmt::Display for ReplayCount<Tag> {
     }
 }
 
+#[cfg(test)]
 fn replay_pevcap_capture(
     capture: &PevcapCapture,
     profile: SelectedSessionProfile,
@@ -338,8 +497,19 @@ fn replay_pevcap_capture(
     Ok(report)
 }
 
+#[cfg(test)]
 fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySession> {
-    match select_falcon_replay_voltage_profile(capture) {
+    falcon_replay_session_from_evidence(
+        &capture.header,
+        &falcon_replay_bms_voltage_evidence(capture),
+    )
+}
+
+fn falcon_replay_session_from_evidence(
+    header: &PevcapHeader,
+    bms_evidence: &[BegodeVoltageEvidence],
+) -> Result<RegisteredReadOnlySession> {
+    match select_falcon_replay_voltage_profile_from_evidence(header, bms_evidence) {
         BegodeVoltageProfileSelection::Selected(profile) => Ok(
             begode_falcon_read_only_session_with_voltage_profile(profile),
         ),
@@ -352,14 +522,26 @@ fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySe
     }
 }
 
+#[cfg(test)]
 fn select_falcon_replay_voltage_profile(capture: &PevcapCapture) -> BegodeVoltageProfileSelection {
-    let bms_evidence = falcon_replay_bms_voltage_evidence(capture);
-    match select_begode_pack_voltage_profile_from_annotations(capture.header.annotations.iter()) {
+    select_falcon_replay_voltage_profile_from_evidence(
+        &capture.header,
+        &falcon_replay_bms_voltage_evidence(capture),
+    )
+}
+
+fn select_falcon_replay_voltage_profile_from_evidence(
+    header: &PevcapHeader,
+    bms_evidence: &[BegodeVoltageEvidence],
+) -> BegodeVoltageProfileSelection {
+    match select_begode_pack_voltage_profile_from_annotations(header.annotations.iter()) {
         BegodeVoltageProfileSelection::Conflicting => BegodeVoltageProfileSelection::Conflicting,
         BegodeVoltageProfileSelection::Selected(profile) => select_begode_pack_voltage_profile(
-            core::iter::once(profile_evidence(profile)).chain(bms_evidence),
+            core::iter::once(profile_evidence(profile)).chain(bms_evidence.iter().copied()),
         ),
-        BegodeVoltageProfileSelection::Missing => select_begode_pack_voltage_profile(bms_evidence),
+        BegodeVoltageProfileSelection::Missing => {
+            select_begode_pack_voltage_profile(bms_evidence.iter().copied())
+        }
     }
 }
 
@@ -374,6 +556,7 @@ fn profile_evidence(profile: cutout_protocols::BegodePackVoltageProfile) -> Bego
     }
 }
 
+#[cfg(test)]
 fn falcon_replay_bms_voltage_evidence(capture: &PevcapCapture) -> Vec<BegodeVoltageEvidence> {
     falcon_bms_voltage_evidence_from_records(capture.records.iter().filter_map(|record| {
         if record.direction == PevcapDirection::Inbound
@@ -427,6 +610,7 @@ fn falcon_bms_voltage_evidence_from_records<'a>(
     evidence
 }
 
+#[cfg(test)]
 fn replay_pevcap_with_session<S>(capture: &PevcapCapture, session: S) -> Result<PevcapReplayReport>
 where
     S: Clone + ProtocolSession,
@@ -543,20 +727,82 @@ fn notification_ingest_monotonic_ms(
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PevcapReplayInputSummary {
+    notifications: NotificationCount,
+    notification_bytes: NotificationPayloadTotal,
+    latest_notification_len: Option<NotificationByteLen>,
+}
+
+impl PevcapReplayInputSummary {
+    #[cfg(test)]
+    fn from_capture(capture: &PevcapCapture) -> Self {
+        Self {
+            notifications: replay_notification_count(capture),
+            notification_bytes: replay_notification_bytes(capture),
+            latest_notification_len: latest_replay_notification_len(capture),
+        }
+    }
+}
+
+fn pevcap_stream_input_summary(
+    path: &std::path::Path,
+    format: PevcapFormat,
+) -> Result<(PevcapHeader, PevcapReplayInputSummary)> {
+    let mut reader = pevcap_reader(path, format)?;
+    let header = reader.header().clone();
+    let mut summary = PevcapReplayInputSummary {
+        notifications: NotificationCount::default(),
+        notification_bytes: NotificationPayloadTotal::default(),
+        latest_notification_len: None,
+    };
+    while let Some(record) = reader.next_record()? {
+        if record.direction != PevcapDirection::Inbound {
+            continue;
+        }
+        let len = NotificationByteLen::from_bytes(record.bytes.len());
+        summary.notifications = summary.notifications.increment();
+        summary.notification_bytes = summary
+            .notification_bytes
+            .saturating_add(NotificationPayloadTotal::from_bytes(len.as_bytes()));
+        summary.latest_notification_len = Some(len);
+    }
+    Ok((header, summary))
+}
+
+#[cfg(test)]
 fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<DashboardState> {
     let report = replay_pevcap_capture(capture, selected_aero_session_profile())?;
+    dashboard_state_from_aero_pevcap_parts(
+        &capture.header,
+        PevcapReplayInputSummary::from_capture(capture),
+        report,
+    )
+}
+
+fn dashboard_state_from_aero_pevcap_stream(
+    path: &std::path::Path,
+    format: PevcapFormat,
+) -> Result<DashboardState> {
+    let (header, summary) = pevcap_stream_input_summary(path, format)?;
+    let report = replay_pevcap_stream(path, format, &header, SessionProfile::Aero)?;
+    dashboard_state_from_aero_pevcap_parts(&header, summary, report)
+}
+
+fn dashboard_state_from_aero_pevcap_parts(
+    header: &PevcapHeader,
+    input: PevcapReplayInputSummary,
+    report: PevcapReplayReport,
+) -> Result<DashboardState> {
     if !(report.chunk_one_byte_matches && report.chunk_arbitrary_matches) {
         bail!("Aero PEVCAP replay chunks did not produce equivalent dashboard state");
     }
 
     let mut state = DashboardState::empty();
-    state.provenance = Some(pevcap_dashboard_provenance(capture));
-    state
-        .device
-        .identifier
-        .clone_from(&capture.header.platform_id);
+    state.provenance = Some(pevcap_dashboard_provenance_from_header(header));
+    state.device.identifier.clone_from(&header.platform_id);
     "replayed".clone_into(&mut state.device.connection_state);
-    if let Some(identity) = &capture.header.resolved_identity {
+    if let Some(identity) = &header.resolved_identity {
         if let Some(model) = &identity.model {
             state.device.model.clone_from(&model.value);
         }
@@ -575,9 +821,9 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
         protocol_writes: ProtocolWriteCount::default(),
         writes: TransportWriteCount::default(),
         subscribes: SubscribeCount::default(),
-        notifications: replay_notification_count(capture),
-        notification_bytes: replay_notification_bytes(capture),
-        latest_notification_len: latest_replay_notification_len(capture),
+        notifications: input.notifications,
+        notification_bytes: input.notification_bytes,
+        latest_notification_len: input.latest_notification_len,
         telemetry: TelemetryEventCount::from_events(report.telemetry.get()),
         telemetry_snapshot: report.telemetry_snapshot,
         read_only_responses: ReadOnlyResponseCount::from_events(report.read_only_responses.get()),
@@ -597,22 +843,21 @@ fn dashboard_state_from_aero_pevcap(capture: &PevcapCapture) -> Result<Dashboard
         }
     }
     state.capture_provenance = Some(DashboardCaptureProvenance::from_pevcap_header(
-        &capture.header,
+        header,
         &state.device.model,
         &state.device.firmware,
     ));
     Ok(state)
 }
 
-fn pevcap_dashboard_provenance(capture: &PevcapCapture) -> String {
-    if capture.header.annotations.is_empty() {
-        return format!("pevcap replay platform={}", capture.header.platform_id);
+fn pevcap_dashboard_provenance_from_header(header: &PevcapHeader) -> String {
+    if header.annotations.is_empty() {
+        return format!("pevcap replay platform={}", header.platform_id);
     }
-
     format!(
         "pevcap replay platform={} annotations={}",
-        capture.header.platform_id,
-        AnnotationList(capture.header.annotations.as_slice())
+        header.platform_id,
+        AnnotationList(header.annotations.as_slice())
     )
 }
 
@@ -644,6 +889,7 @@ impl fmt::Display for OptionalUuid {
     }
 }
 
+#[cfg(test)]
 fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
     capture
         .records
@@ -652,6 +898,7 @@ fn replay_notification_count(capture: &PevcapCapture) -> NotificationCount {
         .fold(NotificationCount::default(), |count, _| count.increment())
 }
 
+#[cfg(test)]
 fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationPayloadTotal {
     capture
         .records
@@ -663,6 +910,7 @@ fn replay_notification_bytes(capture: &PevcapCapture) -> NotificationPayloadTota
         })
 }
 
+#[cfg(test)]
 fn latest_replay_notification_len(capture: &PevcapCapture) -> Option<NotificationByteLen> {
     capture
         .records
@@ -845,9 +1093,10 @@ async fn dashboard(args: DashboardArgs) -> Result<()> {
     }
 
     if let Some(path) = args.pevcap.as_ref() {
-        let input = fs::read(path)?;
-        let capture = PevcapCapture::decode(&input, pevcap_encoding(args.pevcap_format))?;
-        return run_dashboard_with_updates(dashboard_state_from_aero_pevcap(&capture)?, &rx);
+        return run_dashboard_with_updates(
+            dashboard_state_from_aero_pevcap_stream(path, args.pevcap_format)?,
+            &rx,
+        );
     }
 
     let target = dashboard_live_target(&args)?;
@@ -1887,18 +2136,26 @@ const fn selected_falcon_session_profile() -> SelectedSessionProfile {
     selected_session_profile(SessionProfile::Falcon)
 }
 
+#[cfg(test)]
 fn selected_pevcap_replay_profile(
     capture: &PevcapCapture,
     profile: SessionProfile,
 ) -> Result<SelectedSessionProfile> {
+    selected_pevcap_replay_profile_from_header(&capture.header, profile)
+}
+
+fn selected_pevcap_replay_profile_from_header(
+    header: &PevcapHeader,
+    profile: SessionProfile,
+) -> Result<SelectedSessionProfile> {
     match profile {
         SessionProfile::Aero | SessionProfile::Falcon => Ok(selected_session_profile(profile)),
-        SessionProfile::Auto => auto_pevcap_replay_profile(capture),
+        SessionProfile::Auto => auto_pevcap_replay_profile_from_header(header),
     }
 }
 
-fn auto_pevcap_replay_profile(capture: &PevcapCapture) -> Result<SelectedSessionProfile> {
-    let Some(identity) = capture.header.resolved_identity.as_ref() else {
+fn auto_pevcap_replay_profile_from_header(header: &PevcapHeader) -> Result<SelectedSessionProfile> {
+    let Some(identity) = header.resolved_identity.as_ref() else {
         bail!("PEVCAP replay --profile auto requires resolved model identity metadata");
     };
     let Some(family) = identity.protocol_family else {
@@ -4779,6 +5036,42 @@ mod tests {
         assert_eq!(
             state.read_only.unknown_raw_pages,
             crate::dashboard::RawReadOnlyPageCount::default()
+        );
+    }
+
+    #[test]
+    fn pevcap_stream_replay_builds_the_same_aero_dashboard_state() {
+        let capture = sample_aero_replay_capture();
+        let path = std::env::temp_dir().join(format!(
+            "libcutout-streaming-dashboard-{}.jsonl",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            capture.to_jsonl().expect("sample capture serializes"),
+        )
+        .expect("temporary PEVCAP writes");
+
+        let streamed = dashboard_state_from_aero_pevcap_stream(&path, PevcapFormat::Jsonl)
+            .expect("streaming Aero dashboard replay succeeds");
+        let _ = fs::remove_file(&path);
+
+        assert_eq!(
+            streamed.provenance,
+            Some("pevcap replay platform=darwin annotations=aero replay".to_owned())
+        );
+        assert_eq!(streamed.device.connection_state, "replayed");
+        assert_eq!(
+            streamed.counters.notifications,
+            NotificationCount::from_events(1)
+        );
+        assert_eq!(
+            streamed.counters.notification_bytes,
+            NotificationPayloadTotal::from_bytes(99)
+        );
+        assert_eq!(
+            streamed.counters.latest_notification_len,
+            Some(NotificationByteLen::from_bytes(99))
         );
     }
 

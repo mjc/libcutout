@@ -1,5 +1,8 @@
 use core::convert::Infallible;
 
+#[cfg(feature = "serde")]
+use std::io::{self, BufRead, BufReader, Read};
+
 use arrayvec::ArrayVec;
 use bytes::Bytes;
 #[cfg(feature = "serde")]
@@ -254,6 +257,510 @@ pub enum PevcapEncoding {
 
     /// Binary PEVCAP container representation for storage and replay tooling.
     Binary,
+}
+
+/// Streaming PEVCAP reader that owns only the current record.
+#[cfg(feature = "serde")]
+#[derive(Debug)]
+pub struct PevcapReader<R: Read> {
+    state: PevcapReaderState<R>,
+}
+
+#[cfg(feature = "serde")]
+#[derive(Debug)]
+enum PevcapReaderState<R: Read> {
+    Jsonl {
+        reader: BufReader<R>,
+        line_number: usize,
+        header: PevcapHeader,
+        line: String,
+    },
+    Binary {
+        reader: R,
+        remaining_records: u32,
+        header: PevcapHeader,
+        finished: bool,
+    },
+}
+
+/// Error returned while streaming a PEVCAP file.
+#[cfg(feature = "serde")]
+#[derive(Debug, Error)]
+pub enum PevcapStreamError {
+    /// JSONL stream failure.
+    #[error(transparent)]
+    Jsonl(#[from] PevcapJsonlError),
+
+    /// Binary stream failure.
+    #[error(transparent)]
+    Binary(#[from] PevcapBinaryError),
+}
+
+#[cfg(feature = "serde")]
+impl<R: Read> PevcapReader<R> {
+    /// Opens a streaming reader and validates its header before returning.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapStreamError`] when the header is malformed or cannot be
+    /// read from the underlying stream.
+    pub fn new(reader: R, encoding: PevcapEncoding) -> Result<Self, PevcapStreamError> {
+        match encoding {
+            PevcapEncoding::Jsonl => Self::new_jsonl(reader).map_err(Into::into),
+            PevcapEncoding::Binary => Self::new_binary(reader).map_err(Into::into),
+        }
+    }
+
+    fn new_jsonl(reader: R) -> Result<Self, PevcapJsonlError> {
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        let mut line_number = 0;
+
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                return Err(PevcapJsonlError::MissingHeader);
+            }
+            line_number += 1;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let parsed = serde_json::from_str::<PevcapJsonlLine>(trimmed).map_err(|source| {
+                PevcapJsonlError::Deserialize {
+                    line: line_number,
+                    source,
+                }
+            })?;
+            let PevcapJsonlLine::Header {
+                magic,
+                version,
+                header,
+            } = parsed
+            else {
+                return Err(PevcapJsonlError::MissingHeader);
+            };
+            if magic != PEVCAP_MAGIC {
+                return Err(PevcapJsonlError::InvalidMagic { line: line_number });
+            }
+            if version != PevcapFormatVersion::current() {
+                return Err(PevcapJsonlError::UnsupportedVersion {
+                    line: line_number,
+                    version,
+                });
+            }
+            return Ok(Self {
+                state: PevcapReaderState::Jsonl {
+                    reader,
+                    line_number,
+                    header: header.try_into_header()?,
+                    line: String::new(),
+                },
+            });
+        }
+    }
+
+    fn new_binary(mut reader: R) -> Result<Self, PevcapBinaryError> {
+        let magic = read_stream_exact(&mut reader, PEVCAP_MAGIC.len(), PevcapBinarySection::Magic)?;
+        if magic != PEVCAP_MAGIC {
+            return Err(PevcapBinaryError::InvalidMagic);
+        }
+        let version = PevcapFormatVersion {
+            major: read_stream_u16(&mut reader, PevcapBinarySection::Version)?,
+            minor: read_stream_u16(&mut reader, PevcapBinarySection::Version)?,
+        };
+        if version != PevcapFormatVersion::current() {
+            return Err(PevcapBinaryError::UnsupportedVersion { version });
+        }
+        let header = read_stream_len_prefixed(&mut reader, PevcapBinarySection::Header)?;
+        let header = serde_json::from_slice::<PevcapHeaderJson>(&header)
+            .map_err(|source| PevcapBinaryError::Deserialize {
+                section: PevcapBinarySection::Header,
+                source,
+            })?
+            .try_into_header()?;
+        let remaining_records = read_stream_u32(&mut reader, PevcapBinarySection::RecordCount)?;
+        Ok(Self {
+            state: PevcapReaderState::Binary {
+                reader,
+                remaining_records,
+                header,
+                finished: false,
+            },
+        })
+    }
+
+    /// Returns the validated capture header.
+    #[must_use]
+    pub fn header(&self) -> &PevcapHeader {
+        match &self.state {
+            PevcapReaderState::Jsonl { header, .. } | PevcapReaderState::Binary { header, .. } => {
+                header
+            }
+        }
+    }
+
+    /// Reads the next record, retaining no previously decoded records.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapStreamError`] when the next record is malformed, the
+    /// stream is truncated, or an underlying read fails.
+    pub fn next_record(&mut self) -> Result<Option<PevcapRecord>, PevcapStreamError> {
+        match &mut self.state {
+            PevcapReaderState::Jsonl {
+                reader,
+                line_number,
+                line,
+                ..
+            } => loop {
+                line.clear();
+                if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
+                    return Ok(None);
+                }
+                *line_number += 1;
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let parsed =
+                    serde_json::from_str::<PevcapJsonlLine>(trimmed).map_err(|source| {
+                        PevcapJsonlError::Deserialize {
+                            line: *line_number,
+                            source,
+                        }
+                    })?;
+                return match parsed {
+                    PevcapJsonlLine::Header { .. } => {
+                        Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into())
+                    }
+                    PevcapJsonlLine::Record { record } => {
+                        Ok(Some(record.try_into_record().map_err(|source| {
+                            PevcapJsonlError::Record {
+                                line: *line_number,
+                                source,
+                            }
+                        })?))
+                    }
+                };
+            },
+            PevcapReaderState::Binary {
+                reader,
+                remaining_records,
+                finished,
+                ..
+            } => {
+                if *remaining_records > 0 {
+                    let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
+                    *remaining_records -= 1;
+                    let record = serde_json::from_slice::<PevcapRecordJson>(&payload)
+                        .map_err(|source| PevcapBinaryError::Deserialize {
+                            section: PevcapBinarySection::Record,
+                            source,
+                        })?
+                        .try_into_record()
+                        .map_err(PevcapBinaryError::Record)?;
+                    return Ok(Some(record));
+                }
+                if *finished {
+                    return Ok(None);
+                }
+                *finished = true;
+                let mut trailing = Vec::new();
+                reader
+                    .read_to_end(&mut trailing)
+                    .map_err(PevcapBinaryError::Io)?;
+                if trailing.is_empty() {
+                    Ok(None)
+                } else {
+                    Err(PevcapBinaryError::TrailingBytes {
+                        len: trailing.len(),
+                    }
+                    .into())
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<R: Read> PevcapReader<R> {
+    /// Replays records from the stream into a host session without retaining
+    /// the capture in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapStreamError`] when a record cannot be decoded.
+    pub fn replay_into_host<S>(
+        &mut self,
+        mode: PevcapReplayMode<'_>,
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+    ) -> Result<PevcapReplayStats, PevcapStreamError>
+    where
+        S: ProtocolSession,
+    {
+        self.replay_into_host_inner(mode, host, outputs, None)
+    }
+
+    /// Replays records using a preflight result that says whether the capture
+    /// contains an explicit `LinkUp` record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapStreamError`] when a record cannot be decoded.
+    pub fn replay_into_host_with_known_link_up<S>(
+        &mut self,
+        mode: PevcapReplayMode<'_>,
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+        contains_link_up: bool,
+    ) -> Result<PevcapReplayStats, PevcapStreamError>
+    where
+        S: ProtocolSession,
+    {
+        self.replay_into_host_inner(mode, host, outputs, Some(contains_link_up))
+    }
+
+    fn replay_into_host_inner<S>(
+        &mut self,
+        mode: PevcapReplayMode<'_>,
+        host: &mut HostSession<S>,
+        outputs: &mut Vec<SessionOutput>,
+        contains_link_up: Option<bool>,
+    ) -> Result<PevcapReplayStats, PevcapStreamError>
+    where
+        S: ProtocolSession,
+    {
+        let write_limit = self.header().write_limit;
+        let mut stats = PevcapReplayStats::default();
+        let mut saw_record = false;
+
+        while let Some(record) = self.next_record()? {
+            stats.max_notification_len =
+                stats
+                    .max_notification_len
+                    .max(if record.direction == PevcapDirection::Inbound {
+                        record.bytes.len()
+                    } else {
+                        0
+                    });
+            if !saw_record
+                && record.direction != PevcapDirection::LinkUp
+                && contains_link_up != Some(true)
+            {
+                host.ingest_link_up(LinkInfo {
+                    monotonic_ms: MonotonicTimestamp::new(0),
+                    max_write_len: write_limit,
+                });
+                host.drain_outputs_into(outputs);
+                stats.replay_input_count += 1;
+            }
+            saw_record = true;
+            match record.direction {
+                PevcapDirection::LinkUp => host.ingest_link_up(LinkInfo {
+                    monotonic_ms: record.monotonic_ms,
+                    max_write_len: record.link_max_write_len,
+                }),
+                PevcapDirection::LinkDown => host.ingest_link_down(),
+                PevcapDirection::Inbound => {
+                    replay_pevcap_notification(&record, mode, host, outputs);
+                    stats.replay_input_count += 1;
+                    continue;
+                }
+                PevcapDirection::Outbound => {}
+            }
+            host.drain_outputs_into(outputs);
+            if record.direction != PevcapDirection::Outbound {
+                stats.replay_input_count += 1;
+            }
+        }
+
+        if !saw_record && contains_link_up != Some(true) {
+            // A stream cannot look ahead without retaining records. Normal
+            // captures begin with LinkUp; this preserves the existing
+            // synthetic-link behavior for captures that omit it.
+            host.ingest_link_up(LinkInfo {
+                monotonic_ms: MonotonicTimestamp::new(0),
+                max_write_len: write_limit,
+            });
+            host.drain_outputs_into(outputs);
+            stats.replay_input_count += 1;
+        }
+
+        Ok(stats)
+    }
+
+    /// Replays records while collecting semantic events without retaining the
+    /// capture in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapReplayError`] when a record cannot be decoded or the
+    /// replay produces more output than the bounded semantic collector allows.
+    pub fn replay_semantic_events<S>(
+        &mut self,
+        mode: PevcapReplayMode<'_>,
+        session: S,
+    ) -> Result<(Vec<DeviceEvent>, PevcapReplayStats), PevcapReplayError>
+    where
+        S: ProtocolSession,
+    {
+        self.replay_semantic_events_inner(mode, session, None)
+    }
+
+    /// Replays semantic events using a preflight result that says whether the
+    /// capture contains an explicit `LinkUp` record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PevcapReplayError`] when a record cannot be decoded or the
+    /// replay produces more output than the bounded semantic collector allows.
+    pub fn replay_semantic_events_with_known_link_up<S>(
+        &mut self,
+        mode: PevcapReplayMode<'_>,
+        session: S,
+        contains_link_up: bool,
+    ) -> Result<(Vec<DeviceEvent>, PevcapReplayStats), PevcapReplayError>
+    where
+        S: ProtocolSession,
+    {
+        self.replay_semantic_events_inner(mode, session, Some(contains_link_up))
+    }
+
+    fn replay_semantic_events_inner<S>(
+        &mut self,
+        mode: PevcapReplayMode<'_>,
+        session: S,
+        contains_link_up: Option<bool>,
+    ) -> Result<(Vec<DeviceEvent>, PevcapReplayStats), PevcapReplayError>
+    where
+        S: ProtocolSession,
+    {
+        let write_limit = self.header().write_limit;
+        let mut host = HostSession::new(session);
+        let mut outputs = Vec::new();
+        let mut events = Vec::new();
+        let mut stats = PevcapReplayStats::default();
+        let mut saw_record = false;
+
+        while let Some(record) = self.next_record()? {
+            stats.max_notification_len =
+                stats
+                    .max_notification_len
+                    .max(if record.direction == PevcapDirection::Inbound {
+                        record.bytes.len()
+                    } else {
+                        0
+                    });
+            if !saw_record
+                && record.direction != PevcapDirection::LinkUp
+                && contains_link_up != Some(true)
+            {
+                host.ingest_link_up(LinkInfo {
+                    monotonic_ms: MonotonicTimestamp::new(0),
+                    max_write_len: write_limit,
+                });
+                drain_semantic_events_checked(
+                    &mut host,
+                    &mut outputs,
+                    &mut events,
+                    DEFAULT_REPLAY_OUTPUT_LIMIT,
+                )?;
+                stats.replay_input_count += 1;
+            }
+            saw_record = true;
+            match record.direction {
+                PevcapDirection::LinkUp => host.ingest_link_up(LinkInfo {
+                    monotonic_ms: record.monotonic_ms,
+                    max_write_len: record.link_max_write_len,
+                }),
+                PevcapDirection::LinkDown => host.ingest_link_down(),
+                PevcapDirection::Inbound => {
+                    replay_pevcap_notification_semantic_checked(
+                        &record,
+                        mode,
+                        &mut host,
+                        &mut outputs,
+                        &mut events,
+                        DEFAULT_REPLAY_OUTPUT_LIMIT,
+                    )?;
+                    stats.replay_input_count += 1;
+                    continue;
+                }
+                PevcapDirection::Outbound => {}
+            }
+            drain_semantic_events_checked(
+                &mut host,
+                &mut outputs,
+                &mut events,
+                DEFAULT_REPLAY_OUTPUT_LIMIT,
+            )?;
+            if record.direction != PevcapDirection::Outbound {
+                stats.replay_input_count += 1;
+            }
+        }
+
+        if !saw_record && contains_link_up != Some(true) {
+            host.ingest_link_up(LinkInfo {
+                monotonic_ms: MonotonicTimestamp::new(0),
+                max_write_len: write_limit,
+            });
+            drain_semantic_events_checked(
+                &mut host,
+                &mut outputs,
+                &mut events,
+                DEFAULT_REPLAY_OUTPUT_LIMIT,
+            )?;
+            stats.replay_input_count += 1;
+        }
+
+        Ok((events, stats))
+    }
+}
+
+#[cfg(feature = "serde")]
+fn read_stream_exact<R: Read>(
+    reader: &mut R,
+    len: usize,
+    section: PevcapBinarySection,
+) -> Result<Vec<u8>, PevcapBinaryError> {
+    let mut bytes = vec![0; len];
+    reader.read_exact(&mut bytes).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            PevcapBinaryError::Truncated { section }
+        } else {
+            PevcapBinaryError::Io(error)
+        }
+    })?;
+    Ok(bytes)
+}
+
+#[cfg(feature = "serde")]
+fn read_stream_u16<R: Read>(
+    reader: &mut R,
+    section: PevcapBinarySection,
+) -> Result<u16, PevcapBinaryError> {
+    let bytes = read_stream_exact(reader, 2, section)?;
+    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+
+#[cfg(feature = "serde")]
+fn read_stream_u32<R: Read>(
+    reader: &mut R,
+    section: PevcapBinarySection,
+) -> Result<u32, PevcapBinaryError> {
+    let bytes = read_stream_exact(reader, 4, section)?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+#[cfg(feature = "serde")]
+fn read_stream_len_prefixed<R: Read>(
+    reader: &mut R,
+    section: PevcapBinarySection,
+) -> Result<Vec<u8>, PevcapBinaryError> {
+    let len = read_stream_u32(reader, section)? as usize;
+    read_stream_exact(reader, len, section)
 }
 
 /// Direction of a captured transport record.
@@ -780,27 +1287,18 @@ impl PevcapCapture {
     /// capture without materializing owned replay records.
     #[must_use]
     pub fn arbitrary_notification_chunk_lengths(&self) -> Vec<NotificationChunkLen> {
-        let max_notification_len = self
-            .records
-            .iter()
-            .filter_map(|record| {
-                (record.direction == PevcapDirection::Inbound).then_some(record.bytes.len())
-            })
-            .max()
-            .unwrap_or(0);
-
-        let mut lengths = Vec::new();
-        let mut covered = 0usize;
-        for chunk_len in [2usize, 3, 5].into_iter().cycle() {
-            if covered >= max_notification_len {
-                break;
-            }
-            let remaining = max_notification_len - covered;
-            let next = chunk_len.min(remaining);
-            lengths.push(NotificationChunkLen::from_bytes(next));
-            covered += next;
+        PevcapReplayStats {
+            replay_input_count: 0,
+            max_notification_len: self
+                .records
+                .iter()
+                .filter_map(|record| {
+                    (record.direction == PevcapDirection::Inbound).then_some(record.bytes.len())
+                })
+                .max()
+                .unwrap_or(0),
         }
-        lengths
+        .arbitrary_notification_chunk_lengths()
     }
 
     /// Compares whole-notification PEVCAP replay against one-byte and
@@ -932,7 +1430,17 @@ impl PevcapCapture {
     pub fn from_jsonl(input: &str) -> Result<Self, PevcapJsonlError> {
         let mut header = None;
         let mut version = None;
-        let mut records = Vec::new();
+        // JSONL has no record count header, but reserving for the number of
+        // non-empty lines avoids repeated growth for the owned compatibility
+        // API. Streaming replay uses `PevcapReader` and does not allocate this
+        // collection at all.
+        let mut records = Vec::with_capacity(
+            input
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count()
+                .saturating_sub(1),
+        );
 
         for (index, raw_line) in input.lines().enumerate() {
             let line = raw_line.trim();
@@ -1117,11 +1625,61 @@ impl PevcapCapture {
     }
 }
 
-#[derive(Clone, Copy)]
-enum PevcapReplayMode<'a> {
+/// Notification chunking mode used by PEVCAP replay.
+#[derive(Clone, Copy, Debug)]
+pub enum PevcapReplayMode<'a> {
+    /// Replay each inbound notification as one payload.
     Whole,
+
+    /// Replay each inbound notification one byte at a time.
     OneByte,
+
+    /// Replay each inbound notification according to the supplied lengths.
     Lengths(&'a [NotificationChunkLen]),
+}
+
+/// Counts observed while replaying a PEVCAP stream.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PevcapReplayStats {
+    /// Number of host inputs, including a synthetic `LinkUp` when required.
+    pub replay_input_count: usize,
+
+    /// Largest inbound notification payload observed.
+    pub max_notification_len: usize,
+}
+
+impl PevcapReplayStats {
+    /// Builds the deterministic arbitrary notification chunk plan used by
+    /// replay equivalence checks.
+    #[must_use]
+    pub fn arbitrary_notification_chunk_lengths(&self) -> Vec<NotificationChunkLen> {
+        let mut lengths = Vec::new();
+        let mut covered = 0usize;
+        for chunk_len in [2usize, 3, 5].into_iter().cycle() {
+            if covered >= self.max_notification_len {
+                break;
+            }
+            let remaining = self.max_notification_len - covered;
+            let next = chunk_len.min(remaining);
+            lengths.push(NotificationChunkLen::from_bytes(next));
+            covered += next;
+        }
+        lengths
+    }
+}
+
+/// Error returned when streaming replay fails while parsing or decoding
+/// session output.
+#[cfg(feature = "serde")]
+#[derive(Debug, Error)]
+pub enum PevcapReplayError {
+    /// The source stream failed.
+    #[error(transparent)]
+    Stream(#[from] PevcapStreamError),
+
+    /// The session exceeded its bounded output retention limit.
+    #[error(transparent)]
+    Output(#[from] SessionOutputError),
 }
 
 enum PevcapReplayStep<'a> {
@@ -1250,6 +1808,10 @@ where
 #[cfg(feature = "serde")]
 #[derive(Debug, Error)]
 pub enum PevcapJsonlError {
+    /// Reading the JSONL stream failed.
+    #[error("failed to read PEVCAP JSONL: {0}")]
+    Io(#[from] io::Error),
+
     /// JSON serialization failed.
     #[error("failed to serialize PEVCAP JSONL: {0}")]
     Serialize(serde_json::Error),
@@ -1328,6 +1890,10 @@ pub enum PevcapCodecError {
 #[cfg(feature = "serde")]
 #[derive(Debug, Error)]
 pub enum PevcapBinaryError {
+    /// Reading the binary stream failed.
+    #[error("failed to read PEVCAP binary: {0}")]
+    Io(#[from] io::Error),
+
     /// Payload serialization failed.
     #[error("failed to serialize PEVCAP binary payload: {0}")]
     Serialize(serde_json::Error),
@@ -2036,7 +2602,7 @@ mod tests {
     use super::*;
     use crate::{NotificationByteLen, VerificationStatus};
     use proptest::prelude::*;
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::RefCell, io::Cursor, rc::Rc};
 
     const fn ms(value: u64) -> MonotonicTimestamp {
         MonotonicTimestamp::new(value)
@@ -2108,6 +2674,132 @@ mod tests {
             PevcapFormatVersion::current(),
             PevcapFormatVersion { major: 1, minor: 0 }
         );
+    }
+
+    #[test]
+    fn streaming_reader_replays_jsonl_one_record_at_a_time() {
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::link_up(ms(1), None),
+                PevcapRecord::outbound_write(
+                    ms(2),
+                    characteristic,
+                    WriteMode::WithoutResponse,
+                    Bytes::from_static(b"N"),
+                ),
+            ],
+        );
+        let input = capture.to_jsonl().expect("capture should encode");
+        let mut reader = PevcapReader::new(Cursor::new(input.into_bytes()), PevcapEncoding::Jsonl)
+            .expect("streaming JSONL reader should validate the header");
+        assert_eq!(reader.header(), &capture.header);
+        let mut records = Vec::new();
+        while let Some(record) = reader.next_record().expect("record should decode") {
+            records.push(record);
+        }
+        assert_eq!(records, capture.records);
+    }
+
+    #[test]
+    fn streaming_reader_replays_binary_one_record_at_a_time() {
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                ms(2),
+                characteristic,
+                characteristic,
+                Bytes::from_static(b"telemetry"),
+            )],
+        );
+        let input = capture
+            .encode(PevcapEncoding::Binary)
+            .expect("capture should encode");
+        let mut reader = PevcapReader::new(Cursor::new(input), PevcapEncoding::Binary)
+            .expect("streaming binary reader should validate the header");
+        assert_eq!(reader.header(), &capture.header);
+        assert_eq!(
+            reader.next_record().expect("record should decode"),
+            Some(capture.records[0].clone())
+        );
+        assert_eq!(reader.next_record().expect("stream should finish"), None);
+    }
+
+    #[test]
+    fn streaming_replay_preflight_preserves_late_link_up_behavior() {
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let capture = PevcapCapture::new(
+            header,
+            vec![
+                PevcapRecord::outbound_write(
+                    ms(1),
+                    characteristic,
+                    WriteMode::WithoutResponse,
+                    Bytes::from_static(b"N"),
+                ),
+                PevcapRecord::link_up(ms(2), None),
+            ],
+        );
+        let input = capture.to_jsonl().expect("capture should encode");
+        let mut reader = PevcapReader::new(Cursor::new(input.into_bytes()), PevcapEncoding::Jsonl)
+            .expect("streaming JSONL reader should validate the header");
+        let mut host = HostSession::new(RecordingSession::default());
+        let mut outputs = Vec::new();
+        let stats = reader
+            .replay_into_host_with_known_link_up(
+                PevcapReplayMode::Whole,
+                &mut host,
+                &mut outputs,
+                true,
+            )
+            .expect("streaming replay should decode late LinkUp");
+
+        assert_eq!(stats.replay_input_count, 1);
+        assert!(matches!(
+            outputs.as_slice(),
+            [SessionOutput::Event(DeviceEvent::LinkUp(_))]
+        ));
     }
 
     #[test]
