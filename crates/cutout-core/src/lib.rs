@@ -28,6 +28,8 @@ mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod rider_dashboard;
 pub use rider_dashboard::*;
+mod camera;
+pub use camera::*;
 mod energy_estimate;
 pub use energy_estimate::*;
 mod melk_controls;
