@@ -83,6 +83,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
@@ -173,6 +174,8 @@ final class CutoutAppModel {
     }
 
     func start() {
+        guard hasStarted == false else { return }
+        hasStarted = true
         permitsStoredDeviceAutoPairing = false
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth

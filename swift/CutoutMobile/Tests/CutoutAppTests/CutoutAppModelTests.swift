@@ -219,6 +219,17 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSessionStartIsIdempotentAcrossSwiftUISceneTaskRecreation() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        model.start()
+        model.start()
+
+        XCTAssertEqual(driver.startCount, 1)
+    }
+
+    @MainActor
     func testDelayedScanningPhaseCannotOverwriteAnActiveConnectionAttempt() {
         let suiteName = #function
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -1959,6 +1970,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private let restoredPlatformIdentifier: String?
     private let notifyBluetoothRestorationOnStart: Bool
     private(set) var pairedPlatformIdentifiers = [String]()
+    private(set) var startCount = 0
     private(set) var probedPlatformIdentifiers = [String]()
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
@@ -1980,6 +1992,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
 
     func start() {
+        startCount += 1
         if notifyBluetoothRestorationOnStart {
             onBluetoothRestorationResolved?(restoredPlatformIdentifier)
         }
