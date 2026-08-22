@@ -7773,6 +7773,20 @@ mod tests {
                 requested: LightState::Off,
             }
         );
+
+        let mut observed = SettingState::<LightState>::unknown();
+        assert!(!observed.observe(
+            LightState::Off,
+            SettingValueSource::LiveReadback,
+            ms(40)
+        ));
+        assert_eq!(
+            observed,
+            SettingState::Current(SettingValue {
+                value: LightState::Off,
+                source: SettingValueSource::LiveReadback,
+            })
+        );
     }
 
     #[test]

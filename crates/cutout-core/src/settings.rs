@@ -101,18 +101,7 @@ where
     /// Returns the current value held by any state, if available.
     #[must_use]
     pub fn current_value(self) -> Option<Value> {
-        match self {
-            Self::Unknown => None,
-            Self::Current(value) => Some(value.value),
-            Self::Pending { current, .. }
-            | Self::Refused { current, .. }
-            | Self::TimedOut { current, .. }
-            | Self::Failed { current, .. } => match current {
-                Some(value) => Some(value.value),
-                None => None,
-            },
-            Self::Confirmed { value, .. } => Some(value.value),
-        }
+        self.current_readback().map(|value| value.value)
     }
 
     /// Returns the requested value held by a pending or terminal write state.
@@ -158,6 +147,25 @@ where
             confirmed_at,
         };
         true
+    }
+
+    /// Applies a readback, confirming a matching pending request or becoming current.
+    ///
+    /// A mismatched readback never overwrites a pending request. The return value is true
+    /// only when the readback confirmed that request.
+    pub fn observe(
+        &mut self,
+        value: Value,
+        source: SettingValueSource,
+        observed_at: MonotonicTimestamp,
+    ) -> bool {
+        if self.confirm_from(value, source, observed_at) {
+            return true;
+        }
+        if !matches!(self, Self::Pending { .. }) {
+            *self = Self::Current(SettingValue { value, source });
+        }
+        false
     }
 
     /// Records a typed refusal without implying that a write reached transport.
