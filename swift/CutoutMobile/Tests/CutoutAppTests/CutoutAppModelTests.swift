@@ -17,10 +17,12 @@ final class CutoutAppModelTests: XCTestCase {
     override func setUp() {
         super.setUp()
         RideSessionMarkerStore().clear()
+        DevicePickerSelectionStore().clear()
     }
 
     override func tearDown() {
         RideSessionMarkerStore().clear()
+        DevicePickerSelectionStore().clear()
         super.tearDown()
     }
 
@@ -216,6 +218,29 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .discoveringServices)
         XCTAssertEqual(model.selectedRideTitle, "VESC")
         XCTAssertEqual(model.selectedConnectionRoute, .vescOnewheel)
+    }
+
+    @MainActor
+    func testRepeatedUseCannotReplaceAnInFlightConnection() {
+        let store = DevicePickerSelectionStore()
+        store.clear()
+        defer { store.clear() }
+        let row = DevicePickerRow(
+            id: "vesc-1234",
+            title: "VESC",
+            subtitle: "VESC Onewheel",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "circle.hexagongrid.circle",
+            connectionRoute: .vescOnewheel
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        XCTAssertFalse(model.pair(platformIdentifier: row.id))
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [row.id])
     }
 
     @MainActor
@@ -641,7 +666,12 @@ final class CutoutAppModelTests: XCTestCase {
             .bluetoothUnavailable(rawState: 4),
         ] {
             let driver = SessionDriverSpy(rows: [row])
-            let model = CutoutAppModel(core: driver)
+            let defaults = UserDefaults(suiteName: "CutoutAppModelTests.bluetoothLoss")!
+            defaults.removePersistentDomain(forName: "CutoutAppModelTests.bluetoothLoss")
+            let model = CutoutAppModel(
+                core: driver,
+                selectedDeviceStore: DevicePickerSelectionStore(defaults: defaults)
+            )
             model.start()
             XCTAssertTrue(model.pair(platformIdentifier: row.id))
             driver.onPhaseChange?(.subscribing)
@@ -659,6 +689,7 @@ final class CutoutAppModelTests: XCTestCase {
                 model.connectionState.navigationIntent(isRecordOnlyCapture: false),
                 .returnToPicker
             )
+            defaults.removePersistentDomain(forName: "CutoutAppModelTests.bluetoothLoss")
         }
     }
 

@@ -183,6 +183,13 @@ final class CutoutAppModel {
     }
 
     func pair(platformIdentifier: String) -> Bool {
+        switch connectionState {
+        case .connecting, .retrying, .connected:
+            let isSameSelection = connectionState.selection?.platformIdentifier == platformIdentifier
+            guard !isSameSelection || liveActivityError != nil else { return false }
+        case .picker, .identified, .failed:
+            break
+        }
         let rows = devicePickerScanState?.rows ?? []
         guard let selectedRow = rows.first(where: { $0.id == platformIdentifier }) else {
             phase = .scanning
