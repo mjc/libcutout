@@ -27,6 +27,7 @@ mod tests {
         MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapPhoneLocation,
         PevcapRecord, WallClockUnixTimestamp,
     };
+    use rusqlite::Connection;
 
     use super::{
         Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
@@ -245,6 +246,43 @@ mod tests {
         database.shutdown().unwrap();
         let _ = std::fs::remove_file(database_path);
         let _ = std::fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let database_path = std::env::temp_dir().join(format!(
+            "cutout-ride-maps-malformed-pevcap-db-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let artifact_path = std::env::temp_dir().join(format!(
+            "cutout-ride-maps-malformed-pevcap-{}.jsonl",
+            uuid::Uuid::new_v4()
+        ));
+        let backup_path = std::env::temp_dir().join(format!(
+            "cutout-ride-maps-malformed-pevcap-backup-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(&artifact_path, b"not a PEVCAP document\n").unwrap();
+
+        let database = RideDatabase::open(&database_path).unwrap();
+        assert!(
+            database
+                .import_pevcap(&artifact_path, PevcapEncoding::Jsonl, 1_700_000_000_000)
+                .is_err()
+        );
+        database.backup_to(&backup_path).unwrap();
+        database.shutdown().unwrap();
+
+        let connection = Connection::open(&backup_path).unwrap();
+        let ride_count: u64 = connection
+            .query_row("SELECT COUNT(*) FROM rides", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(ride_count, 0);
+
+        let _ = std::fs::remove_file(database_path);
+        let _ = std::fs::remove_file(artifact_path);
+        let _ = std::fs::remove_file(backup_path);
     }
 
     #[test]
