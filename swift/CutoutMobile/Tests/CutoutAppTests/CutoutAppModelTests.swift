@@ -93,8 +93,9 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHeadlightToggleSendsOnlyWhileConnected() {
+    func testAeroLowBeamToggleReportsSentWithoutClaimingConfirmation() {
         let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.setHeadlight(true))
@@ -105,7 +106,36 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertTrue(model.setHeadlight(true))
         XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
         XCTAssertEqual(driver.headlightStates, [.on])
+    }
+
+    @MainActor
+    func testFalconHeadlightToggleWaitsForMatchingWheelTelemetry() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(
+                entries: [],
+                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
+            )
+        )
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(
+                entries: [],
+                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .on)
+            )
+        )
+        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
     }
 
     @MainActor
@@ -2593,6 +2623,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    var electricUnicycleModel: ElectricUnicycleModel?
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool

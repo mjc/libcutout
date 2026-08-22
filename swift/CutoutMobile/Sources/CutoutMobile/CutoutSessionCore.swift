@@ -321,6 +321,7 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    public var electricUnicycleModel: ElectricUnicycleModel? { selectedModel }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?

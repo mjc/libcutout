@@ -15,6 +15,13 @@ private enum RideSessionRestorationState {
     case recovering
 }
 
+enum HeadlightCommandStatus: Equatable {
+    case idle
+    case waitingForConfirmation
+    case confirmed
+    case sentWithoutConfirmation
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -119,6 +126,7 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     private(set) var headlightOn = false
+    private(set) var headlightCommandStatus = HeadlightCommandStatus.idle
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -237,6 +245,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
+    private var pendingHeadlightState: LightState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -329,7 +338,7 @@ final class CutoutAppModel {
             self?.handleScanStateChange(scanState)
         }
         self.core.onSettingsReadbackChange = { [weak self] settingsReadback in
-            self?.settingsReadback = settingsReadback
+            self?.handleSettingsReadback(settingsReadback)
         }
         self.core.onFaultHistoryReadbackChange = { [weak self] faultHistoryReadback in
             self?.faultHistoryReadback = faultHistoryReadback
@@ -1206,7 +1215,26 @@ final class CutoutAppModel {
         let state = enabled ? LightState.on : .off
         guard core.setLights(state) else { return false }
         headlightOn = enabled
+        if core.electricUnicycleModel == .falcon {
+            pendingHeadlightState = state
+            headlightCommandStatus = .waitingForConfirmation
+        } else {
+            pendingHeadlightState = nil
+            headlightCommandStatus = .sentWithoutConfirmation
+        }
         return true
+    }
+    private func handleSettingsReadback(_ readback: SettingsReadback?) {
+        settingsReadback = readback
+        guard core.electricUnicycleModel == .falcon,
+              let reportedState = readback?.eucGarageSettings.lightState
+        else { return }
+        if let pendingHeadlightState {
+            guard pendingHeadlightState == reportedState else { return }
+            self.pendingHeadlightState = nil
+        }
+        headlightOn = reportedState == .on
+        headlightCommandStatus = .confirmed
     }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {

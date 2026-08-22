@@ -18,6 +18,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
+    var electricUnicycleModel: ElectricUnicycleModel? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool

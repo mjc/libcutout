@@ -2491,15 +2491,18 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
     public let beepMargin: ReadbackValue<Speed>
     public let tiltback: ReadbackValue<Speed>
     public let pedalMode: ReadbackValue<PedalMode>
+    public let lightState: LightState?
 
     public init(
         beepMargin: ReadbackValue<Speed> = .unavailable,
         tiltback: ReadbackValue<Speed> = .unavailable,
-        pedalMode: ReadbackValue<PedalMode> = .unavailable
+        pedalMode: ReadbackValue<PedalMode> = .unavailable,
+        lightState: LightState? = nil
     ) {
         self.beepMargin = beepMargin
         self.tiltback = tiltback
         self.pedalMode = pedalMode
+        self.lightState = lightState
     }
 
     fileprivate init(_ dto: MobileEucGarageSettingsDto) {
@@ -2510,7 +2513,8 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
             pedalMode: Self.readback(
                 dto.pedalMode.flatMap(PedalMode.init),
                 availability: availability
-            )
+            ),
+            lightState: dto.lightState.map(LightState.init)
         )
     }
 
