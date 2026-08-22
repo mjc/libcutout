@@ -55,22 +55,13 @@ pub struct EncodedControl {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AeroControlEncoder;
 
-const AERO_HIGH_BEAM_ON: &[u8] = &[
-    0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5, 0x4c, 0x64, 0x41,
-    0x70, 0x0d, 0x01, 0x00, 0x80, 0x01, 0x6f, 0xf8, 0x32, 0xf9,
-];
-const AERO_HIGH_BEAM_OFF: &[u8] = &[
-    0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x00, 0x20, 0xea, 0x0b, 0x43, 0x4c, 0x64, 0x41,
-    0x70, 0x0d, 0x01, 0x00, 0x80, 0x00, 0x18, 0xff, 0x02, 0x6f,
-];
-
 impl AeroControlEncoder {
     /// Encodes a supported NOSFET Aero benign control.
     #[must_use]
     pub fn encode(command: DeviceCommand) -> Option<EncodedControl> {
         let payload = match command {
-            DeviceCommand::SetLights(LightState::On) => AERO_HIGH_BEAM_ON,
-            DeviceCommand::SetLights(LightState::Off) => AERO_HIGH_BEAM_OFF,
+            DeviceCommand::SetLights(LightState::On) => b"SetLightON".as_slice(),
+            DeviceCommand::SetLights(LightState::Off) => b"SetLightOFF".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
@@ -329,29 +320,17 @@ mod tests {
     use core::mem::size_of;
 
     #[test]
-    fn aero_control_encoder_uses_nosfet_high_beam_frame_pairs() {
+    fn aero_control_encoder_uses_silent_ascii_light_commands() {
         let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
             .expect("NOSFET lights-on command encodes");
         let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
             .expect("NOSFET lights-off command encodes");
 
         assert_eq!(on.command, CommandKind::SetLights);
-        assert_eq!(
-            on.payload.as_slice(),
-            &[
-                0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5, 0x4c,
-                0x64, 0x41, 0x70, 0x0d, 0x01, 0x00, 0x80, 0x01, 0x6f, 0xf8, 0x32, 0xf9,
-            ]
-        );
+        assert_eq!(on.payload.as_slice(), b"SetLightON");
         assert_eq!(on.mode, WriteMode::WithoutResponse);
         assert_eq!(off.command, CommandKind::SetLights);
-        assert_eq!(
-            off.payload.as_slice(),
-            &[
-                0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x00, 0x20, 0xea, 0x0b, 0x43, 0x4c,
-                0x64, 0x41, 0x70, 0x0d, 0x01, 0x00, 0x80, 0x00, 0x18, 0xff, 0x02, 0x6f,
-            ]
-        );
+        assert_eq!(off.payload.as_slice(), b"SetLightOFF");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
         assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
     }
