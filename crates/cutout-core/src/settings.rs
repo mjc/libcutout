@@ -194,10 +194,7 @@ where
     pub fn fail(&mut self) {
         let current = self.current_readback();
         let requested = self.requested_value();
-        *self = Self::Failed {
-            current,
-            requested,
-        };
+        *self = Self::Failed { current, requested };
     }
 
     fn current_readback(self) -> Option<SettingValue<Value>> {

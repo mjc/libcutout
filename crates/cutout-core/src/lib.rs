@@ -7690,14 +7690,13 @@ mod tests {
     use super::crate_name;
     use crate::round_div_i32;
     use crate::{
-        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
-        ControlRefusalReason, DeviceEvent, Distance, Duration, DutyCycle, Energy,
-        FootpadTelemetry, GattChannel, LightState,
-        LinkInfo, Measured, MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power,
-        ProtocolSession, SeriesCount, SessionInput, SessionOutput, SettingState, SettingValue,
-        SettingValueSource, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-        TransportAction, UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage,
-        WriteMode, WritePayload,
+        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, ControlRefusalReason, Current,
+        DeviceCommand, DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry,
+        GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
+        PeakCurrent, PhaseCurrent, Power, ProtocolSession, SeriesCount, SessionInput,
+        SessionOutput, SettingState, SettingValue, SettingValueSource, Speed, TelemetryDelta,
+        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
+        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -7731,10 +7730,7 @@ mod tests {
 
     #[test]
     fn setting_state_requires_matching_readback_before_confirmation() {
-        let mut state = SettingState::current(
-            LightState::Off,
-            SettingValueSource::LiveReadback,
-        );
+        let mut state = SettingState::current(LightState::Off, SettingValueSource::LiveReadback);
 
         state.submit(LightState::On, ms(10));
         assert_eq!(
@@ -7775,11 +7771,7 @@ mod tests {
         );
 
         let mut observed = SettingState::<LightState>::unknown();
-        assert!(!observed.observe(
-            LightState::Off,
-            SettingValueSource::LiveReadback,
-            ms(40)
-        ));
+        assert!(!observed.observe(LightState::Off, SettingValueSource::LiveReadback, ms(40)));
         assert_eq!(
             observed,
             SettingState::Current(SettingValue {
