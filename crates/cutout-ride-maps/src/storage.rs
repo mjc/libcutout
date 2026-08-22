@@ -362,9 +362,7 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker is stopped or cannot report its capabilities.
     pub fn capabilities(&self) -> Result<SqliteCapabilities, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::Capabilities { reply })?;
-        receive(&response)
+        self.request(|reply| Command::Capabilities { reply })
     }
 
     /// Creates a draft ride record.
@@ -377,13 +375,11 @@ impl RideDatabase {
         source: RideSource,
         created_at_ms: u64,
     ) -> Result<RideId, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::CreateRide {
+        self.request(move |reply| Command::CreateRide {
             source,
             created_at_ms,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Stores the selected platform-local device identifier.
@@ -402,13 +398,11 @@ impl RideDatabase {
                 value: "empty".to_owned(),
             });
         }
-        let (reply, response) = response_channel();
-        self.enqueue(Command::SaveSelectedDevice {
+        self.request(move |reply| Command::SaveSelectedDevice {
             platform_identifier: platform_identifier.to_owned(),
             updated_at_ms,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Loads the selected platform-local device identifier.
@@ -417,9 +411,7 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker cannot query the value.
     pub fn selected_device(&self) -> Result<Option<String>, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::SelectedDevice { reply })?;
-        receive(&response)
+        self.request(|reply| Command::SelectedDevice { reply })
     }
 
     /// Clears the selected platform-local device identifier.
@@ -428,9 +420,7 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::ClearSelectedDevice { reply })?;
-        receive(&response)
+        self.request(|reply| Command::ClearSelectedDevice { reply })
     }
 
     /// Stores a learned voltage-sag model for one device identity.
@@ -449,13 +439,11 @@ impl RideDatabase {
                 value: "empty".to_owned(),
             });
         }
-        let (reply, response) = response_channel();
-        self.enqueue(Command::SaveVoltageSagModel {
+        self.request(move |reply| Command::SaveVoltageSagModel {
             device_identity: device_identity.to_owned(),
             model,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Loads a learned voltage-sag model for one device identity.
@@ -467,12 +455,10 @@ impl RideDatabase {
         &self,
         device_identity: &str,
     ) -> Result<Option<VoltageSagModelRecord>, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::VoltageSagModel {
+        self.request(move |reply| Command::VoltageSagModel {
             device_identity: device_identity.to_owned(),
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Removes a learned voltage-sag model.
@@ -481,12 +467,10 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn remove_voltage_sag_model(&self, device_identity: &str) -> Result<(), StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::RemoveVoltageSagModel {
+        self.request(move |reply| Command::RemoveVoltageSagModel {
             device_identity: device_identity.to_owned(),
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Stores opaque Rust-owned ride-session marker bytes.
@@ -495,12 +479,10 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker cannot commit the marker.
     pub fn save_ride_session_marker(&self, marker: &[u8]) -> Result<(), StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::SaveRideSessionMarker {
+        self.request(move |reply| Command::SaveRideSessionMarker {
             marker: marker.to_vec(),
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Loads opaque Rust-owned ride-session marker bytes.
@@ -509,9 +491,7 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker cannot query the marker.
     pub fn ride_session_marker(&self) -> Result<Option<Vec<u8>>, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::RideSessionMarker { reply })?;
-        receive(&response)
+        self.request(|reply| Command::RideSessionMarker { reply })
     }
 
     /// Clears opaque Rust-owned ride-session marker bytes.
@@ -520,9 +500,7 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when the worker cannot commit the deletion.
     pub fn clear_ride_session_marker(&self) -> Result<(), StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::ClearRideSessionMarker { reply })?;
-        receive(&response)
+        self.request(|reply| Command::ClearRideSessionMarker { reply })
     }
 
     /// Streams a PEVCAP artifact into a Rust-owned imported ride.
@@ -536,14 +514,12 @@ impl RideDatabase {
         encoding: PevcapEncoding,
         created_at_ms: u64,
     ) -> Result<PevcapImportReceipt, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::ImportPevcap {
+        self.request(move |reply| Command::ImportPevcap {
             path: path.to_owned(),
             encoding,
             created_at_ms,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Creates an empty canonical trail definition.
@@ -552,12 +528,10 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError`] when spatial indexing is unavailable or the worker fails.
     pub fn create_trail(&self, name: &str) -> Result<TrailId, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::CreateTrail {
+        self.request(move |reply| Command::CreateTrail {
             name: name.to_owned(),
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Appends a segment to a canonical trail and indexes its bounding box.
@@ -572,15 +546,13 @@ impl RideDatabase {
         start: Coordinate,
         end: Coordinate,
     ) -> Result<(), StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::AppendTrailSegment {
+        self.request(move |reply| Command::AppendTrailSegment {
             trail_id,
             sequence,
             start,
             end,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Returns trail segments intersecting a WGS84 bounding box.
@@ -595,15 +567,13 @@ impl RideDatabase {
         minimum_longitude_degrees: f64,
         maximum_longitude_degrees: f64,
     ) -> Result<Vec<TrailSegment>, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::TrailSegmentsInBounds {
+        self.request(move |reply| Command::TrailSegmentsInBounds {
             minimum_latitude_degrees,
             maximum_latitude_degrees,
             minimum_longitude_degrees,
             maximum_longitude_degrees,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Stores a charging/food map point and indexes its coordinate.
@@ -616,13 +586,11 @@ impl RideDatabase {
         name: &str,
         coordinate: Coordinate,
     ) -> Result<u64, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::CreateMapPoint {
+        self.request(move |reply| Command::CreateMapPoint {
             name: name.to_owned(),
             coordinate,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Returns charging/food points intersecting a WGS84 bounding box.
@@ -637,15 +605,13 @@ impl RideDatabase {
         minimum_longitude_degrees: f64,
         maximum_longitude_degrees: f64,
     ) -> Result<Vec<MapPoint>, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::MapPointsInBounds {
+        self.request(move |reply| Command::MapPointsInBounds {
             minimum_latitude_degrees,
             maximum_latitude_degrees,
             minimum_longitude_degrees,
             maximum_longitude_degrees,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Writes a consistent `SQLite` backup to a caller-selected file.
@@ -655,9 +621,7 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the destination cannot be prepared or copied.
     pub fn backup_to(&self, path: &Path) -> Result<(), StorageError> {
         let destination = canonical_backup_path(path)?;
-        let (reply, response) = response_channel();
-        self.enqueue(Command::Backup { destination, reply })?;
-        receive(&response)
+        self.request(move |reply| Command::Backup { destination, reply })
     }
 
     /// Exports one canonical ride summary as a versioned JSON document.
@@ -667,13 +631,11 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the ride is missing or the destination cannot be written.
     pub fn export_ride_json(&self, ride_id: RideId, path: &Path) -> Result<(), StorageError> {
         let destination = canonical_backup_path(path)?;
-        let (reply, response) = response_channel();
-        self.enqueue(Command::ExportRideJson {
+        self.request(move |reply| Command::ExportRideJson {
             ride_id,
             destination,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Applies one lifecycle event to a ride.
@@ -687,13 +649,11 @@ impl RideDatabase {
         ride_id: RideId,
         event: RideEvent,
     ) -> Result<RideLifecycleState, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::Transition {
+        self.request(move |reply| Command::Transition {
             ride_id,
             event,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Appends one location through the worker, returning duplicate/out-of-order admission.
@@ -707,13 +667,11 @@ impl RideDatabase {
         ride_id: RideId,
         sample: LocationSample,
     ) -> Result<LocationAdmission, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocation {
+        self.request(move |reply| Command::AppendLocation {
             ride_id,
             sample,
             reply,
-        })?;
-        receive(&response)
+        })
     }
 
     /// Loads the durable summary projection for one ride.
@@ -723,9 +681,7 @@ impl RideDatabase {
     /// Returns [`StorageError::NotFound`] when the ride does not exist or another worker error
     /// prevents the query.
     pub fn summary(&self, ride_id: RideId) -> Result<RideSummary, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::Summary { ride_id, reply })?;
-        receive(&response)
+        self.request(move |reply| Command::Summary { ride_id, reply })
     }
 
     /// Stops the process-wide worker and releases its ownership slot.
@@ -735,9 +691,7 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot stop or its ownership slot cannot be
     /// released.
     pub fn shutdown(self) -> Result<(), StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::Shutdown { reply })?;
-        receive(&response)?;
+        self.request(|reply| Command::Shutdown { reply })?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
         let Some(mut existing) = owner.take() else {
             return Ok(());
@@ -750,6 +704,12 @@ impl RideDatabase {
             join.join().map_err(|_| StorageError::WorkerStopped)?;
         }
         Ok(())
+    }
+
+    fn request<T>(&self, build: impl FnOnce(Reply<T>) -> Command) -> Result<T, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(build(reply))?;
+        receive(&response)
     }
 
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
