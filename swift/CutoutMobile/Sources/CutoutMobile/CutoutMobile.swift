@@ -4614,8 +4614,8 @@ struct VoltageSagModelStore {
 
 public final class ElectricUnicycleSession: @unchecked Sendable {
     private enum Inner {
-        case aero(AeroReadOnlySession)
-        case falcon(FalconReadOnlySession)
+        case aero(AeroBenignControlSession)
+        case falcon(FalconBenignControlSession)
     }
 
     public let model: ElectricUnicycleModel
@@ -4631,9 +4631,9 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
-            .aero(AeroReadOnlySession())
+            .aero(AeroBenignControlSession())
         case .falcon:
-            .falcon(try FalconReadOnlySession())
+            .falcon(try FalconBenignControlSession())
         }
         chargeEstimator.configureElectricUnicycleProfile(model: model.dto)
         if
@@ -4874,15 +4874,15 @@ public final class VescOnewheelSession: @unchecked Sendable {
     }
 }
 
-private protocol MobileReadOnlySession {
+private protocol MobileTelemetrySession {
     func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResultDto
 }
 
-extension AeroReadOnlySession: MobileReadOnlySession {}
-extension FalconReadOnlySession: MobileReadOnlySession {}
-extension VescReadOnlySession: MobileReadOnlySession {}
+extension AeroBenignControlSession: MobileTelemetrySession {}
+extension FalconBenignControlSession: MobileTelemetrySession {}
+extension VescReadOnlySession: MobileTelemetrySession {}
 
-private extension MobileReadOnlySession {
+private extension MobileTelemetrySession {
     func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,

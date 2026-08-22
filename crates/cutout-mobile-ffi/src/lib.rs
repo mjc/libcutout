@@ -62,7 +62,7 @@ use cutout_core::{
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_TILTBACK_SPEED_KMH,
-    ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
+    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
     ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
     DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
     PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
@@ -70,8 +70,8 @@ use cutout_protocols::{
     VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
     VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
     VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
-    identify_known_model, new_nosfet_aero_read_only_session,
-    try_new_begode_falcon_read_only_session,
+    identify_known_model, new_nosfet_aero_benign_control_session,
+    try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
 use libcutout_persistence as persistence;
@@ -9434,20 +9434,20 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
 }
 
-/// Mobile-facing wrapper for a NOSFET Aero read-only session.
+/// Mobile-facing NOSFET Aero telemetry wrapper with allow-listed light control.
 #[derive(Debug, uniffi::Object)]
-pub struct AeroReadOnlySession {
-    inner: Mutex<ConcreteAeroReadOnlySession>,
+pub struct AeroBenignControlSession {
+    inner: Mutex<ConcreteAeroBenignControlSession>,
 }
 
 #[uniffi::export]
-impl AeroReadOnlySession {
-    /// Creates a NOSFET Aero read-only session.
+impl AeroBenignControlSession {
+    /// Creates a NOSFET Aero telemetry session with allow-listed headlight control.
     #[uniffi::constructor]
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(new_nosfet_aero_read_only_session()),
+            inner: Mutex::new(new_nosfet_aero_benign_control_session()),
         })
     }
 
@@ -9477,16 +9477,16 @@ impl AeroReadOnlySession {
     }
 }
 
-impl AeroReadOnlySession {
-    fn lock_inner(&self) -> MutexGuard<'_, ConcreteAeroReadOnlySession> {
+impl AeroBenignControlSession {
+    fn lock_inner(&self) -> MutexGuard<'_, ConcreteAeroBenignControlSession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-impl Default for AeroReadOnlySession {
+impl Default for AeroBenignControlSession {
     fn default() -> Self {
         Self {
-            inner: Mutex::new(new_nosfet_aero_read_only_session()),
+            inner: Mutex::new(new_nosfet_aero_benign_control_session()),
         }
     }
 }
@@ -10744,15 +10744,15 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
     }
 }
 
-/// Mobile-facing wrapper for a Begode Falcon read-only session.
+/// Mobile-facing Begode Falcon telemetry wrapper with allow-listed light control.
 #[derive(Debug, uniffi::Object)]
-pub struct FalconReadOnlySession {
-    inner: Mutex<ConcreteFalconReadOnlySession>,
+pub struct FalconBenignControlSession {
+    inner: Mutex<ConcreteFalconBenignControlSession>,
 }
 
 #[uniffi::export]
-impl FalconReadOnlySession {
-    /// Creates a Begode Falcon read-only session with the default profile.
+impl FalconBenignControlSession {
+    /// Creates a Begode Falcon telemetry session with allow-listed headlight control.
     ///
     /// # Errors
     ///
@@ -10763,7 +10763,7 @@ impl FalconReadOnlySession {
         Self::with_profile(MobileFalconProfileDto::Default)
     }
 
-    /// Creates a Begode Falcon read-only session with an explicit profile.
+    /// Creates a Begode Falcon telemetry session with an explicit profile.
     ///
     /// # Errors
     ///
@@ -10774,7 +10774,9 @@ impl FalconReadOnlySession {
         profile: MobileFalconProfileDto,
     ) -> Result<Arc<Self>, MobileSessionConstructorError> {
         Ok(Arc::new(Self {
-            inner: Mutex::new(try_new_begode_falcon_read_only_session(profile.into())?),
+            inner: Mutex::new(try_new_begode_falcon_benign_control_session(
+                profile.into(),
+            )?),
         }))
     }
 
@@ -10804,8 +10806,8 @@ impl FalconReadOnlySession {
     }
 }
 
-impl FalconReadOnlySession {
-    fn lock_inner(&self) -> MutexGuard<'_, ConcreteFalconReadOnlySession> {
+impl FalconBenignControlSession {
+    fn lock_inner(&self) -> MutexGuard<'_, ConcreteFalconBenignControlSession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -13664,14 +13666,14 @@ mod tests {
 
     #[test]
     fn aero_wrapper_constructs_and_exposes_diagnostics() {
-        let session = AeroReadOnlySession::new();
+        let session = AeroBenignControlSession::new();
 
         assert_eq!(session.diagnostics().malformed_frames, mobile_diag_count(0));
     }
 
     #[test]
     fn falcon_wrapper_surfaces_unsupported_command_error() {
-        let session = FalconReadOnlySession::new().expect("default profile should construct");
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -13694,8 +13696,8 @@ mod tests {
 
     #[test]
     fn euc_wrappers_expose_typed_headlight_writes() {
-        let aero = AeroReadOnlySession::new();
-        let falcon = FalconReadOnlySession::new().expect("default profile should construct");
+        let aero = AeroBenignControlSession::new();
+        let falcon = FalconBenignControlSession::new().expect("default profile should construct");
 
         let command_input = |state| MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -13721,7 +13723,7 @@ mod tests {
 
     #[test]
     fn falcon_wrapper_rejects_unsupported_profile() {
-        let result = FalconReadOnlySession::with_profile(MobileFalconProfileDto::Unsupported);
+        let result = FalconBenignControlSession::with_profile(MobileFalconProfileDto::Unsupported);
 
         assert!(matches!(
             result,
@@ -13731,7 +13733,7 @@ mod tests {
 
     #[test]
     fn aero_wrapper_accepts_owned_notification_input() {
-        let session = AeroReadOnlySession::new();
+        let session = AeroBenignControlSession::new();
         let link_result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::LinkUp,
             monotonic_ms: ms(1),
