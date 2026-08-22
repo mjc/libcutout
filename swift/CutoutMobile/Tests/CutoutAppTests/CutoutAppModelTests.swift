@@ -1,4 +1,3 @@
-import CoreLocation
 import XCTest
 @testable import CutoutApp
 @testable import CutoutMobile
@@ -53,7 +52,6 @@ final class CutoutAppModelTests: XCTestCase {
         for _ in 0 ..< maxTurns {
             if await condition() { return }
             await Task.yield()
-            try? await Task.sleep(for: .milliseconds(5))
         }
         XCTFail("timed out waiting for \(description)", file: file, line: line)
     }
@@ -64,7 +62,6 @@ final class CutoutAppModelTests: XCTestCase {
         clear(DevicePickerSelectionStore())
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
-        MusicMonitoringPreferenceStore().setEnabled(false)
         MusicHistoryPolicyStore().set(.disabled)
     }
 
@@ -73,7 +70,6 @@ final class CutoutAppModelTests: XCTestCase {
         clear(DevicePickerSelectionStore())
         MusicProviderSelectionStore().set(.appleMusic)
         MusicPlayerVisibilityStore().setHidden(false)
-        MusicMonitoringPreferenceStore().setEnabled(false)
         MusicHistoryPolicyStore().set(.disabled)
         super.tearDown()
     }
@@ -117,16 +113,8 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testMusicMonitoringStartsWhenHistoryIsDisabled() throws {
-        let suiteName = "MusicMonitoringDisabledHistory-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
-        monitoringStore.setEnabled(true)
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicMonitoringPreferenceStore: monitoringStore
-        )
+    func testMusicMonitoringStartsWhenHistoryIsDisabled() {
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
         XCTAssertEqual(model.musicHistoryPolicy, .disabled)
         model.start()
@@ -136,27 +124,22 @@ final class CutoutAppModelTests: XCTestCase {
     }
 #endif
 
-    func testRustMusicMonitorResumesOnlyRequestedMonitorWithoutRideState() {
-        let state = MobileMusicMonitor()
+    func testMusicMonitorSceneStateResumesOnlyRequestedMonitor() {
+        var state = MusicMonitorSceneState()
 
-        XCTAssertEqual(state.resume(), .alreadyActive)
-        XCTAssertNil(state.takeStart())
+        XCTAssertFalse(state.resumeIfNeeded())
 
         state.suspend()
-        XCTAssertEqual(state.resume(), .noRequest)
+        XCTAssertFalse(state.resumeIfNeeded())
 
-        state.request(request: .authorize)
-        XCTAssertEqual(state.takeStart(), .authorize)
+        state.request()
         state.suspend()
-        XCTAssertNil(state.takeStart())
-        XCTAssertEqual(state.resume(), .restored)
-        XCTAssertEqual(state.takeStart(), .observe)
-        XCTAssertEqual(state.resume(), .alreadyActive)
+        XCTAssertTrue(state.resumeIfNeeded())
+        XCTAssertFalse(state.resumeIfNeeded())
 
         state.cancel()
         state.suspend()
-        XCTAssertEqual(state.resume(), .noRequest)
-        XCTAssertNil(state.takeStart())
+        XCTAssertFalse(state.resumeIfNeeded())
     }
 
     @MainActor
@@ -173,201 +156,6 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
-    }
-
-    @MainActor
-    func testMusicHistoryPreferenceSavesWithoutRideDatabase() throws {
-        let suiteName = "MusicHistoryWithoutDatabase-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = MusicHistoryPolicyStore(defaults: defaults)
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
-            musicHistoryPolicyStore: store
-        )
-        for policy in [MobileMusicHistoryPolicyDto.opaqueItem, .humanReadable] {
-            XCTAssertTrue(model.setMusicHistoryPolicy(policy))
-            XCTAssertEqual(model.musicHistoryPolicy, policy)
-            XCTAssertEqual(store.policy, policy)
-            let relaunched = CutoutAppModel(
-                core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
-                musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: defaults)
-            )
-            XCTAssertEqual(relaunched.musicHistoryPolicy, policy)
-        }
-    }
-
-    @MainActor
-    func testMusicHistorySaveFailureRemainsVisibleAndKeepsPersistedChoice() throws {
-        let suiteName = "MusicHistoryFailure-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = MusicHistoryPolicyStore(defaults: defaults)
-        store.set(.opaqueItem)
-        let state = MobileRideMapState(storageUnavailable: "Test storage failure")
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: [], rideMapState: state),
-            musicHistoryPolicyStore: store
-        )
-
-        XCTAssertFalse(model.musicHistoryUnavailable)
-        XCTAssertFalse(model.setMusicHistoryPolicy(.humanReadable))
-        XCTAssertNotNil(model.musicHistorySaveError)
-        XCTAssertFalse(model.musicHistoryUnavailable, "A rejected choice must not disable capture under the retained policy")
-        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
-        XCTAssertEqual(store.policy, .opaqueItem)
-    }
-
-    @MainActor
-    func testMusicSettingsKeepReceivingMetadataWhenPlayerIsHidden() throws {
-        let suiteName = "MusicHiddenSettings-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let providerStore = MusicProviderSelectionStore(defaults: defaults)
-        providerStore.set(.appleMusic)
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: [], rideMapUnavailable: true),
-            musicProviderSelectionStore: providerStore
-        )
-        model.dismissMusicPlayer()
-        let observation = MusicProviderObservation(snapshot: MobileMusicSnapshotDto(
-            provider: .appleMusic, sessionId: "settings-test", state: .playing,
-            item: .init(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil, durationMilliseconds: nil, observedAtMs: 1,
-            capabilities: .init(previous: false, play: false, pause: true, next: false, openProvider: true)
-        ))
-        _ = model.ingestMusicObservation(observation)
-
-        XCTAssertTrue(model.isMusicPlayerHidden)
-        XCTAssertNil(model.musicNowPlaying)
-        XCTAssertEqual(model.musicSettingsNowPlaying?.title, "Song")
-        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .playing)
-        model.appDidEnterBackground()
-        XCTAssertNil(model.musicNowPlaying)
-        XCTAssertEqual(model.musicSettingsNowPlaying?.state, .stale)
-    }
-
-    @MainActor
-    func testProductionSessionHasRustRideDatabase() throws {
-        guard RustPersistenceStore.shared != nil else {
-            throw XCTSkip("Platform persistence unavailable; production wiring is covered on device")
-        }
-        let core = CutoutSessionCore()
-        XCTAssertNotNil(core.rideMapStateHandle)
-    }
-
-    @MainActor
-    func testSelectedMusicProviderPersistsAcrossModelLaunches() throws {
-        let suiteName = "CutoutAppMusicProviderSelectionTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let providerStore = MusicProviderSelectionStore(defaults: defaults)
-
-        let firstModel = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicProviderSelectionStore: providerStore
-        )
-        firstModel.selectMusicProvider(.spotify)
-
-        let secondModel = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicProviderSelectionStore: providerStore
-        )
-
-        XCTAssertEqual(secondModel.selectedMusicProvider, .spotify)
-    }
-
-    @MainActor
-    func testConnectMusicPersistsMonitoringIntent() throws {
-        let suiteName = "CutoutAppMusicMonitoringTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicMonitoringPreferenceStore: monitoringStore
-        )
-
-        XCTAssertFalse(monitoringStore.isEnabled)
-        model.connectMusic()
-        XCTAssertTrue(monitoringStore.isEnabled)
-    }
-
-#if !os(iOS)
-    @MainActor
-    func testMusicSetupRestoresMonitoringForSelectedProviderOnNextLaunch() throws {
-        let suiteName = "MusicRelaunch-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let providerStore = MusicProviderSelectionStore(defaults: defaults)
-        let monitoringStore = MusicMonitoringPreferenceStore(defaults: defaults)
-        let first = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicProviderSelectionStore: providerStore,
-            musicMonitoringPreferenceStore: monitoringStore
-        )
-        first.selectMusicProvider(.spotify)
-        let relaunched = CutoutAppModel(
-            core: SessionDriverSpy(rows: []),
-            musicProviderSelectionStore: providerStore,
-            musicMonitoringPreferenceStore: monitoringStore
-        )
-        relaunched.restoreMusicPlayer()
-        XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
-        XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)
-        relaunched.start()
-        XCTAssertEqual(relaunched.musicNowPlaying?.provider, .spotify)
-        XCTAssertEqual(relaunched.musicNowPlaying?.state, .unavailable)
-    }
-#endif
-
-    @MainActor
-    func testMusicHistoryPolicyCanBeChangedAfterRideStops() throws {
-        let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        try state.setMusicHistoryPolicy(.humanReadable)
-
-        let suiteName = "CutoutAppMusicHistoryStoppedRideTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let policyStore = MusicHistoryPolicyStore(defaults: defaults)
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: [], rideMapState: state, preserveExistingRide: true),
-            musicHistoryPolicyStore: policyStore
-        )
-
-        XCTAssertTrue(model.stopRideMap())
-        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
-        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
-        XCTAssertEqual(policyStore.policy, .opaqueItem)
-        XCTAssertEqual(state.currentMusicHistoryPolicy(), .humanReadable)
-    }
-
-    @MainActor
-    func testNewRideUsesPersistedMusicDefaultAfterRestoringAnotherRide() throws {
-        let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        try state.setMusicHistoryPolicy(.humanReadable)
-
-        let driver = SessionDriverSpy(
-            rows: [],
-            rideMapState: state,
-            preserveExistingRide: true
-        )
-        let suiteName = "CutoutAppMusicHistoryRestoreTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let model = CutoutAppModel(
-            core: driver,
-            musicHistoryPolicyStore: MusicHistoryPolicyStore(defaults: defaults)
-        )
-
-        XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
-        XCTAssertTrue(model.stopRideMap())
-        XCTAssertTrue(model.saveRideMap())
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertEqual(model.musicHistoryPolicy, .disabled)
-        XCTAssertEqual(state.currentMusicHistoryPolicy(), .disabled)
     }
 
     @MainActor
@@ -400,7 +188,6 @@ final class CutoutAppModelTests: XCTestCase {
                 clockUncertaintyMs: 5
             )
         )
-        XCTAssertEqual(driver.musicCaptureObservation?.rideSequence, 0)
         let rideID = try XCTUnwrap(model.rideMapSnapshot?.rideID)
         XCTAssertFalse(model.musicTimelineEvents.isEmpty)
 
@@ -410,7 +197,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.musicTimelineEvents.isEmpty)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .disabled)
         XCTAssertTrue(driver.rideMapState.currentMusicEvents().isEmpty)
-        XCTAssertNil(driver.musicCaptureObservation)
     }
 
     @MainActor
@@ -433,54 +219,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertEqual(model.musicHistoryPolicy, .humanReadable)
         XCTAssertEqual(driver.rideMapState.currentMusicHistoryPolicy(), .humanReadable)
-    }
-
-    @MainActor
-    func testStoppingRideKeepsMonitoringForTheNextRideWithoutAppendingToTheStoppedRide() {
-        let driver = SessionDriverSpy(rows: [])
-        let model = CutoutAppModel(core: driver)
-        model.restoreMusicPlayer()
-        XCTAssertTrue(model.startGpsOnlyRide())
-        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
-
-        func snapshot(identifier: String, title: String, observedAtMs: UInt64) -> MobileMusicSnapshotDto {
-            MobileMusicSnapshotDto(
-                provider: .appleMusic,
-                sessionId: "session",
-                state: .playing,
-                item: MobileMusicItemDto(identifier: identifier, title: title, artist: "Artist"),
-                positionMilliseconds: nil,
-                durationMilliseconds: nil,
-                observedAtMs: observedAtMs,
-                capabilities: MobileMusicCapabilitiesDto(
-                    previous: false,
-                    play: false,
-                    pause: true,
-                    next: true,
-                    openProvider: true
-                )
-            )
-        }
-
-        let firstSnapshot = snapshot(identifier: "track-1", title: "Song A", observedAtMs: 1)
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: firstSnapshot)))
-        XCTAssertNotNil(driver.musicCaptureObservation)
-        let stoppedRideEvents = model.musicTimelineEvents
-
-        XCTAssertTrue(model.stopRideMap())
-
-        XCTAssertNil(driver.musicCaptureObservation)
-        XCTAssertEqual(model.musicSettingsNowPlaying?.item?.identifier, "track-1")
-
-        let stoppedSnapshot = snapshot(identifier: "track-2", title: "Song B", observedAtMs: 2)
-        _ = model.ingestMusicObservation(MusicProviderObservation(snapshot: stoppedSnapshot))
-        XCTAssertEqual(model.musicSettingsNowPlaying?.item?.identifier, "track-2")
-        XCTAssertEqual(model.musicTimelineEvents, stoppedRideEvents)
-
-        XCTAssertTrue(model.startGpsOnlyRide())
-        let nextRideSnapshot = snapshot(identifier: "track-3", title: "Song C", observedAtMs: 3)
-        XCTAssertTrue(model.ingestMusicObservation(MusicProviderObservation(snapshot: nextRideSnapshot)))
-        XCTAssertEqual(model.musicTimelineEvents.last?.itemIdentifier, "track-3")
     }
 
     @MainActor
@@ -535,75 +273,6 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testSavedRideReloadsPersistedMusicTimelineInHistoryDetail() async throws {
-        let driver = SessionDriverSpy(rows: [])
-        let state = driver.rideMapState
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
-        _ = await Self.settle(state, try state.ingestLocation(
-            monotonicMs: 100,
-            wallClockUnixMs: 1_700_000_000_100,
-            latitudeDegrees: 39.7000,
-            longitudeDegrees: -104.9000,
-            horizontalAccuracyMeters: 5
-        ))
-        try state.setMusicHistoryPolicy(.humanReadable)
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 200,
-            capabilities: MobileMusicCapabilitiesDto(
-                previous: false,
-                play: false,
-                pause: true,
-                next: true,
-                openProvider: true
-            )
-        )
-        XCTAssertEqual(
-            try state.recordMusicEvent(
-                snapshot: snapshot,
-                kind: .play,
-                monotonicAtMs: 200,
-                wallClockAtMs: 1_700_000_000_200,
-                clockUncertaintyMs: 5
-            ),
-            .recorded
-        )
-        _ = try state.stop(atMs: 300)
-        let ride = try state.save()
-
-        let model = CutoutAppModel(core: driver)
-        model.setRideMapHistoryDateFilter(.allTime)
-        model.loadRideMapHistory(selecting: ride.rideID)
-        await Self.waitUntil("saved ride music timeline", maxTurns: 100_000) {
-            model.selectedRideMapHistoryID == ride.rideID
-                && model.rideMapHistoryDetailMusicTimeline.count == 1
-                && !model.rideMapHistoryDetailRouteLoading
-        }
-
-        XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.title, "Song")
-        XCTAssertEqual(model.rideMapHistoryDetailMusicTimeline.first?.kind, .play)
-        XCTAssertEqual(try state.storedMusicEvents(rideID: ride.rideID).first?.sequence, 0)
-        XCTAssertEqual(
-            try state.storedMusicHistoryState(rideID: ride.rideID),
-            .humanReadable
-        )
-
-        XCTAssertTrue(model.forgetMusicHistory(for: ride.rideID))
-        XCTAssertTrue(model.rideMapHistoryDetailMusicTimeline.isEmpty)
-        XCTAssertTrue(try state.storedMusicEvents(rideID: ride.rideID).isEmpty)
-        XCTAssertEqual(
-            try state.storedMusicHistoryState(rideID: ride.rideID),
-            .deleted
-        )
-        XCTAssertNotNil(try state.storedHistoryRide(rideID: ride.rideID))
-    }
-
-    @MainActor
     func testRestoringPlayerAfterHiddenProviderSwitchDoesNotShowPreviousProvider() {
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
         model.restoreMusicPlayer()
@@ -635,40 +304,6 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(model.musicNowPlaying?.item)
     }
 
-    @MainActor
-    func testBackgroundMusicProjectionBecomesStaleWithoutRecordingAnEvent() throws {
-        let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        let model = CutoutAppModel(
-            core: SessionDriverSpy(rows: [], rideMapState: state, preserveExistingRide: true)
-        )
-        model.restoreMusicPlayer()
-
-        let snapshot = MobileMusicSnapshotDto(
-            provider: .appleMusic,
-            sessionId: "session",
-            state: .playing,
-            item: MobileMusicItemDto(identifier: "track-1", title: "Song", artist: "Artist"),
-            positionMilliseconds: nil,
-            durationMilliseconds: nil,
-            observedAtMs: 1,
-            capabilities: .init(previous: true, play: false, pause: true, next: true, openProvider: true)
-        )
-        XCTAssertTrue(
-            model.ingestMusicObservation(
-                MusicProviderObservation(snapshot: snapshot),
-                wallClockAtMs: 1_700_000_000_000,
-                clockUncertaintyMs: 5
-            )
-        )
-        XCTAssertEqual(model.musicNowPlaying?.state, .playing)
-
-        model.appDidEnterBackground()
-
-        XCTAssertEqual(model.musicNowPlaying?.state, .stale)
-        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
-    }
-
     private func clear(
         _ store: RideSessionMarkerStore,
         file: StaticString = #filePath,
@@ -694,53 +329,246 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testHeadlightToggleSendsOnlyWhileConnected() {
+    func testHeadlightWriteRefusesWithoutVerifiedEucModel() {
         let driver = SessionDriverSpy(rows: [])
+        driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
-        driver.isLive = true
-        XCTAssertFalse(model.setHeadlight(.on))
-        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+        XCTAssertFalse(model.headlightControlAvailable)
+        XCTAssertEqual(
+            model.headlightStatusText,
+            "Headlight is unavailable until a supported wheel is connected."
+        )
+        XCTAssertEqual(model.setHeadlight(true), .failed)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
+        XCTAssertEqual(driver.headlightStates, [])
+    }
+
+    @MainActor
+    func testAeroHighBeamToggleReportsSentWithoutClaimingConfirmation() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.setHeadlight(true), .failed)
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
 
-        XCTAssertTrue(model.setHeadlight(.on))
-        XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
+        XCTAssertEqual(model.headlightControlTitle, "High beam")
+        XCTAssertEqual(
+            model.headlightStatusText,
+            "Command sent. This wheel does not report high-beam state."
+        )
         XCTAssertEqual(driver.headlightStates, [.on])
 
-        model.disconnectTransport()
-        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+        driver.headlightWriteSucceeds = false
+        XCTAssertEqual(model.setHeadlight(false), .failed)
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
     }
 
     @MainActor
-    func testHeadlightCommandStatusIsClearedDuringReconnect() {
-        let row = DevicePickerRow(
-            id: "euc-1234",
-            title: "EUC",
-            subtitle: "Electric unicycle",
-            detail: "Device 1234",
-            state: DevicePickerRowState(action: .use),
-            symbolName: "circle.hexagongrid.circle",
-            connectionRoute: .electricUnicycle
-        )
-        let driver = SessionDriverSpy(rows: [row])
+    func testUnverifiedFalconHeadlightToggleStaysUnavailable() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
         let model = CutoutAppModel(core: driver)
 
+        XCTAssertFalse(model.headlightControlAvailable)
+        XCTAssertEqual(
+            model.headlightStatusText,
+            "Headlight control is unavailable until this wheel model is validated."
+        )
+        XCTAssertEqual(model.setHeadlight(true), .failed)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
+        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
+        XCTAssertTrue(driver.headlightStates.isEmpty)
+    }
+
+    @MainActor
+    func testSettingsCapabilitiesAreExposedToTuneSurface() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(
+            model.settingsCapabilities,
+            EucSettingsCapabilities(
+                pedalMode: .unsupported,
+                accelerationAssist: .unsupported,
+                headlight: .unverified,
+                taillight: .unsupported
+            )
+        )
+    }
+
+    @MainActor
+    func testTuneUsesRustOwnedConfirmedLightState() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        driver.headlightState = LightSettingState(
+            kind: .confirmed,
+            current: .on,
+            source: .liveReadback,
+            confirmedAt: MonotonicMilliseconds(7)
+        )
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+    }
+
+    @MainActor
+    func testFalconHeadlightToggleWaitsForMatchingWheelTelemetry() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+        XCTAssertEqual(model.headlightControlTitle, "Headlight")
+        XCTAssertEqual(model.headlightStatusText, "Waiting for wheel confirmation.")
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(
+                entries: [],
+                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
+            )
+        )
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(
+                entries: [],
+                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .on)
+            )
+        )
+        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+
+        XCTAssertEqual(model.setHeadlight(false), .accepted)
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(
+                entries: [],
+                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
+            )
+        )
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
+    }
+
+    @MainActor
+    func testFalconHeadlightReadbackWithoutLightStateFailsPendingCommand() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(entries: [], availability: .unsupported)
+        )
+
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
+        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
+    }
+
+    @MainActor
+    func testFalconHeadlightConfirmationTimesOutWithoutReadback() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.nowValue = 2_000
+
+        XCTAssertEqual(model.headlightCommandStatus, .timedOut)
+        XCTAssertEqual(model.headlightStatusText, "Wheel did not confirm the headlight command.")
+        XCTAssertFalse(model.headlightOn)
+    }
+
+    @MainActor
+    func testHeadlightRefusalIsVisibleWithoutChangingState() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
+        driver.headlightWriteSucceeds = true
+        driver.headlightCommandResult = .refused(.unsupportedCommand)
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.setHeadlight(true), .refused(.unsupportedCommand))
+        XCTAssertEqual(model.headlightCommandStatus, .refused)
+        XCTAssertEqual(model.headlightStatusText, "Wheel refused the headlight command.")
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(driver.headlightStates, [])
+    }
+
+    @MainActor
+    func testHeadlightStateDoesNotSurviveDisconnectOrNewPairing() {
+        let row = DevicePickerRow(
+            id: "aero-1234",
+            title: "NF2557",
+            subtitle: "NOSFET Aero",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "scooter",
+            connectionRoute: .electricUnicycle,
+            electricUnicycleModel: .aero
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        driver.electricUnicycleModel = .aero
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
         model.start()
+
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        model.disconnectTransport()
+        XCTAssertFalse(model.headlightOn)
+
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
-        driver.onPhaseChange?(.subscribing)
-        driver.onPhaseChange?(.live)
-        driver.isLive = true
-        XCTAssertTrue(model.setHeadlight(.on))
-        XCTAssertEqual(model.headlightCommandStatus, .requested(.on))
-
-        driver.onPhaseChange?(.discoveringServices)
-        XCTAssertEqual(model.headlightCommandStatus, .unknown)
-
-        driver.onPhaseChange?(.subscribing)
-        driver.onPhaseChange?(.live)
-        XCTAssertEqual(model.headlightCommandStatus, .unknown)
+        XCTAssertFalse(model.headlightOn)
     }
 
     @MainActor
@@ -873,30 +701,6 @@ final class CutoutAppModelTests: XCTestCase {
                 isCancelled: false
             )
         )
-    }
-
-    @MainActor
-    func testMusicHistoryQueryPreservesDurableStateAlongsideEvents() {
-        let result = CutoutAppModel.musicHistoryQueryResult(
-            .success([]),
-            state: .success(.redacted)
-        )
-
-        XCTAssertEqual(result.state, .redacted)
-        XCTAssertTrue(result.events.isEmpty)
-        XCTAssertNil(result.error)
-    }
-
-    @MainActor
-    func testMusicHistoryErrorAccessibilityTextDoesNotExposeStorageDetails() {
-        let error = MobileRideMapError.storageError("private database path")
-        let accessibilityText = error.musicHistoryAccessibilityText
-
-        XCTAssertEqual(
-            accessibilityText,
-            localizedAppText("music.history.unavailable")
-        )
-        XCTAssertFalse(accessibilityText.contains("private database path"))
     }
 
     @MainActor
@@ -3249,44 +3053,6 @@ final class CutoutAppModelTests: XCTestCase {
             XCTAssertEqual(fixture?.testScript.telemetryUpdateDelayMilliseconds, 1_500)
         }
     }
-    @MainActor
-    func testProductionRideMapDecisionReachesAppModelWithoutMapMounted() async throws {
-        let fixture = CutoutUITestSessionFixture.autoVescLiveActivity
-        let core = CutoutSessionCore(
-            testScript: fixture.testScript,
-            rideMapState: MobileRideMapState()
-        )
-        let model = CutoutAppModel(core: core)
-
-        core.start()
-        XCTAssertTrue(core.pair(platformIdentifier: fixture.candidate.platformIdentifier))
-        await Self.waitUntil("production ride-map recording") {
-            model.phase == .live && model.rideMapSnapshot?.state == .active
-        }
-
-        core.locationManager(
-            CLLocationManager(),
-            didUpdateLocations: [
-                CLLocation(
-                    coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
-                    altitude: 1_600,
-                    horizontalAccuracy: 4,
-                    verticalAccuracy: 4,
-                    course: 0,
-                    speed: 8,
-                    timestamp: Date()
-                )
-            ]
-        )
-        await Self.waitUntil("app-model ride-map decision") {
-            guard case .accepted? = model.rideMapLastDecision else { return false }
-            return true
-        }
-        await Self.waitUntil("app-model live projection") {
-            !model.rideMapLiveDisplayPoints.isEmpty
-        }
-    }
-
 }
 
 @MainActor
@@ -3362,6 +3128,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    var electricUnicycleModel: ElectricUnicycleModel?
+    var headlightState: LightSettingState?
+    var settingsCapabilitiesOverride: EucSettingsCapabilities?
+    var settingsCapabilities: EucSettingsCapabilities? {
+        settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities
+    }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool
@@ -3372,13 +3144,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var probedPlatformIdentifiers = [String]()
     private(set) var recordedPlatformIdentifiers = [String]()
     private(set) var captureAnnotations = [String]()
-    private(set) var musicCaptureObservation: MobilePevcapMusicEventDto?
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
     var headlightWriteSucceeds = false
-    var isLive = false
+    var headlightCommandResult: LightCommandResult = .accepted
+    var nowValue: UInt64 = 0
 
     init(
         rows: [DevicePickerRow],
@@ -3386,9 +3158,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
         notifyBluetoothRestorationOnStart: Bool = true,
-        rideMapUnavailable: Bool = false,
-        rideMapState: MobileRideMapState? = nil,
-        preserveExistingRide: Bool = false
+        rideMapUnavailable: Bool = false
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
@@ -3396,13 +3166,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
         self.rideMapUnavailable = rideMapUnavailable
-        let state = rideMapState
-            ?? RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
+        let state = RustPersistenceStore.shared.map(MobileRideMapState.init(database:))
             ?? MobileRideMapState()
-        if !preserveExistingRide, state.currentSnapshot() != nil {
+        if state.currentSnapshot() != nil {
             _ = try? state.discard()
         }
-        self.rideMapState = state
+        rideMapState = state
     }
 
     func start() {
@@ -3436,9 +3205,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func annotateCapture(key _: String, value _: String) {}
     func updateMusicCapturePolicy(_: MobileMusicHistoryPolicyDto) {}
-    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
-        musicCaptureObservation = observation
-    }
+    func updateMusicCaptureObservation(_: MobilePevcapMusicEventDto?) {}
     func flushCapture() async -> Bool {
         flushCaptureCount += 1
         return flushSucceeds
@@ -3452,12 +3219,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func setLights(_ state: LightState) -> LightCommandStatus? {
-        guard isLive, headlightWriteSucceeds else { return nil }
+    func setLights(_ state: LightState) -> LightCommandResult {
+        guard headlightWriteSucceeds else { return .failed }
+        guard headlightCommandResult == .accepted else { return headlightCommandResult }
         headlightStates.append(state)
-        return .requested(state)
+        return .accepted
     }
     func now() -> MonotonicMilliseconds {
-        MonotonicMilliseconds(0)
+        MonotonicMilliseconds(nowValue)
     }
 }

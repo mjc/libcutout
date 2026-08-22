@@ -14,12 +14,33 @@ use sha2::{Digest, Sha256};
 
 const GENERATED_PACKAGE: &str = "crates/cutout-mobile-ffi/CutoutMobileFFI";
 
+#[derive(Debug, Eq, PartialEq)]
+enum DevCommand {
+    SwiftFfi,
+    IosDeploy(Vec<String>),
+}
+
 fn main() -> Result<()> {
     let root = workspace_root();
-    match env::args().skip(1).collect::<Vec<_>>().as_slice() {
-        [command] if command == "swift-ffi" => ensure_swift_ffi(&root),
-        [ios, deploy] if ios == "ios" && deploy == "deploy" => deploy_ios(&root),
-        _ => bail!("usage: cutout-dev swift-ffi | cutout-dev ios deploy"),
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    match parse_cli(&args)? {
+        DevCommand::SwiftFfi => ensure_swift_ffi(&root),
+        DevCommand::IosDeploy(launch_args) => deploy_ios(&root, &launch_args),
+    }
+}
+
+fn parse_cli(args: &[String]) -> Result<DevCommand> {
+    match args {
+        [command] if command == "swift-ffi" => Ok(DevCommand::SwiftFfi),
+        [ios, deploy] if ios == "ios" && deploy == "deploy" => {
+            Ok(DevCommand::IosDeploy(Vec::new()))
+        }
+        [ios, deploy, separator, launch_args @ ..]
+            if ios == "ios" && deploy == "deploy" && separator == "--" =>
+        {
+            Ok(DevCommand::IosDeploy(launch_args.to_vec()))
+        }
+        _ => bail!("usage: cutout-dev swift-ffi | cutout-dev ios deploy [-- <launch args>...]"),
     }
 }
 
@@ -55,7 +76,7 @@ fn ensure_swift_ffi(root: &Path) -> Result<()> {
 fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
-        "Swift FFI generation requires macOS"
+        "Swift FFI artifact is stale or missing; regenerate it on macOS with `cargo cutout swift-ffi` before using Swift builds on this host"
     );
     ensure_empty_wrapper("RUSTC_WRAPPER")?;
     ensure_empty_wrapper("RUSTC_WORKSPACE_WRAPPER")?;
@@ -115,7 +136,7 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     }
 }
 
-fn deploy_ios(root: &Path) -> Result<()> {
+fn deploy_ios(root: &Path, launch_args: &[String]) -> Result<()> {
     ensure!(
         cfg!(target_os = "macos"),
         "iPhone deployment requires macOS"
@@ -132,7 +153,9 @@ fn deploy_ios(root: &Path) -> Result<()> {
         fs::remove_dir_all(&product)?;
     }
 
-    let team = env::var("CUTOUT_IOS_DEVELOPMENT_TEAM").unwrap_or_else(|_| "2RH32Y5HM5".into());
+    let team = env::var("CUTOUT_IOS_DEVELOPMENT_TEAM")
+        .context("CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone deployment")?;
+    let bundle_id = env::var("CUTOUT_IOS_APP_BUNDLE_ID").ok();
     let destination = format!("platform=iOS,id={device}");
     let mut build = command("xcodebuild");
     build.current_dir(root.join("swift/CutoutMobile")).args([
@@ -144,15 +167,9 @@ fn deploy_ios(root: &Path) -> Result<()> {
         &destination,
         "-derivedDataPath",
     ]);
-    build.arg(&derived_data).args([
-        "-allowProvisioningUpdates",
-        "CODE_SIGNING_ALLOWED=YES",
-        "CODE_SIGNING_REQUIRED=YES",
-        "CODE_SIGN_STYLE=Automatic",
-        "CODE_SIGN_IDENTITY=Apple Development",
-        &format!("DEVELOPMENT_TEAM={team}"),
-        "build",
-    ]);
+    build.arg(&derived_data).arg("-allowProvisioningUpdates");
+    build.args(ios_signing_arguments(Some(&team), bundle_id.as_deref())?);
+    build.arg("build");
     run(&mut build, "build signed iPhone app")?;
     ensure!(
         product.is_dir(),
@@ -174,8 +191,9 @@ fn deploy_ios(root: &Path) -> Result<()> {
         ]),
         "install iPhone app",
     )?;
-    run(
-        command("xcrun").args([
+    let mut launch = command("xcrun");
+    launch
+        .args([
             "devicectl",
             "--quiet",
             "device",
@@ -186,9 +204,9 @@ fn deploy_ios(root: &Path) -> Result<()> {
             "--terminate-existing",
             "--activate",
             &bundle_id,
-        ]),
-        "launch iPhone app",
-    )?;
+        ])
+        .args(launch_args);
+    run(&mut launch, "launch iPhone app")?;
 
     println!("ios_device_udid={device}");
     println!("ios_app_bundle_id={bundle_id}");
@@ -197,7 +215,7 @@ fn deploy_ios(root: &Path) -> Result<()> {
 }
 
 fn discover_ios_device(root: &Path) -> Result<String> {
-    let output = root.join("target/devicectl-devices.json");
+    let output = device_list_output_path(root, std::process::id());
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -207,8 +225,10 @@ fn discover_ios_device(root: &Path) -> Result<String> {
             .arg(&output),
         "list connected iOS devices",
     )?;
-    let document: Value = serde_json::from_slice(&fs::read(&output)?)?;
-    let _ = fs::remove_file(&output);
+    let bytes = fs::read(&output);
+    let cleanup = fs::remove_file(&output);
+    cleanup?;
+    let document: Value = serde_json::from_slice(&bytes?)?;
     document["result"]["devices"]
         .as_array()
         .into_iter()
@@ -221,6 +241,25 @@ fn discover_ios_device(root: &Path) -> Result<String> {
         .and_then(|device| device["properties"]["hardware"]["udid"].as_str())
         .map(str::to_owned)
         .context("no connected booted physical iOS device found")
+}
+
+fn ios_signing_arguments(team: Option<&str>, bundle_id: Option<&str>) -> Result<Vec<String>> {
+    let team = team.context("CUTOUT_IOS_DEVELOPMENT_TEAM is required for iPhone deployment")?;
+    let mut arguments = vec![
+        "CODE_SIGNING_ALLOWED=YES".to_owned(),
+        "CODE_SIGNING_REQUIRED=YES".to_owned(),
+        "CODE_SIGN_STYLE=Automatic".to_owned(),
+        "CODE_SIGN_IDENTITY=Apple Development".to_owned(),
+        format!("DEVELOPMENT_TEAM={team}"),
+    ];
+    if let Some(bundle_id) = bundle_id {
+        arguments.push(format!("PRODUCT_BUNDLE_IDENTIFIER={bundle_id}"));
+    }
+    Ok(arguments)
+}
+
+fn device_list_output_path(root: &Path, process_id: u32) -> PathBuf {
+    root.join(format!("target/devicectl-devices-{process_id}.json"))
 }
 
 fn source_fingerprint(root: &Path) -> Result<String> {
@@ -432,6 +471,42 @@ fn hex(bytes: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ios_deploy_accepts_launch_arguments_after_separator() {
+        let args = ["ios", "deploy", "--", "--launch-smoke"].map(str::to_owned);
+
+        assert_eq!(
+            parse_cli(&args).unwrap(),
+            DevCommand::IosDeploy(vec!["--launch-smoke".to_owned()])
+        );
+    }
+
+    #[test]
+    fn ios_signing_requires_a_team_and_forwards_bundle_id() {
+        assert!(ios_signing_arguments(None, None).is_err());
+        assert_eq!(
+            ios_signing_arguments(Some("TEAM"), Some("org.example.cutout")).unwrap(),
+            [
+                "CODE_SIGNING_ALLOWED=YES",
+                "CODE_SIGNING_REQUIRED=YES",
+                "CODE_SIGN_STYLE=Automatic",
+                "CODE_SIGN_IDENTITY=Apple Development",
+                "DEVELOPMENT_TEAM=TEAM",
+                "PRODUCT_BUNDLE_IDENTIFIER=org.example.cutout",
+            ]
+        );
+    }
+
+    #[test]
+    fn device_list_output_is_unique_between_processes() {
+        let root = Path::new("workspace");
+
+        assert_ne!(
+            device_list_output_path(root, 41),
+            device_list_output_path(root, 42)
+        );
+    }
 
     #[test]
     fn usage_rejects_failed_commands() {

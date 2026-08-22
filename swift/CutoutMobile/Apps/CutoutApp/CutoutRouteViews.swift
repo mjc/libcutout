@@ -4,25 +4,26 @@ import SwiftUI
 
 struct AppMusicCompactPlayerModifier: ViewModifier {
     let model: CutoutAppModel
-    @State private var isMusicSettingsPresented = false
 
     func body(content: Content) -> some View {
         content.musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
             timeline: model.musicTimelineEvents,
+            selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
+            historyPolicy: model.musicHistoryPolicy,
+            historyUnavailable: model.musicHistoryUnavailable,
             onCommand: { command in
                 Task { @MainActor in
                     _ = await model.handleMusicCommand(command)
                 }
             },
-            onOpenSettings: { isMusicSettingsPresented = true },
+            onConnect: model.connectMusic,
             onDismiss: model.dismissMusicPlayer,
-            onRestore: model.restoreMusicPlayer
+            onRestore: model.restoreMusicPlayer,
+            onSelectProvider: model.selectMusicProvider,
+            onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
-        .sheet(isPresented: $isMusicSettingsPresented) {
-            AppSetupView(model: model, opensMusic: true)
-        }
     }
 }
 
@@ -36,7 +37,6 @@ struct DevicePickerRouteView: View {
     let model: CutoutAppModel
     let pair: (DevicePickerRow) -> Void
     let navigate: (CutoutAppRoute) -> Void
-    @State private var isSetupPresented = false
 
     var body: some View {
         DevicePickerView(
@@ -51,12 +51,8 @@ struct DevicePickerRouteView: View {
                 guard model.recordOnly(platformIdentifier: row.id, deviceKind: deviceKind) else { return false }
                 navigate(model.isRecordOnlyCapture ? .capture : .eucRide)
                 return true
-            },
-            openSetup: { isSetupPresented = true }
+            }
         )
-        .sheet(isPresented: $isSetupPresented) {
-            AppSetupView(model: model)
-        }
         .safeAreaInset(edge: .bottom, spacing: 12) {
             Button {
                 navigate(.rideMap)
@@ -158,55 +154,79 @@ struct EucTuneRouteView: View {
     let model: CutoutAppModel
 
     var body: some View {
-        Form {
-            HeadlightControlSection(
-                status: model.headlightCommandStatus,
-                isAvailable: model.phase == .live,
-                submit: { state in
-                    _ = model.setHeadlight(state)
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            Form {
+                Section {
+                    HStack {
+                        Button(localizedAppText("settings.headlight.turn_on")) {
+                            _ = model.setHeadlight(true)
+                        }
+                        Button(localizedAppText("settings.headlight.turn_off")) {
+                            _ = model.setHeadlight(false)
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.phase != .live || !model.headlightControlAvailable)
+                    .accessibilityHint(model.headlightStatusText)
+                } header: {
+                    Text(localizedAppText("settings.lights.title"))
+                } footer: {
+                    Text(model.headlightStatusText)
                 }
-            )
+
+                if let capabilities = model.settingsCapabilities {
+                    Section {
+                        EucSettingCapabilityRow(
+                            id: "pedalMode",
+                            title: localizedAppText("settings.pedal_mode.title"),
+                            support: capabilities.pedalMode
+                        )
+                        EucSettingCapabilityRow(
+                            id: "accelerationAssist",
+                            title: localizedAppText("settings.acceleration_assist.title"),
+                            support: capabilities.accelerationAssist
+                        )
+                        EucSettingCapabilityRow(
+                            id: "taillight",
+                            title: localizedAppText("settings.taillight.title"),
+                            support: capabilities.taillight
+                        )
+                    } header: {
+                        Text(localizedAppText("settings.capabilities.title"))
+                    } footer: {
+                        Text(localizedAppText("settings.capabilities.footer"))
+                    }
+                }
+            }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
     }
 }
 
-private struct HeadlightControlSection: View {
-    let status: LightCommandStatus
-    let isAvailable: Bool
-    let submit: (LightState) -> Void
+private struct EucSettingCapabilityRow: View {
+    let id: String
+    let title: String
+    let support: SettingWriteSupport
 
     var body: some View {
-        Section {
-            HStack {
-                Button(localizedAppText("settings.headlight.turn_on")) {
-                    submit(.on)
-                }
-                Button(localizedAppText("settings.headlight.turn_off")) {
-                    submit(.off)
-                }
-            }
-            .buttonStyle(.bordered)
-            .disabled(!isAvailable)
-            .accessibilityHint(localizedAppText("settings.headlight.help"))
-
+        HStack {
+            Text(title)
+            Spacer()
             Text(statusText)
                 .foregroundStyle(.secondary)
-        } header: {
-            Text(localizedAppText("settings.lights.title"))
-        } footer: {
-            Text(localizedAppText("settings.headlight.help"))
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settings.capability.\(id)")
     }
 
     private var statusText: String {
-        switch status {
-        case .unknown:
-            localizedAppText("settings.headlight.state_unknown")
-        case .requested(.off):
-            localizedAppText("settings.headlight.last_request_off")
-        case .requested(.on):
-            localizedAppText("settings.headlight.last_request_on")
+        switch support {
+        case .supported:
+            localizedAppText("settings.capabilities.supported")
+        case .unverified:
+            localizedAppText("settings.capabilities.unverified")
+        case .unsupported:
+            localizedAppText("settings.capabilities.unsupported")
         }
     }
 }

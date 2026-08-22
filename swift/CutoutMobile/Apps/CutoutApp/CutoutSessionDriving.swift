@@ -15,13 +15,12 @@ protocol CutoutSessionDriving: AnyObject {
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
-    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? { get set }
-    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? { get set }
-    var onRideMapErrorChange: ((MobileRideMapError) -> Void)? { get set }
-    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)? { get set }
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
+    var electricUnicycleModel: ElectricUnicycleModel? { get }
+    var settingsCapabilities: EucSettingsCapabilities? { get }
+    var headlightState: LightSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -34,7 +33,7 @@ protocol CutoutSessionDriving: AnyObject {
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
     func disconnectAndScan()
-    func setLights(_ state: LightState) -> LightCommandStatus?
+    func setLights(_ state: LightState) -> LightCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

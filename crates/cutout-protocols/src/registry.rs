@@ -113,14 +113,17 @@ impl SessionRegistration {
 
 include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 
-/// Allocation-free session sum type for statically registered models.
+/// Allocation-free registered session sum type.
+///
+/// These sessions preserve read-only telemetry behavior while admitting each model's
+/// explicitly allow-listed benign controls, currently headlight changes.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum RegisteredReadOnlySession {
-    /// NOSFET Aero session with read-only telemetry and benign controls.
+    /// NOSFET Aero telemetry session with allow-listed benign controls.
     NosfetAero(BenignControlSession<NosfetAeroModel, false>),
 
-    /// Begode Falcon session with read-only telemetry and benign controls.
+    /// Begode Falcon telemetry session with allow-listed benign controls.
     BegodeFalcon(BenignControlSession<BegodeFalconModel, true>),
 }
 
@@ -143,7 +146,7 @@ pub(super) fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
     )
 }
 
-/// Constructs a registered Begode Falcon session with explicit pack-voltage evidence.
+/// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
 #[must_use]
 pub fn begode_falcon_read_only_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
@@ -166,10 +169,11 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, CompleteModelAuthoring, GattFingerprint, GattRoles, ManufacturerKey,
-        ModelAuthoring, ModelCatalog, ModelCatalogEntry, ModelKey, ModelRegistryEntry,
-        ModelRuntimeRegistration, ParserKey, ProtocolFamily, RegistryValidationError, SessionKey,
-        VerificationStatus, Voltage,
+        CommandKind, CompleteModelAuthoring, ControlRefusalReason, DeviceCommand, DeviceEvent,
+        GattFingerprint, GattRoles, LightState, ManufacturerKey, ModelAuthoring, ModelCatalog,
+        ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
+        ProtocolFamily, ProtocolSession, RegistryValidationError, SessionInput, SessionKey,
+        SessionOutput, TransportAction, VerificationStatus, Voltage,
     };
 
     use crate::{
@@ -233,6 +237,42 @@ mod tests {
             RegisteredReadOnlySession::BegodeFalcon(_)
         ));
         assert!(find_session_registration(SessionKey::new("missing")).is_none());
+    }
+
+    #[test]
+    fn registered_sessions_only_schedule_validated_headlight_writes() {
+        let mut aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
+            .expect("Aero model session registration exists")
+            .construct();
+        let mut aero_output = Vec::new();
+        aero.handle(
+            SessionInput::Command(DeviceCommand::SetLights(LightState::On)),
+            &mut aero_output,
+        );
+        assert!(aero_output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SetLightON"
+        )));
+
+        let mut falcon = find_session_registration(BEGODE_FALCON_SESSION_KEY)
+            .expect("Falcon model session registration exists")
+            .construct();
+        let mut falcon_output = Vec::new();
+        falcon.handle(
+            SessionInput::Command(DeviceCommand::SetLights(LightState::Off)),
+            &mut falcon_output,
+        );
+        assert!(falcon_output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        assert!(falcon_output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))
+                if refusal.command == CommandKind::SetLights
+                    && refusal.reason == ControlRefusalReason::UnsupportedCommand
+        )));
     }
 
     #[test]
@@ -460,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_registry_entry_exposes_reads_and_headlight_control() {
+    fn begode_falcon_registry_entry_exposes_reads_without_unverified_control() {
         let capabilities = BEGODE_FALCON_REGISTRY_ENTRY.capabilities;
 
         assert!(capabilities.supports_command_kind(CommandKind::RequestIdentity));
@@ -469,7 +509,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
-        assert!(capabilities.supports_command_kind(CommandKind::SetLights));
+        assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
     }
 
     #[test]

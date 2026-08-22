@@ -85,22 +85,6 @@ public enum CaptureEvent: Equatable, Sendable {
     case failed
 }
 
-struct CaptureMusicContext: Equatable {
-    private(set) var current: MobilePevcapMusicEventDto?
-
-    mutating func update(_ observation: MobilePevcapMusicEventDto?) {
-        current = observation
-    }
-
-    mutating func take() -> MobilePevcapMusicEventDto? {
-        defer { current = nil }
-        return current
-    }
-
-    mutating func reset() {
-        current = nil
-    }
-}
 struct ConnectionReconnectPolicy {
     static let maximumAttempts = 3
 
@@ -196,28 +180,14 @@ private final class DispatchReconnectCancellation: ConnectionReconnectCancellabl
     }
 }
 
-final class DispatchQueueReconnectScheduler: ConnectionReconnectScheduling {
-    private let queue: DispatchQueue
-
-    init(queue: DispatchQueue) {
-        self.queue = queue
-    }
-
+private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
         let workItem = DispatchWorkItem(block: operation)
-        queue.asyncAfter(
+        DispatchQueue.main.asyncAfter(
             deadline: .now() + .milliseconds(Int(delayMilliseconds)),
             execute: workItem
         )
         return DispatchReconnectCancellation(workItem: workItem)
-    }
-}
-
-private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
-    private let scheduler = DispatchQueueReconnectScheduler(queue: .main)
-
-    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
-        scheduler.schedule(after: delayMilliseconds, operation: operation)
     }
 }
 
@@ -241,6 +211,7 @@ enum CoreBluetoothRestorationPolicy {
         return savedPlatformIdentifier
     }
 }
+
 #if DEBUG
 public enum CutoutSessionTestInitialBluetoothState: Sendable {
     case scanning
@@ -336,14 +307,6 @@ struct BoundedDiagnosticLog {
     }
 }
 
-private final class WeakCutoutSessionCoreReference: @unchecked Sendable {
-    weak var value: CutoutSessionCore?
-
-    init(_ value: CutoutSessionCore) {
-        self.value = value
-    }
-}
-
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
     public var rideMapStateHandle: MobileRideMapState? { rideMapState }
@@ -358,12 +321,13 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
-
-#if DEBUG
-    var musicCaptureObservationForTesting: MobilePevcapMusicEventDto? {
-        onBleQueue { musicCaptureContext.current }
+    public var electricUnicycleModel: ElectricUnicycleModel? { selectedModel }
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        liveOwner?.settingsCapabilities ?? selectedModel?.settingsCapabilities
     }
-#endif
+    public var headlightState: LightSettingState? {
+        onBleQueue { liveOwner?.headlightState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -377,10 +341,6 @@ public final class CutoutSessionCore: NSObject {
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
-    public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
-    public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
-    public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
-    public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
 
 
     private let clock: MonotonicClock
@@ -388,8 +348,6 @@ public final class CutoutSessionCore: NSObject {
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
-    private let rideMapQueue = DispatchQueue(label: "io.cutout.ridemap", qos: .utility)
-    private let rideMapQueueKey = DispatchSpecificKey<Void>()
     private let rustSessionState: CutoutSessionStateHandle
     private let selectedDeviceStore: DevicePickerSelectionStore
     private var central: CBCentralManager?
@@ -404,8 +362,6 @@ public final class CutoutSessionCore: NSObject {
     private var isRecordOnly = false
     private var isProbeOnly = false
     private var subscribedCharacteristics: [BluetoothUuid: CBCharacteristic] = [:]
-    private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
-    private static let maximumPendingWithoutResponseWrites = 64
     private var pendingServiceDiscoveries = Set<CBUUID>()
     private var suppressReconnect = false
     private let reconnectController: ConnectionReconnectController
@@ -413,7 +369,6 @@ public final class CutoutSessionCore: NSObject {
     private var captureStartedAt: MonotonicMilliseconds?
     private var captureNotificationCount: UInt64 = 0
     private var captureBuilder: MobilePevcapCaptureBuilder?
-    private var musicCaptureContext = CaptureMusicContext()
     private var captureMusicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private var captureFileURL: URL?
     private var bmsPages: [BmsPageKey: BmsSnapshot] = [:]
@@ -427,8 +382,6 @@ public final class CutoutSessionCore: NSObject {
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let rideMapState: MobileRideMapState?
     private let phoneLocationState = MobilePhoneLocationState()
-    private var latestRideMapSnapshot: MobileRideMapSnapshotDto?
-    private var rideMapWritePoller: DispatchSourceTimer?
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
@@ -437,11 +390,6 @@ public final class CutoutSessionCore: NSObject {
     private var testScriptUpdateWorkItem: DispatchWorkItem?
     private var testScriptDidReconnect = false
 #endif
-
-    deinit {
-        rideMapWritePoller?.cancel()
-    }
-
     private lazy var locationManager: CLLocationManager = {
         let manager = CLLocationManager()
         manager.delegate = self
@@ -494,7 +442,6 @@ public final class CutoutSessionCore: NSObject {
         self.selectedDeviceStore = selectedDeviceStore
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
-        rideMapQueue.setSpecific(key: rideMapQueueKey, value: ())
     }
 #else
     init(
@@ -518,13 +465,10 @@ public final class CutoutSessionCore: NSObject {
         self.selectedDeviceStore = selectedDeviceStore
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
-        rideMapQueue.setSpecific(key: rideMapQueueKey, value: ())
     }
 #endif
 
     public func start() {
-        startRideMapWritePolling()
-        publishRideMapAvailability()
 #if DEBUG
         if let testScript {
             publishOnMain { self.onBluetoothRestorationResolved?(nil) }
@@ -715,16 +659,22 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setLights(_ state: LightState) -> LightCommandStatus? {
+    public func setLights(_ state: LightState) -> LightCommandResult {
         onBleQueue {
-            guard phase == .live, let liveOwner else { return nil }
+            guard phase == .live, let liveOwner else { return .failed }
             do {
                 try liveOwner.handleCommand(.setLights(state), at: clock.now())
-                guard phase == .live else { return nil }
-                return liveOwner.lightCommandStatus
+                guard phase == .live else { return .failed }
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("set_lights_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
             } catch {
                 record("set_lights_error=\(error)")
-                return nil
+                return .failed
             }
         }
     }
@@ -965,9 +915,6 @@ public final class CutoutSessionCore: NSObject {
 #endif
         suppressReconnect = true
         cancelPendingReconnect()
-        // A teardown must not carry a pending provider observation into the
-        // next capture, including the synthetic/debug writer path below.
-        musicCaptureContext.reset()
 #if DEBUG
         if testScript != nil, isRecordOnly, captureBuilder != nil {
             finishCaptureAfterLinkDown()
@@ -987,7 +934,6 @@ public final class CutoutSessionCore: NSObject {
         chargeEstimateProfile = nil
         vescBoardProfile = nil
         liveOwner = nil
-        pendingWithoutResponseWrites.removeAll()
         deviceDetectionSession.reset()
         clearPendingBegodeProbeResponses()
         subscribedCharacteristics.removeAll()
@@ -1041,7 +987,6 @@ public final class CutoutSessionCore: NSObject {
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
-        observeRideMapConnection(at: receivedAt)
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -1418,7 +1363,6 @@ public final class CutoutSessionCore: NSObject {
         selectedRoute = nil
         liveOwner = nil
         subscribedCharacteristics.removeAll()
-        pendingWithoutResponseWrites.removeAll()
         pendingServiceDiscoveries.removeAll()
 
         guard !suppressReconnect else {
@@ -1499,12 +1443,6 @@ public final class CutoutSessionCore: NSObject {
     private func record(_ message: String) {
         diagnosticLog.append(message)
         publishOnMain { self.onRecord?(message) }
-    }
-
-    private func recordRideMapDiagnostic(_ message: String) {
-        bleQueue.async { [weak self] in
-            self?.record(message)
-        }
     }
 
     private func publishOnMain(_ work: @escaping () -> Void) {
@@ -1618,122 +1556,14 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onCaptureEvent?(event) }
     }
 
-    private func startRideMapWritePolling() {
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value, self.rideMapWritePoller == nil else { return }
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(
-                deadline: .now() + .milliseconds(100),
-                repeating: .milliseconds(100),
-                leeway: .milliseconds(25)
-            )
-            timer.setEventHandler { [reference] in
-                reference.value?.drainRideMapWrites()
-            }
-            self.rideMapWritePoller = timer
-            timer.resume()
-        }
-    }
-
-    private func drainRideMapWrites() {
-        guard let rideMapState, rideMapState.initializationError == nil else { return }
-        guard rideMapState.hasPendingLocationWrites
-            || rideMapState.currentSnapshot(atMs: clock.now().rawValue)?.state.isOpen == true
-        else {
-            return
-        }
-        publishRideMapDecisions(rideMapState.pollLocationWrites())
-    }
-
-    private func observeRideMapConnection(at receivedAt: MonotonicMilliseconds) {
-        guard !isRecordOnly, !isProbeOnly,
-              let rideMapState,
-              rideMapState.initializationError == nil,
-              let platformIdentifier = protocolIdentityCandidate?.platformIdentifier
-                ?? peripheral?.identifier.uuidString
-        else {
-            return
-        }
-
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value else { return }
-            do {
-                if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                    guard snapshot.state.isOpen else {
-                        self.publishRideMapSnapshot(snapshot)
-                        return
-                    }
-                } else {
-                    _ = try rideMapState.ensureRecordingForVehicle(
-                        platformIdentifier: platformIdentifier,
-                        atMs: receivedAt.rawValue
-                    )
-                }
-                _ = try rideMapState.observeVehicleConnection(
-                    platformIdentifier: platformIdentifier,
-                    atMs: receivedAt.rawValue
-                )
-                _ = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
-                if let snapshot = rideMapState.currentSnapshot(atMs: receivedAt.rawValue) {
-                    self.publishRideMapSnapshot(snapshot)
-                }
-            } catch let error as MobileRideMapError {
-                self.publishRideMapError(error)
-                self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
-            } catch {
-                self.recordRideMapDiagnostic("ride_map_connection_error=\(error)")
-            }
-        }
-    }
-
-    private func publishRideMapDecisions(_ decisions: [MobileRideMapDecisionDto]) {
-        guard let rideMapState else { return }
-        let snapshot = rideMapState.currentSnapshot(atMs: clock.now().rawValue)
-            ?? latestRideMapSnapshot
-        for decision in decisions {
-            switch decision {
-            case let .storageError(message):
-                publishRideMapError(.storageError(message))
-            default:
-                guard let snapshot else { continue }
-                publishOnMain {
-                    self.onRideMapDecisionChange?(snapshot, decision)
-                }
-            }
-        }
-    }
-
-    private func publishRideMapSnapshot(_ snapshot: MobileRideMapSnapshotDto) {
-        latestRideMapSnapshot = snapshot
-        publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
-    }
-
-    private func publishRideMapError(_ error: MobileRideMapError) {
-        publishOnMain { self.onRideMapErrorChange?(error) }
-    }
-
-    private func publishRideMapAvailability() {
-        let availability: MobileRideMapAvailability =
-            rideMapState?.initializationError == nil ? .ready : .storageUnavailable
-        publishOnMain { self.onRideMapAvailabilityChange?(availability) }
-    }
-
     /// Records one bounded music observation independently of BLE frame arrival.
     /// The Rust writer owns the capture event and keeps metadata low-rate.
     public func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
         onBleQueue {
-            self.musicCaptureContext.update(observation)
-            guard let observation else {
-                _ = self.captureBuilder?.setMusicContext(music: nil)
-                return
-            }
-            guard let builder = self.captureBuilder
+            guard let captured = self.captureMusicObservation(observation),
+                  let builder = self.captureBuilder
             else { return }
-            _ = self.acceptCaptureWrite(builder.recordMusicEvent(music: observation))
+            _ = self.acceptCaptureWrite(builder.recordMusicEvent(music: captured))
         }
     }
 
@@ -1745,15 +1575,25 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
-    func captureFrame(
+    private func captureMusicObservation(
+        _ observation: MobilePevcapMusicEventDto?
+    ) -> MobilePevcapMusicEventDto? {
+        guard let observation, let captureStartedAt else { return observation }
+        guard observation.monotonicAtMs >= captureStartedAt.rawValue else { return nil }
+        var relative = observation
+        relative.monotonicAtMs = observation.monotonicAtMs - captureStartedAt.rawValue
+        return relative
+    }
+
+    private func captureFrame(
         direction: String,
         characteristic: CBUUID,
         service: CBUUID? = nil,
         bytes: Data,
         telemetry: RawTelemetryReadback? = nil
-    ) -> Bool {
+    ) {
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic) else {
-            return false
+            return
         }
 
         switch direction {
@@ -1762,12 +1602,10 @@ public final class CutoutSessionCore: NSObject {
                 record("capture_error=notification_missing_service characteristic=\(characteristic.uuidString)")
                 publishCaptureEvent(.failed)
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
-                finishCaptureWriter()
-                return false
+                return
             }
-            guard let builder = captureBuilder else { return true }
             let location = phoneLocationState.currentSnapshot().latestSample
-            let accepted = builder.recordNotificationWithContext(
+            _ = captureBuilder?.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 service: serviceUuid.bytes,
@@ -1775,21 +1613,18 @@ public final class CutoutSessionCore: NSObject {
                 telemetry: telemetry?.dto,
                 phoneLocation: location
             )
-            guard acceptCaptureWrite(accepted) else { return false }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         case "write_without_response":
-            guard let builder = captureBuilder else { return true }
-            let accepted = builder.recordWriteWithoutResponse(
+            let accepted = captureBuilder?.recordWriteWithoutResponse(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
                 bytes: bytes
-            )
-            guard acceptCaptureWrite(accepted) else { return false }
+            ) ?? false
+            guard acceptCaptureWrite(accepted) else { return }
             record("capture_queue_depth=\(captureBuilder?.writerStatus().queuedMessages ?? 0)")
         default:
-            return false
+            return
         }
-        return true
     }
 
     private func startCapture(
@@ -1797,8 +1632,7 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) {
-        let captureStart = clock.now()
-        captureStartedAt = captureStart
+        captureStartedAt = clock.now()
         captureNotificationCount = 0
 
         let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -1809,7 +1643,6 @@ public final class CutoutSessionCore: NSObject {
             writeLimit: MobileTransportWriteLimitDto(bytes: 23)
         )
         _ = builder.setMusicHistoryPolicy(policy: captureMusicHistoryPolicy)
-        _ = builder.setMusicCaptureStartMonotonicMs(monotonicMs: captureStart.rawValue)
         (advertisement?.advertisedServiceUuids ?? []).forEach { service in
             _ = builder.addAdvertisedService(service: service.bytes)
         }
@@ -1821,7 +1654,6 @@ public final class CutoutSessionCore: NSObject {
         ].forEach { _ = builder.addAnnotation(annotation: $0) }
         extraAnnotations.forEach { _ = builder.addAnnotation(annotation: sanitizedPevcapAnnotation($0)) }
         captureBuilder = builder
-        _ = builder.setMusicContext(music: musicCaptureContext.current)
         guard builder.startWriter(path: url.path) else {
             record("capture_error=writer_start_failed")
             captureBuilder = nil
@@ -1830,7 +1662,6 @@ public final class CutoutSessionCore: NSObject {
             setPhase(.failed(.sessionFailed("capture writer failed to start")))
             return
         }
-        musicCaptureContext.reset()
         captureFileURL = url
         record("capture_file=\(url.path)")
         publishCaptureEvent(.started(fileURL: url))
@@ -1859,13 +1690,11 @@ public final class CutoutSessionCore: NSObject {
         publishesResult: Bool = false,
         priorWriteSucceeded: Bool = true
     ) {
-        musicCaptureContext.reset()
         guard let builder = captureBuilder else { return }
         let completedCaptureURL = captureFileURL
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
-        musicCaptureContext.reset()
         let finish = DispatchWorkItem { [weak self] in
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded
@@ -2175,7 +2004,7 @@ private extension CutoutSessionCore {
             }
             for characteristic in characteristics {
                 if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
-                    bindDiscoveredCharacteristic(channel, characteristic)
+                    subscribedCharacteristics[channel] = characteristic
                 }
             }
             pendingServiceDiscoveries.remove(service.uuid)
@@ -2324,12 +2153,6 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 }
 
 extension CutoutSessionCore: CBPeripheralDelegate {
-    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
-        assertOnBleQueue()
-        guard self.peripheral === peripheral else { return }
-        flushPendingWithoutResponseWrites()
-    }
-
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         assertOnBleQueue()
         if let error {
@@ -2356,7 +2179,7 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         }
         service.characteristics?.forEach { characteristic in
             if let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) {
-                bindDiscoveredCharacteristic(channel, characteristic)
+                subscribedCharacteristics[channel] = characteristic
             }
         }
         recordGattFingerprints(service: service)
@@ -2396,31 +2219,27 @@ extension CutoutSessionCore: CBPeripheralDelegate {
         else {
             return
         }
-        guard subscribedCharacteristics[channel] === characteristic else {
-            record("notification_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
-            return
-        }
         let detectionResolution = observeDetectionNotification(channel: channel, bytes: value)
         if isProbeOnly {
             guard promoteProbeIfResolved(detectionResolution, on: characteristic.service?.peripheral) else {
-                guard captureFrame(
+                captureFrame(
                     direction: "notify",
                     characteristic: characteristic.uuid,
                     service: characteristic.service?.uuid,
                     bytes: value
-                ) else { return }
+                )
                 captureNotificationCount += 1
                 publishCaptureEvent(.progress(captureProgress()))
                 return
             }
         }
         if isRecordOnly {
-            guard captureFrame(
+            captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value
-            ) else { return }
+            )
             record("record_only_notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2441,13 +2260,13 @@ extension CutoutSessionCore: CBPeripheralDelegate {
             let ingestMilliseconds = ingestFinishedAt.rawValue >= ingestStartedAt.rawValue
                 ? ingestFinishedAt.rawValue - ingestStartedAt.rawValue
                 : 0
-            guard captureFrame(
+            captureFrame(
                 direction: "notify",
                 characteristic: characteristic.uuid,
                 service: characteristic.service?.uuid,
                 bytes: value,
                 telemetry: step.actions.compactMap(\.rawTelemetry).last
-            ) else { return }
+            )
             record("notification=\(characteristic.uuid.uuidString) bytes=\(value.count)")
             captureNotificationCount += 1
             publishCaptureEvent(.progress(captureProgress()))
@@ -2471,10 +2290,6 @@ extension CutoutSessionCore: CBPeripheralDelegate {
     ) {
         assertOnBleQueue()
         guard let channel = BluetoothUuid(coreBluetoothUuid: characteristic.uuid) else {
-            return
-        }
-        guard subscribedCharacteristics[channel] === characteristic else {
-            record("notification_state_ignored=unbound_characteristic service=\(characteristic.service?.uuid.uuidString ?? "unknown") characteristic=\(characteristic.uuid.uuidString)")
             return
         }
         if let error {
@@ -2508,32 +2323,6 @@ extension CutoutSessionCore: CBPeripheralDelegate {
 }
 
 private extension CutoutSessionCore {
-    func bindDiscoveredCharacteristic(_ channel: BluetoothUuid, _ characteristic: CBCharacteristic) {
-        guard let existing = subscribedCharacteristics[channel] else {
-            subscribedCharacteristics[channel] = characteristic
-            return
-        }
-        guard preferredServiceUuid(for: selectedRoute) == characteristic.service?.uuid else {
-            return
-        }
-        if existing.service?.uuid != characteristic.service?.uuid {
-            subscribedCharacteristics[channel] = characteristic
-        }
-    }
-
-    func preferredServiceUuid(for route: DevicePickerConnectionRoute?) -> CBUUID? {
-        switch route {
-        case .vescOnewheel:
-            return BluetoothUuid.vescNordicUartService.coreBluetoothUuid
-        case .electricUnicycle:
-            return BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
-        case nil:
-            return nil
-        }
-    }
-}
-
-private extension CutoutSessionCore {
     func assertOnBleQueue() {
         dispatchPrecondition(condition: .onQueue(bleQueue))
     }
@@ -2545,56 +2334,18 @@ extension CutoutSessionCore: CoreBluetoothOperationSink {
             setPhase(.failed(.missingNotifyChannel))
             return
         }
-        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
-            setPhase(.failed(.missingNotifyChannel))
-            return
-        }
         peripheral?.setNotifyValue(true, for: characteristic)
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         observeDetectionProbeWrite(channel: channel, bytes: bytes)
+        captureFrame(direction: "write_without_response", characteristic: channel.coreBluetoothUuid, bytes: bytes)
         guard let characteristic = subscribedCharacteristics[channel] else {
             setPhase(.failed(.missingWriteChannel))
             return
         }
-        guard characteristic.properties.contains(.writeWithoutResponse) else {
-            setPhase(.failed(.missingWriteChannel))
-            return
-        }
-        guard let peripheral else { return }
-        guard captureFrame(
-            direction: "write_without_response",
-            characteristic: channel.coreBluetoothUuid,
-            bytes: bytes
-        ) else {
-            return
-        }
-        guard pendingWithoutResponseWrites.isEmpty, peripheral.canSendWriteWithoutResponse else {
-            if pendingWithoutResponseWrites.count >= Self.maximumPendingWithoutResponseWrites {
-                pendingWithoutResponseWrites.removeFirst()
-                record("write_without_response_dropped=queue_full_oldest")
-            }
-            pendingWithoutResponseWrites.append((characteristic, bytes))
-            record("write_without_response_queued=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
-            flushPendingWithoutResponseWrites()
-            return
-        }
-        peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
+        peripheral?.writeValue(bytes, for: characteristic, type: .withoutResponse)
         record("write_without_response=\(channel.coreBluetoothUuid.uuidString) bytes=\(bytes.count)")
-    }
-
-    public func canSubmitWithoutResponse() -> Bool {
-        peripheral?.canSendWriteWithoutResponse ?? false
-    }
-
-    private func flushPendingWithoutResponseWrites() {
-        guard let peripheral else { return }
-        while peripheral.canSendWriteWithoutResponse, !pendingWithoutResponseWrites.isEmpty {
-            let (characteristic, bytes) = pendingWithoutResponseWrites.removeFirst()
-            peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
-            record("write_without_response_flush=\(characteristic.uuid.uuidString) bytes=\(bytes.count)")
-        }
     }
 
     public func disconnect() {
@@ -2850,71 +2601,15 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
               let receiptWallClockUnixMs = unixMilliseconds(for: receiptWallClock)
         else { return }
 
-        let queue = rideMapQueue
-        let reference = WeakCutoutSessionCoreReference(self)
-        queue.async {
-            guard let self = reference.value else { return }
-            do {
-                let decisions = try rideMapState.ingestLocationBatch(
-                    receiptMonotonicMs: receiptMonotonicMs,
-                    receiptWallClockUnixMs: receiptWallClockUnixMs,
-                    samples: samples
-                )
-                self.publishRideMapDecisions(decisions)
-            } catch let error as MobileRideMapError {
-                self.publishRideMapError(error)
-                self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
-            } catch {
-                self.recordRideMapDiagnostic("ride_map_ingest_error=\(error)")
-            }
-        }
-    }
-
-
-    private func onRideMapQueue<T>(_ operation: () throws -> T) rethrows -> T {
-        if DispatchQueue.getSpecific(key: rideMapQueueKey) != nil {
-            return try operation()
-        }
-        return try rideMapQueue.sync(execute: operation)
-    }
-
-    private func requireRideMapStateForCommand() throws -> MobileRideMapState {
-        guard let rideMapState else {
-            throw MobileRideMapError.storageError("Rust ride database is unavailable")
-        }
-        return rideMapState
-    }
-
-    public func startRideMapGpsOnly(
-        atMs: UInt64,
-        lastConnectedVehicle: String?
-    ) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue {
-            try requireRideMapStateForCommand().startGpsOnly(
-                atMs: atMs,
-                lastConnectedVehicle: lastConnectedVehicle
+        do {
+            _ = try rideMapState.ingestLocationBatch(
+                receiptMonotonicMs: receiptMonotonicMs,
+                receiptWallClockUnixMs: receiptWallClockUnixMs,
+                samples: samples
             )
+        } catch {
+            record("ride_map_ingest_error=\(error)")
         }
-    }
-
-    public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().pause(atMs: atMs) }
-    }
-
-    public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().resume(atMs: atMs) }
-    }
-
-    public func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().stop(atMs: atMs) }
-    }
-
-    public func saveRideMap() throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().save() }
-    }
-
-    public func discardRideMap() throws -> MobileRideMapSnapshotDto {
-        try onRideMapQueue { try requireRideMapStateForCommand().discard() }
     }
 
     /// Clears the Rust-owned location context before starting a new capture.
@@ -2922,7 +2617,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         phoneLocationState.clear()
     }
 }
-
 
 private extension MobilePhoneLocationSampleDto {
     init?(location: CLLocation) {

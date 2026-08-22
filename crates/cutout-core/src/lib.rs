@@ -30,6 +30,8 @@ mod melk_controls;
 pub use melk_controls::*;
 mod rgb_lighting;
 pub use rgb_lighting::*;
+mod settings;
+pub use settings::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;

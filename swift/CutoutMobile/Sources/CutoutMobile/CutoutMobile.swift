@@ -382,11 +382,6 @@ public struct SessionAction: Equatable, Hashable, Sendable {
     public let faultHistoryReadback: FaultHistoryReadback?
     public let bmsSnapshot: BmsSnapshot?
     public let rawTelemetry: RawTelemetryReadback?
-    /// True when this action carries a fresh Refloat realtime telemetry event.
-    ///
-    /// The session snapshot is retained across reconnects, so retry logic must
-    /// use this event-scoped marker instead of inspecting snapshot fields.
-    public let vescRealtimeTelemetry: Bool
     public let veteranProtocolModelId: UInt16?
 
     fileprivate init(
@@ -397,7 +392,6 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         faultHistoryReadback: FaultHistoryReadback? = nil,
         bmsSnapshot: BmsSnapshot? = nil,
         rawTelemetry: RawTelemetryReadback? = nil,
-        vescRealtimeTelemetry: Bool = false,
         veteranProtocolModelId: UInt16? = nil
     ) {
         self.kind = kind
@@ -407,7 +401,6 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.faultHistoryReadback = faultHistoryReadback
         self.bmsSnapshot = bmsSnapshot
         self.rawTelemetry = rawTelemetry
-        self.vescRealtimeTelemetry = vescRealtimeTelemetry
         self.veteranProtocolModelId = veteranProtocolModelId
     }
 
@@ -475,7 +468,6 @@ public struct SessionAction: Equatable, Hashable, Sendable {
         self.faultHistoryReadback = dto.faultHistoryReadback.map(FaultHistoryReadback.init)
         self.bmsSnapshot = dto.bmsSnapshot.map(BmsSnapshot.init)
         self.rawTelemetry = dto.rawTelemetry.map(RawTelemetryReadback.init)
-        self.vescRealtimeTelemetry = dto.vescRealtimeTelemetry
         self.veteranProtocolModelId = dto.veteranProtocolModelId
     }
 }
@@ -1236,7 +1228,7 @@ public enum LightState: Equatable, Hashable, Sendable {
         switch dto {
         case .off:
             self = .off
-        case .on:
+        case .on, .strobe:
             self = .on
         }
     }
@@ -1246,21 +1238,135 @@ public enum LightState: Equatable, Hashable, Sendable {
     }
 }
 
-/// Rust-owned knowledge about the current built-in-light command.
-///
-/// A requested state is accepted for transport, not controller readback.
-public enum LightCommandStatus: Equatable, Hashable, Sendable {
+public enum SettingStateKind: Equatable, Hashable, Sendable {
     case unknown
-    case requested(LightState)
+    case current
+    case pending
+    case confirmed
+    case refused
+    case timedOut
+    case failed
 
-    fileprivate init(_ dto: MobileLightCommandStateDto) {
+    fileprivate init(_ dto: MobileSettingStateKindDto) {
         switch dto {
-        case .unknown:
-            self = .unknown
-        case .requested(let state):
-            self = .requested(LightState(state))
+        case .unknown: self = .unknown
+        case .current: self = .current
+        case .pending: self = .pending
+        case .confirmed: self = .confirmed
+        case .refused: self = .refused
+        case .timedOut: self = .timedOut
+        case .failed: self = .failed
         }
     }
+}
+
+public enum SettingValueSource: Equatable, Hashable, Sendable {
+    case liveReadback
+    case captureReplay
+    case userRequest
+    case unknown
+
+    fileprivate init(_ dto: MobileSettingValueSourceDto) {
+        switch dto {
+        case .liveReadback: self = .liveReadback
+        case .captureReplay: self = .captureReplay
+        case .userRequest: self = .userRequest
+        case .unknown: self = .unknown
+        }
+    }
+}
+
+public struct LightSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: LightState?
+    public let requested: LightState?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: LightState? = nil,
+        requested: LightState? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobileLightSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(LightState.init)
+        self.requested = dto.requested.map(LightState.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public enum SettingWriteSupport: Equatable, Hashable, Sendable {
+    case supported
+    case unverified
+    case unsupported
+
+    fileprivate init(_ dto: MobileSettingWriteSupportDto) {
+        switch dto {
+        case .supported:
+            self = .supported
+        case .unverified:
+            self = .unverified
+        case .unsupported:
+            self = .unsupported
+        }
+    }
+}
+
+public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
+    public let pedalMode: SettingWriteSupport
+    public let accelerationAssist: SettingWriteSupport
+    public let headlight: SettingWriteSupport
+    public let taillight: SettingWriteSupport
+
+    public init(
+        pedalMode: SettingWriteSupport,
+        accelerationAssist: SettingWriteSupport,
+        headlight: SettingWriteSupport,
+        taillight: SettingWriteSupport
+    ) {
+        self.pedalMode = pedalMode
+        self.accelerationAssist = accelerationAssist
+        self.headlight = headlight
+        self.taillight = taillight
+    }
+
+    fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
+        self.pedalMode = SettingWriteSupport(dto.pedalMode)
+        self.accelerationAssist = SettingWriteSupport(dto.accelerationAssist)
+        self.headlight = SettingWriteSupport(dto.headlight)
+        self.taillight = SettingWriteSupport(dto.taillight)
+    }
+}
+
+/// Result of submitting a benign light-setting command to the live session.
+public enum LightCommandResult: Equatable, Hashable, Sendable {
+    /// The command was accepted and scheduled for transport.
+    case accepted
+
+    /// The session refused the command before producing a transport write.
+    case refused(CommandRefusalReason?)
+
+    /// The command could not be submitted because the session or transport failed.
+    case failed
 }
 
 public enum DeviceCommand: Equatable, Hashable, Sendable {
@@ -1721,13 +1827,11 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
     case motorTemperature
     case current
     case dutyPushback
-    case speedPushback
     case temperaturePushback
     case wheelslip
     case sensors
     case lowBattery
     case error
-    case bmsConnection
     case unknown
 
     fileprivate init(_ dto: MobileVescRideWarningDto) {
@@ -1746,8 +1850,6 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
             self = .current
         case .dutyPushback:
             self = .dutyPushback
-        case .speedPushback:
-            self = .speedPushback
         case .temperaturePushback:
             self = .temperaturePushback
         case .wheelslip:
@@ -1758,10 +1860,6 @@ public enum VescRideWarning: Equatable, Hashable, Sendable {
             self = .lowBattery
         case .error:
             self = .error
-        case .bmsConnection:
-            self = .bmsConnection
-        case .unknown:
-            self = .unknown
         }
     }
 }
@@ -2293,9 +2391,9 @@ private func rideHeroSeverity(_ warning: VescRideWarning) -> RideHeroSeverity {
     switch warning {
     case .none: .nominal
     case .lowVoltage, .highVoltage, .mosfetTemperature, .motorTemperature,
-         .current, .dutyPushback, .speedPushback, .temperaturePushback, .wheelslip, .sensors, .lowBattery:
+         .current, .dutyPushback, .temperaturePushback, .wheelslip, .sensors, .lowBattery:
         .caution
-    case .error, .bmsConnection: .critical
+    case .error: .critical
     case .unknown: .unavailable
     }
 }
@@ -2529,15 +2627,18 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
     public let beepMargin: ReadbackValue<Speed>
     public let tiltback: ReadbackValue<Speed>
     public let pedalMode: ReadbackValue<PedalMode>
+    public let lightState: LightState?
 
     public init(
         beepMargin: ReadbackValue<Speed> = .unavailable,
         tiltback: ReadbackValue<Speed> = .unavailable,
-        pedalMode: ReadbackValue<PedalMode> = .unavailable
+        pedalMode: ReadbackValue<PedalMode> = .unavailable,
+        lightState: LightState? = nil
     ) {
         self.beepMargin = beepMargin
         self.tiltback = tiltback
         self.pedalMode = pedalMode
+        self.lightState = lightState
     }
 
     fileprivate init(_ dto: MobileEucGarageSettingsDto) {
@@ -2548,7 +2649,8 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
             pedalMode: Self.readback(
                 dto.pedalMode.flatMap(PedalMode.init),
                 availability: availability
-            )
+            ),
+            lightState: dto.lightState.map(LightState.init)
         )
     }
 
@@ -4429,15 +4531,44 @@ public struct ParserDiagnostics: Equatable, Hashable, Sendable {
     }
 }
 
+public enum CommandRefusalReason: Equatable, Hashable, Sendable {
+    case wrongSafetyClass
+    case missingArm
+    case wrongModel
+    case expiredArm
+    case currentLimitExceeded
+    case unsupportedCommand
+
+    fileprivate init(_ dto: MobileControlRefusalReasonDto) {
+        switch dto {
+        case .wrongSafetyClass:
+            self = .wrongSafetyClass
+        case .missingArm:
+            self = .missingArm
+        case .wrongModel:
+            self = .wrongModel
+        case .expiredArm:
+            self = .expiredArm
+        case .currentLimitExceeded:
+            self = .currentLimitExceeded
+        case .unsupportedCommand:
+            self = .unsupportedCommand
+        }
+    }
+}
+
 public enum CutoutSessionError: Error, Equatable, Sendable {
-    case commandRefused(DeviceCommand?, String?)
+    case commandRefused(DeviceCommand?, CommandRefusalReason?)
     case unsupportedFalconProfile
     case unexpectedStepError(String?)
 
     fileprivate init(_ dto: MobileSessionStepErrorDto) {
         switch dto.kind {
         case .commandRefused:
-            self = .commandRefused(dto.command.map(DeviceCommand.init), dto.reason)
+            self = .commandRefused(
+                dto.command.map(DeviceCommand.init),
+                dto.reason.map(CommandRefusalReason.init)
+            )
         case .unsupportedFalconProfile:
             self = .unsupportedFalconProfile
         }
@@ -4465,6 +4596,25 @@ public extension ElectricUnicycleModel {
             "Aero"
         case .falcon:
             "Falcon"
+        }
+    }
+
+    var settingsCapabilities: EucSettingsCapabilities {
+        switch self {
+        case .aero:
+            EucSettingsCapabilities(
+                pedalMode: .unsupported,
+                accelerationAssist: .unsupported,
+                headlight: .supported,
+                taillight: .unsupported
+            )
+        case .falcon:
+            EucSettingsCapabilities(
+                pedalMode: .unsupported,
+                accelerationAssist: .unsupported,
+                headlight: .unverified,
+                taillight: .unsupported
+            )
         }
     }
 
@@ -4607,8 +4757,8 @@ struct VoltageSagModelStore {
 
 public final class ElectricUnicycleSession: @unchecked Sendable {
     private enum Inner {
-        case aero(AeroReadOnlySession)
-        case falcon(FalconReadOnlySession)
+        case aero(AeroBenignControlSession)
+        case falcon(FalconBenignControlSession)
     }
 
     public let model: ElectricUnicycleModel
@@ -4624,9 +4774,9 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         self.voltageSagIdentity = deviceIdentity
         self.inner = switch model {
         case .aero:
-            .aero(AeroReadOnlySession())
+            .aero(AeroBenignControlSession())
         case .falcon:
-            .falcon(try FalconReadOnlySession())
+            .falcon(try FalconBenignControlSession())
         }
         chargeEstimator.configureElectricUnicycleProfile(model: model.dto)
         if
@@ -4647,6 +4797,24 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var settingsCapabilities: EucSettingsCapabilities {
+        switch inner {
+        case .aero(let session):
+            EucSettingsCapabilities(session.settingsCapabilities())
+        case .falcon(let session):
+            EucSettingsCapabilities(session.settingsCapabilities())
+        }
+    }
+
+    public var headlightState: LightSettingState {
+        switch inner {
+        case .aero(let session):
+            LightSettingState(session.headlightState())
+        case .falcon(let session):
+            LightSettingState(session.headlightState())
+        }
+    }
+
     public var currentSnapshot: TelemetrySnapshot {
         switch inner {
         case .aero(let session):
@@ -4658,15 +4826,6 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
 
     public var chargeEstimate: ChargeEstimateState {
         chargeEstimateState
-    }
-
-    public var lightCommandStatus: LightCommandStatus {
-        switch inner {
-        case .aero(let session):
-            LightCommandStatus(session.lightCommandState())
-        case .falcon(let session):
-            LightCommandStatus(session.lightCommandState())
-        }
     }
 
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
@@ -4717,7 +4876,7 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         try step(.command, at: monotonicMilliseconds, command: command)
     }
 
-    fileprivate func step(
+    private func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
@@ -4842,7 +5001,7 @@ public final class VescOnewheelSession: @unchecked Sendable {
         try step(.command, at: monotonicMilliseconds, command: command)
     }
 
-    fileprivate func step(
+    private func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
         writeLimit: TransportWriteLimitBytes? = nil,
@@ -4876,15 +5035,15 @@ public final class VescOnewheelSession: @unchecked Sendable {
     }
 }
 
-private protocol MobileReadOnlySession {
+private protocol MobileTelemetrySession {
     func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResultDto
 }
 
-extension AeroReadOnlySession: MobileReadOnlySession {}
-extension FalconReadOnlySession: MobileReadOnlySession {}
-extension VescReadOnlySession: MobileReadOnlySession {}
+extension AeroBenignControlSession: MobileTelemetrySession {}
+extension FalconBenignControlSession: MobileTelemetrySession {}
+extension VescReadOnlySession: MobileTelemetrySession {}
 
-private extension MobileReadOnlySession {
+private extension MobileTelemetrySession {
     func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
@@ -5065,15 +5224,6 @@ public enum CoreBluetoothSession: Sendable {
     case electricUnicycle(ElectricUnicycleSession)
     case vescOnewheel(VescOnewheelSession)
 
-    fileprivate var preferredServiceUuid: CBUUID {
-        switch self {
-        case .electricUnicycle:
-            BluetoothUuid.bluetooth16(0xffe0).coreBluetoothUuid
-        case .vescOnewheel:
-            BluetoothUuid.vescNordicUartService.coreBluetoothUuid
-        }
-    }
-
     public static func electricUnicycle(
         model: ElectricUnicycleModel,
         deviceIdentity: String? = nil
@@ -5112,21 +5262,30 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.settingsCapabilities
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var headlightState: LightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.headlightState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
             session.currentSnapshot
         case .vescOnewheel(let session):
             session.currentSnapshot
-        }
-    }
-
-    fileprivate var lightCommandStatus: LightCommandStatus? {
-        switch self {
-        case .electricUnicycle(let session):
-            session.lightCommandStatus
-        case .vescOnewheel:
-            nil
         }
     }
 
@@ -5185,20 +5344,7 @@ public enum CoreBluetoothSession: Sendable {
         case .electricUnicycle(let session):
             try session.perform(command, at: monotonicMilliseconds)
         case .vescOnewheel(let session):
-            try session.step(.tick, at: monotonicMilliseconds)
-                + session.perform(command, at: monotonicMilliseconds)
-        }
-    }
-
-    fileprivate func lifecycle(
-        _ kind: MobileSessionInputKindDto,
-        at monotonicMilliseconds: MonotonicMilliseconds
-    ) throws -> [SessionAction] {
-        switch self {
-        case .electricUnicycle(let session):
-            try session.step(kind, at: monotonicMilliseconds)
-        case .vescOnewheel(let session):
-            try session.step(kind, at: monotonicMilliseconds)
+            try session.perform(command, at: monotonicMilliseconds)
         }
     }
 }
@@ -5207,7 +5353,6 @@ public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
     case linkUp(at: MonotonicMilliseconds)
     case notification(bytes: Data, channel: BluetoothUuid, at: MonotonicMilliseconds)
     case command(DeviceCommand, at: MonotonicMilliseconds)
-    case tick(at: MonotonicMilliseconds)
     case linkDown(at: MonotonicMilliseconds)
 }
 
@@ -5258,8 +5403,12 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.clearChargeEstimateProfile()
     }
 
-    fileprivate var lightCommandStatus: LightCommandStatus? {
-        session.lightCommandStatus
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        session.settingsCapabilities
+    }
+
+    public var headlightState: LightSettingState? {
+        session.headlightState
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
@@ -5301,21 +5450,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
                 captureContext: captureContext
             )
 
-        case .tick(let monotonicMilliseconds):
-            let actions = try session.lifecycle(.tick, at: monotonicMilliseconds)
-            return CoreBluetoothSessionStep(
-                operations: actions.flatMap(planner.plan(action:)),
-                snapshot: session.currentSnapshot,
-                actions: actions,
-                captureContext: captureContext
-            )
-
-        case .linkDown(let monotonicMilliseconds):
-            let actions = try session.lifecycle(.linkDown, at: monotonicMilliseconds)
+        case .linkDown:
             return CoreBluetoothSessionStep(
                 operations: [.disconnect],
                 snapshot: session.currentSnapshot,
-                actions: actions,
                 captureContext: captureContext
             )
         }
@@ -5325,21 +5463,7 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 public protocol CoreBluetoothOperationSink: AnyObject {
     func subscribe(channel: BluetoothUuid)
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data)
-    func canSubmitWithoutResponse() -> Bool
     func disconnect()
-    func peripheralIsReadyToSendWithoutResponse()
-    func clearPendingWithoutResponseWrites()
-}
-
-public extension CoreBluetoothOperationSink {
-    /// Reports whether a no-response write can be submitted immediately.
-    func canSubmitWithoutResponse() -> Bool { true }
-
-    /// Flushes writes retained while CoreBluetooth reported a full no-response queue.
-    func peripheralIsReadyToSendWithoutResponse() {}
-
-    /// Discards writes retained for a disconnected connection generation.
-    func clearPendingWithoutResponseWrites() {}
 }
 
 public struct CoreBluetoothOperationExecutor {
@@ -5411,11 +5535,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private let maximumRetryAttempts: Int
     private let retryDelay: DispatchTimeInterval
     private let monotonicClock: MonotonicClock
-    private let pollsVesc: Bool
     private var recorded: [CoreBluetoothLiveRecord] = []
     private var pendingRetry: DispatchWorkItem?
-    private var deadlineTimer: DispatchSourceTimer?
-    private var linkGeneration: UInt64 = 0
     private var retryGeneration: UInt64 = 0
     private var retryAttempts = 0
     private var receivedRealtimeTelemetrySinceLinkUp = false
@@ -5477,20 +5598,18 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         self.maximumRetryAttempts = max(0, maximumRetryAttempts)
         self.retryDelay = retryDelay
         self.monotonicClock = monotonicClock
-        if case .vescOnewheel = session {
-            self.pollsVesc = true
-        } else {
-            self.pollsVesc = false
-        }
     }
 
     public var records: [CoreBluetoothLiveRecord] {
         recorded
     }
 
-    deinit {
-        deadlineTimer?.cancel()
-        pendingRetry?.cancel()
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        runner.settingsCapabilities
+    }
+
+    public var headlightState: LightSettingState? {
+        runner.headlightState
     }
 
     /// Configures the Rust-owned charge estimate profile for this connection.
@@ -5503,13 +5622,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         runner.clearChargeEstimateProfile()
     }
 
-    var lightCommandStatus: LightCommandStatus? {
-        runner.lightCommandStatus
-    }
-
     @discardableResult
     public func handleLinkUp(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        cancelDeadlineTimer()
         cancelPendingRetry()
         receivedRealtimeTelemetrySinceLinkUp = false
         retryAttempts = 0
@@ -5524,7 +5638,8 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         let subscriptions = step.operations.filter { operation in
             if case .subscribe = operation { true } else { false }
         }
-        executeAndRecord(subscriptions + writes)
+        executeAndRecord(writes + subscriptions)
+        scheduleRetryIfNeeded()
         return step
     }
 
@@ -5564,7 +5679,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         ))
         receivedRealtimeTelemetrySinceLinkUp =
             receivedRealtimeTelemetrySinceLinkUp
-            || step.actions.contains { $0.vescRealtimeTelemetry }
+            || step.snapshot?.pitch != nil
+            || step.snapshot?.roll != nil
+            || step.snapshot?.footpad != nil
         if receivedRealtimeTelemetrySinceLinkUp {
             cancelPendingRetry()
         }
@@ -5574,9 +5691,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     @discardableResult
     public func handleLinkDown(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
-        cancelDeadlineTimer()
         cancelPendingRetry()
-        retainedSink.clearPendingWithoutResponseWrites()
         pendingOperationsAfterSubscription.removeAll()
         waitingForSubscriptionChannel = nil
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
@@ -5597,47 +5712,12 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         guard waitingForSubscriptionChannel == channel else { return }
         waitingForSubscriptionChannel = nil
         guard error == nil, isNotifying else {
-            cancelDeadlineTimer()
-            cancelPendingRetry()
             pendingOperationsAfterSubscription.removeAll()
             return
         }
         let pending = pendingOperationsAfterSubscription
         pendingOperationsAfterSubscription.removeAll()
         executeAndRecord(pending)
-        startDeadlineTimer()
-        scheduleRetryIfNeeded()
-    }
-
-    private func startDeadlineTimer() {
-        cancelDeadlineTimer()
-        guard pollsVesc else { return }
-        let generation = linkGeneration
-        let timer = DispatchSource.makeTimerSource(queue: executionQueue ?? DispatchQueue.main)
-        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
-        timer.setEventHandler { [weak self] in
-            guard let self, self.linkGeneration == generation else { return }
-            guard self.retainedSink.canSubmitWithoutResponse() else { return }
-            do {
-                let step = try self.runner.handle(.tick(at: self.monotonicClock.now()))
-                self.executeAndRecord(step.operations)
-            } catch {
-                self.cancelDeadlineTimer()
-            }
-        }
-        deadlineTimer = timer
-        timer.resume()
-    }
-
-    private func cancelDeadlineTimer() {
-        linkGeneration &+= 1
-        deadlineTimer?.cancel()
-        deadlineTimer = nil
-    }
-
-    /// Forwards CoreBluetooth's ready-to-send callback to the operation sink.
-    public func handlePeripheralIsReadyToSendWithoutResponse() {
-        retainedSink.peripheralIsReadyToSendWithoutResponse()
     }
 
     private func executeAndRecord(_ operations: [CoreBluetoothPlannedOperation]) {
@@ -5741,18 +5821,15 @@ public struct CoreBluetoothCaptureContext: Equatable, Hashable, Sendable {
 
 public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
     public let serviceUuids: [BluetoothUuid]
-    public let requiresKnownRideModel: Bool
 
-    public init(serviceUuids: [BluetoothUuid], requiresKnownRideModel: Bool = true) {
+    public init(serviceUuids: [BluetoothUuid]) {
         self.serviceUuids = serviceUuids
-        self.requiresKnownRideModel = requiresKnownRideModel
     }
 
     public static let aeroFalcon = CoreBluetoothScanPolicy(serviceUuids: [
         .bluetooth16(0xffe0),
         .bluetooth16(0xfff0),
     ])
-
 }
 
 public enum CoreBluetoothCharacteristicProperty: Equatable, Hashable, Sendable {
@@ -5815,10 +5892,7 @@ public struct CoreBluetoothCentralCoordinator: Equatable, Hashable, Sendable {
     }
 
     public func handleDiscovered(_ advertisement: CoreBluetoothAdvertisement) -> CoreBluetoothCentralAction? {
-        guard scanPolicy.matches(advertisement) else {
-            return nil
-        }
-        guard !scanPolicy.requiresKnownRideModel || advertisement.modelHint != .unknown else {
+        guard scanPolicy.matches(advertisement), advertisement.modelHint != .unknown else {
             return nil
         }
         return .connect(peripheralIdentifier: advertisement.peripheralIdentifier)
@@ -6044,10 +6118,7 @@ public extension CoreBluetoothLiveSessionOwner {
             session: session,
             advertisement: advertisement,
             writeLimit: TransportWriteLimitBytes(peripheral.withoutResponseWriteLimit),
-            operationSink: CoreBluetoothPeripheralOperationSink(
-                peripheral: peripheral,
-                preferredServiceUuid: session.preferredServiceUuid
-            )
+            operationSink: CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
         )
     }
 }
@@ -6077,61 +6148,23 @@ private extension CoreBluetoothCharacteristicProperty {
 
 public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationSink {
     private let peripheral: CBPeripheral
-    private let preferredServiceUuid: CBUUID?
-    private var pendingWithoutResponseWrites: [(CBCharacteristic, Data)] = []
-    private static let maximumPendingWrites = 64
 
-    public init(peripheral: CBPeripheral, preferredServiceUuid: CBUUID? = nil) {
+    public init(peripheral: CBPeripheral) {
         self.peripheral = peripheral
-        self.preferredServiceUuid = preferredServiceUuid
     }
 
     public func subscribe(channel: BluetoothUuid) {
-        guard let characteristic = peripheral.characteristic(
-            for: channel,
-            preferredServiceUuid: preferredServiceUuid
-        ) else {
-            return
-        }
-        guard characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) else {
+        guard let characteristic = peripheral.characteristic(for: channel) else {
             return
         }
         peripheral.setNotifyValue(true, for: characteristic)
     }
 
     public func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
-        guard let characteristic = peripheral.characteristic(
-            for: channel,
-            preferredServiceUuid: preferredServiceUuid
-        ) else {
-            return
-        }
-        guard characteristic.properties.contains(.writeWithoutResponse) else {
-            return
-        }
-        guard peripheral.canSendWriteWithoutResponse else {
-            if pendingWithoutResponseWrites.count >= Self.maximumPendingWrites {
-                pendingWithoutResponseWrites.removeFirst()
-            }
-            pendingWithoutResponseWrites.append((characteristic, bytes))
+        guard let characteristic = peripheral.characteristic(for: channel) else {
             return
         }
         peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
-    }
-
-    public func canSubmitWithoutResponse() -> Bool {
-        peripheral.canSendWriteWithoutResponse
-    }
-
-    public func peripheralIsReadyToSendWithoutResponse() {
-        while peripheral.canSendWriteWithoutResponse, !pendingWithoutResponseWrites.isEmpty {
-            let (characteristic, bytes) = pendingWithoutResponseWrites.removeFirst()
-            peripheral.writeValue(bytes, for: characteristic, type: .withoutResponse)
-        }
-    }
-
-    public func clearPendingWithoutResponseWrites() {
-        pendingWithoutResponseWrites.removeAll()
     }
 
     public func disconnect() {
@@ -6140,15 +6173,10 @@ public final class CoreBluetoothPeripheralOperationSink: CoreBluetoothOperationS
 }
 
 private extension CBPeripheral {
-    func characteristic(
-        for channel: BluetoothUuid,
-        preferredServiceUuid: CBUUID? = nil
-    ) -> CBCharacteristic? {
+    func characteristic(for channel: BluetoothUuid) -> CBCharacteristic? {
         let uuid = channel.coreBluetoothUuid
-        guard let services else { return nil }
-        return services.lazy.filter { service in
-            preferredServiceUuid == nil || service.uuid == preferredServiceUuid
-        }
+        return services?
+            .lazy
             .compactMap { $0.characteristics }
             .joined()
             .first { $0.uuid == uuid }
