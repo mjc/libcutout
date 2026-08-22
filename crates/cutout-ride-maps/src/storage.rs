@@ -1699,7 +1699,7 @@ fn transition_ride(
     let current = state_from_db(&state)?;
     let next = current.apply(event)?;
     connection.execute(
-        "UPDATE rides SET state = ?2, updated_at_ms = created_at_ms WHERE id = ?1",
+        "UPDATE rides SET state = ?2 WHERE id = ?1",
         params![ride_id.uuid().to_string(), state_to_db(next)],
     )?;
     Ok(next)
@@ -1811,8 +1811,12 @@ fn insert_location(
     )?;
     connection.execute(
         "UPDATE rides SET point_count = point_count + 1, distance_mm = distance_mm + ?2,
-         updated_at_ms = created_at_ms WHERE id = ?1",
-        params![ride_id.uuid().to_string(), distance_millimetres],
+         updated_at_ms = MAX(updated_at_ms, ?3) WHERE id = ?1",
+        params![
+            ride_id.uuid().to_string(),
+            distance_millimetres,
+            sample.wall_clock_unix_milliseconds()
+        ],
     )?;
     Ok(())
 }

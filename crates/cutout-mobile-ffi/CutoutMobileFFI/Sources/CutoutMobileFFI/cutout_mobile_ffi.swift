@@ -14720,9 +14720,9 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case AlreadyOpenForDifferentPath
     /**
-     * The supplied ride identifier is not a Rust-created UUID.
+     * A supplied ride or trail identifier is not a Rust-created UUID.
      */
-    case InvalidRideIdentifier
+    case InvalidIdentifier
     /**
      * The database schema is newer than this build supports.
      */
@@ -14786,7 +14786,7 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
 
         case 1: return .InvalidPath
         case 2: return .AlreadyOpenForDifferentPath
-        case 3: return .InvalidRideIdentifier
+        case 3: return .InvalidIdentifier
         case 4: return .UnsupportedSchemaVersion
         case 5: return .InvalidCoordinate
         case 6: return .NotFound
@@ -14815,7 +14815,7 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(2))
 
 
-        case .InvalidRideIdentifier:
+        case .InvalidIdentifier:
             writeInt(&buf, Int32(3))
 
 

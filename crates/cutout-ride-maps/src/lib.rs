@@ -171,7 +171,7 @@ mod tests {
         assert!(first.capabilities().unwrap().sqlite_version().major() >= 3);
 
         let ride = first
-            .create_ride(RideSource::Live, 1_700_000_000_000)
+            .create_ride(RideSource::Live, 1_600_000_000_000)
             .unwrap();
         first.transition(ride, RideEvent::Start).unwrap();
         let sample = LocationSample::new(
@@ -185,6 +185,15 @@ mod tests {
             first.append_location(ride, sample).unwrap(),
             LocationAdmission::Accepted
         );
+        let export_path = std::env::temp_dir().join(format!(
+            "cutout-ride-maps-timestamp-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        first.export_ride_json(ride, &export_path).unwrap();
+        let export = std::fs::read_to_string(&export_path).unwrap();
+        assert!(export.contains("\"created_at_ms\":1600000000000"));
+        assert!(export.contains("\"updated_at_ms\":1700000000000"));
+        let _ = std::fs::remove_file(export_path);
         assert_eq!(
             first.append_location(ride, sample).unwrap(),
             LocationAdmission::Duplicate

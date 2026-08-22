@@ -18,16 +18,23 @@ public struct DevicePickerSelectionStore {
 
     public var platformIdentifier: String? {
         if let database {
-            if let persisted = try? database.selectedDevice() {
-                return persisted
-            }
             if let legacy = defaults.string(forKey: Self.key) {
-                try? database.saveSelectedDevice(
+                if legacy.isEmpty {
+                    if (try? database.clearSelectedDevice()) != nil {
+                        defaults.removeObject(forKey: Self.key)
+                    }
+                    return nil
+                }
+                if (try? database.saveSelectedDevice(
                     platformIdentifier: legacy,
                     updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
-                )
-                defaults.removeObject(forKey: Self.key)
+                )) != nil {
+                    defaults.removeObject(forKey: Self.key)
+                }
                 return legacy
+            }
+            if let persisted = try? database.selectedDevice() {
+                return persisted
             }
             return nil
         }
@@ -43,6 +50,8 @@ public struct DevicePickerSelectionStore {
                 updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
             )) != nil {
                 defaults.removeObject(forKey: Self.key)
+            } else {
+                defaults.set(trimmed, forKey: Self.key)
             }
             return
         }
@@ -51,8 +60,11 @@ public struct DevicePickerSelectionStore {
 
     public func clear() {
         if let database {
-            try? database.clearSelectedDevice()
-            defaults.removeObject(forKey: Self.key)
+            if (try? database.clearSelectedDevice()) != nil {
+                defaults.removeObject(forKey: Self.key)
+            } else {
+                defaults.set("", forKey: Self.key)
+            }
             return
         }
         defaults.removeObject(forKey: Self.key)

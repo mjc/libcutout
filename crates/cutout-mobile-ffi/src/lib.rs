@@ -3151,9 +3151,9 @@ pub enum MobileRideDatabaseError {
     /// A different database is already owned by this process.
     #[error("a different database is already open")]
     AlreadyOpenForDifferentPath,
-    /// The supplied ride identifier is not a Rust-created UUID.
-    #[error("invalid ride identifier")]
-    InvalidRideIdentifier,
+    /// A supplied ride or trail identifier is not a Rust-created UUID.
+    #[error("invalid ride or trail identifier")]
+    InvalidIdentifier,
     /// The database schema is newer than this build supports.
     #[error("unsupported database schema")]
     UnsupportedSchemaVersion,
@@ -3213,7 +3213,7 @@ fn parse_mobile_ride_id(
 ) -> Result<ride_maps::RideId, MobileRideDatabaseError> {
     Uuid::parse_str(&id.value)
         .map(ride_maps::RideId::from_uuid)
-        .map_err(|_| MobileRideDatabaseError::InvalidRideIdentifier)
+        .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
 }
 
 fn parse_mobile_trail_id(
@@ -3221,7 +3221,7 @@ fn parse_mobile_trail_id(
 ) -> Result<ride_maps::TrailId, MobileRideDatabaseError> {
     Uuid::parse_str(&id.value)
         .map(ride_maps::TrailId::from_uuid)
-        .map_err(|_| MobileRideDatabaseError::InvalidRideIdentifier)
+        .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
 }
 
 fn mobile_map_coordinate(

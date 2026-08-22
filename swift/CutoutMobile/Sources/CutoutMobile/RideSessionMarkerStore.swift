@@ -20,13 +20,20 @@ public struct RideSessionMarkerStore: @unchecked Sendable {
 
     public var marker: Data? {
         if let database {
+            if let legacy = defaults.data(forKey: Self.key) {
+                if legacy.isEmpty {
+                    if (try? database.clearRideSessionMarker()) != nil {
+                        defaults.removeObject(forKey: Self.key)
+                    }
+                    return nil
+                }
+                if (try? database.saveRideSessionMarker(marker: legacy)) != nil {
+                    defaults.removeObject(forKey: Self.key)
+                }
+                return legacy
+            }
             if let persisted = try? database.rideSessionMarker() {
                 return persisted
-            }
-            if let legacy = defaults.data(forKey: Self.key) {
-                try? database.saveRideSessionMarker(marker: legacy)
-                defaults.removeObject(forKey: Self.key)
-                return legacy
             }
             return nil
         }
@@ -41,6 +48,8 @@ public struct RideSessionMarkerStore: @unchecked Sendable {
         if let database {
             if (try? database.saveRideSessionMarker(marker: marker)) != nil {
                 defaults.removeObject(forKey: Self.key)
+            } else {
+                defaults.set(marker, forKey: Self.key)
             }
             return
         }
@@ -49,8 +58,11 @@ public struct RideSessionMarkerStore: @unchecked Sendable {
 
     public func clear() {
         if let database {
-            try? database.clearRideSessionMarker()
-            defaults.removeObject(forKey: Self.key)
+            if (try? database.clearRideSessionMarker()) != nil {
+                defaults.removeObject(forKey: Self.key)
+            } else {
+                defaults.set(Data(), forKey: Self.key)
+            }
             return
         }
         defaults.removeObject(forKey: Self.key)
