@@ -1500,8 +1500,9 @@ fn import_pevcap(
         });
     }
 
-    let ride_id = create_ride(connection, RideSource::PevcapImport, created_at_ms)?;
-    transition_ride(connection, ride_id, RideEvent::Import)?;
+    let transaction = connection.transaction()?;
+    let ride_id = create_ride(&transaction, RideSource::PevcapImport, created_at_ms)?;
+    transition_ride(&transaction, ride_id, RideEvent::Import)?;
     let file = File::open(&path)?;
     let mut reader = PevcapReader::new(BufReader::new(file), encoding)
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
@@ -1532,11 +1533,13 @@ fn import_pevcap(
             horizontal_accuracy_millimetres,
             LocationSource::PevcapImport,
         );
-        if append_location(connection, ride_id, sample)? == LocationAdmission::Accepted {
+        if append_location_in_transaction(&transaction, ride_id, sample)?
+            == LocationAdmission::Accepted
+        {
             location_count = location_count.saturating_add(1);
         }
     }
-    connection.execute(
+    transaction.execute(
         "INSERT INTO pevcap_imports
             (artifact_digest, artifact_path, ride_id, record_count, location_count, imported_at_ms)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1549,6 +1552,7 @@ fn import_pevcap(
             created_at_ms,
         ],
     )?;
+    transaction.commit()?;
     Ok(PevcapImportReceipt {
         ride_id,
         artifact_digest: digest,
@@ -1706,6 +1710,17 @@ fn append_location(
     ride_id: RideId,
     sample: LocationSample,
 ) -> Result<LocationAdmission, StorageError> {
+    let transaction = connection.transaction()?;
+    let admission = append_location_in_transaction(&transaction, ride_id, sample)?;
+    transaction.commit()?;
+    Ok(admission)
+}
+
+fn append_location_in_transaction(
+    connection: &Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+) -> Result<LocationAdmission, StorageError> {
     let state: String = connection
         .query_row(
             "SELECT state FROM rides WHERE id = ?1",
@@ -1773,14 +1788,13 @@ fn append_location(
 }
 
 fn insert_location(
-    connection: &mut Connection,
+    connection: &Connection,
     ride_id: RideId,
     sequence: i64,
     sample: LocationSample,
     distance_millimetres: u64,
 ) -> Result<(), StorageError> {
-    let transaction = connection.transaction()?;
-    transaction.execute(
+    connection.execute(
         "INSERT INTO ride_points
             (ride_id, sequence, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1795,12 +1809,11 @@ fn insert_location(
             source_to_db(sample.source()),
         ],
     )?;
-    transaction.execute(
+    connection.execute(
         "UPDATE rides SET point_count = point_count + 1, distance_mm = distance_mm + ?2,
          updated_at_ms = created_at_ms WHERE id = ?1",
         params![ride_id.uuid().to_string(), distance_millimetres],
     )?;
-    transaction.commit()?;
     Ok(())
 }
 
