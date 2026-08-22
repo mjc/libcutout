@@ -27,7 +27,7 @@ Regenerate the package after changing Rust code that ships in the app (the
 output remains ignored):
 
 ```console
-nix develop -c ./scripts/regenerate-swift-ffi.sh
+nix develop -c cargo cutout swift-ffi
 ```
 
 Cargo Swift 0.11 cannot spell the Xcode 27 platform enum in its generated
@@ -100,7 +100,7 @@ Useful app commands are:
 ```console
 nix develop -c ./scripts/smoke-ios-app-metadata.sh
 nix develop -c ./scripts/run-ios-app-on-mac.sh
-CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c ./scripts/run-ios-app-on-phone.sh
+CUTOUT_IOS_DEVELOPMENT_TEAM=YOURTEAM nix develop -c cargo cutout ios deploy
 ```
 
 The Mac command builds the iPhone app for Apple Silicon Mac and opens it. The

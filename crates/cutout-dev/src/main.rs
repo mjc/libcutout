@@ -38,11 +38,7 @@ fn ensure_swift_ffi(root: &Path) -> Result<()> {
         .unwrap_or_default()
         .trim()
         .to_owned();
-    if current == expected
-        && required_ffi_inputs(&package)
-            .iter()
-            .all(|path| path.is_file())
-    {
+    if current == expected && verify_swift_ffi(&package).is_ok() {
         return Ok(());
     }
 
@@ -52,6 +48,7 @@ fn ensure_swift_ffi(root: &Path) -> Result<()> {
         package.join(".cutout-source.sha256"),
         format!("{expected}\n"),
     )?;
+    verify_swift_ffi(&package)?;
     Ok(())
 }
 
@@ -125,7 +122,10 @@ fn deploy_ios(root: &Path) -> Result<()> {
     );
     ensure_swift_ffi(root)?;
 
-    let device = env::var("CUTOUT_IOS_DEVICE_UDID").unwrap_or(discover_ios_device(root)?);
+    let device = match env::var("CUTOUT_IOS_DEVICE_UDID") {
+        Ok(device) => device,
+        Err(_) => discover_ios_device(root)?,
+    };
     let derived_data = root.join("target/xcode-device-signed");
     let product = derived_data.join("Build/Products/Debug-iphoneos/CutoutApp.app");
     if product.exists() {
@@ -282,13 +282,55 @@ fn collect_files(root: &Path, relative: &Path, files: &mut BTreeSet<PathBuf>) ->
     Ok(())
 }
 
-fn required_ffi_inputs(package: &Path) -> [PathBuf; 4] {
+fn required_ffi_inputs(package: &Path) -> Vec<PathBuf> {
     [
         package.join("Package.swift"),
         package.join("Sources/CutoutMobileFFI/cutout_mobile_ffi.swift"),
         package.join("cutout_mobile_ffiFFI.xcframework/Info.plist"),
         package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64/libcutout_mobile_ffi.a"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64/Headers/cutout_mobile_ffiFFI/module.modulemap"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/libcutout_mobile_ffi.a"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
+        package.join("cutout_mobile_ffiFFI.xcframework/ios-arm64_x86_64-simulator/Headers/cutout_mobile_ffiFFI/module.modulemap"),
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/libcutout_mobile_ffi.a"),
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/cutout_mobile_ffiFFI.h"),
+        package.join("cutout_mobile_ffiFFI.xcframework/macos-arm64_x86_64/Headers/cutout_mobile_ffiFFI/module.modulemap"),
     ]
+    .into()
+}
+
+fn verify_swift_ffi(package: &Path) -> Result<()> {
+    for input in required_ffi_inputs(package) {
+        ensure!(
+            input.is_file(),
+            "missing Swift FFI build input: {}",
+            input.display()
+        );
+    }
+    if cfg!(target_os = "macos") {
+        for (slice, architectures) in [
+            ("ios-arm64", &["arm64"][..]),
+            ("ios-arm64_x86_64-simulator", &["arm64", "x86_64"][..]),
+            ("macos-arm64_x86_64", &["arm64", "x86_64"][..]),
+        ] {
+            let library = package.join(format!(
+                "cutout_mobile_ffiFFI.xcframework/{slice}/libcutout_mobile_ffi.a"
+            ));
+            for architecture in architectures {
+                let status = Command::new("/usr/bin/lipo")
+                    .arg(&library)
+                    .args(["-verify_arch", architecture])
+                    .status()?;
+                ensure!(
+                    status.success(),
+                    "{} lacks {architecture}",
+                    library.display()
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn trim_generated_sources(package: &Path) -> Result<()> {
