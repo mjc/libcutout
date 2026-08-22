@@ -25,77 +25,14 @@ enum HeadlightCommandStatus: Equatable {
     case sentWithoutConfirmation
 }
 
-private enum HeadlightSettingState: Equatable {
-    case idle
-    case failed(LightState?)
-    case refused(LightState?)
-    case waitingForConfirmation(
-        requested: LightState,
-        current: LightState?,
-        sentAt: MonotonicMilliseconds
-    )
-    case confirmed(LightState)
-    case sentWithoutConfirmation(LightState)
-
-    var isOn: Bool {
-        lightState == .on
-    }
-
-    var lightState: LightState? {
-        switch self {
-        case .idle:
-            nil
-        case let .failed(state):
-            state
-        case let .refused(state):
-            state
-        case let .waitingForConfirmation(_, state, _):
-            state
-        case let .confirmed(state), let .sentWithoutConfirmation(state):
-            state
-        }
-    }
-
-    var isWaitingForConfirmation: Bool {
-        if case .waitingForConfirmation = self {
-            return true
-        }
-        return false
-    }
-
-    var pendingRequestedState: LightState? {
-        guard case let .waitingForConfirmation(requested, _, _) = self else {
-            return nil
-        }
-        return requested
-    }
-
-    func commandStatus(
-        at now: MonotonicMilliseconds,
-        timeout: MonotonicMilliseconds
-    ) -> HeadlightCommandStatus {
-        switch self {
-        case .idle:
-            .idle
-        case .failed:
-            .failed
-        case .refused:
-            .refused
-        case let .waitingForConfirmation(_, _, sentAt):
-            now.elapsed(since: sentAt).rawValue >= timeout.rawValue
-                ? .timedOut
-                : .waitingForConfirmation
-        case .confirmed:
-            .confirmed
-        case .sentWithoutConfirmation:
-            .sentWithoutConfirmation
-        }
-    }
-}
-
 private extension LightSettingState {
     var lightState: LightState? {
-        current ?? requested
+        switch kind {
+        case .pending:
+            current
+        case .unknown, .current, .confirmed, .refused, .timedOut, .failed:
+            current
+        }
     }
 
     func commandStatus(
@@ -228,21 +165,18 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     var headlightOn: Bool {
-        (rustHeadlightState?.lightState ?? headlightState.lightState) == .on
+        effectiveHeadlightState?.lightState == .on
     }
 
     var headlightCommandStatus: HeadlightCommandStatus {
-        if let rustHeadlightState {
-            return rustHeadlightState.commandStatus(
+        if let effectiveHeadlightState {
+            return effectiveHeadlightState.commandStatus(
                 for: core.electricUnicycleModel,
                 at: core.now(),
                 timeout: Self.headlightConfirmationTimeout
             )
         }
-        return headlightState.commandStatus(
-            at: core.now(),
-            timeout: Self.headlightConfirmationTimeout
-        )
+        return .idle
     }
 
     var headlightControlAvailable: Bool {
@@ -401,7 +335,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
-    private var headlightState = HeadlightSettingState.idle
+    private var fallbackHeadlightState: LightSettingState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -427,10 +361,6 @@ final class CutoutAppModel {
 
     private var headlightWriteSupport: SettingWriteSupport? {
         core.settingsCapabilities?.headlight
-    }
-
-    private var rustHeadlightState: LightSettingState? {
-        core.headlightState
     }
 
     convenience init() {
@@ -1379,7 +1309,10 @@ final class CutoutAppModel {
     func setHeadlight(_ enabled: Bool) -> LightCommandResult {
         let state = enabled ? LightState.on : .off
         guard headlightWriteSupport == .supported else {
-            headlightState = .failed(headlightState.lightState)
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: effectiveHeadlightState?.lightState
+            )
             return .failed
         }
         return applyHeadlightSubmission(core.setLights(state), for: state)
@@ -1394,40 +1327,68 @@ final class CutoutAppModel {
             recordHeadlightCommand(state, sentAt: core.now())
             return .accepted
         case let .refused(reason):
-            headlightState = .refused(headlightState.lightState)
+            fallbackHeadlightState = LightSettingState(
+                kind: .refused,
+                current: effectiveHeadlightState?.lightState,
+                requested: state,
+                source: .userRequest,
+                refusalReason: reason
+            )
             return .refused(reason)
         case .failed:
-            headlightState = .failed(headlightState.lightState)
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: effectiveHeadlightState?.lightState,
+                requested: state,
+                source: .userRequest
+            )
             return .failed
         }
     }
 
     private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
-        if core.electricUnicycleModel == .falcon {
-            headlightState = .waitingForConfirmation(
-                requested: state,
-                current: headlightState.lightState,
-                sentAt: sentAt
-            )
-        } else {
-            headlightState = .sentWithoutConfirmation(state)
-        }
+        guard core.headlightState == nil else { return }
+        fallbackHeadlightState = LightSettingState(
+            kind: .pending,
+            current: fallbackHeadlightState?.lightState,
+            requested: state,
+            source: .userRequest,
+            submittedAt: sentAt
+        )
     }
-    private func handleSettingsReadback(_ readback: SettingsReadback?) {
-        settingsReadback = readback
-        guard core.electricUnicycleModel == .falcon else { return }
+    private var effectiveHeadlightState: LightSettingState? {
+        core.headlightState ?? fallbackHeadlightState
+    }
+
+    private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
+        guard core.headlightState == nil else { return }
+>>>>>>> 07dcc406 (Use shared light setting state in Tune)
         guard let reportedState = readback?.eucGarageSettings.lightState else {
-            if headlightState.isWaitingForConfirmation {
-                headlightState = .failed(headlightState.lightState)
+            if fallbackHeadlightState?.kind == .pending {
+                fallbackHeadlightState = LightSettingState(
+                    kind: .failed,
+                    current: fallbackHeadlightState?.lightState
+                )
             }
             return
         }
-        if let requestedState = headlightState.pendingRequestedState,
+        if let requestedState = fallbackHeadlightState?.requested,
+           fallbackHeadlightState?.kind == .pending,
            requestedState != reportedState
         {
             return
         }
-        headlightState = .confirmed(reportedState)
+        fallbackHeadlightState = LightSettingState(
+            kind: .confirmed,
+            current: reportedState,
+            source: .liveReadback,
+            confirmedAt: core.now()
+        )
+    }
+
+    private func handleSettingsReadback(_ readback: SettingsReadback?) {
+        settingsReadback = readback
+        updateFallbackHeadlightState(from: readback)
     }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
@@ -1698,7 +1659,7 @@ final class CutoutAppModel {
     }
 
     private func resetHeadlightState() {
-        headlightState = .idle
+        fallbackHeadlightState = nil
     }
 
     func forgetSavedDevice() {
