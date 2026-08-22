@@ -407,6 +407,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .eucPack(.bmsOverview)), [.eucPack(.bmsOverview)])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .vescDebug), [.vescDebug])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .capture), [.capture])
+        XCTAssertEqual(CutoutAppRoute.navigationPath(for: .camera), [.camera])
     }
 
     func testNavigationPathNestsRideMapDetailUnderMap() {
@@ -475,6 +476,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertTrue(CutoutAppRoute.devicePicker.availableNavigationTabs(for: nil).isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.availableNavigationTabs(for: nil).isEmpty)
+        XCTAssertTrue(CutoutAppRoute.camera.availableNavigationTabs(for: nil).isEmpty)
     }
 
     func testDisconnectedMapKeepsMapCommandAvailable() {

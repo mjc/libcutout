@@ -43,6 +43,7 @@ hex = "0.4"
 hex-literal = "1"
 mio = "1"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "termina"] }
+retina = { version = "=0.4.13", default-features = false }
 proptest = "1"
 rusqlite = { version = "0.37", default-features = false, features = ["bundled", "hooks", "limits"] }
 sha2 = "0.10"

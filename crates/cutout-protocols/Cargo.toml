@@ -26,6 +26,7 @@ vesc.workspace = true
 [dev-dependencies]
 hex-literal.workspace = true
 proptest.workspace = true
+retina.workspace = true
 
 [build-dependencies]
 serde.workspace = true

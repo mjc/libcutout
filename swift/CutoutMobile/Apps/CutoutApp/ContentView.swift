@@ -140,7 +140,7 @@ struct ContentView: View {
                     }
                 }
                 .accessibilityFocused($focusedRoute, equals: destination)
-        } else if destination == .capture {
+        } else if destination == .capture || destination == .camera {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -220,12 +220,19 @@ struct ContentView: View {
             if usesConnectedShell {
                 PevAppShell(
                     sectionTitle: appSectionTitle(for: destination),
-                    disconnect: disconnectAndReturnToPicker
+                    disconnect: disconnectAndReturnToPicker,
+                    openCamera: { navigate(to: .camera) }
                 ) {
                     routedContent(for: destination)
                 }
             } else {
+                PevAppShell(
+                    sectionTitle: appSectionTitle(for: destination),
+                    disconnect: disconnectAndReturnToPicker,
+                    openCamera: { navigate(to: .camera) }
+                ) {
                 routedContent(for: destination)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -256,6 +263,8 @@ struct ContentView: View {
             VescDebugRouteView(model: model)
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
+        case .camera:
+            CameraRouteContainerView()
         case .rideMap:
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history
@@ -291,6 +300,8 @@ struct ContentView: View {
             localizedAppText("navigation.section.debug")
         case .capture:
             localizedAppText("navigation.section.capture")
+        case .camera:
+            localizedAppText("navigation.section.camera")
         case .rideMap, .rideMapDetail:
             localizedAppText("navigation.section.map")
         case .devicePicker:

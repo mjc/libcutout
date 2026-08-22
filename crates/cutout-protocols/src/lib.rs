@@ -63,6 +63,15 @@ pub use melk_lighting::{
     MELK_FRAME_LEN, MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL,
     MelkGattEvidence, MelkLightingProfile, MelkPatternDescriptor, MelkWritePolicy,
 };
+mod novatek;
+pub use novatek::{
+    NOVATEK_MAX_MEDIA_RESPONSE_BYTES, NOVATEK_MAX_RESPONSE_BYTES, NovatekCommandStatus,
+    NovatekConfiguration, NovatekFirmwareVersion, NovatekHttpOrigin, NovatekLiveViewLinks,
+    NovatekMediaEntry, NovatekMediaList, NovatekOriginError, NovatekReadCommand,
+    NovatekReadOnlySnapshot, NovatekResponseError, NovatekRtspUri, NovatekStoragePresence,
+    parse_configuration_response, parse_firmware_response, parse_live_view_response,
+    parse_media_list_response, parse_read_only_snapshot, parse_storage_response,
+};
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
 mod parser;
