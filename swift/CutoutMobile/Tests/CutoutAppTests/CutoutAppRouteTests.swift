@@ -75,8 +75,8 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.lights.title"), "Lights")
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
         XCTAssertEqual(
-            localizedAppText("settings.headlight.unavailable"),
-            "Headlight changes are unavailable until this device's control is verified."
+            localizedAppText("settings.headlight.help"),
+            "Changes are sent immediately to the connected wheel."
         )
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),

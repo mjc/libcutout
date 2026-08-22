@@ -1248,6 +1248,31 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertNil(step.snapshot?.speed)
     }
 
+    func testEucLiveOwnerWritesTypedHeadlightCommands() throws {
+        let cases: [(ElectricUnicycleModel, LightState, Data)] = [
+            (.aero, .on, Data("SetLightON".utf8)),
+            (.falcon, .off, Data("E".utf8)),
+        ]
+
+        for (model, state, expectedBytes) in cases {
+            let sink = RecordingOperationSink()
+            let owner = CoreBluetoothLiveSessionOwner(
+                session: try .electricUnicycle(model: model),
+                advertisement: CoreBluetoothAdvertisement(
+                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
+                    localName: model.displayName,
+                    advertisedServiceUuids: []
+                ),
+                writeLimit: TransportWriteLimitBytes(20),
+                operationSink: sink
+            )
+
+            _ = try owner.handleCommand(.setLights(state), at: MonotonicMilliseconds(1))
+
+            XCTAssertEqual(sink.writes, [expectedBytes])
+        }
+    }
+
     func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(

@@ -28,6 +28,7 @@ protocol CutoutSessionDriving: AnyObject {
     func annotateCapture(key: String, value: String)
     func flushCapture() async -> Bool
     func disconnectAndScan()
+    func setLights(_ state: LightState) -> Bool
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

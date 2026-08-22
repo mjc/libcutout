@@ -236,7 +236,7 @@ struct ContentView: View {
                 navigate: navigate
             )
         case .eucTune:
-            EucTuneRouteView()
+            EucTuneRouteView(model: model)
         case .vescRide:
             VescRideRouteView(model: model)
         case .vescDebug:

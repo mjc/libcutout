@@ -93,6 +93,22 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHeadlightToggleSendsOnlyWhileConnected() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.setHeadlight(true))
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(driver.headlightStates, [])
+
+        driver.headlightWriteSucceeds = true
+
+        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(driver.headlightStates, [.on])
+    }
+
+    @MainActor
     func testAvailableBmsRouteDoesNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -2590,6 +2606,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
+    private(set) var headlightStates = [LightState]()
+    var headlightWriteSucceeds = false
 
     init(
         rows: [DevicePickerRow],
@@ -2656,6 +2674,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
+    func setLights(_ state: LightState) -> Bool {
+        guard headlightWriteSucceeds else { return false }
+        headlightStates.append(state)
+        return true
+    }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(0)
     }

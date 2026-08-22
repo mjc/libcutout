@@ -648,6 +648,20 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { disconnectAndScanOnBleQueue() }
     }
 
+    @discardableResult
+    public func setLights(_ state: LightState) -> Bool {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return false }
+            do {
+                try liveOwner.handleCommand(.setLights(state), at: clock.now())
+                return true
+            } catch {
+                record("set_lights_error=\(error)")
+                return false
+            }
+        }
+    }
+
     /// Configures the Rust-owned charge estimate profile for the active or next connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         onBleQueue {
