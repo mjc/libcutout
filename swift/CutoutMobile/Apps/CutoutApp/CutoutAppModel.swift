@@ -208,7 +208,7 @@ final class CutoutAppModel {
     }
 
     var headlightControlAvailable: Bool {
-        core.settingsCapabilities?.headlight == .supported
+        headlightWriteSupport == .supported
     }
 
     var selectedRideTitle: String? {
@@ -324,7 +324,7 @@ final class CutoutAppModel {
 
     var headlightStatusText: String {
         if !headlightControlAvailable, headlightCommandStatus == .idle {
-            if core.settingsCapabilities?.headlight == .unverified {
+            if headlightWriteSupport == .unverified {
                 return localizedAppText("settings.headlight.unverified")
             }
             return localizedAppText("settings.headlight.unavailable")
@@ -382,6 +382,10 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
     private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
+
+    private var headlightWriteSupport: SettingWriteSupport? {
+        core.settingsCapabilities?.headlight
+    }
 
     convenience init() {
         #if DEBUG
@@ -1328,7 +1332,7 @@ final class CutoutAppModel {
     @discardableResult
     func setHeadlight(_ enabled: Bool) -> LightCommandResult {
         let state = enabled ? LightState.on : .off
-        guard core.settingsCapabilities?.headlight == .supported else {
+        guard headlightWriteSupport == .supported else {
             headlightState = .failed(headlightState.lightState)
             return .failed
         }
