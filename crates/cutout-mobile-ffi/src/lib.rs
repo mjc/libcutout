@@ -61,11 +61,11 @@ use cutout_core::{
     WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
-    ConcreteFalconProfileDto, ConcreteFalconReadOnlySession, ConcreteSessionErrorDto,
-    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    ConcreteAeroReadOnlySession, ConcreteFalconProfileDto, ConcreteFalconReadOnlySession,
+    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
+    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
+    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
     StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
     VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
     VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
@@ -7828,6 +7828,9 @@ pub struct MobileEucGarageSettingsDto {
 
     /// Pedal mode setting, when understood.
     pub pedal_mode: Option<MobilePedalModeDto>,
+
+    /// Light state reported by wheel telemetry, when the protocol provides it.
+    pub light_state: Option<MobileLightStateDto>,
 }
 
 /// Read-only pedal mode projection for mobile UI.
@@ -9062,6 +9065,7 @@ impl MobileEucGarageSettingsDto {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                light_state: None,
             };
         }
 
@@ -9082,6 +9086,13 @@ impl MobileEucGarageSettingsDto {
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
                 .map(|raw_mode| MobilePedalModeDto {
                     raw_mode: Some(raw_mode),
+                }),
+            light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .and_then(|value| match value & 0x03 {
+                    0 => Some(MobileLightStateDto::Off),
+                    1 => Some(MobileLightStateDto::On),
+                    _ => None,
                 }),
         }
     }
@@ -12230,6 +12241,7 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                light_state: None,
             }
         );
     }
@@ -12323,6 +12335,7 @@ mod tests {
                 pedal_mode: Some(MobilePedalModeDto {
                     raw_mode: Some(1_920),
                 }),
+                light_state: None,
             }
         );
     }
@@ -12355,7 +12368,46 @@ mod tests {
                     verification: MobileVerificationStatusDto::SourceVerified,
                 }),
                 pedal_mode: None,
+                light_state: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_begode_light_state() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_LED_AND_LIGHT_MODE, 0x0301),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(mobile.euc_garage.light_state, Some(MobileLightStateDto::On));
+
+        let strobe = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_LED_AND_LIGHT_MODE, 0x0302),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        assert_eq!(
+            MobileSettingsReadbackDto::from(strobe)
+                .euc_garage
+                .light_state,
+            None
         );
     }
 
@@ -12392,6 +12444,7 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                light_state: None,
             }
         );
         assert_eq!(mobile.entries.len(), 3);
@@ -12410,6 +12463,7 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    light_state: None,
                 },
                 entries: Vec::new(),
             }
@@ -12443,6 +12497,7 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                light_state: None,
             }
         );
     }
@@ -12606,6 +12661,7 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    light_state: None,
                 },
                 entries: vec![MobileSettingsEntryDto {
                     field: MobileRawFieldValueDto {
