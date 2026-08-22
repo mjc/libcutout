@@ -61,7 +61,7 @@ pub use identification::{
 mod melk_lighting;
 pub use melk_lighting::{
     MELK_FRAME_LEN, MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL,
-    MelkLightingProfile,
+    MelkGattEvidence, MelkLightingProfile, MelkWritePolicy,
 };
 mod probe;
 pub use probe::{AeroProbe, FalconProbe, ProtocolProbe};
