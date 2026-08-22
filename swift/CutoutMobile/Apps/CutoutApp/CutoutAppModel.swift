@@ -211,6 +211,10 @@ final class CutoutAppModel {
         headlightWriteSupport == .supported
     }
 
+    var settingsCapabilities: EucSettingsCapabilities? {
+        core.settingsCapabilities
+    }
+
     var selectedRideTitle: String? {
         connectionState.selection?.title
     }
