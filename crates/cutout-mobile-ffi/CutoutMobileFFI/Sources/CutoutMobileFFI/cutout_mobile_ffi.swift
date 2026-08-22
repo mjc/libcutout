@@ -8376,6 +8376,10 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable {
      */
     public var segmentCount: UInt64
     /**
+     * Stable PEV identity captured at ride start, if one was available.
+     */
+    public var candidateVehicle: String?
+    /**
      * Stable PEV identity after automatic association, if confirmed.
      */
     public var associatedVehicle: String?
@@ -8396,12 +8400,16 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable {
          * Number of contiguous route segments.
          */segmentCount: UInt64,
         /**
+         * Stable PEV identity captured at ride start, if one was available.
+         */candidateVehicle: String?,
+        /**
          * Stable PEV identity after automatic association, if confirmed.
          */associatedVehicle: String?) {
         self.rideId = rideId
         self.state = state
         self.summary = summary
         self.segmentCount = segmentCount
+        self.candidateVehicle = candidateVehicle
         self.associatedVehicle = associatedVehicle
     }
 
@@ -8425,6 +8433,7 @@ public struct FfiConverterTypeMobileRideMapSnapshotDto: FfiConverterRustBuffer {
                 state: FfiConverterTypeMobileRideMapStateDto.read(from: &buf),
                 summary: FfiConverterTypeMobileRideMapSummaryDto.read(from: &buf),
                 segmentCount: FfiConverterUInt64.read(from: &buf),
+                candidateVehicle: FfiConverterOptionString.read(from: &buf),
                 associatedVehicle: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -8434,6 +8443,7 @@ public struct FfiConverterTypeMobileRideMapSnapshotDto: FfiConverterRustBuffer {
         FfiConverterTypeMobileRideMapStateDto.write(value.state, into: &buf)
         FfiConverterTypeMobileRideMapSummaryDto.write(value.summary, into: &buf)
         FfiConverterUInt64.write(value.segmentCount, into: &buf)
+        FfiConverterOptionString.write(value.candidateVehicle, into: &buf)
         FfiConverterOptionString.write(value.associatedVehicle, into: &buf)
     }
 }

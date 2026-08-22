@@ -3027,6 +3027,8 @@ pub struct MobileRideMapSnapshotDto {
     pub summary: MobileRideMapSummaryDto,
     /// Number of contiguous route segments.
     pub segment_count: u64,
+    /// Stable PEV identity captured at ride start, if one was available.
+    pub candidate_vehicle: Option<String>,
     /// Stable PEV identity after automatic association, if confirmed.
     pub associated_vehicle: Option<String>,
 }
@@ -3490,6 +3492,9 @@ impl MobileRideMapState {
             state: ride.state().into(),
             summary: ride.summary().into(),
             segment_count: u64::try_from(ride.segments().len()).ok()?,
+            candidate_vehicle: ride
+                .candidate_vehicle()
+                .map(|identity| identity.as_str().to_owned()),
             associated_vehicle: ride
                 .associated_vehicle()
                 .map(|identity| identity.as_str().to_owned()),
@@ -11342,6 +11347,14 @@ mod ride_map_tests {
                 .start_gps_only(100, Some("pev-recovered".to_owned()))
                 .expect("ride should start")
                 .ride_id;
+            assert_eq!(
+                state
+                    .current_snapshot()
+                    .expect("started snapshot should exist")
+                    .candidate_vehicle
+                    .as_deref(),
+                Some("pev-recovered")
+            );
             state
                 .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
                 .expect("location should be admitted");
