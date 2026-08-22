@@ -105,6 +105,21 @@ pub enum VehicleIdentityError {
     TooLong,
 }
 
+/// Result of comparing a confirmed PEV connection with a ride's snapshotted candidate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VehicleAssociationOutcome {
+    /// The candidate matched and the ride is now associated.
+    Associated,
+    /// The ride already has a confirmed association.
+    AlreadyAssociated,
+    /// The ride started without a candidate identity.
+    CandidateMissing,
+    /// The confirmed identity differs from the snapshotted candidate.
+    IdentityMismatch,
+    /// The ride is paused, stopped, saved, or discarded in a state that cannot change.
+    RideNotOpen,
+}
+
 /// A location observation received from the platform.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocationSample {
@@ -598,22 +613,30 @@ impl RideRecording {
     }
 
     /// Associates the snapshotted PEV after a confirmed connection event.
-    ///
-    /// Returns `true` only for the first matching association while the ride is open.
     pub fn observe_vehicle_connection(
         &mut self,
         identity: &VehicleIdentity,
         at: MonotonicMilliseconds,
-    ) -> bool {
-        if !matches!(self.state, RideState::Recording | RideState::Paused)
-            || self.associated_vehicle.is_some()
-            || self.candidate_vehicle.as_ref() != Some(identity)
-        {
-            return false;
+    ) -> VehicleAssociationOutcome {
+        if !matches!(self.state, RideState::Recording | RideState::Paused) {
+            return VehicleAssociationOutcome::RideNotOpen;
+        }
+        if let Some(associated) = self.associated_vehicle.as_ref() {
+            return if associated == identity {
+                VehicleAssociationOutcome::AlreadyAssociated
+            } else {
+                VehicleAssociationOutcome::IdentityMismatch
+            };
+        }
+        let Some(candidate) = self.candidate_vehicle.as_ref() else {
+            return VehicleAssociationOutcome::CandidateMissing;
+        };
+        if candidate != identity {
+            return VehicleAssociationOutcome::IdentityMismatch;
         }
         self.associated_vehicle = Some(identity.clone());
         self.associated_at = Some(at);
-        true
+        VehicleAssociationOutcome::Associated
     }
 
     /// Attempts to admit one platform observation into the current route.
@@ -745,7 +768,7 @@ mod tests {
     use super::{
         LocationAdmissionPolicy, LocationSample, MonotonicMilliseconds, RideMapDatabase,
         RideMapDatabaseOpenError, RideMapStore, RideRecording, RideState, RoutePointDecision,
-        VehicleIdentity,
+        VehicleAssociationOutcome, VehicleIdentity,
     };
 
     fn sample(at: u64, latitude: f64, longitude: f64) -> LocationSample {
@@ -833,11 +856,47 @@ mod tests {
         let ride_id = ride.ride_id();
 
         assert!(ride.associated_vehicle().is_none());
-        assert!(ride.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(200)));
+        assert_eq!(
+            ride.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(200)),
+            VehicleAssociationOutcome::Associated
+        );
         assert_eq!(ride.ride_id(), ride_id);
         assert_eq!(ride.associated_vehicle(), Some(&vehicle));
         assert_eq!(ride.associated_at(), Some(MonotonicMilliseconds::new(200)));
-        assert!(!ride.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(201)));
+        assert_eq!(
+            ride.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(201)),
+            VehicleAssociationOutcome::AlreadyAssociated
+        );
+    }
+
+    #[test]
+    fn vehicle_association_reports_typed_refusals() {
+        let vehicle = VehicleIdentity::new("pev-1").expect("fixture identity");
+        let mut no_candidate = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            None,
+            LocationAdmissionPolicy::default(),
+        );
+        assert_eq!(
+            no_candidate.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(200)),
+            VehicleAssociationOutcome::CandidateMissing
+        );
+
+        let different = VehicleIdentity::new("pev-2").expect("fixture identity");
+        let mut mismatched = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            Some(vehicle.clone()),
+            LocationAdmissionPolicy::default(),
+        );
+        assert_eq!(
+            mismatched.observe_vehicle_connection(&different, MonotonicMilliseconds::new(200)),
+            VehicleAssociationOutcome::IdentityMismatch
+        );
+        assert!(mismatched.stop());
+        assert_eq!(
+            mismatched.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(300)),
+            VehicleAssociationOutcome::RideNotOpen
+        );
     }
 
     #[test]
@@ -966,7 +1025,10 @@ mod tests {
         assert_eq!(recovered.state(), RideState::Recording);
         assert_eq!(recovered.summary().point_count(), 1);
         assert_eq!(recovered.associated_vehicle(), None);
-        assert!(recovered.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(300)));
+        assert_eq!(
+            recovered.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(300)),
+            VehicleAssociationOutcome::Associated
+        );
         assert_eq!(recovered.points_after(0, 10).points().len(), 1);
         std::fs::remove_file(path).expect("fixture database is removable");
     }

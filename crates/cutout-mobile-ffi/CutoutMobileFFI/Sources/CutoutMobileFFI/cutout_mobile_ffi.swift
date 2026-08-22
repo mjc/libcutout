@@ -2452,7 +2452,7 @@ public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
      *
      * Returns [`MobileRideMapError`] when the identity is invalid or no ride exists.
      */
-    func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws  -> Bool
+    func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapAssociationDto
 
     /**
      * Pauses the active ride without changing its identity.
@@ -2664,8 +2664,8 @@ open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeD
      *
      * Returns [`MobileRideMapError`] when the identity is invalid or no ride exists.
      */
-open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
+open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapAssociationDto  {
+    return try  FfiConverterTypeMobileRideMapAssociationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_observe_vehicle_connection(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(platformIdentifier),
@@ -14280,6 +14280,112 @@ public func FfiConverterTypeMobileReadbackAvailabilityDto_lower(_ value: MobileR
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Typed result of a confirmed PEV connection being compared with a ride candidate.
+ */
+
+public enum MobileRideMapAssociationDto: Equatable, Hashable {
+
+    /**
+     * The candidate matched and the ride is now associated.
+     */
+    case associated
+    /**
+     * The ride already has a confirmed association.
+     */
+    case alreadyAssociated
+    /**
+     * The ride started without a candidate identity.
+     */
+    case candidateMissing
+    /**
+     * The confirmed identity differs from the candidate.
+     */
+    case identityMismatch
+    /**
+     * The ride is no longer open to association.
+     */
+    case rideNotOpen
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapAssociationDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapAssociationDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapAssociationDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapAssociationDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .associated
+
+        case 2: return .alreadyAssociated
+
+        case 3: return .candidateMissing
+
+        case 4: return .identityMismatch
+
+        case 5: return .rideNotOpen
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapAssociationDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .associated:
+            writeInt(&buf, Int32(1))
+
+
+        case .alreadyAssociated:
+            writeInt(&buf, Int32(2))
+
+
+        case .candidateMissing:
+            writeInt(&buf, Int32(3))
+
+
+        case .identityMismatch:
+            writeInt(&buf, Int32(4))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapAssociationDto_lift(_ buf: RustBuffer) throws -> MobileRideMapAssociationDto {
+    return try FfiConverterTypeMobileRideMapAssociationDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapAssociationDto_lower(_ value: MobileRideMapAssociationDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapAssociationDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Result of submitting one location to the Rust ride-map domain.
  */
 
@@ -19819,7 +19925,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_ingest_location() != 56362) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_observe_vehicle_connection() != 61302) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_observe_vehicle_connection() != 34666) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_pause() != 63074) {

@@ -83,10 +83,13 @@ final class CutoutAppModelTests: XCTestCase {
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 5
         )
-        XCTAssertTrue(try driver.rideMapStateHandle.observeVehicleConnection(
-            platformIdentifier: "pev-restored",
-            atMs: 200
-        ))
+        XCTAssertEqual(
+            try driver.rideMapStateHandle.observeVehicleConnection(
+                platformIdentifier: "pev-restored",
+                atMs: 200
+            ),
+            .associated
+        )
 
         let model = CutoutAppModel(core: driver)
 

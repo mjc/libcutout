@@ -2092,10 +2092,10 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
-        if let associated = try? rideMapState.observeVehicleConnection(
+        if let association = try? rideMapState.observeVehicleConnection(
             platformIdentifier: peripheral.identifier.uuidString,
             atMs: clock.now().rawValue
-        ), associated {
+        ), association == .associated {
             publishRideMapSnapshot()
         }
         setPhase(.discoveringServices)

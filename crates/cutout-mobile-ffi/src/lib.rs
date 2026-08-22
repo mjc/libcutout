@@ -78,6 +78,7 @@ use cutout_ride_maps::{
     LocationSample as RideMapLocationSample, MonotonicMilliseconds as RideMapMonotonicMilliseconds,
     RideMapDatabase, RideRecording as RideMapRecording, RideState as RideMapState,
     RoutePointDecision as RideMapPointDecision, StoredRideSummary as RideMapStoredSummary,
+    VehicleAssociationOutcome as RideMapAssociationOutcome,
     VehicleIdentity as RideMapVehicleIdentity,
 };
 use uuid::Uuid;
@@ -2986,6 +2987,21 @@ pub enum MobileRideMapIgnoredReasonDto {
     Discarded,
 }
 
+/// Typed result of a confirmed PEV connection being compared with a ride candidate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapAssociationDto {
+    /// The candidate matched and the ride is now associated.
+    Associated,
+    /// The ride already has a confirmed association.
+    AlreadyAssociated,
+    /// The ride started without a candidate identity.
+    CandidateMissing,
+    /// The confirmed identity differs from the candidate.
+    IdentityMismatch,
+    /// The ride is no longer open to association.
+    RideNotOpen,
+}
+
 /// One validated point returned by the Rust ride-map domain.
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapPointDto {
@@ -3332,21 +3348,21 @@ impl MobileRideMapState {
         &self,
         platform_identifier: String,
         at_ms: u64,
-    ) -> Result<bool, MobileRideMapError> {
+    ) -> Result<MobileRideMapAssociationDto, MobileRideMapError> {
         let identity = RideMapVehicleIdentity::new(platform_identifier)
             .map_err(|_| MobileRideMapError::InvalidVehicleIdentity)?;
         let mut ride = self.lock_ride();
         let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
         let previous = current.clone();
-        let associated =
+        let outcome =
             current.observe_vehicle_connection(&identity, RideMapMonotonicMilliseconds::new(at_ms));
-        if associated {
+        if outcome == RideMapAssociationOutcome::Associated {
             if let Err(error) = self.persist_metadata(current) {
                 *current = previous;
                 return Err(error);
             }
         }
-        Ok(associated)
+        Ok(outcome.into())
     }
 
     /// Returns the current snapshot, or `None` before the first ride starts.
@@ -3532,6 +3548,18 @@ impl From<RideMapIgnoredReason> for MobileRideMapIgnoredReasonDto {
             RideMapIgnoredReason::Stopped => Self::Stopped,
             RideMapIgnoredReason::Saved => Self::Saved,
             RideMapIgnoredReason::Discarded => Self::Discarded,
+        }
+    }
+}
+
+impl From<RideMapAssociationOutcome> for MobileRideMapAssociationDto {
+    fn from(outcome: RideMapAssociationOutcome) -> Self {
+        match outcome {
+            RideMapAssociationOutcome::Associated => Self::Associated,
+            RideMapAssociationOutcome::AlreadyAssociated => Self::AlreadyAssociated,
+            RideMapAssociationOutcome::CandidateMissing => Self::CandidateMissing,
+            RideMapAssociationOutcome::IdentityMismatch => Self::IdentityMismatch,
+            RideMapAssociationOutcome::RideNotOpen => Self::RideNotOpen,
         }
     }
 }
@@ -11254,8 +11282,8 @@ mod tests {
 #[cfg(test)]
 mod ride_map_tests {
     use super::{
-        MobileRideMapDecisionDto, MobileRideMapRejectionDto, MobileRideMapState,
-        MobileRideMapStateDto,
+        MobileRideMapAssociationDto, MobileRideMapDecisionDto, MobileRideMapRejectionDto,
+        MobileRideMapState, MobileRideMapStateDto,
     };
 
     #[test]
@@ -11276,7 +11304,15 @@ mod ride_map_tests {
         ));
         assert_eq!(
             state.observe_vehicle_connection("last-pev".to_owned(), 200),
-            Ok(true)
+            Ok(MobileRideMapAssociationDto::Associated)
+        );
+        assert_eq!(
+            state.observe_vehicle_connection("different-pev".to_owned(), 201),
+            Ok(MobileRideMapAssociationDto::IdentityMismatch)
+        );
+        assert_eq!(
+            state.observe_vehicle_connection("last-pev".to_owned(), 202),
+            Ok(MobileRideMapAssociationDto::AlreadyAssociated)
         );
         assert_eq!(state.current_snapshot().expect("snapshot").ride_id, ride_id);
         assert_eq!(
@@ -11358,9 +11394,12 @@ mod ride_map_tests {
             state
                 .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
                 .expect("location should be admitted");
-            assert!(state
-                .observe_vehicle_connection("pev-recovered".to_owned(), 200)
-                .expect("vehicle association should persist"));
+            assert_eq!(
+                state
+                    .observe_vehicle_connection("pev-recovered".to_owned(), 200)
+                    .expect("vehicle association should persist"),
+                MobileRideMapAssociationDto::Associated
+            );
         }
 
         let recovered = MobileRideMapState::new_with_database(path.to_string_lossy().into_owned())
@@ -11371,7 +11410,10 @@ mod ride_map_tests {
         assert_eq!(snapshot.ride_id, ride_id);
         assert_eq!(snapshot.state, MobileRideMapStateDto::Recording);
         assert_eq!(snapshot.summary.point_count, 1);
-        assert_eq!(snapshot.associated_vehicle.as_deref(), Some("pev-recovered"));
+        assert_eq!(
+            snapshot.associated_vehicle.as_deref(),
+            Some("pev-recovered")
+        );
         assert_eq!(
             recovered
                 .points_after(0, 10)
