@@ -123,7 +123,7 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.setHeadlight(true))
-        XCTAssertTrue(model.headlightOn)
+        XCTAssertFalse(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
         XCTAssertEqual(model.headlightControlTitle, "Headlight")
         XCTAssertEqual(model.headlightStatusText, "Waiting for wheel confirmation.")
@@ -143,7 +143,21 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertEqual(model.headlightCommandStatus, .confirmed)
+        XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+
+        XCTAssertTrue(model.setHeadlight(false))
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(
+                entries: [],
+                eucGarageSettings: EucGarageSettingsSnapshot(lightState: .off)
+            )
+        )
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
     }
 
     @MainActor
