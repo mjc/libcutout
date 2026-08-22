@@ -14302,6 +14302,10 @@ public enum MobileRideMapAssociationDto: Equatable, Hashable {
      */
     case identityMismatch
     /**
+     * The association event predates the latest admitted route point.
+     */
+    case timestampOutOfOrder
+    /**
      * The ride is no longer open to association.
      */
     case rideNotOpen
@@ -14334,7 +14338,9 @@ public struct FfiConverterTypeMobileRideMapAssociationDto: FfiConverterRustBuffe
 
         case 4: return .identityMismatch
 
-        case 5: return .rideNotOpen
+        case 5: return .timestampOutOfOrder
+
+        case 6: return .rideNotOpen
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -14360,8 +14366,12 @@ public struct FfiConverterTypeMobileRideMapAssociationDto: FfiConverterRustBuffe
             writeInt(&buf, Int32(4))
 
 
-        case .rideNotOpen:
+        case .timestampOutOfOrder:
             writeInt(&buf, Int32(5))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(6))
 
         }
     }

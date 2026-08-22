@@ -116,6 +116,8 @@ pub enum VehicleAssociationOutcome {
     CandidateMissing,
     /// The confirmed identity differs from the snapshotted candidate.
     IdentityMismatch,
+    /// The association event predates the latest admitted route point.
+    TimestampOutOfOrder,
     /// The ride is paused, stopped, saved, or discarded in a state that cannot change.
     RideNotOpen,
 }
@@ -642,6 +644,12 @@ impl RideRecording {
         if candidate != identity {
             return VehicleAssociationOutcome::IdentityMismatch;
         }
+        if self
+            .last_point
+            .is_some_and(|point| at < point.sample.monotonic_at())
+        {
+            return VehicleAssociationOutcome::TimestampOutOfOrder;
+        }
         self.associated_vehicle = Some(identity.clone());
         self.associated_at = Some(at);
         VehicleAssociationOutcome::Associated
@@ -904,6 +912,17 @@ mod tests {
         assert_eq!(
             mismatched.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(300)),
             VehicleAssociationOutcome::RideNotOpen
+        );
+
+        let mut out_of_order = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            Some(vehicle.clone()),
+            LocationAdmissionPolicy::default(),
+        );
+        out_of_order.append_location(sample(200, 39.7392, -104.9903));
+        assert_eq!(
+            out_of_order.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(199)),
+            VehicleAssociationOutcome::TimestampOutOfOrder
         );
     }
 

@@ -2998,6 +2998,8 @@ pub enum MobileRideMapAssociationDto {
     CandidateMissing,
     /// The confirmed identity differs from the candidate.
     IdentityMismatch,
+    /// The association event predates the latest admitted route point.
+    TimestampOutOfOrder,
     /// The ride is no longer open to association.
     RideNotOpen,
 }
@@ -3559,6 +3561,7 @@ impl From<RideMapAssociationOutcome> for MobileRideMapAssociationDto {
             RideMapAssociationOutcome::AlreadyAssociated => Self::AlreadyAssociated,
             RideMapAssociationOutcome::CandidateMissing => Self::CandidateMissing,
             RideMapAssociationOutcome::IdentityMismatch => Self::IdentityMismatch,
+            RideMapAssociationOutcome::TimestampOutOfOrder => Self::TimestampOutOfOrder,
             RideMapAssociationOutcome::RideNotOpen => Self::RideNotOpen,
         }
     }
@@ -11313,6 +11316,18 @@ mod ride_map_tests {
         assert_eq!(
             state.observe_vehicle_connection("last-pev".to_owned(), 202),
             Ok(MobileRideMapAssociationDto::AlreadyAssociated)
+        );
+
+        let ordered_state = MobileRideMapState::new();
+        ordered_state
+            .start_gps_only(100, Some("ordered-pev".to_owned()))
+            .expect("ordered ride should start");
+        ordered_state
+            .ingest_location(200, 1_700_000_000_200, 39.7392, -104.9903, 5.0)
+            .expect("ordered location should be admitted");
+        assert_eq!(
+            ordered_state.observe_vehicle_connection("ordered-pev".to_owned(), 199),
+            Ok(MobileRideMapAssociationDto::TimestampOutOfOrder)
         );
         assert_eq!(state.current_snapshot().expect("snapshot").ride_id, ride_id);
         assert_eq!(
