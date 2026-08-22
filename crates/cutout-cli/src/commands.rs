@@ -3206,6 +3206,7 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
         CommandKind::SetLights => "set_lights",
+        CommandKind::SetPedalMode => "set_pedal_mode",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }

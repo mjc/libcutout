@@ -10968,7 +10968,9 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
-        CommandKindDto::SetLights | CommandKindDto::SetRawMotorCurrent => None,
+        CommandKindDto::SetLights
+        | CommandKindDto::SetPedalMode
+        | CommandKindDto::SetRawMotorCurrent => None,
     }
 }
 

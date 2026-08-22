@@ -167,6 +167,19 @@ pub struct LinkInfo {
     pub max_write_len: Option<TransportWriteLimit>,
 }
 
+/// Documented pedal stiffness setting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PedalMode {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -194,6 +207,9 @@ pub enum DeviceCommand {
     /// Set the device lights.
     SetLights(LightState),
 
+    /// Set pedal stiffness; this command is stationary-only.
+    SetPedalMode(PedalMode),
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -217,6 +233,7 @@ impl DeviceCommand {
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
+            Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SoundHorn => CommandKind::SoundHorn,
             Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
         }
@@ -275,6 +292,9 @@ pub enum CommandKind {
     /// Set the device lights.
     SetLights,
 
+    /// Set pedal stiffness.
+    SetPedalMode,
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -295,6 +315,7 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
+            Self::SetPedalMode => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }

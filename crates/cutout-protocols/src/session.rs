@@ -1396,6 +1396,7 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
         | CommandKind::SetLights
+        | CommandKind::SetPedalMode
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
     }
