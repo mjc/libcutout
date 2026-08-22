@@ -140,8 +140,7 @@ struct RideMapRouteView: View {
                     .font(.subheadline)
                     Spacer()
                     Button(localizedAppText("ride_map.return_live")) {
-                        mode = .live
-                        recenterOnLatestPoint()
+                        returnToLive()
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("ride-map.return-live")
@@ -338,8 +337,7 @@ struct RideMapRouteView: View {
     private var cameraControls: some View {
         HStack(spacing: 12) {
             Button {
-                followsLatestPoint = true
-                recenterOnLatestPoint()
+                returnToLive()
             } label: {
                 Label(
                     localizedAppText("ride_map.recenter"),
@@ -374,6 +372,12 @@ struct RideMapRouteView: View {
         DispatchQueue.main.async {
             isApplyingCamera = false
         }
+    }
+
+    private func returnToLive() {
+        mode = .live
+        followsLatestPoint = true
+        recenterOnLatestPoint()
     }
 
     private var accessibilityRouteSummary: String {
