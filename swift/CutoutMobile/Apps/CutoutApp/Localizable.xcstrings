@@ -25,6 +25,10 @@
       "comment" : "Explains when the headlight command is sent.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes are sent immediately to the connected wheel." } } }
     },
+    "settings.headlight.failed" : {
+      "comment" : "Shown when the headlight command could not be sent.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight command failed." } } }
+    },
     "settings.headlight.waiting" : {
       "comment" : "Shown while waiting for wheel telemetry to confirm a headlight command.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for wheel confirmation." } } }

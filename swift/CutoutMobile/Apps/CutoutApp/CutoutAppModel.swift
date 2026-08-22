@@ -17,6 +17,7 @@ private enum RideSessionRestorationState {
 
 enum HeadlightCommandStatus: Equatable {
     case idle
+    case failed
     case waitingForConfirmation
     case confirmed
     case sentWithoutConfirmation
@@ -243,6 +244,8 @@ final class CutoutAppModel {
         switch headlightCommandStatus {
         case .idle:
             localizedAppText("settings.headlight.help")
+        case .failed:
+            localizedAppText("settings.headlight.failed")
         case .waitingForConfirmation:
             localizedAppText("settings.headlight.waiting")
         case .confirmed:
@@ -1232,7 +1235,10 @@ final class CutoutAppModel {
     @discardableResult
     func setHeadlight(_ enabled: Bool) -> Bool {
         let state = enabled ? LightState.on : .off
-        guard core.setLights(state) else { return false }
+        guard core.setLights(state) else {
+            headlightCommandStatus = .failed
+            return false
+        }
         recordHeadlightCommand(state)
         return true
     }

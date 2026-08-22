@@ -100,6 +100,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertFalse(model.setHeadlight(true))
         XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
