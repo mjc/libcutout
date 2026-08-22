@@ -2446,6 +2446,20 @@ public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
     func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double) throws  -> MobileRideMapDecisionDto
 
     /**
+     * Records one timestamp from confirmed PEV telemetry.
+     *
+     * The timestamp is Rust-owned evidence only; it never backfills points
+     * admitted before the observation.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::NoActiveRide`] when no ride exists, or
+     * [`MobileRideMapError::Storage`] if the accepted timestamp cannot be
+     * checkpointed.
+     */
+    func observeTelemetry(atMs: UInt64) throws  -> MobileRideMapTelemetryObservationDto
+
+    /**
      * Reports a confirmed PEV connection for automatic GPS-only association.
      *
      * # Errors
@@ -2653,6 +2667,27 @@ open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeD
         FfiConverterDouble.lower(latitudeDegrees),
         FfiConverterDouble.lower(longitudeDegrees),
         FfiConverterDouble.lower(horizontalAccuracyMeters),$0
+    )
+})
+}
+
+    /**
+     * Records one timestamp from confirmed PEV telemetry.
+     *
+     * The timestamp is Rust-owned evidence only; it never backfills points
+     * admitted before the observation.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::NoActiveRide`] when no ride exists, or
+     * [`MobileRideMapError::Storage`] if the accepted timestamp cannot be
+     * checkpointed.
+     */
+open func observeTelemetry(atMs: UInt64)throws  -> MobileRideMapTelemetryObservationDto  {
+    return try  FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_observe_telemetry(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
     )
 })
 }
@@ -8268,6 +8303,10 @@ public struct MobileRideMapPointDto: Equatable, Hashable {
      * Validated horizontal accuracy in meters.
      */
     public var horizontalAccuracyMeters: Double
+    /**
+     * Rust-owned telemetry provenance for this point.
+     */
+    public var telemetryState: MobileRideMapTelemetryStateDto
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -8292,7 +8331,10 @@ public struct MobileRideMapPointDto: Equatable, Hashable {
          */monotonicMs: UInt64,
         /**
          * Validated horizontal accuracy in meters.
-         */horizontalAccuracyMeters: Double) {
+         */horizontalAccuracyMeters: Double,
+        /**
+         * Rust-owned telemetry provenance for this point.
+         */telemetryState: MobileRideMapTelemetryStateDto) {
         self.sequence = sequence
         self.segmentId = segmentId
         self.latitudeDegrees = latitudeDegrees
@@ -8300,6 +8342,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable {
         self.wallClockUnixMs = wallClockUnixMs
         self.monotonicMs = monotonicMs
         self.horizontalAccuracyMeters = horizontalAccuracyMeters
+        self.telemetryState = telemetryState
     }
 
 
@@ -8324,7 +8367,8 @@ public struct FfiConverterTypeMobileRideMapPointDto: FfiConverterRustBuffer {
                 longitudeDegrees: FfiConverterDouble.read(from: &buf),
                 wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
                 monotonicMs: FfiConverterUInt64.read(from: &buf),
-                horizontalAccuracyMeters: FfiConverterDouble.read(from: &buf)
+                horizontalAccuracyMeters: FfiConverterDouble.read(from: &buf),
+                telemetryState: FfiConverterTypeMobileRideMapTelemetryStateDto.read(from: &buf)
         )
     }
 
@@ -8336,6 +8380,7 @@ public struct FfiConverterTypeMobileRideMapPointDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)
         FfiConverterUInt64.write(value.monotonicMs, into: &buf)
         FfiConverterDouble.write(value.horizontalAccuracyMeters, into: &buf)
+        FfiConverterTypeMobileRideMapTelemetryStateDto.write(value.telemetryState, into: &buf)
     }
 }
 
@@ -14931,6 +14976,208 @@ public func FfiConverterTypeMobileRideMapStateDto_lower(_ value: MobileRideMapSt
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Result of submitting one confirmed telemetry timestamp to a ride.
+ */
+
+public enum MobileRideMapTelemetryObservationDto: Equatable, Hashable {
+
+    /**
+     * The timestamp became the newest telemetry evidence.
+     */
+    case observed
+    /**
+     * The timestamp was already the newest evidence.
+     */
+    case alreadyObserved
+    /**
+     * The ride has not been associated with a PEV.
+     */
+    case notAssociated
+    /**
+     * The timestamp would move evidence backwards.
+     */
+    case timestampOutOfOrder
+    /**
+     * The ride is no longer open to telemetry.
+     */
+    case rideNotOpen
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapTelemetryObservationDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapTelemetryObservationDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapTelemetryObservationDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapTelemetryObservationDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .observed
+
+        case 2: return .alreadyObserved
+
+        case 3: return .notAssociated
+
+        case 4: return .timestampOutOfOrder
+
+        case 5: return .rideNotOpen
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapTelemetryObservationDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .observed:
+            writeInt(&buf, Int32(1))
+
+
+        case .alreadyObserved:
+            writeInt(&buf, Int32(2))
+
+
+        case .notAssociated:
+            writeInt(&buf, Int32(3))
+
+
+        case .timestampOutOfOrder:
+            writeInt(&buf, Int32(4))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(_ buf: RustBuffer) throws -> MobileRideMapTelemetryObservationDto {
+    return try FfiConverterTypeMobileRideMapTelemetryObservationDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lower(_ value: MobileRideMapTelemetryObservationDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapTelemetryObservationDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Rust-owned telemetry provenance retained on a route point.
+ */
+
+public enum MobileRideMapTelemetryStateDto: Equatable, Hashable {
+
+    /**
+     * The point predates confirmed PEV association.
+     */
+    case gpsOnly
+    /**
+     * The ride was associated, but no usable telemetry was available.
+     */
+    case associatedNoTelemetry
+    /**
+     * A telemetry sample was within the Rust freshness window.
+     */
+    case associatedFresh
+    /**
+     * The newest telemetry sample exceeded the Rust freshness window.
+     */
+    case associatedStale
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapTelemetryStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapTelemetryStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapTelemetryStateDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapTelemetryStateDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .gpsOnly
+
+        case 2: return .associatedNoTelemetry
+
+        case 3: return .associatedFresh
+
+        case 4: return .associatedStale
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapTelemetryStateDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .gpsOnly:
+            writeInt(&buf, Int32(1))
+
+
+        case .associatedNoTelemetry:
+            writeInt(&buf, Int32(2))
+
+
+        case .associatedFresh:
+            writeInt(&buf, Int32(3))
+
+
+        case .associatedStale:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryStateDto_lift(_ buf: RustBuffer) throws -> MobileRideMapTelemetryStateDto {
+    return try FfiConverterTypeMobileRideMapTelemetryStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryStateDto_lower(_ value: MobileRideMapTelemetryStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapTelemetryStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Whether the app UI is currently foregrounded.
  */
 
@@ -19933,6 +20180,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_ingest_location() != 56362) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_observe_telemetry() != 34939) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_observe_vehicle_connection() != 34666) {

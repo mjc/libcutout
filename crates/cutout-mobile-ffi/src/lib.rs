@@ -77,7 +77,9 @@ use cutout_ride_maps::{
     LocationIgnoredReason as RideMapIgnoredReason, LocationRejection as RideMapRejection,
     LocationSample as RideMapLocationSample, MonotonicMilliseconds as RideMapMonotonicMilliseconds,
     RideMapDatabase, RideRecording as RideMapRecording, RideState as RideMapState,
-    RoutePointDecision as RideMapPointDecision, StoredRideSummary as RideMapStoredSummary,
+    RoutePointDecision as RideMapPointDecision, RouteTelemetryState as RideMapTelemetryState,
+    StoredRideSummary as RideMapStoredSummary,
+    TelemetryObservationOutcome as RideMapTelemetryObservationOutcome,
     VehicleAssociationOutcome as RideMapAssociationOutcome,
     VehicleIdentity as RideMapVehicleIdentity,
 };
@@ -3004,6 +3006,34 @@ pub enum MobileRideMapAssociationDto {
     RideNotOpen,
 }
 
+/// Rust-owned telemetry provenance retained on a route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapTelemetryStateDto {
+    /// The point predates confirmed PEV association.
+    GpsOnly,
+    /// The ride was associated, but no usable telemetry was available.
+    AssociatedNoTelemetry,
+    /// A telemetry sample was within the Rust freshness window.
+    AssociatedFresh,
+    /// The newest telemetry sample exceeded the Rust freshness window.
+    AssociatedStale,
+}
+
+/// Result of submitting one confirmed telemetry timestamp to a ride.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapTelemetryObservationDto {
+    /// The timestamp became the newest telemetry evidence.
+    Observed,
+    /// The timestamp was already the newest evidence.
+    AlreadyObserved,
+    /// The ride has not been associated with a PEV.
+    NotAssociated,
+    /// The timestamp would move evidence backwards.
+    TimestampOutOfOrder,
+    /// The ride is no longer open to telemetry.
+    RideNotOpen,
+}
+
 /// One validated point returned by the Rust ride-map domain.
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapPointDto {
@@ -3021,6 +3051,8 @@ pub struct MobileRideMapPointDto {
     pub monotonic_ms: u64,
     /// Validated horizontal accuracy in meters.
     pub horizontal_accuracy_meters: f64,
+    /// Rust-owned telemetry provenance for this point.
+    pub telemetry_state: MobileRideMapTelemetryStateDto,
 }
 
 /// Cumulative Rust-owned ride summary.
@@ -3367,6 +3399,33 @@ impl MobileRideMapState {
         Ok(outcome.into())
     }
 
+    /// Records one timestamp from confirmed PEV telemetry.
+    ///
+    /// The timestamp is Rust-owned evidence only; it never backfills points
+    /// admitted before the observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::NoActiveRide`] when no ride exists, or
+    /// [`MobileRideMapError::Storage`] if the accepted timestamp cannot be
+    /// checkpointed.
+    pub fn observe_telemetry(
+        &self,
+        at_ms: u64,
+    ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapError> {
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        let outcome = current.observe_telemetry(RideMapMonotonicMilliseconds::new(at_ms));
+        if outcome == RideMapTelemetryObservationOutcome::Observed {
+            if let Err(error) = self.persist_metadata(current) {
+                *current = previous;
+                return Err(error);
+            }
+        }
+        Ok(outcome.into())
+    }
+
     /// Returns the current snapshot, or `None` before the first ride starts.
     #[must_use]
     pub fn current_snapshot(&self) -> Option<MobileRideMapSnapshotDto> {
@@ -3567,6 +3626,29 @@ impl From<RideMapAssociationOutcome> for MobileRideMapAssociationDto {
     }
 }
 
+impl From<RideMapTelemetryState> for MobileRideMapTelemetryStateDto {
+    fn from(state: RideMapTelemetryState) -> Self {
+        match state {
+            RideMapTelemetryState::GpsOnly => Self::GpsOnly,
+            RideMapTelemetryState::AssociatedNoTelemetry => Self::AssociatedNoTelemetry,
+            RideMapTelemetryState::AssociatedFresh => Self::AssociatedFresh,
+            RideMapTelemetryState::AssociatedStale => Self::AssociatedStale,
+        }
+    }
+}
+
+impl From<RideMapTelemetryObservationOutcome> for MobileRideMapTelemetryObservationDto {
+    fn from(outcome: RideMapTelemetryObservationOutcome) -> Self {
+        match outcome {
+            RideMapTelemetryObservationOutcome::Observed => Self::Observed,
+            RideMapTelemetryObservationOutcome::AlreadyObserved => Self::AlreadyObserved,
+            RideMapTelemetryObservationOutcome::NotAssociated => Self::NotAssociated,
+            RideMapTelemetryObservationOutcome::TimestampOutOfOrder => Self::TimestampOutOfOrder,
+            RideMapTelemetryObservationOutcome::RideNotOpen => Self::RideNotOpen,
+        }
+    }
+}
+
 impl From<cutout_ride_maps::RoutePoint> for MobileRideMapPointDto {
     fn from(point: cutout_ride_maps::RoutePoint) -> Self {
         let sample = point.sample();
@@ -3578,6 +3660,7 @@ impl From<cutout_ride_maps::RoutePoint> for MobileRideMapPointDto {
             wall_clock_unix_ms: sample.wall_clock_unix_ms(),
             monotonic_ms: sample.monotonic_at().as_milliseconds(),
             horizontal_accuracy_meters: sample.horizontal_accuracy_meters(),
+            telemetry_state: point.telemetry_state().into(),
         }
     }
 }
@@ -11285,8 +11368,9 @@ mod tests {
 #[cfg(test)]
 mod ride_map_tests {
     use super::{
-        MobileRideMapAssociationDto, MobileRideMapDecisionDto, MobileRideMapRejectionDto,
-        MobileRideMapState, MobileRideMapStateDto,
+        MobileRideMapAssociationDto, MobileRideMapDecisionDto, MobileRideMapPointDto,
+        MobileRideMapRejectionDto, MobileRideMapState, MobileRideMapStateDto,
+        MobileRideMapTelemetryObservationDto, MobileRideMapTelemetryStateDto,
     };
 
     #[test]
@@ -11338,6 +11422,61 @@ mod ride_map_tests {
                 .as_deref(),
             Some("last-pev")
         );
+    }
+
+    #[test]
+    fn mobile_ride_map_facade_preserves_telemetry_provenance() {
+        let state = MobileRideMapState::new();
+        state
+            .start_gps_only(100, Some("telemetry-pev".to_owned()))
+            .expect("ride should start");
+        let first = state
+            .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
+            .expect("first location should be admitted");
+        assert!(matches!(
+            first,
+            MobileRideMapDecisionDto::Accepted {
+                point: MobileRideMapPointDto {
+                    telemetry_state: MobileRideMapTelemetryStateDto::GpsOnly,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert_eq!(
+            state.observe_vehicle_connection("telemetry-pev".to_owned(), 200),
+            Ok(MobileRideMapAssociationDto::Associated)
+        );
+        let no_telemetry = state
+            .ingest_location(300, 1_700_000_000_300, 39.7393, -104.9902, 5.0)
+            .expect("associated location should be admitted");
+        assert!(matches!(
+            no_telemetry,
+            MobileRideMapDecisionDto::Accepted {
+                point: MobileRideMapPointDto {
+                    telemetry_state: MobileRideMapTelemetryStateDto::AssociatedNoTelemetry,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert_eq!(
+            state.observe_telemetry(400),
+            Ok(MobileRideMapTelemetryObservationDto::Observed)
+        );
+        let fresh = state
+            .ingest_location(500, 1_700_000_000_500, 39.7394, -104.9901, 5.0)
+            .expect("fresh associated location should be admitted");
+        assert!(matches!(
+            fresh,
+            MobileRideMapDecisionDto::Accepted {
+                point: MobileRideMapPointDto {
+                    telemetry_state: MobileRideMapTelemetryStateDto::AssociatedFresh,
+                    ..
+                },
+                ..
+            }
+        ));
     }
 
     #[test]
