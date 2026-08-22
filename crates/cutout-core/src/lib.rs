@@ -26,6 +26,8 @@ mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod energy_estimate;
 pub use energy_estimate::*;
+mod music;
+pub use music::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
