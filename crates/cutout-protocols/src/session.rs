@@ -3811,7 +3811,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_benign_control_session_writes_typed_light_state() {
+    fn aero_benign_control_session_writes_typed_high_beam_state() {
         let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
@@ -3824,7 +3824,11 @@ mod tests {
             output,
             vec![SessionOutput::Transport(TransportAction::Write {
                 channel: VETERAN_DATA_CHANNEL,
-                bytes: WritePayload::try_from_slice(b"SetLightON").expect("fixture payload fits"),
+                bytes: WritePayload::try_from_slice(&[
+                    0x4c, 0x6b, 0x41, 0x70, 0x0d, 0x01, 0x80, 0x80, 0x01, 0x57, 0xed, 0x3b, 0xd5,
+                    0x4c, 0x64, 0x41, 0x70, 0x0d, 0x01, 0x00, 0x80, 0x01, 0x6f, 0xf8, 0x32, 0xf9,
+                ])
+                .expect("fixture payload fits"),
                 mode: WriteMode::WithoutResponse,
             })]
         );
