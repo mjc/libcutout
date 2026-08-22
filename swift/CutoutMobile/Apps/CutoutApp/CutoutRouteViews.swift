@@ -154,6 +154,31 @@ struct EucPackRouteView: View {
     }
 }
 
+struct EucTuneRouteView: View {
+    let model: CutoutAppModel
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(
+                    localizedAppText("settings.headlight.title"),
+                    isOn: Binding(
+                        get: { model.headlightOn },
+                        set: { model.setHeadlight($0) }
+                    )
+                )
+                .disabled(model.phase != .live)
+                .accessibilityHint(localizedAppText("settings.headlight.help"))
+            } header: {
+                Text(localizedAppText("settings.lights.title"))
+            } footer: {
+                Text(localizedAppText("settings.headlight.help"))
+            }
+        }
+        .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
 struct VescRideRouteView: View {
     let model: CutoutAppModel
 

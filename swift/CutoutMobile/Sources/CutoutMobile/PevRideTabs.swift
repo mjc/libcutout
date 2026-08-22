@@ -1,12 +1,20 @@
 import Foundation
 
 public enum PevRideTabs {
-    public static func eucRideTabs(selected: PevScreenID? = nil) -> [PevScreenTab] {
+    public static func eucRideTabs(
+        selected: PevScreenID? = nil,
+        isTuneSelected: Bool = false
+    ) -> [PevScreenTab] {
         [
-            PevScreenTab(id: .ride, title: pevLocalizedText("tab.ride"), isSelected: selected == nil || selected == .eucRide, destinationTarget: .screen(.eucRide)),
+            PevScreenTab(id: .ride, title: pevLocalizedText("tab.ride"), isSelected: selected == .eucRide || (selected == nil && !isTuneSelected), destinationTarget: .screen(.eucRide)),
             PevScreenTab(id: .pack, title: pevLocalizedText("tab.pack"), isSelected: selected == .bmsOverview || selected == .bmsCellMap6S || selected == .bmsCellMap40S || selected == .bmsCellDetail || selected == .bmsUnknownTopology || selected == .bmsNoData, destinationTarget: .eucPack),
             PevScreenTab(id: .map, title: pevLocalizedText("tab.map"), isSelected: false, destinationTarget: .rideMap),
-            unavailableTab(id: .tune, title: pevLocalizedText("tab.tune"), reason: pevLocalizedText("tab.reason.tune_unavailable")),
+            PevScreenTab(
+                id: .tune,
+                title: pevLocalizedText("tab.tune"),
+                isSelected: isTuneSelected,
+                destinationTarget: .eucTune
+            ),
         ]
     }
 

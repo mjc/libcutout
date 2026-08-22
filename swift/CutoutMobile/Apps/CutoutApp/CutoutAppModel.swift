@@ -139,6 +139,7 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
+    private(set) var headlightOn = false
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -1952,6 +1953,13 @@ final class CutoutAppModel {
         }
     }
 
+    @discardableResult
+    func setHeadlight(_ enabled: Bool) -> Bool {
+        let state = enabled ? LightState.on : .off
+        guard core.setLights(state) else { return false }
+        headlightOn = enabled
+        return true
+    }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
         case .connecting, .retrying, .connected:

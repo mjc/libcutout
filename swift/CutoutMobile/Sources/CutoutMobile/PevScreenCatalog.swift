@@ -16,6 +16,7 @@ public enum PevScreenID: String, CaseIterable, Equatable, Hashable, Sendable {
 public enum PevNavigationTarget: Equatable, Hashable, Sendable {
     case screen(PevScreenID)
     case eucPack
+    case eucTune
     case vescRide
     case rideMap
 }

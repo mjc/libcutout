@@ -1228,6 +1228,19 @@ public struct FaultHistoryReadback: Equatable, Hashable, Sendable {
     }
 }
 
+public enum LightState: Equatable, Hashable, Sendable {
+    case off
+    case on
+
+    fileprivate init(_ dto: MobileLightStateDto) {
+        self = dto == .on ? .on : .off
+    }
+
+    fileprivate var dto: MobileLightStateDto {
+        self == .on ? .on : .off
+    }
+}
+
 public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestIdentity
     case requestTelemetry
@@ -1236,6 +1249,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestDiagnostics
     case requestFaultHistory
     case requestSettings
+    case setLights(LightState)
     case soundHorn
 
     fileprivate init(_ dto: MobileCommandDto) {
@@ -1254,6 +1268,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestFaultHistory
         case .requestSettings:
             self = .requestSettings
+        case .setLights(let state):
+            self = .setLights(LightState(state))
         case .soundHorn:
             self = .soundHorn
         }
@@ -1275,6 +1291,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestFaultHistory
         case .requestSettings:
             .requestSettings
+        case .setLights(let state):
+            .setLights(state.dto)
         case .soundHorn:
             .soundHorn
         }

@@ -400,6 +400,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestTelemetry));
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(capabilities.supports_command_kind(CommandKind::RequestSettings));
+        assert!(capabilities.supports_command_kind(CommandKind::SetLights));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
     }
 
@@ -457,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_registry_entry_exposes_read_only_capabilities_only() {
+    fn begode_falcon_registry_entry_exposes_reads_and_headlight_control() {
         let capabilities = BEGODE_FALCON_REGISTRY_ENTRY.capabilities;
 
         assert!(capabilities.supports_command_kind(CommandKind::RequestIdentity));
@@ -466,7 +467,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
-        assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
+        assert!(capabilities.supports_command_kind(CommandKind::SetLights));
     }
 
     #[test]
