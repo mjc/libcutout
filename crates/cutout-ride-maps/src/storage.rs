@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS ride_map_ride (
     point_count INTEGER NOT NULL CHECK (point_count >= 0),
     distance_meters REAL NOT NULL CHECK (distance_meters >= 0.0),
     duration_milliseconds INTEGER NOT NULL CHECK (duration_milliseconds >= 0),
-    associated_vehicle TEXT
+    candidate_vehicle TEXT,
+    associated_vehicle TEXT,
+    associated_at_monotonic_ms INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS ride_map_point (
@@ -40,10 +42,10 @@ CREATE TABLE IF NOT EXISTS ride_map_point (
 CREATE INDEX IF NOT EXISTS ride_map_point_cursor
     ON ride_map_point (ride_id, sequence);
 
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 ";
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// A bounded, Rust-owned history summary.
 #[derive(Clone, Debug, PartialEq)]
@@ -127,7 +129,9 @@ struct RideMetadata {
     point_count: u64,
     distance_meters: f64,
     duration_milliseconds: u64,
+    candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
+    associated_at_monotonic_ms: Option<u64>,
 }
 
 impl RideMetadata {
@@ -138,10 +142,17 @@ impl RideMetadata {
             point_count: recording.summary().point_count(),
             distance_meters: recording.summary().distance_meters(),
             duration_milliseconds: recording.summary().duration_milliseconds(),
+            candidate_vehicle: recording
+                .candidate_vehicle()
+                .map(VehicleIdentity::as_str)
+                .map(str::to_owned),
             associated_vehicle: recording
                 .associated_vehicle()
                 .map(VehicleIdentity::as_str)
                 .map(str::to_owned),
+            associated_at_monotonic_ms: recording
+                .associated_at()
+                .map(MonotonicMilliseconds::as_milliseconds),
         }
     }
 }
@@ -255,6 +266,15 @@ impl RideMapStore {
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
         if version > SCHEMA_VERSION {
             return Err(RideMapStoreError::UnsupportedSchema(version));
+        }
+        if version == 1 {
+            let transaction = self.connection.unchecked_transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE ride_map_ride ADD COLUMN candidate_vehicle TEXT;
+                 ALTER TABLE ride_map_ride ADD COLUMN associated_at_monotonic_ms INTEGER;
+                 PRAGMA user_version = 2;",
+            )?;
+            transaction.commit()?;
         }
         self.connection.execute_batch(SCHEMA)?;
         Ok(())
@@ -429,7 +449,8 @@ impl RideMapStore {
         let metadata = self
             .connection
             .query_row(
-                "SELECT ride_id, state, point_count, associated_vehicle
+                "SELECT ride_id, state, point_count, candidate_vehicle,
+                        associated_vehicle, associated_at_monotonic_ms
                  FROM ride_map_ride
                  WHERE state IN ('recording', 'paused', 'stopped')
                  ORDER BY rowid DESC
@@ -441,16 +462,30 @@ impl RideMapStore {
                         row.get::<_, String>(1)?,
                         row.get::<_, i64>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<i64>>(5)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((ride_id, state, point_count, associated_vehicle)) = metadata else {
+        let Some((
+            ride_id,
+            state,
+            point_count,
+            candidate_vehicle,
+            associated_vehicle,
+            associated_at_monotonic_ms,
+        )) = metadata
+        else {
             return Ok(None);
         };
         let ride_id = Uuid::parse_str(&ride_id)
             .map_err(|error| RideMapStoreError::InvalidRideId(error.to_string()))?;
         let state = parse_state(&state)?;
+        let candidate_vehicle = candidate_vehicle
+            .map(VehicleIdentity::new)
+            .transpose()
+            .map_err(|error| RideMapStoreError::InvalidPoint(error.to_string()))?;
         let associated_vehicle = associated_vehicle
             .map(VehicleIdentity::new)
             .transpose()
@@ -465,8 +500,20 @@ impl RideMapStore {
         let points = statement
             .query_map(params![ride_id.to_string()], decode_point)?
             .collect::<Result<Vec<_>, _>>()?;
-        let recovered = RideRecording::from_persisted(ride_id, state, associated_vehicle, points)
-            .map_err(RideMapStoreError::InvalidPoint)?;
+        let associated_at = associated_at_monotonic_ms
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| RideMapStoreError::InvalidPoint("negative association time".to_owned()))?
+            .map(MonotonicMilliseconds::new);
+        let recovered = RideRecording::from_persisted(
+            ride_id,
+            state,
+            candidate_vehicle,
+            associated_vehicle,
+            associated_at,
+            points,
+        )
+        .map_err(RideMapStoreError::InvalidPoint)?;
         let stored_point_count = u64::try_from(point_count)
             .map_err(|_| RideMapStoreError::InvalidPoint("negative point count".to_owned()))?;
         if recovered.summary().point_count() != stored_point_count {
@@ -734,21 +781,29 @@ fn insert_metadata(
 ) -> Result<(), RideMapStoreError> {
     connection.execute(
         "INSERT INTO ride_map_ride
-            (ride_id, state, point_count, distance_meters, duration_milliseconds, associated_vehicle)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            (ride_id, state, point_count, distance_meters, duration_milliseconds,
+             candidate_vehicle, associated_vehicle, associated_at_monotonic_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(ride_id) DO UPDATE SET
             state = excluded.state,
             point_count = excluded.point_count,
             distance_meters = excluded.distance_meters,
             duration_milliseconds = excluded.duration_milliseconds,
-            associated_vehicle = excluded.associated_vehicle",
+            candidate_vehicle = excluded.candidate_vehicle,
+            associated_vehicle = excluded.associated_vehicle,
+            associated_at_monotonic_ms = excluded.associated_at_monotonic_ms",
         params![
             metadata.ride_id.to_string(),
             state_name(metadata.state),
             sqlite_i64(metadata.point_count)?,
             metadata.distance_meters,
             sqlite_i64(metadata.duration_milliseconds)?,
+            metadata.candidate_vehicle.as_deref(),
             metadata.associated_vehicle.as_deref(),
+            metadata
+                .associated_at_monotonic_ms
+                .map(sqlite_i64)
+                .transpose()?,
         ],
     )?;
     Ok(())

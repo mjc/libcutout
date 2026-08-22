@@ -437,7 +437,9 @@ impl RideRecording {
     pub(crate) fn from_persisted(
         ride_id: Uuid,
         state: RideState,
+        candidate_vehicle: Option<VehicleIdentity>,
         associated_vehicle: Option<VehicleIdentity>,
+        associated_at: Option<MonotonicMilliseconds>,
         points: Vec<RoutePoint>,
     ) -> Result<Self, String> {
         let mut segments = Vec::new();
@@ -496,9 +498,9 @@ impl RideRecording {
             last_point: previous,
             next_sequence,
             force_new_segment: true,
-            candidate_vehicle: None,
+            candidate_vehicle,
             associated_vehicle,
-            associated_at: None,
+            associated_at,
         })
     }
 
@@ -524,6 +526,12 @@ impl RideRecording {
     #[must_use]
     pub fn segments(&self) -> &[RouteSegment] {
         &self.segments
+    }
+
+    /// Returns the PEV identity snapshotted when this ride began, if one was available.
+    #[must_use]
+    pub fn candidate_vehicle(&self) -> Option<&VehicleIdentity> {
+        self.candidate_vehicle.as_ref()
     }
 
     /// Returns the vehicle associated after a confirmed identity match.
@@ -943,7 +951,6 @@ mod tests {
             LocationAdmissionPolicy::default(),
         );
         ride.append_location(sample(100, 39.7392, -104.9903));
-        ride.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(200));
 
         {
             let mut store = RideMapStore::open(&path).expect("file store opens");
@@ -951,18 +958,89 @@ mod tests {
         }
 
         let reopened = RideMapStore::open(&path).expect("file store reopens");
-        let recovered = reopened
+        let mut recovered = reopened
             .recover_open_recording()
             .expect("recovery query succeeds")
             .expect("open ride is recoverable");
         assert_eq!(recovered.ride_id(), ride.ride_id());
         assert_eq!(recovered.state(), RideState::Recording);
         assert_eq!(recovered.summary().point_count(), 1);
+        assert_eq!(recovered.associated_vehicle(), None);
+        assert!(recovered.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(300)));
+        assert_eq!(recovered.points_after(0, 10).points().len(), 1);
+        std::fs::remove_file(path).expect("fixture database is removable");
+    }
+
+    #[test]
+    fn sqlite_store_migrates_v1_metadata_and_preserves_open_ride() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-ride-map-migration-{}.sqlite",
+            Uuid::new_v4()
+        ));
+        let ride_id = Uuid::new_v4();
+        {
+            let connection = rusqlite::Connection::open(&path).expect("v1 fixture opens");
+            connection
+                .execute_batch(
+                    "PRAGMA foreign_keys = ON;
+                     CREATE TABLE ride_map_ride (
+                         ride_id TEXT PRIMARY KEY NOT NULL,
+                         state TEXT NOT NULL CHECK (state IN ('recording', 'paused', 'stopped', 'saved', 'discarded')),
+                         point_count INTEGER NOT NULL CHECK (point_count >= 0),
+                         distance_meters REAL NOT NULL CHECK (distance_meters >= 0.0),
+                         duration_milliseconds INTEGER NOT NULL CHECK (duration_milliseconds >= 0),
+                         associated_vehicle TEXT
+                     );
+                     CREATE TABLE ride_map_point (
+                         ride_id TEXT NOT NULL REFERENCES ride_map_ride(ride_id) ON DELETE CASCADE,
+                         sequence INTEGER NOT NULL CHECK (sequence > 0),
+                         segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+                         wall_clock_unix_ms INTEGER NOT NULL CHECK (wall_clock_unix_ms > 0),
+                         monotonic_ms INTEGER NOT NULL,
+                         latitude_degrees REAL NOT NULL CHECK (latitude_degrees >= -90.0 AND latitude_degrees <= 90.0),
+                         longitude_degrees REAL NOT NULL CHECK (longitude_degrees >= -180.0 AND longitude_degrees <= 180.0),
+                         horizontal_accuracy_meters REAL NOT NULL CHECK (horizontal_accuracy_meters >= 0.0),
+                         PRIMARY KEY (ride_id, sequence)
+                     );
+                     PRAGMA user_version = 1;",
+                )
+                .expect("v1 schema creates");
+            connection
+                .execute(
+                    "INSERT INTO ride_map_ride
+                         (ride_id, state, point_count, distance_meters,
+                          duration_milliseconds, associated_vehicle)
+                     VALUES (?1, 'recording', 0, 0.0, 0, 'pev-v1')",
+                    rusqlite::params![ride_id.to_string()],
+                )
+                .expect("v1 metadata inserts");
+        }
+
+        let store = RideMapStore::open(&path).expect("v1 database migrates");
+        let recovered = store
+            .recover_open_recording()
+            .expect("migrated recovery succeeds")
+            .expect("v1 ride remains open");
+        assert_eq!(recovered.ride_id(), ride_id);
         assert_eq!(
             recovered.associated_vehicle().map(VehicleIdentity::as_str),
-            Some("pev-recovered")
+            Some("pev-v1")
         );
-        assert_eq!(recovered.points_after(0, 10).points().len(), 1);
+        drop(store);
+
+        let connection = rusqlite::Connection::open(&path).expect("migrated database reopens");
+        let version = connection
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+            .expect("schema version reads");
+        assert_eq!(version, 2);
+        let candidate_column = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('ride_map_ride') WHERE name = 'candidate_vehicle'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("candidate column reads");
+        assert_eq!(candidate_column, 1);
         std::fs::remove_file(path).expect("fixture database is removable");
     }
 
