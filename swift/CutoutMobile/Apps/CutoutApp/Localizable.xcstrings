@@ -77,6 +77,30 @@
       "comment" : "Status for a setting with a validated write command.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Supported" } } }
     },
+    "settings.readback.title" : {
+      "comment" : "Section title for values reported by the connected wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current values" } } }
+    },
+    "settings.readback.footer" : {
+      "comment" : "Explains that these settings are read-only until their write commands are validated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Values reported by the wheel. Editing remains disabled until commands are validated." } } }
+    },
+    "settings.readback.unavailable" : {
+      "comment" : "Status for a setting that the wheel did not report.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
+    "settings.readback.unsupported" : {
+      "comment" : "Status for a setting unsupported by the connected wheel.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported" } } }
+    },
+    "settings.beep_margin.title" : {
+      "comment" : "Label for the EUC beep-margin setting readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beep margin" } } }
+    },
+    "settings.tiltback.title" : {
+      "comment" : "Label for the EUC tiltback setting readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tiltback" } } }
+    },
     "settings.capabilities.unverified" : {
       "comment" : "Status for a setting whose command still needs wheel validation.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Needs validation" } } }
