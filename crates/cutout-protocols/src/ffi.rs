@@ -5,12 +5,12 @@ use cutout_core::{
 };
 
 use crate::{
-    BegodeFalconModel, NosfetAeroModel, ReadOnlySession, VescBoardProfile, VescGenericModel,
-    VescNotificationDecoder,
+    BegodeFalconModel, BenignControlSession, NosfetAeroModel, ReadOnlySession, VescBoardProfile,
+    VescGenericModel, VescNotificationDecoder,
 };
 
-type AeroReadOnlyHost = HostSession<ReadOnlySession<NosfetAeroModel, false>>;
-type FalconReadOnlyHost = HostSession<ReadOnlySession<BegodeFalconModel, true>>;
+type AeroReadOnlyHost = HostSession<BenignControlSession<NosfetAeroModel, false>>;
+type FalconReadOnlyHost = HostSession<BenignControlSession<BegodeFalconModel, true>>;
 type VescReadOnlyHost = HostSession<ReadOnlySession<VescGenericModel, true>>;
 
 /// Owned result of one concrete mobile session step.
@@ -60,7 +60,7 @@ impl ConcreteAeroReadOnlySession {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(ReadOnlySession::<NosfetAeroModel, false>::default()),
+            host: HostSession::new(BenignControlSession::<NosfetAeroModel, false>::default()),
         }
     }
 
@@ -76,7 +76,7 @@ impl ConcreteAeroReadOnlySession {
         checked_drain_outputs(
             &mut self.host,
             input,
-            ReadOnlySession::<NosfetAeroModel, false>::capabilities(),
+            BenignControlSession::<NosfetAeroModel, false>::capabilities(),
         )
     }
 
@@ -116,7 +116,7 @@ impl ConcreteFalconReadOnlySession {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            host: HostSession::new(ReadOnlySession::<BegodeFalconModel, true>::default()),
+            host: HostSession::new(BenignControlSession::<BegodeFalconModel, true>::default()),
         }
     }
 
@@ -147,7 +147,7 @@ impl ConcreteFalconReadOnlySession {
         checked_drain_outputs(
             &mut self.host,
             input,
-            ReadOnlySession::<BegodeFalconModel, true>::capabilities(),
+            BenignControlSession::<BegodeFalconModel, true>::capabilities(),
         )
     }
 
@@ -246,7 +246,7 @@ impl Default for VescReadOnlySession {
 #[must_use]
 pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
     ConcreteAeroReadOnlySession {
-        host: HostSession::new(ReadOnlySession::<NosfetAeroModel, false>::default()),
+        host: HostSession::new(BenignControlSession::<NosfetAeroModel, false>::default()),
     }
 }
 
@@ -254,7 +254,7 @@ pub fn new_nosfet_aero_read_only_session() -> ConcreteAeroReadOnlySession {
 #[must_use]
 pub fn new_begode_falcon_read_only_session() -> ConcreteFalconReadOnlySession {
     ConcreteFalconReadOnlySession {
-        host: HostSession::new(ReadOnlySession::<BegodeFalconModel, true>::default()),
+        host: HostSession::new(BenignControlSession::<BegodeFalconModel, true>::default()),
     }
 }
 
@@ -401,6 +401,38 @@ mod tests {
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
                 if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"N"
+        )));
+    }
+
+    #[test]
+    fn concrete_aero_session_maps_set_lights_to_control_write() {
+        let mut session = new_nosfet_aero_read_only_session();
+
+        let result = session.ingest_checked(&SessionInputDto::Command(
+            DeviceCommandDto::SetLights(cutout_core::LightStateDto::On),
+        ));
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
+                if *channel == VETERAN_DATA_CHANNEL.as_bytes() && bytes == b"SetLightON"
+        )));
+    }
+
+    #[test]
+    fn concrete_falcon_session_maps_set_lights_to_control_write() {
+        let mut session = new_begode_falcon_read_only_session();
+
+        let result = session.ingest_checked(&SessionInputDto::Command(
+            DeviceCommandDto::SetLights(cutout_core::LightStateDto::Off),
+        ));
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| matches!(
+            output,
+            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
+                if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"E"
         )));
     }
 

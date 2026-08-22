@@ -34,7 +34,7 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
+    LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
@@ -2001,8 +2001,30 @@ pub enum MobileCommandDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Set the device lights.
+    SetLights(MobileLightStateDto),
+
     /// Sound a horn or alert.
     SoundHorn,
+}
+
+/// Mobile DTO light state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileLightStateDto {
+    /// Lights off.
+    Off,
+
+    /// Lights on.
+    On,
+}
+
+impl From<MobileLightStateDto> for LightStateDto {
+    fn from(state: MobileLightStateDto) -> Self {
+        match state {
+            MobileLightStateDto::Off => Self::Off,
+            MobileLightStateDto::On => Self::On,
+        }
+    }
 }
 
 /// Mobile DTO input kind.
@@ -9481,6 +9503,7 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             MobileCommandDto::RequestSettings => Self::RequestSettings,
+            MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -13586,6 +13609,33 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn euc_wrappers_expose_typed_headlight_writes() {
+        let aero = AeroReadOnlySession::new();
+        let falcon = FalconReadOnlySession::new().expect("default profile should construct");
+
+        let command_input = |state| MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(state)),
+        };
+
+        let aero_result = aero.ingest_checked(command_input(MobileLightStateDto::On));
+        let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
+
+        assert_eq!(aero_result.error, None);
+        assert!(aero_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
+        }));
+        assert_eq!(falcon_result.error, None);
+        assert!(falcon_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
+        }));
     }
 
     #[test]

@@ -1523,6 +1523,18 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
+impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> Clone
+    for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
+where
+    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            read_only: self.read_only.clone(),
+        }
+    }
+}
+
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool> Default
     for BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
 {
