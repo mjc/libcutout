@@ -1934,6 +1934,14 @@ impl Capabilities {
         self.supported_commands.contains(kind)
     }
 
+    /// Combines two capability sets.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self {
+            supported_commands: CommandSet(self.supported_commands.0 | other.supported_commands.0),
+        }
+    }
+
     /// Checks whether a command is supported and returns metadata for it.
     ///
     /// # Errors
@@ -9954,6 +9962,19 @@ mod tests {
                 crate::CommandKind::SoundHorn
             ))
         );
+    }
+
+    #[test]
+    fn capability_union_combines_read_and_control_commands() {
+        let read =
+            crate::Capabilities::from_supported_commands([crate::CommandKind::RequestTelemetry]);
+        let control = crate::Capabilities::from_supported_commands([crate::CommandKind::SetLights]);
+
+        let combined = read.union(control);
+
+        assert!(combined.supports_command_kind(crate::CommandKind::RequestTelemetry));
+        assert!(combined.supports_command_kind(crate::CommandKind::SetLights));
+        assert!(!combined.supports_command_kind(crate::CommandKind::SoundHorn));
     }
 
     #[test]

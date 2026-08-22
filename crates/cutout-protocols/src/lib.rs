@@ -91,7 +91,7 @@ pub use request_encoder::{
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;
 pub use session::{
-    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation,
+    BegodeFalconModel, BegodeNotificationDecoder, BenignControlOperation, BenignControlSession,
     DangerousActuationOperation, Manufacturer, NoopNotificationDecoder, NosfetAeroModel,
     ProtocolModelSpec, ProtocolOperation, ReadOnlyModelSpec, ReadOnlyNotificationDecoder,
     ReadOnlyOperation, ReadOnlySession, RegisteredModelSpec, SettingsWriteOperation,
