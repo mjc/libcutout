@@ -9,6 +9,11 @@ private enum PevSystemColors {
     #if os(iOS)
     static let pageBackground = Color(uiColor: .systemBackground)
     static let disabledFill = pageBackground
+    static let brand = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
+            : UIColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
+    })
     static let yellow = Color(red: 1, green: 0.8, blue: 0)
     static let cyan = Color(uiColor: .systemCyan)
     static let orange = Color(uiColor: .systemOrange)
@@ -28,6 +33,11 @@ private enum PevSystemColors {
     #elseif os(macOS)
     static let pageBackground = Color(nsColor: .windowBackgroundColor)
     static let disabledFill = pageBackground
+    static let brand = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
+            : NSColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
+    })
     static let yellow = Color(red: 1, green: 0.8, blue: 0)
     static let cyan = Color(nsColor: .systemCyan)
     static let orange = Color(nsColor: .systemOrange)
@@ -46,6 +56,7 @@ private enum PevSystemColors {
 public enum PevDashboardColors {
     public static let pageBackground = PevSystemColors.pageBackground
     public static let disabledFill = PevSystemColors.disabledFill
+    public static let brand = PevSystemColors.brand
     public static let yellow = PevSystemColors.yellow
     public static let cyan = PevSystemColors.cyan
     public static let orange = PevSystemColors.orange
@@ -59,6 +70,8 @@ public enum PevDashboardColors {
     public static let cardStroke = Color.secondary.opacity(0.35)
     public static let primaryText = PevSystemColors.primaryText
     public static let mutedText = PevSystemColors.mutedText
+    public static let disabledText = Color.primary.opacity(0.58)
+    public static let disabledSecondaryText = Color.primary.opacity(0.48)
     public static let green = PevSystemColors.green
     public static let purple = PevSystemColors.purple
     public static let nominal = PevSystemColors.nominal

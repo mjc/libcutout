@@ -1,26 +1,5 @@
 import CutoutMobile
 import SwiftUI
-#if os(iOS)
-import UIKit
-#elseif os(macOS)
-import AppKit
-#endif
-
-private enum PevSystemColors {
-    #if os(iOS)
-    static let brand = Color(uiColor: UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
-            : UIColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
-    })
-    #elseif os(macOS)
-    static let brand = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(red: 1.0, green: 0.84, blue: 0.15, alpha: 1)
-            : NSColor(red: 0.48, green: 0.29, blue: 0.0, alpha: 1)
-    })
-    #endif
-}
 
 extension DevicePickerRow {
     var glyphColor: Color {
@@ -55,10 +34,10 @@ enum PevColors {
     static let cardStroke = PevDashboardColors.cardStroke
     static let disabledFill = PevDashboardColors.disabledFill
     static let primaryText = PevDashboardColors.primaryText
-    static let disabledText = Color.primary.opacity(0.58)
-    static let disabledSecondaryText = Color.primary.opacity(0.48)
+    static let disabledText = PevDashboardColors.disabledText
+    static let disabledSecondaryText = PevDashboardColors.disabledSecondaryText
     static let muted = PevDashboardColors.mutedText
-    static let brand = PevSystemColors.brand
+    static let brand = PevDashboardColors.brand
     static let yellow = PevDashboardColors.yellow
     static let cyan = PevDashboardColors.cyan
     static let green = PevDashboardColors.green
