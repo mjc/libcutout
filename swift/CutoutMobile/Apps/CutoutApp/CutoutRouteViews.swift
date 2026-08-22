@@ -118,6 +118,26 @@ struct EucPackRouteView: View {
     }
 }
 
+struct EucTuneRouteView: View {
+    var body: some View {
+        Form {
+            Section {
+                Toggle(
+                    localizedAppText("settings.headlight.title"),
+                    isOn: .constant(false)
+                )
+                .disabled(true)
+                .accessibilityHint(localizedAppText("settings.headlight.unavailable"))
+            } header: {
+                Text(localizedAppText("settings.lights.title"))
+            } footer: {
+                Text(localizedAppText("settings.headlight.unavailable"))
+            }
+        }
+        .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
 struct VescRideRouteView: View {
     let model: CutoutAppModel
 

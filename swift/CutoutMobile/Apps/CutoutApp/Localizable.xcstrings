@@ -13,6 +13,22 @@
       "comment" : "App command menu that contains navigation destinations.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Navigate" } } }
     },
+    "navigation.section.tune" : {
+      "comment" : "Title for the EUC settings and tuning section.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
+    },
+    "settings.headlight.title" : {
+      "comment" : "Label for the EUC headlight setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight" } } }
+    },
+    "settings.headlight.unavailable" : {
+      "comment" : "Explains why the headlight toggle cannot yet be changed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight changes are unavailable until this device's control is verified." } } }
+    },
+    "settings.lights.title" : {
+      "comment" : "Section title for EUC light settings.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }
+    },
     "accessibility.bms_alert.critical" : {
       "comment" : "VoiceOver announcement for a critical BMS alert.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical battery warning. Check BMS details." } } }
