@@ -125,18 +125,18 @@ struct EucTuneRouteView: View {
         Form {
             Section {
                 Toggle(
-                    localizedAppText("settings.headlight.title"),
+                    model.headlightControlTitle,
                     isOn: Binding(
                         get: { model.headlightOn },
                         set: { model.setHeadlight($0) }
                     )
                 )
                 .disabled(model.phase != .live)
-                .accessibilityHint(localizedAppText("settings.headlight.help"))
+                .accessibilityHint(model.headlightStatusText)
             } header: {
                 Text(localizedAppText("settings.lights.title"))
             } footer: {
-                Text(localizedAppText("settings.headlight.help"))
+                Text(model.headlightStatusText)
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")

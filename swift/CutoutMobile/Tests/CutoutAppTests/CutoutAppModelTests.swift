@@ -93,7 +93,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testAeroLowBeamToggleReportsSentWithoutClaimingConfirmation() {
+    func testAeroHighBeamToggleReportsSentWithoutClaimingConfirmation() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
         let model = CutoutAppModel(core: driver)
@@ -107,6 +107,11 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.setHeadlight(true))
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
+        XCTAssertEqual(model.headlightControlTitle, "High beam")
+        XCTAssertEqual(
+            model.headlightStatusText,
+            "Command sent. This wheel does not report high-beam state."
+        )
         XCTAssertEqual(driver.headlightStates, [.on])
     }
 
@@ -120,6 +125,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.setHeadlight(true))
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+        XCTAssertEqual(model.headlightControlTitle, "Headlight")
+        XCTAssertEqual(model.headlightStatusText, "Waiting for wheel confirmation.")
 
         driver.onSettingsReadbackChange?(
             SettingsReadback(
@@ -136,6 +143,7 @@ final class CutoutAppModelTests: XCTestCase {
             )
         )
         XCTAssertEqual(model.headlightCommandStatus, .confirmed)
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
     }
 
     @MainActor

@@ -25,6 +25,22 @@
       "comment" : "Explains when the headlight command is sent.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes are sent immediately to the connected wheel." } } }
     },
+    "settings.headlight.waiting" : {
+      "comment" : "Shown while waiting for wheel telemetry to confirm a headlight command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for wheel confirmation." } } }
+    },
+    "settings.headlight.confirmed" : {
+      "comment" : "Shown when wheel telemetry confirms the requested headlight state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry." } } }
+    },
+    "settings.high_beam.title" : {
+      "comment" : "Label for a wheel protocol that controls the high beam.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } }
+    },
+    "settings.high_beam.sent_unconfirmed" : {
+      "comment" : "Explains that a high-beam command was sent but cannot be confirmed from telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Command sent. This wheel does not report high-beam state." } } }
+    },
     "settings.lights.title" : {
       "comment" : "Section title for EUC light settings.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }

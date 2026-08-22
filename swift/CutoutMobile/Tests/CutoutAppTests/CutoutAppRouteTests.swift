@@ -74,9 +74,22 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("navigation.section.tune"), "Tune")
         XCTAssertEqual(localizedAppText("settings.lights.title"), "Lights")
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
+        XCTAssertEqual(localizedAppText("settings.high_beam.title"), "High beam")
         XCTAssertEqual(
             localizedAppText("settings.headlight.help"),
             "Changes are sent immediately to the connected wheel."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.waiting"),
+            "Waiting for wheel confirmation."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed"),
+            "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.high_beam.sent_unconfirmed"),
+            "Command sent. This wheel does not report high-beam state."
         )
         XCTAssertEqual(
             localizedAppText("bms.no_data.pack_estimate_accessibility_value", "71", "Derived from voltage curve"),

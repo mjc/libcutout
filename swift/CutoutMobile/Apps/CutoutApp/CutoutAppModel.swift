@@ -233,6 +233,25 @@ final class CutoutAppModel {
         connectionState.statusText ?? phase.displayText
     }
 
+    var headlightControlTitle: String {
+        localizedAppText(core.electricUnicycleModel == .aero
+            ? "settings.high_beam.title"
+            : "settings.headlight.title")
+    }
+
+    var headlightStatusText: String {
+        switch headlightCommandStatus {
+        case .idle:
+            localizedAppText("settings.headlight.help")
+        case .waitingForConfirmation:
+            localizedAppText("settings.headlight.waiting")
+        case .confirmed:
+            localizedAppText("settings.headlight.confirmed")
+        case .sentWithoutConfirmation:
+            localizedAppText("settings.high_beam.sent_unconfirmed")
+        }
+    }
+
     private let core: any CutoutSessionDriving
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
