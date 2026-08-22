@@ -20,6 +20,12 @@ enum DevCommand {
     IosDeploy(Vec<String>),
 }
 
+#[derive(Debug, Eq, PartialEq)]
+enum DevCommand {
+    SwiftFfi,
+    IosDeploy(Vec<String>),
+}
+
 fn main() -> Result<()> {
     let root = workspace_root();
     let args = env::args().skip(1).collect::<Vec<_>>();

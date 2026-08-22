@@ -2550,6 +2550,102 @@ impl MobileAccelerationAssistSettingStateDto {
     }
 }
 
+/// Validation state for a setting write exposed to mobile consumers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingWriteSupportDto {
+    /// Capture-backed and hardware-validated for the model.
+    Supported,
+
+    /// An encoder exists, but validation evidence is incomplete.
+    Unverified,
+
+    /// No safe write is available for the model.
+    Unsupported,
+}
+
+/// Product-shaped write capabilities for an electric-unicycle session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucSettingsCapabilitiesDto {
+    /// Pedal-mode/settings write support.
+    pub pedal_mode: MobileSettingWriteSupportDto,
+
+    /// Acceleration-assist/behavior write support.
+    pub acceleration_assist: MobileSettingWriteSupportDto,
+
+    /// Headlight or validated high-beam write support.
+    pub headlight: MobileSettingWriteSupportDto,
+
+    /// Separate taillight write support.
+    pub taillight: MobileSettingWriteSupportDto,
+}
+
+impl MobileEucSettingsCapabilitiesDto {
+    const fn aero() -> Self {
+        Self {
+            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
+            headlight: MobileSettingWriteSupportDto::Supported,
+            taillight: MobileSettingWriteSupportDto::Unsupported,
+        }
+    }
+
+    const fn falcon() -> Self {
+        Self {
+            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
+            headlight: MobileSettingWriteSupportDto::Unverified,
+            taillight: MobileSettingWriteSupportDto::Unsupported,
+        }
+    }
+}
+
+/// Lifecycle phase for a typed mobile setting write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingStateKindDto {
+    Unknown,
+    Current,
+    Pending,
+    Confirmed,
+    Refused,
+    TimedOut,
+    Failed,
+}
+
+/// Provenance for the current value in a mobile setting state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingValueSourceDto {
+    LiveReadback,
+    CaptureReplay,
+    UserRequest,
+    Unknown,
+}
+
+/// Typed headlight state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLightSettingStateDto {
+    pub kind: MobileSettingStateKindDto,
+    pub current: Option<MobileLightStateDto>,
+    pub requested: Option<MobileLightStateDto>,
+    pub source: MobileSettingValueSourceDto,
+    pub submitted_at_ms: Option<u64>,
+    pub confirmed_at_ms: Option<u64>,
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileLightSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
@@ -16963,10 +17059,76 @@ mod tests {
         assert!(aero_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
         }));
-        assert_eq!(falcon_result.error, None);
-        assert!(falcon_result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
-        }));
+        assert!(matches!(
+            falcon_result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                ..
+            })
+        ));
+        assert!(
+            falcon_result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
+    }
+
+    #[test]
+    fn mobile_light_state_tracks_accepted_write_until_matching_readback() {
+        let session = AeroBenignControlSession::new();
+
+        assert_eq!(
+            session.headlight_state(),
+            MobileLightSettingStateDto::unknown()
+        );
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+        });
+        assert_eq!(result.error, None);
+        assert_eq!(
+            session.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        let state = session.headlight_state();
+        assert_eq!(state.current, None);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+        assert_eq!(state.submitted_at_ms, Some(10));
+    }
+
+    #[test]
+    fn euc_settings_capabilities_preserve_validation_state() {
+        let aero = AeroBenignControlSession::new();
+        let falcon = FalconBenignControlSession::new().expect("default profile should construct");
+
+        assert_eq!(
+            aero.settings_capabilities().headlight,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert_eq!(
+            falcon.settings_capabilities().headlight,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().taillight,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            aero.settings_capabilities().pedal_mode,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            aero.settings_capabilities().acceleration_assist,
+            MobileSettingWriteSupportDto::Unsupported
+        );
     }
 
     #[test]

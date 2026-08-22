@@ -568,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_control_encoder_uses_nosfet_ascii_light_commands() {
+    fn aero_control_encoder_uses_silent_ascii_light_commands() {
         let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
             .expect("NOSFET lights-on command encodes");
         let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))

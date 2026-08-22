@@ -44,6 +44,52 @@ struct MusicMonitorSceneState: Equatable {
     }
 }
 
+enum HeadlightCommandStatus: Equatable {
+    case idle
+    case failed
+    case refused
+    case waitingForConfirmation
+    case timedOut
+    case confirmed
+    case sentWithoutConfirmation
+}
+
+private extension LightSettingState {
+    var lightState: LightState? {
+        switch kind {
+        case .pending:
+            current
+        case .unknown, .current, .confirmed, .refused, .timedOut, .failed:
+            current
+        }
+    }
+
+    func commandStatus(
+        for model: ElectricUnicycleModel?,
+        at now: MonotonicMilliseconds,
+        timeout: MonotonicMilliseconds
+    ) -> HeadlightCommandStatus {
+        switch kind {
+        case .unknown, .current:
+            return .idle
+        case .pending:
+            guard model != .aero else { return .sentWithoutConfirmation }
+            guard let submittedAt else { return .waitingForConfirmation }
+            return now.elapsed(since: submittedAt).rawValue >= timeout.rawValue
+                ? .timedOut
+                : .waitingForConfirmation
+        case .confirmed:
+            return .confirmed
+        case .refused:
+            return .refused
+        case .timedOut:
+            return .timedOut
+        case .failed:
+            return .failed
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -420,6 +466,7 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
+    private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
 
     isolated deinit {
         stopMusicMonitoring()

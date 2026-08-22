@@ -1480,6 +1480,30 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
                 )
             }
         }
+        XCTAssertTrue(sink.writes.isEmpty)
+    }
+
+    func testElectricUnicycleSessionExposesValidationAwareSettingCapabilities() throws {
+        let aero = try ElectricUnicycleSession(model: .aero)
+        let falcon = try ElectricUnicycleSession(model: .falcon)
+
+        XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.headlight, .unverified)
+        XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
+    }
+
+    func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertEqual(session.headlightState.kind, .unknown)
+
+        _ = try session.perform(.setLights(.on), at: MonotonicMilliseconds(10))
+
+        XCTAssertEqual(session.headlightState.kind, .pending)
+        XCTAssertEqual(session.headlightState.requested, .on)
+        XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
     }
 
     func testElectricUnicycleSessionExposesRustOwnedLightState() throws {

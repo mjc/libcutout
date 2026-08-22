@@ -563,8 +563,17 @@ mod tests {
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::Off),
         ));
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| matches!(
+        assert_eq!(
+            result.error,
+            Some(ConcreteSessionErrorDto::CommandRefused {
+                refusal: ControlRefusalDto {
+                    command: CommandKindDto::SetLights,
+                    safety_class: SafetyClassDto::BenignControl,
+                    reason: ControlRefusalReasonDto::UnsupportedCommand,
+                }
+            })
+        );
+        assert!(result.outputs.iter().all(|output| !matches!(
             output,
             SessionOutputDto::Transport(TransportActionDto::Write { bytes, .. })
                 if bytes == b"E"
