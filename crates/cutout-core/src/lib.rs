@@ -246,6 +246,113 @@ pub enum LightState {
     On,
 }
 
+/// A 24-bit RGB color for a standalone lighting accessory.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RgbColor {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+impl RgbColor {
+    /// Creates a color from red, green, and blue channels.
+    #[must_use]
+    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
+
+    /// Returns the red channel.
+    #[must_use]
+    pub const fn red(self) -> u8 {
+        self.red
+    }
+
+    /// Returns the green channel.
+    #[must_use]
+    pub const fn green(self) -> u8 {
+        self.green
+    }
+
+    /// Returns the blue channel.
+    #[must_use]
+    pub const fn blue(self) -> u8 {
+        self.blue
+    }
+
+    /// Returns the channels in RGB order.
+    #[must_use]
+    pub const fn channels(self) -> [u8; 3] {
+        [self.red, self.green, self.blue]
+    }
+}
+
+/// Brightness for a standalone lighting accessory, from 0 through 100 percent.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct LightingBrightness(u8);
+
+impl LightingBrightness {
+    /// Creates a brightness from a percentage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LightingBrightnessOutOfRange`] when `percent` exceeds 100.
+    pub const fn try_from_percent(percent: u8) -> Result<Self, LightingBrightnessOutOfRange> {
+        if percent <= 100 {
+            Ok(Self(percent))
+        } else {
+            Err(LightingBrightnessOutOfRange { percent })
+        }
+    }
+
+    /// Returns this brightness as a percentage.
+    #[must_use]
+    pub const fn as_percent(self) -> u8 {
+        self.0
+    }
+}
+
+impl TryFrom<u8> for LightingBrightness {
+    type Error = LightingBrightnessOutOfRange;
+
+    fn try_from(percent: u8) -> Result<Self, Self::Error> {
+        Self::try_from_percent(percent)
+    }
+}
+
+/// Error returned for a standalone-lighting brightness above 100 percent.
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("lighting brightness {percent}% exceeds 100%")]
+pub struct LightingBrightnessOutOfRange {
+    /// Rejected percentage.
+    pub percent: u8,
+}
+
+/// Requested power state for a standalone lighting accessory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LightingPowerState {
+    /// Turn the accessory off.
+    Off,
+
+    /// Turn the accessory on.
+    On,
+}
+
+/// Typed command for a standalone RGB lighting accessory.
+///
+/// This command is intentionally separate from [`DeviceCommand::SetLights`],
+/// which controls lights built into a vehicle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RgbLightingCommand {
+    /// Set accessory power.
+    SetPower(LightingPowerState),
+
+    /// Set one solid color for the whole controller.
+    SetSolidColor(RgbColor),
+
+    /// Set accessory brightness.
+    SetBrightness(LightingBrightness),
+}
+
 /// Stable command discriminator, excluding command payload values.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum CommandKind {
@@ -7715,6 +7822,71 @@ mod tests {
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-core");
+    }
+
+    #[test]
+    fn rgb_color_preserves_all_channels() {
+        let color = crate::RgbColor::new(0x12, 0x34, 0x56);
+
+        assert_eq!(color.red(), 0x12);
+        assert_eq!(color.green(), 0x34);
+        assert_eq!(color.blue(), 0x56);
+        assert_eq!(color.channels(), [0x12, 0x34, 0x56]);
+    }
+
+    #[test]
+    fn lighting_brightness_accepts_only_percent_values() {
+        assert_eq!(
+            crate::LightingBrightness::try_from_percent(0)
+                .expect("zero percent is valid")
+                .as_percent(),
+            0
+        );
+        assert_eq!(
+            crate::LightingBrightness::try_from_percent(100)
+                .expect("one hundred percent is valid")
+                .as_percent(),
+            100
+        );
+        assert_eq!(
+            crate::LightingBrightness::try_from_percent(101),
+            Err(crate::LightingBrightnessOutOfRange { percent: 101 })
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn lighting_brightness_validates_every_u8(percent in any::<u8>()) {
+            let brightness = crate::LightingBrightness::try_from_percent(percent);
+
+            if percent <= 100 {
+                prop_assert_eq!(brightness.map(crate::LightingBrightness::as_percent), Ok(percent));
+            } else {
+                prop_assert_eq!(
+                    brightness,
+                    Err(crate::LightingBrightnessOutOfRange { percent })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rgb_lighting_commands_are_typed_and_standalone() {
+        let brightness =
+            crate::LightingBrightness::try_from_percent(42).expect("brightness is in range");
+
+        assert_eq!(
+            crate::RgbLightingCommand::SetPower(crate::LightingPowerState::On),
+            crate::RgbLightingCommand::SetPower(crate::LightingPowerState::On)
+        );
+        assert_eq!(
+            crate::RgbLightingCommand::SetSolidColor(crate::RgbColor::new(1, 2, 3)),
+            crate::RgbLightingCommand::SetSolidColor(crate::RgbColor::new(1, 2, 3))
+        );
+        assert_eq!(
+            crate::RgbLightingCommand::SetBrightness(brightness),
+            crate::RgbLightingCommand::SetBrightness(brightness)
+        );
     }
 
     #[test]
