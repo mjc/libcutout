@@ -9,6 +9,7 @@ members = [
     "crates/cutout-btle",
     "crates/cutout-cli",
     "crates/cutout-uniffi-bindgen",
+    "crates/cutout-dev",
 ]
 default-members = [
     "crates/cutout-core",
@@ -45,6 +46,7 @@ rusqlite = { version = "0.37", default-features = false, features = ["bundled", 
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 signal-hook = "0.3"
 smallvec = "1"
 smol = "2"
