@@ -157,6 +157,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var reconnectEnabled = true
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
+    public private(set) var peripheralName: String?
     public private(set) var commandEvidence = MelkLightingCommandEvidence()
     public private(set) var lastWritePlan: MelkLightingWritePlan?
 
@@ -204,6 +205,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             central = nil
             peripheral = nil
             advertisedName = nil
+            peripheralName = nil
             harness = nil
             sink = nil
             transition(to: .disconnected)
@@ -280,6 +282,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
             self.peripheral = peripheral
             advertisedName = name
+            peripheralName = name
             peripheral.delegate = self
             central.stopScan()
             transition(to: .connecting)
@@ -345,6 +348,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
             peripheral = restoredPeripheral
             advertisedName = restoredPeripheral.name
+            peripheralName = restoredPeripheral.name
             restoredPeripheral.delegate = self
             if restoredPeripheral.state == .connected {
                 transition(to: .discovering)

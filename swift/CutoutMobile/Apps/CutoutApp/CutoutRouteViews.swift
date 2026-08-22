@@ -143,10 +143,11 @@ struct VescDebugRouteView: View {
 
 @MainActor
 @Observable
-private final class MelkValidationModel {
+final class LightingRouteModel {
     private let session = MelkLightingPeripheralSession()
 
     private(set) var connectionState: MelkLightingPeripheralState = .idle
+    private(set) var peripheralName: String?
     private(set) var commandStatus: MelkLightingCommandStatus = .idle
     private(set) var records: [MelkValidationLogEntry] = []
     private(set) var notificationCount = 0
@@ -155,6 +156,9 @@ private final class MelkValidationModel {
     init() {
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
+                if state == .scanning {
+                    self?.peripheralName = nil
+                }
                 self?.connectionState = state
             }
         }
@@ -175,6 +179,11 @@ private final class MelkValidationModel {
         guard isRunning else { return }
         isRunning = false
         session.stop()
+    }
+
+    func reconnect() {
+        stop()
+        start()
     }
 
     func setPower(_ on: Bool) {
@@ -202,8 +211,23 @@ private final class MelkValidationModel {
         commandStatus = .unconfirmed
     }
 
+    var isReady: Bool { connectionState == .ready }
+
+    var canReconnect: Bool {
+        switch connectionState {
+        case .disconnected, .failed:
+            true
+        default:
+            false
+        }
+    }
+
     private func append(_ record: String) {
-        if record.hasPrefix("notification=") {
+        if record.hasPrefix("candidate=") {
+            let candidate = record.dropFirst("candidate=".count)
+            peripheralName = String(candidate.split(separator: " rssi=", maxSplits: 1).first ?? candidate)
+            records = Array((records + [MelkValidationLogEntry(text: record)]).suffix(12))
+        } else if record.hasPrefix("notification=") {
             notificationCount += 1
             records = Array((records + [MelkValidationLogEntry(text: "FFF4 notification received")]).suffix(12))
         } else if record.hasPrefix("requested=") {
@@ -214,14 +238,171 @@ private final class MelkValidationModel {
     }
 }
 
-private struct MelkValidationLogEntry: Identifiable {
+struct MelkValidationLogEntry: Identifiable {
     let id = UUID()
     let text: String
 }
 
+struct LightingRouteView: View {
+    let model: LightingRouteModel
+    let rideModel: CutoutAppModel
+    @State private var brightness = 100.0
+
+    private var controlsEnabled: Bool { model.isReady }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Lighting")
+                    .font(.largeTitle.bold())
+
+                Text("Standalone RGB controller")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                connectionCard
+                rideCard
+                controlsCard
+                commandStatusCard
+            }
+            .padding()
+        }
+        .background(PevColors.pageBackground.ignoresSafeArea())
+        .task { model.start() }
+        .accessibilityIdentifier("dashboard.screen.lighting")
+    }
+
+    private var connectionCard: some View {
+        GroupBox("Controller") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
+                    .accessibilityIdentifier("lighting.connection-state")
+                Text(model.peripheralName ?? "Scanning for MELK-OC21")
+                    .font(.headline)
+                Text("Verified MELK-OC21 profile · FFF0 service · FFF3 write · FFF4 notify")
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+                if model.canReconnect {
+                    Button("Reconnect") { model.reconnect() }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("lighting.reconnect")
+                }
+            }
+        }
+    }
+
+    private var rideCard: some View {
+        GroupBox("Ride session") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(rideModel.connectionStatusText, systemImage: "figure.roll")
+                Text("Lighting uses an independent CoreBluetooth central and remains available while the ride session is connected.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var controlsCard: some View {
+        GroupBox("Manual controls") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    lightingButton("Power on", systemImage: "power", identifier: "lighting.power-on") {
+                        model.setPower(true)
+                    }
+                    lightingButton("Power off", systemImage: "power", identifier: "lighting.power-off") {
+                        model.setPower(false)
+                    }
+                }
+
+                HStack {
+                    colorButton("Red", color: .red, identifier: "lighting.color.red") {
+                        model.setSolidColor(red: 255, green: 0, blue: 0)
+                    }
+                    colorButton("Green", color: .green, identifier: "lighting.color.green") {
+                        model.setSolidColor(red: 0, green: 255, blue: 0)
+                    }
+                    colorButton("Blue", color: .blue, identifier: "lighting.color.blue") {
+                        model.setSolidColor(red: 0, green: 0, blue: 255)
+                    }
+                    colorButton("Mixed", color: .orange, identifier: "lighting.color.mixed") {
+                        model.setSolidColor(red: 255, green: 96, blue: 24)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label("Brightness", systemImage: "sun.max")
+                        Spacer()
+                        Text("\(Int(brightness))%")
+                            .monospacedDigit()
+                    }
+                    Slider(value: $brightness, in: 1...100, step: 1) { editing in
+                        if !editing, controlsEnabled {
+                            model.setBrightness(UInt8(brightness.rounded()))
+                        }
+                    }
+                    .disabled(!controlsEnabled)
+                    .accessibilityIdentifier("lighting.brightness")
+                    .accessibilityValue("\(Int(brightness)) percent")
+                }
+            }
+            .disabled(!controlsEnabled)
+        }
+    }
+
+    private var commandStatusCard: some View {
+        GroupBox("Command status") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Status: \(model.commandStatus.displayText)", systemImage: model.commandStatus.symbolName)
+                    .accessibilityIdentifier("lighting.command-status")
+                Text("Writes remain requested until you explicitly observe the controller change.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                HStack {
+                    Button("Mark confirmed") { model.markConfirmed() }
+                        .accessibilityIdentifier("lighting.mark-confirmed")
+                    Button("Mark unconfirmed") { model.markUnconfirmed() }
+                        .accessibilityIdentifier("lighting.mark-unconfirmed")
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.commandStatus != .requested)
+            }
+        }
+    }
+
+    private func lightingButton(
+        _ title: String,
+        systemImage: String,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private func colorButton(
+        _ title: String,
+        color: Color,
+        identifier: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: "circle.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .tint(color)
+        .buttonStyle(.bordered)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
 struct MelkValidationRouteView: View {
     let rideModel: CutoutAppModel
-    @State private var validation = MelkValidationModel()
+    let lighting: LightingRouteModel
 
     var body: some View {
         ScrollView {
@@ -242,13 +423,12 @@ struct MelkValidationRouteView: View {
             .padding()
         }
         .background(PevColors.pageBackground.ignoresSafeArea())
-        .task { validation.start() }
-        .onDisappear { validation.stop() }
+        .task { lighting.start() }
     }
 
     private var statusCard: some View {
         GroupBox("Lighting connection") {
-            Label(validation.connectionState.displayText, systemImage: validation.connectionState.symbolName)
+            Label(lighting.connectionState.displayText, systemImage: lighting.connectionState.symbolName)
                 .accessibilityIdentifier("melk.validation.connection-state")
             Text("FFF0 service · FFF3 write · FFF4 notify")
                 .font(.footnote.monospaced())
@@ -269,19 +449,19 @@ struct MelkValidationRouteView: View {
         GroupBox("Typed commands") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    commandButton("Power on", systemImage: "power") { validation.setPower(true) }
-                    commandButton("Power off", systemImage: "power") { validation.setPower(false) }
+                    commandButton("Power on", systemImage: "power") { lighting.setPower(true) }
+                    commandButton("Power off", systemImage: "power") { lighting.setPower(false) }
                 }
                 HStack {
-                    commandButton("Red", systemImage: "circle.fill") { validation.setSolidColor(red: 255, green: 0, blue: 0) }
-                    commandButton("Green", systemImage: "circle.fill") { validation.setSolidColor(red: 0, green: 255, blue: 0) }
-                    commandButton("Blue", systemImage: "circle.fill") { validation.setSolidColor(red: 0, green: 0, blue: 255) }
+                    commandButton("Red", systemImage: "circle.fill") { lighting.setSolidColor(red: 255, green: 0, blue: 0) }
+                    commandButton("Green", systemImage: "circle.fill") { lighting.setSolidColor(red: 0, green: 255, blue: 0) }
+                    commandButton("Blue", systemImage: "circle.fill") { lighting.setSolidColor(red: 0, green: 0, blue: 255) }
                 }
                 HStack {
-                    commandButton("Mixed", systemImage: "circle.fill") { validation.setSolidColor(red: 255, green: 96, blue: 24) }
+                    commandButton("Mixed", systemImage: "circle.fill") { lighting.setSolidColor(red: 255, green: 96, blue: 24) }
                     ForEach([10, 50, 100], id: \.self) { percentage in
                         commandButton("\(percentage)%", systemImage: "sun.max") {
-                            validation.setBrightness(UInt8(percentage))
+                            lighting.setBrightness(UInt8(percentage))
                         }
                     }
                 }
@@ -292,14 +472,14 @@ struct MelkValidationRouteView: View {
     private var evidenceControls: some View {
         GroupBox("Command evidence") {
             VStack(alignment: .leading, spacing: 10) {
-                Label("Status: \(validation.commandStatus.displayText)", systemImage: validation.commandStatus.symbolName)
+                Label("Status: \(lighting.commandStatus.displayText)", systemImage: lighting.commandStatus.symbolName)
                     .accessibilityIdentifier("melk.validation.command-status")
                 Text("A write is never treated as success without an explicit confirmation observation.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 HStack {
-                    Button("Mark confirmed") { validation.markConfirmed() }
-                    Button("Mark unconfirmed") { validation.markUnconfirmed() }
+                    Button("Mark confirmed") { lighting.markConfirmed() }
+                    Button("Mark unconfirmed") { lighting.markUnconfirmed() }
                 }
                 .buttonStyle(.bordered)
             }
@@ -309,9 +489,9 @@ struct MelkValidationRouteView: View {
     private var recordsCard: some View {
         GroupBox("Validation log") {
             VStack(alignment: .leading, spacing: 6) {
-                Text("FFF4 notifications: \(validation.notificationCount)")
-                    .font(.footnote.monospaced())
-                ForEach(validation.records) { record in
+                Text("FFF4 notifications: \(lighting.notificationCount)")
+                .font(.footnote.monospaced())
+                ForEach(lighting.records) { record in
                     Text(record.text)
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)

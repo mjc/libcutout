@@ -45,6 +45,7 @@ enum EucPackScreen: Hashable {
 enum CutoutAppRoute: Hashable {
     case devicePicker
     case eucRide
+    case lighting(LightingRideContext)
     case eucPack(EucPackScreen)
     case vescRide
     case vescDebug
@@ -79,6 +80,13 @@ enum CutoutAppRoute: Hashable {
     }
 
     static func route(forNavigationTarget navigationTarget: PevNavigationTarget) -> CutoutAppRoute {
+        route(forNavigationTarget: navigationTarget, from: nil)
+    }
+
+    static func route(
+        forNavigationTarget navigationTarget: PevNavigationTarget,
+        from source: CutoutAppRoute?
+    ) -> CutoutAppRoute {
         switch navigationTarget {
         case .screen(let screenID):
             route(for: screenID)
@@ -86,6 +94,8 @@ enum CutoutAppRoute: Hashable {
             .eucPack(.root)
         case .vescRide:
             .vescRide
+        case .lighting:
+            .lighting(source?.lightingContext ?? .euc)
         }
     }
 
@@ -99,6 +109,13 @@ enum CutoutAppRoute: Hashable {
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)
+        case .lighting(let context):
+            switch context {
+            case .euc:
+                PevRideTabs.eucRideTabs(lightingSelected: true)
+            case .vesc:
+                PevRideTabs.vescRideTabs(lightingSelected: true)
+            }
         case .eucPack(let screen):
             PevRideTabs.eucRideTabs(selected: screen.screenID ?? .bmsOverview)
         case .vescRide:
@@ -115,7 +132,19 @@ enum CutoutAppRoute: Hashable {
     func destination(for tab: PevScreenTab) -> CutoutAppRoute? {
         guard let target = tab.destinationTarget else { return nil }
         if tab.id == .pack, case .eucPack = self { return self }
-        return Self.route(forNavigationTarget: target)
+        return Self.route(forNavigationTarget: target, from: self)
+    }
+
+    func destination(forNavigationTarget target: PevNavigationTarget) -> CutoutAppRoute {
+        Self.route(forNavigationTarget: target, from: self)
+    }
+
+    private var lightingContext: LightingRideContext? {
+        switch self {
+        case .eucRide, .eucPack, .lighting(.euc): .euc
+        case .vescRide, .vescDebug, .lighting(.vesc): .vesc
+        default: nil
+        }
     }
 
     var selectedBmsGroupIndex: Int? {
@@ -123,4 +152,9 @@ enum CutoutAppRoute: Hashable {
         return groupIndex
     }
 
+}
+
+enum LightingRideContext: Hashable {
+    case euc
+    case vesc
 }

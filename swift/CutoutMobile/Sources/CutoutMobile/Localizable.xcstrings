@@ -833,6 +833,10 @@
       "comment" : "Bottom navigation tab for live riding telemetry.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
     },
+    "tab.lighting" : {
+      "comment" : "Connected ride tab for standalone MELK RGB lighting accessories.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lighting" } } }
+    },
     "tab.tune" : {
       "comment" : "Bottom navigation tab for tuning controls.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
