@@ -98,6 +98,11 @@ final class CutoutAppModelTests: XCTestCase {
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
+        XCTAssertFalse(model.headlightControlAvailable)
+        XCTAssertEqual(
+            model.headlightStatusText,
+            "Headlight is unavailable until a supported wheel is connected."
+        )
         XCTAssertFalse(model.setHeadlight(true))
         XCTAssertEqual(model.headlightCommandStatus, .failed)
         XCTAssertEqual(driver.headlightStates, [])

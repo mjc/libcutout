@@ -174,6 +174,10 @@ final class CutoutAppModel {
         headlightState.commandStatus
     }
 
+    var headlightControlAvailable: Bool {
+        core.electricUnicycleModel != nil
+    }
+
     var selectedRideTitle: String? {
         connectionState.selection?.title
     }
@@ -286,7 +290,10 @@ final class CutoutAppModel {
     }
 
     var headlightStatusText: String {
-        switch headlightCommandStatus {
+        if !headlightControlAvailable, headlightCommandStatus == .idle {
+            return localizedAppText("settings.headlight.unavailable")
+        }
+        return switch headlightCommandStatus {
         case .idle:
             localizedAppText("settings.headlight.help")
         case .failed:

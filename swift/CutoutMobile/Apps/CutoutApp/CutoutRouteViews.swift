@@ -131,7 +131,7 @@ struct EucTuneRouteView: View {
                         set: { model.setHeadlight($0) }
                     )
                 )
-                .disabled(model.phase != .live)
+                .disabled(model.phase != .live || !model.headlightControlAvailable)
                 .accessibilityHint(model.headlightStatusText)
             } header: {
                 Text(localizedAppText("settings.lights.title"))
