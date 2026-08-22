@@ -257,11 +257,12 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
                 return
             }
-            central.scanForPeripherals(
-                withServices: CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids
-            )
+            // MELK-OC21 does not advertise FFF0 in its advertisement packet. Filter only after
+            // connecting and discovering the GATT inventory; the advertised name is the
+            // candidate gate that keeps this standalone scan narrow.
+            central.scanForPeripherals(withServices: nil)
             transition(to: .scanning)
-            record("scan=melk services=FFF0")
+            record("scan=melk services=all; gatt=FFF0 post-connect")
         }
     }
 
