@@ -212,71 +212,47 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
-        do {
-            rideMapSnapshot = try core.rideMapStateHandle.startGpsOnly(
+        applyRideMapCommand(resetPoints: true) {
+            try core.rideMapStateHandle.startGpsOnly(
                 atMs: currentMonotonicTime.rawValue,
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
-            rideMapPoints.removeAll(keepingCapacity: true)
-            rideMapLastDecision = nil
-            return true
-        } catch {
-            return false
         }
     }
 
     @discardableResult
     func pauseRideMap() -> Bool {
-        do {
-            rideMapSnapshot = try core.rideMapStateHandle.pause()
-            return true
-        } catch {
-            return false
-        }
+        applyRideMapCommand { try core.rideMapStateHandle.pause() }
     }
 
     @discardableResult
     func resumeRideMap() -> Bool {
-        do {
-            rideMapSnapshot = try core.rideMapStateHandle.resume()
-            return true
-        } catch {
-            return false
-        }
+        applyRideMapCommand { try core.rideMapStateHandle.resume() }
     }
 
     @discardableResult
     func stopRideMap() -> Bool {
-        do {
-            rideMapSnapshot = try core.rideMapStateHandle.stop()
-            return true
-        } catch {
-            return false
-        }
+        applyRideMapCommand { try core.rideMapStateHandle.stop() }
     }
 
     @discardableResult
     func saveRideMap() -> Bool {
-        do {
-            rideMapSnapshot = try core.rideMapStateHandle.save()
-            loadRideMapHistory()
-            return true
-        } catch {
+        guard applyRideMapCommand({ try core.rideMapStateHandle.save() }) else {
             return false
         }
+        loadRideMapHistory()
+        return true
     }
 
     @discardableResult
     func discardRideMap() -> Bool {
-        do {
-            rideMapSnapshot = try core.rideMapStateHandle.discard()
-            rideMapHistoryPoints = []
-            rideMapHistoryPointsTruncated = false
-            loadRideMapHistory()
-            return true
-        } catch {
+        guard applyRideMapCommand({ try core.rideMapStateHandle.discard() }) else {
             return false
         }
+        rideMapHistoryPoints = []
+        rideMapHistoryPointsTruncated = false
+        loadRideMapHistory()
+        return true
     }
 
     func loadRideMapHistory() {
@@ -344,6 +320,22 @@ final class CutoutAppModel {
         rideMapLastDecision = decision
         if case let .accepted(point, _) = decision {
             rideMapPoints.append(point)
+        }
+    }
+
+    private func applyRideMapCommand(
+        resetPoints: Bool = false,
+        _ command: () throws -> MobileRideMapSnapshotDto
+    ) -> Bool {
+        do {
+            rideMapSnapshot = try command()
+            if resetPoints {
+                rideMapPoints.removeAll(keepingCapacity: true)
+                rideMapLastDecision = nil
+            }
+            return true
+        } catch {
+            return false
         }
     }
 

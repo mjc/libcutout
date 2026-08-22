@@ -11339,12 +11339,15 @@ mod ride_map_tests {
             let state = MobileRideMapState::new_with_database(path.to_string_lossy().into_owned())
                 .expect("database should open");
             ride_id = state
-                .start_gps_only(100, None)
+                .start_gps_only(100, Some("pev-recovered".to_owned()))
                 .expect("ride should start")
                 .ride_id;
             state
                 .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
                 .expect("location should be admitted");
+            assert!(state
+                .observe_vehicle_connection("pev-recovered".to_owned(), 200)
+                .expect("vehicle association should persist"));
         }
 
         let recovered = MobileRideMapState::new_with_database(path.to_string_lossy().into_owned())
@@ -11355,6 +11358,7 @@ mod ride_map_tests {
         assert_eq!(snapshot.ride_id, ride_id);
         assert_eq!(snapshot.state, MobileRideMapStateDto::Recording);
         assert_eq!(snapshot.summary.point_count, 1);
+        assert_eq!(snapshot.associated_vehicle.as_deref(), Some("pev-recovered"));
         assert_eq!(
             recovered
                 .points_after(0, 10)

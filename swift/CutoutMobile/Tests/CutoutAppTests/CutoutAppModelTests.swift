@@ -70,6 +70,32 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() throws {
+        let driver = SessionDriverSpy(rows: [])
+        _ = try driver.rideMapStateHandle.startGpsOnly(
+            atMs: 100,
+            lastConnectedVehicle: "pev-restored"
+        )
+        _ = try driver.rideMapStateHandle.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 5
+        )
+        XCTAssertTrue(try driver.rideMapStateHandle.observeVehicleConnection(
+            platformIdentifier: "pev-restored",
+            atMs: 200
+        ))
+
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
+        XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
+        XCTAssertEqual(model.rideMapPoints.count, 1)
+    }
+
+    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
