@@ -8,8 +8,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    LocationSample, MonotonicMilliseconds, RideRecording, RideState, RoutePoint, RoutePointBatch,
-    VehicleIdentity,
+    LocationSample, MonotonicMilliseconds, PersistedRide, RideRecording, RideState, RoutePoint,
+    RoutePointBatch, RouteTelemetryState, VehicleIdentity,
 };
 
 const SCHEMA: &str = r"
@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS ride_map_ride (
     started_at_monotonic_ms INTEGER NOT NULL CHECK (started_at_monotonic_ms >= 0),
     candidate_vehicle TEXT,
     associated_vehicle TEXT,
-    associated_at_monotonic_ms INTEGER
+    associated_at_monotonic_ms INTEGER,
+    last_telemetry_at_monotonic_ms INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS ride_map_point (
@@ -37,16 +38,17 @@ CREATE TABLE IF NOT EXISTS ride_map_point (
     latitude_degrees REAL NOT NULL CHECK (latitude_degrees >= -90.0 AND latitude_degrees <= 90.0),
     longitude_degrees REAL NOT NULL CHECK (longitude_degrees >= -180.0 AND longitude_degrees <= 180.0),
     horizontal_accuracy_meters REAL NOT NULL CHECK (horizontal_accuracy_meters >= 0.0),
+    telemetry_state INTEGER NOT NULL CHECK (telemetry_state BETWEEN 0 AND 3),
     PRIMARY KEY (ride_id, sequence)
 );
 
 CREATE INDEX IF NOT EXISTS ride_map_point_cursor
     ON ride_map_point (ride_id, sequence);
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 ";
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 /// A bounded, Rust-owned history summary.
 #[derive(Clone, Debug, PartialEq)]
@@ -134,6 +136,7 @@ struct RideMetadata {
     candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
     associated_at_monotonic_ms: Option<u64>,
+    last_telemetry_at_monotonic_ms: Option<u64>,
 }
 
 impl RideMetadata {
@@ -155,6 +158,9 @@ impl RideMetadata {
                 .map(str::to_owned),
             associated_at_monotonic_ms: recording
                 .associated_at()
+                .map(MonotonicMilliseconds::as_milliseconds),
+            last_telemetry_at_monotonic_ms: recording
+                .last_telemetry_at()
                 .map(MonotonicMilliseconds::as_milliseconds),
         }
     }
@@ -288,6 +294,18 @@ impl RideMapStore {
                  PRAGMA user_version = 3;",
             )?;
             transaction.commit()?;
+            version = 3;
+        }
+        if version == 3 {
+            let transaction = self.connection.unchecked_transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE ride_map_ride
+                     ADD COLUMN last_telemetry_at_monotonic_ms INTEGER;
+                 ALTER TABLE ride_map_point
+                     ADD COLUMN telemetry_state INTEGER NOT NULL DEFAULT 0;
+                 PRAGMA user_version = 4;",
+            )?;
+            transaction.commit()?;
         }
         self.connection.execute_batch(SCHEMA)?;
         Ok(())
@@ -314,8 +332,8 @@ impl RideMapStore {
         let mut insert_point = transaction.prepare(
             "INSERT INTO ride_map_point
                 (ride_id, sequence, segment_id, wall_clock_unix_ms, monotonic_ms,
-                 latitude_degrees, longitude_degrees, horizontal_accuracy_meters)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 latitude_degrees, longitude_degrees, horizontal_accuracy_meters, telemetry_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         )?;
         for segment in recording.segments() {
             for point in segment.points() {
@@ -329,6 +347,7 @@ impl RideMapStore {
                     sample.latitude().as_degrees(),
                     sample.longitude().as_degrees(),
                     sample.horizontal_accuracy_meters(),
+                    point.telemetry_state().storage_value(),
                 ])?;
             }
         }
@@ -355,8 +374,8 @@ impl RideMapStore {
         transaction.execute(
             "INSERT INTO ride_map_point
                 (ride_id, sequence, segment_id, wall_clock_unix_ms, monotonic_ms,
-                 latitude_degrees, longitude_degrees, horizontal_accuracy_meters)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 latitude_degrees, longitude_degrees, horizontal_accuracy_meters, telemetry_state)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(ride_id, sequence) DO NOTHING",
             params![
                 metadata.ride_id.to_string(),
@@ -367,6 +386,7 @@ impl RideMapStore {
                 sample.latitude().as_degrees(),
                 sample.longitude().as_degrees(),
                 sample.horizontal_accuracy_meters(),
+                point.telemetry_state().storage_value(),
             ],
         )?;
         transaction.commit()?;
@@ -425,7 +445,7 @@ impl RideMapStore {
         let after_sequence_sql = sqlite_i64(after_sequence)?;
         let mut statement = self.connection.prepare(
             "SELECT sequence, segment_id, wall_clock_unix_ms, monotonic_ms,
-                    latitude_degrees, longitude_degrees, horizontal_accuracy_meters
+                    latitude_degrees, longitude_degrees, horizontal_accuracy_meters, telemetry_state
              FROM ride_map_point
              WHERE ride_id = ?1 AND sequence > ?2
              ORDER BY sequence ASC
@@ -463,7 +483,8 @@ impl RideMapStore {
             .connection
             .query_row(
                 "SELECT ride_id, state, point_count, started_at_monotonic_ms,
-                        candidate_vehicle, associated_vehicle, associated_at_monotonic_ms
+                        candidate_vehicle, associated_vehicle, associated_at_monotonic_ms,
+                        last_telemetry_at_monotonic_ms
                  FROM ride_map_ride
                  WHERE state IN ('recording', 'paused', 'stopped')
                  ORDER BY rowid DESC
@@ -478,6 +499,7 @@ impl RideMapStore {
                         row.get::<_, Option<String>>(4)?,
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<i64>>(6)?,
+                        row.get::<_, Option<i64>>(7)?,
                     ))
                 },
             )
@@ -490,6 +512,7 @@ impl RideMapStore {
             candidate_vehicle,
             associated_vehicle,
             associated_at_monotonic_ms,
+            last_telemetry_at_monotonic_ms,
         )) = metadata
         else {
             return Ok(None);
@@ -508,7 +531,7 @@ impl RideMapStore {
             .map_err(|error| RideMapStoreError::InvalidPoint(error.to_string()))?;
         let mut statement = self.connection.prepare(
             "SELECT sequence, segment_id, wall_clock_unix_ms, monotonic_ms,
-                    latitude_degrees, longitude_degrees, horizontal_accuracy_meters
+                    latitude_degrees, longitude_degrees, horizontal_accuracy_meters, telemetry_state
              FROM ride_map_point
              WHERE ride_id = ?1
              ORDER BY sequence ASC",
@@ -519,15 +542,19 @@ impl RideMapStore {
         let associated_at = associated_at_monotonic_ms
             .map(|value| decode_monotonic(value, "negative association time"))
             .transpose()?;
-        let recovered = RideRecording::from_persisted(
+        let last_telemetry_at = last_telemetry_at_monotonic_ms
+            .map(|value| decode_monotonic(value, "negative telemetry time"))
+            .transpose()?;
+        let recovered = RideRecording::from_persisted(PersistedRide {
             ride_id,
             state,
             started_at,
             candidate_vehicle,
             associated_vehicle,
             associated_at,
+            last_telemetry_at,
             points,
-        )
+        })
         .map_err(RideMapStoreError::InvalidPoint)?;
         let stored_point_count = u64::try_from(point_count)
             .map_err(|_| RideMapStoreError::InvalidPoint("negative point count".to_owned()))?;
@@ -798,8 +825,8 @@ fn insert_metadata(
         "INSERT INTO ride_map_ride
             (ride_id, state, point_count, distance_meters, duration_milliseconds,
              started_at_monotonic_ms, candidate_vehicle, associated_vehicle,
-             associated_at_monotonic_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             associated_at_monotonic_ms, last_telemetry_at_monotonic_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(ride_id) DO UPDATE SET
             state = excluded.state,
             point_count = excluded.point_count,
@@ -808,7 +835,8 @@ fn insert_metadata(
             started_at_monotonic_ms = excluded.started_at_monotonic_ms,
             candidate_vehicle = excluded.candidate_vehicle,
             associated_vehicle = excluded.associated_vehicle,
-            associated_at_monotonic_ms = excluded.associated_at_monotonic_ms",
+            associated_at_monotonic_ms = excluded.associated_at_monotonic_ms,
+            last_telemetry_at_monotonic_ms = excluded.last_telemetry_at_monotonic_ms",
         params![
             metadata.ride_id.to_string(),
             state_name(metadata.state),
@@ -820,6 +848,10 @@ fn insert_metadata(
             metadata.associated_vehicle.as_deref(),
             metadata
                 .associated_at_monotonic_ms
+                .map(sqlite_i64)
+                .transpose()?,
+            metadata
+                .last_telemetry_at_monotonic_ms
                 .map(sqlite_i64)
                 .transpose()?,
         ],
@@ -885,6 +917,7 @@ fn decode_point(row: &rusqlite::Row<'_>) -> Result<RoutePoint, rusqlite::Error> 
     let latitude = row.get::<_, f64>(4)?;
     let longitude = row.get::<_, f64>(5)?;
     let horizontal_accuracy_meters = row.get::<_, f64>(6)?;
+    let telemetry_state = row.get::<_, i64>(7)?;
     let sequence = u64::try_from(sequence).map_err(|error| conversion_error(0, error))?;
     let segment_id = u64::try_from(segment_id).map_err(|error| conversion_error(1, error))?;
     let wall_clock_unix_ms =
@@ -898,10 +931,13 @@ fn decode_point(row: &rusqlite::Row<'_>) -> Result<RoutePoint, rusqlite::Error> 
         horizontal_accuracy_meters,
     )
     .map_err(|error| conversion_error(4, error))?;
+    let telemetry_state = RouteTelemetryState::from_storage(telemetry_state)
+        .map_err(|error| conversion_error(7, error))?;
     Ok(RoutePoint {
         sequence,
         sample,
         segment_id,
+        telemetry_state,
     })
 }
 

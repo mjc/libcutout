@@ -20,6 +20,8 @@ pub use storage::{
 const EARTH_RADIUS_METERS: f64 = 6_371_000.0;
 const MAX_VEHICLE_ID_BYTES: usize = 256;
 const MAX_POINT_BATCH: usize = 1_024;
+/// Maximum age of telemetry that can qualify a route point as fresh.
+pub const TELEMETRY_FRESHNESS_MILLISECONDS: u64 = 2_000;
 
 /// Monotonic host time in milliseconds.
 #[repr(transparent)]
@@ -128,6 +130,55 @@ impl VehicleAssociationOutcome {
     pub const fn is_associated(self) -> bool {
         matches!(self, Self::Associated)
     }
+}
+
+/// Telemetry provenance retained on every admitted route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteTelemetryState {
+    /// The point was recorded before this ride was associated with a PEV.
+    GpsOnly,
+    /// The ride was associated, but no telemetry sample was available for this point.
+    AssociatedNoTelemetry,
+    /// A telemetry sample no older than the Rust freshness window was available.
+    AssociatedFresh,
+    /// The associated telemetry was older than the Rust freshness window.
+    AssociatedStale,
+}
+
+impl RouteTelemetryState {
+    pub(crate) const fn storage_value(self) -> i64 {
+        match self {
+            Self::GpsOnly => 0,
+            Self::AssociatedNoTelemetry => 1,
+            Self::AssociatedFresh => 2,
+            Self::AssociatedStale => 3,
+        }
+    }
+
+    pub(crate) fn from_storage(value: i64) -> Result<Self, String> {
+        match value {
+            0 => Ok(Self::GpsOnly),
+            1 => Ok(Self::AssociatedNoTelemetry),
+            2 => Ok(Self::AssociatedFresh),
+            3 => Ok(Self::AssociatedStale),
+            other => Err(format!("invalid route telemetry state: {other}")),
+        }
+    }
+}
+
+/// Result of submitting a telemetry timestamp to an associated ride.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryObservationOutcome {
+    /// The timestamp became the newest telemetry evidence.
+    Observed,
+    /// The timestamp was already the newest observed evidence.
+    AlreadyObserved,
+    /// The ride has no confirmed PEV association yet.
+    NotAssociated,
+    /// The timestamp would move telemetry evidence backwards.
+    TimestampOutOfOrder,
+    /// The ride is no longer open to telemetry.
+    RideNotOpen,
 }
 
 /// A location observation received from the platform.
@@ -264,6 +315,7 @@ pub struct RoutePoint {
     sequence: u64,
     sample: LocationSample,
     segment_id: u64,
+    telemetry_state: RouteTelemetryState,
 }
 
 impl RoutePoint {
@@ -283,6 +335,12 @@ impl RoutePoint {
     #[must_use]
     pub const fn segment_id(self) -> u64 {
         self.segment_id
+    }
+
+    /// Returns the Rust-owned telemetry provenance for this point.
+    #[must_use]
+    pub const fn telemetry_state(self) -> RouteTelemetryState {
+        self.telemetry_state
     }
 }
 
@@ -430,6 +488,18 @@ pub struct RideRecording {
     candidate_vehicle: Option<VehicleIdentity>,
     associated_vehicle: Option<VehicleIdentity>,
     associated_at: Option<MonotonicMilliseconds>,
+    last_telemetry_at: Option<MonotonicMilliseconds>,
+}
+
+pub(crate) struct PersistedRide {
+    pub(crate) ride_id: Uuid,
+    pub(crate) state: RideState,
+    pub(crate) started_at: MonotonicMilliseconds,
+    pub(crate) candidate_vehicle: Option<VehicleIdentity>,
+    pub(crate) associated_vehicle: Option<VehicleIdentity>,
+    pub(crate) associated_at: Option<MonotonicMilliseconds>,
+    pub(crate) last_telemetry_at: Option<MonotonicMilliseconds>,
+    pub(crate) points: Vec<RoutePoint>,
 }
 
 impl RideRecording {
@@ -458,18 +528,21 @@ impl RideRecording {
             candidate_vehicle,
             associated_vehicle: None,
             associated_at: None,
+            last_telemetry_at: None,
         }
     }
 
-    pub(crate) fn from_persisted(
-        ride_id: Uuid,
-        state: RideState,
-        started_at: MonotonicMilliseconds,
-        candidate_vehicle: Option<VehicleIdentity>,
-        associated_vehicle: Option<VehicleIdentity>,
-        associated_at: Option<MonotonicMilliseconds>,
-        points: Vec<RoutePoint>,
-    ) -> Result<Self, String> {
+    pub(crate) fn from_persisted(persisted: PersistedRide) -> Result<Self, String> {
+        let PersistedRide {
+            ride_id,
+            state,
+            started_at,
+            candidate_vehicle,
+            associated_vehicle,
+            associated_at,
+            last_telemetry_at,
+            points,
+        } = persisted;
         let mut segments = Vec::new();
         let mut previous = None;
         let mut total_distance_meters = 0.0;
@@ -481,6 +554,11 @@ impl RideRecording {
         for point in points {
             if point.sample.monotonic_at() < started_at {
                 return Err("persisted route point predates ride start".to_owned());
+            }
+            if associated_vehicle.is_none()
+                && !matches!(point.telemetry_state, RouteTelemetryState::GpsOnly)
+            {
+                return Err("persisted telemetry provenance requires an association".to_owned());
             }
             if point.sequence == 0
                 || previous.is_some_and(|previous: RoutePoint| {
@@ -518,6 +596,14 @@ impl RideRecording {
         if associated_at.is_some_and(|at| at < started_at) {
             return Err("persisted association predates ride start".to_owned());
         }
+        if last_telemetry_at.is_some_and(|at| {
+            at < started_at || associated_at.is_none_or(|associated_at| at < associated_at)
+        }) {
+            return Err("persisted telemetry predates ride association".to_owned());
+        }
+        if last_telemetry_at.is_some() && associated_vehicle.is_none() {
+            return Err("persisted telemetry requires an associated vehicle".to_owned());
+        }
 
         Ok(Self {
             ride_id,
@@ -537,6 +623,7 @@ impl RideRecording {
             candidate_vehicle,
             associated_vehicle,
             associated_at,
+            last_telemetry_at,
         })
     }
 
@@ -586,6 +673,12 @@ impl RideRecording {
     #[must_use]
     pub const fn associated_at(&self) -> Option<MonotonicMilliseconds> {
         self.associated_at
+    }
+
+    /// Returns the newest accepted telemetry timestamp, if one exists.
+    #[must_use]
+    pub const fn last_telemetry_at(&self) -> Option<MonotonicMilliseconds> {
+        self.last_telemetry_at
     }
 
     /// Pauses point admission without ending the logical ride.
@@ -673,6 +766,48 @@ impl RideRecording {
         VehicleAssociationOutcome::Associated
     }
 
+    /// Records a timestamp from confirmed PEV telemetry without backfilling points.
+    pub fn observe_telemetry(&mut self, at: MonotonicMilliseconds) -> TelemetryObservationOutcome {
+        if !matches!(self.state, RideState::Recording | RideState::Paused) {
+            return TelemetryObservationOutcome::RideNotOpen;
+        }
+        let Some(associated_at) = self.associated_at else {
+            return TelemetryObservationOutcome::NotAssociated;
+        };
+        if at < self.started_at || at < associated_at {
+            return TelemetryObservationOutcome::TimestampOutOfOrder;
+        }
+        if let Some(previous) = self.last_telemetry_at {
+            if at < previous {
+                return TelemetryObservationOutcome::TimestampOutOfOrder;
+            }
+            if at == previous {
+                return TelemetryObservationOutcome::AlreadyObserved;
+            }
+        }
+        self.last_telemetry_at = Some(at);
+        TelemetryObservationOutcome::Observed
+    }
+
+    fn telemetry_state_at(&self, at: MonotonicMilliseconds) -> RouteTelemetryState {
+        if self.associated_vehicle.is_none() {
+            return RouteTelemetryState::GpsOnly;
+        }
+        let Some(last_telemetry_at) = self.last_telemetry_at else {
+            return RouteTelemetryState::AssociatedNoTelemetry;
+        };
+        let age = at
+            .as_milliseconds()
+            .saturating_sub(last_telemetry_at.as_milliseconds());
+        if last_telemetry_at > at {
+            RouteTelemetryState::AssociatedNoTelemetry
+        } else if age > TELEMETRY_FRESHNESS_MILLISECONDS {
+            RouteTelemetryState::AssociatedStale
+        } else {
+            RouteTelemetryState::AssociatedFresh
+        }
+    }
+
     /// Attempts to admit one platform observation into the current route.
     pub fn append_location(&mut self, sample: LocationSample) -> RoutePointDecision {
         match self.state {
@@ -736,6 +871,7 @@ impl RideRecording {
             sequence: self.next_sequence,
             sample,
             segment_id,
+            telemetry_state: self.telemetry_state_at(sample.monotonic_at()),
         };
         if let Some(segment) = self.segments.last_mut() {
             segment.points.push(point);
@@ -802,7 +938,8 @@ mod tests {
     use super::{
         LocationAdmissionPolicy, LocationSample, MonotonicMilliseconds, RideMapDatabase,
         RideMapDatabaseOpenError, RideMapStore, RideRecording, RideState, RoutePointDecision,
-        VehicleAssociationOutcome, VehicleIdentity,
+        RouteTelemetryState, TelemetryObservationOutcome, VehicleAssociationOutcome,
+        VehicleIdentity,
     };
 
     fn sample(at: u64, latitude: f64, longitude: f64) -> LocationSample {
@@ -904,6 +1041,45 @@ mod tests {
     }
 
     #[test]
+    fn route_points_retain_rust_owned_telemetry_provenance() {
+        let vehicle = VehicleIdentity::new("pev-telemetry").expect("fixture identity");
+        let mut ride = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            Some(vehicle.clone()),
+            LocationAdmissionPolicy::default(),
+        );
+
+        ride.append_location(sample(100, 39.7392, -104.9903));
+        assert_eq!(
+            ride.points_after(0, 10).points()[0].telemetry_state(),
+            RouteTelemetryState::GpsOnly
+        );
+        assert_eq!(
+            ride.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(200)),
+            VehicleAssociationOutcome::Associated
+        );
+        ride.append_location(sample(300, 39.7393, -104.9902));
+        assert_eq!(
+            ride.points_after(1, 10).points()[0].telemetry_state(),
+            RouteTelemetryState::AssociatedNoTelemetry
+        );
+        assert_eq!(
+            ride.observe_telemetry(MonotonicMilliseconds::new(400)),
+            TelemetryObservationOutcome::Observed
+        );
+        ride.append_location(sample(500, 39.7394, -104.9901));
+        assert_eq!(
+            ride.points_after(2, 10).points()[0].telemetry_state(),
+            RouteTelemetryState::AssociatedFresh
+        );
+        ride.append_location(sample(3_000, 39.7395, -104.9900));
+        assert_eq!(
+            ride.points_after(3, 10).points()[0].telemetry_state(),
+            RouteTelemetryState::AssociatedStale
+        );
+    }
+
+    #[test]
     fn vehicle_association_reports_typed_refusals() {
         let vehicle = VehicleIdentity::new("pev-1").expect("fixture identity");
         let mut no_candidate = RideRecording::start_gps_only(
@@ -980,20 +1156,29 @@ mod tests {
             &VehicleIdentity::new("pev-1").expect("fixture identity"),
             MonotonicMilliseconds::new(1_200),
         );
+        assert_eq!(
+            ride.observe_telemetry(MonotonicMilliseconds::new(1_300)),
+            TelemetryObservationOutcome::Observed
+        );
+        ride.append_location(sample(1_400, 39.7394, -104.9901));
         assert!(ride.stop());
 
         store.save_recording(&ride).expect("recording saves");
         let summaries = store.list_summaries(10).expect("summaries query");
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].ride_id(), ride.ride_id());
-        assert_eq!(summaries[0].point_count(), 2);
+        assert_eq!(summaries[0].point_count(), 3);
         assert_eq!(summaries[0].associated_vehicle(), Some("pev-1"));
 
         let points = store
-            .points_after(ride.ride_id(), 0, 1)
+            .points_after(ride.ride_id(), 0, 10)
             .expect("points query");
-        assert_eq!(points.points().len(), 1);
-        assert!(points.has_more());
+        assert_eq!(points.points().len(), 3);
+        assert_eq!(
+            points.points()[2].telemetry_state(),
+            RouteTelemetryState::AssociatedFresh
+        );
+        assert!(!points.has_more());
     }
 
     #[test]
@@ -1144,7 +1329,7 @@ mod tests {
         let version = connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .expect("schema version reads");
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let candidate_column = connection
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('ride_map_ride') WHERE name = 'candidate_vehicle'",
@@ -1161,6 +1346,14 @@ mod tests {
             )
             .expect("ride start column reads");
         assert_eq!(started_at_column, 1);
+        let telemetry_column = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('ride_map_point') WHERE name = 'telemetry_state'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("telemetry column reads");
+        assert_eq!(telemetry_column, 1);
         std::fs::remove_file(path).expect("fixture database is removable");
     }
 
