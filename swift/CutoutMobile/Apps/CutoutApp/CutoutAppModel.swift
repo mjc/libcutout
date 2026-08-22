@@ -28,6 +28,7 @@ final class CutoutAppModel {
     )
     private(set) var rideMapSnapshot: MobileRideMapSnapshotDto?
     private(set) var rideMapStorageError: String?
+    private(set) var rideMapError: MobileRideMapError?
     private(set) var rideMapPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
@@ -258,6 +259,7 @@ final class CutoutAppModel {
     func loadRideMapHistory() {
         do {
             rideMapHistory = try core.rideMapStateHandle.storedSummaries(limit: 50)
+            rideMapError = nil
             guard let first = rideMapHistory.first else {
                 selectedRideMapHistoryID = nil
                 rideMapHistoryPoints = []
@@ -265,7 +267,14 @@ final class CutoutAppModel {
                 return
             }
             selectRideMapHistory(first.rideId)
+        } catch let error as MobileRideMapError {
+            rideMapError = error
+            rideMapHistory = []
+            selectedRideMapHistoryID = nil
+            rideMapHistoryPoints = []
+            rideMapHistoryPointsTruncated = false
         } catch {
+            rideMapError = nil
             rideMapHistory = []
             selectedRideMapHistoryID = nil
             rideMapHistoryPoints = []
@@ -277,19 +286,30 @@ final class CutoutAppModel {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
         selectedRideMapHistoryID = rideID
         rideMapHistoryPointsTruncated = false
-        guard let (points, truncated) = try? collectRideMapPoints({ cursor, limit in
-            try core.rideMapStateHandle.storedPointsAfter(
-                rideId: rideID,
-                afterCursor: cursor,
-                limit: limit
-            )
-        }) else {
+        do {
+            guard let (points, truncated) = try collectRideMapPoints({ cursor, limit in
+                try core.rideMapStateHandle.storedPointsAfter(
+                    rideId: rideID,
+                    afterCursor: cursor,
+                    limit: limit
+                )
+            }) else {
+                rideMapHistoryPoints = []
+                rideMapHistoryPointsTruncated = false
+                return
+            }
+            rideMapError = nil
+            rideMapHistoryPoints = points
+            rideMapHistoryPointsTruncated = truncated
+        } catch let error as MobileRideMapError {
+            rideMapError = error
             rideMapHistoryPoints = []
             rideMapHistoryPointsTruncated = false
-            return
+        } catch {
+            rideMapError = nil
+            rideMapHistoryPoints = []
+            rideMapHistoryPointsTruncated = false
         }
-        rideMapHistoryPoints = points
-        rideMapHistoryPointsTruncated = truncated
     }
 
     private func collectRideMapPoints(
@@ -316,6 +336,7 @@ final class CutoutAppModel {
         snapshot: MobileRideMapSnapshotDto,
         decision: MobileRideMapDecisionDto
     ) {
+        rideMapError = nil
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
         if case let .accepted(point, _) = decision {
@@ -329,11 +350,15 @@ final class CutoutAppModel {
     ) -> Bool {
         do {
             rideMapSnapshot = try command()
+            rideMapError = nil
             if resetPoints {
                 rideMapPoints.removeAll(keepingCapacity: true)
                 rideMapLastDecision = nil
             }
             return true
+        } catch let error as MobileRideMapError {
+            rideMapError = error
+            return false
         } catch {
             return false
         }

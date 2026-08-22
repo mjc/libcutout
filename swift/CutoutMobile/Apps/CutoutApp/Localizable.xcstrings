@@ -701,6 +701,10 @@
       "comment" : "Warning shown when the ride-map database could not be opened and the map is session-only.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride maps are stored only for this session because durable storage is unavailable." } } }
     },
+    "ride_map.command_failed" : {
+      "comment" : "Warning shown when a Rust-owned ride-map command or query fails without changing ride state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The map action could not be completed; the ride state was not changed." } } }
+    },
     "ride_map.history_truncated" : {
       "comment" : "History route warning when the bounded UI point preview is incomplete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }

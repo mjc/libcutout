@@ -99,6 +99,15 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.pauseRideMap())
+        XCTAssertEqual(model.rideMapError, .NoActiveRide)
+    }
+
+    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

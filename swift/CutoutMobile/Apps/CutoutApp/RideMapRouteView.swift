@@ -74,6 +74,15 @@ struct RideMapRouteView: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("ride-map.persistence-warning")
                 }
+                if model.rideMapError != nil {
+                    Label(
+                        localizedAppText("ride_map.command_failed"),
+                        systemImage: "exclamationmark.circle.fill"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("ride-map.command-error")
+                }
                 Text(statusTitle)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
