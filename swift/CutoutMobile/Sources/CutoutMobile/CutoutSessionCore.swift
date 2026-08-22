@@ -1545,8 +1545,8 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
     }
 
-    private func publishRideMapError(_ error: MobileRideMapError) {
-        guard error != .NoActiveRide else { return }
+    private func publishRideMapError(_ error: Error) {
+        guard let error = error as? MobileRideMapError, error != .NoActiveRide else { return }
         publishOnMain { self.onRideMapErrorChange?(error) }
     }
 
@@ -2119,10 +2119,8 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             if outcome == .associated {
                 publishRideMapSnapshot()
             }
-        } catch let error as MobileRideMapError {
-            publishRideMapError(error)
         } catch {
-            return
+            publishRideMapError(error)
         }
     }
 
@@ -2598,12 +2596,8 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
                 horizontalAccuracyMeters: sample.horizontalAccuracyMeters
             )
             publishRideMapDecision(decision)
-        } catch let error as MobileRideMapError {
-            publishRideMapError(error)
         } catch {
-            // Keep the existing phone-location publication path alive for an
-            // unexpected bridge error; the typed Rust error path above is the
-            // only ride-map failure the app can render.
+            publishRideMapError(error)
         }
         publishPhoneLocationSnapshot()
     }
