@@ -20,6 +20,7 @@ protocol CutoutSessionDriving: AnyObject {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
     var electricUnicycleModel: ElectricUnicycleModel? { get }
     var settingsCapabilities: EucSettingsCapabilities? { get }
+    var headlightState: LightSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool

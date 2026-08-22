@@ -1280,6 +1280,24 @@ public struct LightSettingState: Equatable, Hashable, Sendable {
     public let confirmedAt: MonotonicMilliseconds?
     public let refusalReason: CommandRefusalReason?
 
+    public init(
+        kind: SettingStateKind,
+        current: LightState? = nil,
+        requested: LightState? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
     fileprivate init(_ dto: MobileLightSettingStateDto) {
         self.kind = SettingStateKind(dto.kind)
         self.current = dto.current.map(LightState.init)

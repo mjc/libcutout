@@ -93,6 +93,37 @@ private enum HeadlightSettingState: Equatable {
     }
 }
 
+private extension LightSettingState {
+    var lightState: LightState? {
+        current ?? requested
+    }
+
+    func commandStatus(
+        for model: ElectricUnicycleModel?,
+        at now: MonotonicMilliseconds,
+        timeout: MonotonicMilliseconds
+    ) -> HeadlightCommandStatus {
+        switch kind {
+        case .unknown, .current:
+            return .idle
+        case .pending:
+            guard model != .aero else { return .sentWithoutConfirmation }
+            guard let submittedAt else { return .waitingForConfirmation }
+            return now.elapsed(since: submittedAt).rawValue >= timeout.rawValue
+                ? .timedOut
+                : .waitingForConfirmation
+        case .confirmed:
+            return .confirmed
+        case .refused:
+            return .refused
+        case .timedOut:
+            return .timedOut
+        case .failed:
+            return .failed
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -197,11 +228,18 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     var headlightOn: Bool {
-        headlightState.isOn
+        (rustHeadlightState?.lightState ?? headlightState.lightState) == .on
     }
 
     var headlightCommandStatus: HeadlightCommandStatus {
-        headlightState.commandStatus(
+        if let rustHeadlightState {
+            return rustHeadlightState.commandStatus(
+                for: core.electricUnicycleModel,
+                at: core.now(),
+                timeout: Self.headlightConfirmationTimeout
+            )
+        }
+        return headlightState.commandStatus(
             at: core.now(),
             timeout: Self.headlightConfirmationTimeout
         )
@@ -389,6 +427,10 @@ final class CutoutAppModel {
 
     private var headlightWriteSupport: SettingWriteSupport? {
         core.settingsCapabilities?.headlight
+    }
+
+    private var rustHeadlightState: LightSettingState? {
+        core.headlightState
     }
 
     convenience init() {

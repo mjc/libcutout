@@ -325,6 +325,9 @@ public final class CutoutSessionCore: NSObject {
     public var settingsCapabilities: EucSettingsCapabilities? {
         liveOwner?.settingsCapabilities ?? selectedModel?.settingsCapabilities
     }
+    public var headlightState: LightSettingState? {
+        onBleQueue { liveOwner?.headlightState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
