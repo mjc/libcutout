@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/cutout-core",
+    "crates/cutout-ride-maps",
     "crates/cutout-protocols",
     "crates/cutout-mobile-ffi",
     "crates/cutout-btle",
@@ -39,6 +40,8 @@ hex-literal = "1"
 mio = "1"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "termina"] }
 proptest = "1"
+rusqlite = { version = "0.37", default-features = false, features = ["bundled", "limits"] }
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 signal-hook = "0.3"

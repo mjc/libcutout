@@ -1,0 +1,22 @@
+[package]
+name = "cutout-ride-maps"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust-owned ride recording and geospatial domain types for Cutout"
+
+[lints]
+workspace = true
+
+[dependencies]
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+hex.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

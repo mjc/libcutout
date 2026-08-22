@@ -4434,12 +4434,45 @@ struct VoltageSagModelStore {
 
     private static let keyPrefix = "io.cutout.voltage-sag.v1."
     private let defaults: UserDefaults
+    private let database: RideDatabaseHandle?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.database = defaults === UserDefaults.standard ? RustPersistenceStore.shared : nil
+    }
+
+    init(database: RideDatabaseHandle) {
+        self.defaults = .standard
+        self.database = database
     }
 
     func load(for deviceIdentity: String) -> MobileVoltageSagModelDto? {
+        if let database {
+            if let persisted = try? database.voltageSagModel(deviceIdentity: deviceIdentity) {
+                return persisted
+            }
+            guard
+                let data = defaults.data(forKey: Self.keyPrefix + deviceIdentity),
+                let legacy = try? JSONDecoder().decode(Record.self, from: data),
+                legacy.schemaVersion == 1,
+                legacy.deviceIdentity == deviceIdentity
+            else {
+                return nil
+            }
+            let model = MobileVoltageSagModelDto(
+                schemaVersion: legacy.schemaVersion,
+                effectiveResistanceMilliohms: legacy.effectiveResistanceMilliohms,
+                observations: legacy.observations,
+                hardwareVerified: legacy.hardwareVerified
+            )
+            try? database.saveVoltageSagModel(
+                deviceIdentity: deviceIdentity,
+                model: model,
+                learnedAtMilliseconds: UInt64(legacy.lastLearnedWallClockMilliseconds)
+            )
+            defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
+            return model
+        }
         guard
             !deviceIdentity.isEmpty,
             let data = defaults.data(forKey: Self.keyPrefix + deviceIdentity),
@@ -4459,6 +4492,16 @@ struct VoltageSagModelStore {
 
     func save(_ model: MobileVoltageSagModelDto, for deviceIdentity: String) {
         guard !deviceIdentity.isEmpty else { return }
+        if let database {
+            if (try? database.saveVoltageSagModel(
+                deviceIdentity: deviceIdentity,
+                model: model,
+                learnedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
+            )) != nil {
+                defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
+            }
+            return
+        }
         let record = Record(
             schemaVersion: model.schemaVersion,
             deviceIdentity: deviceIdentity,
@@ -4473,6 +4516,11 @@ struct VoltageSagModelStore {
 
     func remove(for deviceIdentity: String) {
         guard !deviceIdentity.isEmpty else { return }
+        if let database {
+            try? database.removeVoltageSagModel(deviceIdentity: deviceIdentity)
+            defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
+            return
+        }
         defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
     }
 }
