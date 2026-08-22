@@ -1107,6 +1107,23 @@ pub enum MobileMelkLightingWriteModeDto {
     WithoutResponse,
 }
 
+/// Typed GATT-role evidence observed for a standalone MELK controller.
+///
+/// Swift/CoreBluetooth derives these flags from discovered UUIDs and
+/// characteristic properties; it never supplies UUIDs or protocol bytes to
+/// the Rust profile boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingGattEvidence {
+    /// The verified `FFF0` primary service was observed.
+    pub service_present: bool,
+
+    /// The verified `FFF3` characteristic supports write-without-response.
+    pub write_without_response: bool,
+
+    /// The verified `FFF4` characteristic supports notifications or indicates.
+    pub notify_or_indicate: bool,
+}
+
 /// One bounded MELK lighting write plus its independent confirmation policy.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMelkLightingWriteDto {
@@ -1129,10 +1146,6 @@ pub struct MobileMelkLightingWriteDto {
 /// Invalid input presented to the MELK lighting boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileMelkLightingError {
-    /// A GATT UUID did not contain exactly 16 bytes.
-    #[error("invalid MELK GATT channel")]
-    InvalidGattChannel,
-
     /// Name and observed GATT evidence did not identify the candidate profile.
     #[error("invalid MELK GATT evidence")]
     InvalidGattEvidence,
@@ -1148,25 +1161,28 @@ pub struct MobileMelkLightingProfile;
 
 #[uniffi::export]
 impl MobileMelkLightingProfile {
-    /// Selects the profile only when the family name and all observed channels agree.
+    /// Selects the profile only when the family name and all typed GATT roles agree.
     ///
     /// # Errors
     ///
-    /// Returns [`MobileMelkLightingError::InvalidGattChannel`] for malformed channel bytes or
-    /// [`MobileMelkLightingError::InvalidGattEvidence`] when the identity evidence does not
-    /// match the candidate profile.
+    /// Returns [`MobileMelkLightingError::InvalidGattEvidence`] when the identity evidence does
+    /// not match the candidate profile.
     #[uniffi::constructor]
     #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
     pub fn new(
         name: String,
-        service: Vec<u8>,
-        write: Vec<u8>,
-        notify: Vec<u8>,
+        evidence: MobileMelkLightingGattEvidence,
     ) -> Result<Arc<Self>, MobileMelkLightingError> {
         let evidence = MelkGattEvidence {
-            service: Some(mobile_melk_gatt_channel(&service)?),
-            write: Some(mobile_melk_gatt_channel(&write)?),
-            notify: Some(mobile_melk_gatt_channel(&notify)?),
+            service: evidence
+                .service_present
+                .then_some(cutout_protocols::MELK_SERVICE_CHANNEL),
+            write: evidence
+                .write_without_response
+                .then_some(cutout_protocols::MELK_WRITE_CHANNEL),
+            notify: evidence
+                .notify_or_indicate
+                .then_some(cutout_protocols::MELK_NOTIFY_CHANNEL),
         };
         MelkLightingProfile::identify(&name, evidence)
             .map(|_| Arc::new(Self))
@@ -1212,16 +1228,19 @@ impl MobileMelkLightingProfile {
 #[cfg(test)]
 mod melk_lighting_tests {
     use super::{
-        MobileMelkLightingError, MobileMelkLightingProfile, MobileMelkLightingWriteModeDto,
+        MobileMelkLightingError, MobileMelkLightingGattEvidence, MobileMelkLightingProfile,
+        MobileMelkLightingWriteModeDto,
     };
-    use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL};
+    use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
 
     fn observed_profile() -> std::sync::Arc<MobileMelkLightingProfile> {
         MobileMelkLightingProfile::new(
             "MELK-OC21  6A".to_owned(),
-            MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
-            MELK_WRITE_CHANNEL.as_bytes().to_vec(),
-            MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
+            MobileMelkLightingGattEvidence {
+                service_present: true,
+                write_without_response: true,
+                notify_or_indicate: true,
+            },
         )
         .expect("observed MELK evidence should select the profile")
     }
@@ -1230,20 +1249,24 @@ mod melk_lighting_tests {
     fn profile_requires_name_and_complete_gatt_evidence() {
         let result = MobileMelkLightingProfile::new(
             "MELK-OC21  6A".to_owned(),
-            MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
-            MELK_WRITE_CHANNEL.as_bytes().to_vec(),
-            vec![],
+            MobileMelkLightingGattEvidence {
+                service_present: true,
+                write_without_response: true,
+                notify_or_indicate: false,
+            },
         );
         assert!(matches!(
             result,
-            Err(MobileMelkLightingError::InvalidGattChannel)
+            Err(MobileMelkLightingError::InvalidGattEvidence)
         ));
 
         let result = MobileMelkLightingProfile::new(
             "Govee_H607C_D635".to_owned(),
-            MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
-            MELK_WRITE_CHANNEL.as_bytes().to_vec(),
-            MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
+            MobileMelkLightingGattEvidence {
+                service_present: true,
+                write_without_response: true,
+                notify_or_indicate: true,
+            },
         );
         assert!(matches!(
             result,
@@ -5645,13 +5668,6 @@ impl From<MobileResolvedIdentityDto> for PevcapResolvedIdentity {
 
 fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
-}
-
-fn mobile_melk_gatt_channel(channel: &[u8]) -> Result<GattChannel, MobileMelkLightingError> {
-    let bytes: [u8; 16] = channel
-        .try_into()
-        .map_err(|_| MobileMelkLightingError::InvalidGattChannel)?;
-    Ok(GattChannel::from_bytes(bytes))
 }
 
 fn mobile_melk_write(command: RgbLightingCommand) -> MobileMelkLightingWriteDto {

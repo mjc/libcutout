@@ -89,9 +89,12 @@ public struct MelkLightingValidationHarness: Sendable {
         do {
             profile = try MobileMelkLightingProfile(
                 name: name,
-                service: Self.service.bytes,
-                write: writeCharacteristic.uuid.bytes,
-                notify: notifyCharacteristic.uuid.bytes
+                evidence: MobileMelkLightingGattEvidence(
+                    servicePresent: true,
+                    writeWithoutResponse: writeCharacteristic.properties.contains(.writeWithoutResponse),
+                    notifyOrIndicate: notifyCharacteristic.properties.contains(.notify)
+                        || notifyCharacteristic.properties.contains(.indicate)
+                )
             )
         } catch {
             throw MelkLightingValidationError.profileRejected
