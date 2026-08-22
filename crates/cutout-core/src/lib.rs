@@ -7691,9 +7691,10 @@ mod tests {
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
         DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry, GattChannel,
         LinkInfo, Measured, MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power,
-        ProtocolSession, SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta,
-        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        ProtocolSession, SeriesCount, SessionInput, SessionOutput, SettingState,
+        SettingValueSource, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
+        TransportAction, UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage,
+        WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -7723,6 +7724,60 @@ mod tests {
     #[test]
     fn exposes_the_expected_name() {
         assert_eq!(crate_name(), "cutout-core");
+    }
+
+    #[test]
+    fn setting_state_requires_matching_readback_before_confirmation() {
+        let mut state = SettingState::current(
+            LightState::Off,
+            SettingValueSource::LiveReadback,
+        );
+
+        state.submit(LightState::On, ms(10));
+        assert_eq!(
+            state,
+            SettingState::Pending {
+                current: Some(LightState::Off),
+                requested: LightState::On,
+                submitted_at: ms(10),
+            }
+        );
+        assert!(!state.confirm(LightState::Off, ms(11)));
+        assert!(state.confirm(LightState::On, ms(12)));
+        assert_eq!(
+            state,
+            SettingState::Confirmed {
+                value: LightState::On,
+                source: SettingValueSource::LiveReadback,
+                confirmed_at: ms(12),
+            }
+        );
+
+        state.submit(LightState::Off, ms(20));
+        state.timeout();
+        assert_eq!(
+            state,
+            SettingState::TimedOut {
+                current: Some(LightState::On),
+                requested: LightState::Off,
+            }
+        );
+    }
+
+    #[test]
+    fn setting_state_preserves_refusal_without_a_transport_write() {
+        let mut state = SettingState::unknown::<LightState>();
+        state.submit(LightState::On, ms(30));
+        state.refuse(ControlRefusalReason::UnsupportedCommand);
+
+        assert_eq!(
+            state,
+            SettingState::Refused {
+                current: None,
+                requested: Some(LightState::On),
+                reason: ControlRefusalReason::UnsupportedCommand,
+            }
+        );
     }
 
     #[test]
