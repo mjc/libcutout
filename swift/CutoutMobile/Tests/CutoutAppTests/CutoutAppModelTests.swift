@@ -202,6 +202,23 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testFalconHeadlightConfirmationTimesOutWithoutReadback() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.nowValue = 2_000
+
+        XCTAssertEqual(model.headlightCommandStatus, .timedOut)
+        XCTAssertEqual(model.headlightStatusText, "Wheel did not confirm the headlight command.")
+        XCTAssertFalse(model.headlightOn)
+    }
+
+    @MainActor
     func testHeadlightStateDoesNotSurviveDisconnectOrNewPairing() {
         let row = DevicePickerRow(
             id: "aero-1234",
@@ -2729,6 +2746,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
     var headlightWriteSucceeds = false
+    var nowValue: UInt64 = 0
 
     init(
         rows: [DevicePickerRow],
@@ -2801,6 +2819,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         return true
     }
     func now() -> MonotonicMilliseconds {
-        MonotonicMilliseconds(0)
+        MonotonicMilliseconds(nowValue)
     }
 }

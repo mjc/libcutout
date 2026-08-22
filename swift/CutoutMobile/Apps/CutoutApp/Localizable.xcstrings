@@ -37,6 +37,10 @@
       "comment" : "Shown while waiting for wheel telemetry to confirm a headlight command.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for wheel confirmation." } } }
     },
+    "settings.headlight.timed_out" : {
+      "comment" : "Shown when the wheel does not confirm a headlight command before the timeout.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Wheel did not confirm the headlight command." } } }
+    },
     "settings.headlight.confirmed" : {
       "comment" : "Shown when wheel telemetry confirms the requested headlight state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry." } } }

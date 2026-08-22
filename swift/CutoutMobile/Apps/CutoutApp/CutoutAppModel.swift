@@ -19,6 +19,7 @@ enum HeadlightCommandStatus: Equatable {
     case idle
     case failed
     case waitingForConfirmation
+    case timedOut
     case confirmed
     case sentWithoutConfirmation
 }
@@ -26,7 +27,11 @@ enum HeadlightCommandStatus: Equatable {
 private enum HeadlightSettingState: Equatable {
     case idle
     case failed(LightState?)
-    case waitingForConfirmation(requested: LightState, current: LightState?)
+    case waitingForConfirmation(
+        requested: LightState,
+        current: LightState?,
+        sentAt: MonotonicMilliseconds
+    )
     case confirmed(LightState)
     case sentWithoutConfirmation(LightState)
 
@@ -40,21 +45,26 @@ private enum HeadlightSettingState: Equatable {
             nil
         case let .failed(state):
             state
-        case let .waitingForConfirmation(_, state):
+        case let .waitingForConfirmation(_, state, _):
             state
         case let .confirmed(state), let .sentWithoutConfirmation(state):
             state
         }
     }
 
-    var commandStatus: HeadlightCommandStatus {
+    func commandStatus(
+        at now: MonotonicMilliseconds,
+        timeout: MonotonicMilliseconds
+    ) -> HeadlightCommandStatus {
         switch self {
         case .idle:
             .idle
         case .failed:
             .failed
-        case .waitingForConfirmation:
-            .waitingForConfirmation
+        case let .waitingForConfirmation(_, _, sentAt):
+            now.elapsed(since: sentAt).rawValue >= timeout.rawValue
+                ? .timedOut
+                : .waitingForConfirmation
         case .confirmed:
             .confirmed
         case .sentWithoutConfirmation:
@@ -171,7 +181,10 @@ final class CutoutAppModel {
     }
 
     var headlightCommandStatus: HeadlightCommandStatus {
-        headlightState.commandStatus
+        headlightState.commandStatus(
+            at: core.now(),
+            timeout: Self.headlightConfirmationTimeout
+        )
     }
 
     var headlightControlAvailable: Bool {
@@ -300,6 +313,8 @@ final class CutoutAppModel {
             localizedAppText("settings.headlight.failed")
         case .waitingForConfirmation:
             localizedAppText("settings.headlight.waiting")
+        case .timedOut:
+            localizedAppText("settings.headlight.timed_out")
         case .confirmed:
             localizedAppText("settings.headlight.confirmed")
         case .sentWithoutConfirmation:
@@ -341,6 +356,7 @@ final class CutoutAppModel {
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
+    private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
 
     convenience init() {
         #if DEBUG
@@ -1295,15 +1311,16 @@ final class CutoutAppModel {
             headlightState = .failed(headlightState.lightState)
             return false
         }
-        recordHeadlightCommand(state)
+        recordHeadlightCommand(state, sentAt: core.now())
         return true
     }
 
-    private func recordHeadlightCommand(_ state: LightState) {
+    private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
         if core.electricUnicycleModel == .falcon {
             headlightState = .waitingForConfirmation(
                 requested: state,
-                current: headlightState.lightState
+                current: headlightState.lightState,
+                sentAt: sentAt
             )
         } else {
             headlightState = .sentWithoutConfirmation(state)
@@ -1318,7 +1335,7 @@ final class CutoutAppModel {
             }
             return
         }
-        if case let .waitingForConfirmation(requestedState, _) = headlightState,
+        if case let .waitingForConfirmation(requestedState, _, _) = headlightState,
            requestedState != reportedState
         {
             return

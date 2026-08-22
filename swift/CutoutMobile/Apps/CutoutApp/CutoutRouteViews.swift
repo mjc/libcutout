@@ -122,21 +122,23 @@ struct EucTuneRouteView: View {
     let model: CutoutAppModel
 
     var body: some View {
-        Form {
-            Section {
-                Toggle(
-                    model.headlightControlTitle,
-                    isOn: Binding(
-                        get: { model.headlightOn },
-                        set: { model.setHeadlight($0) }
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            Form {
+                Section {
+                    Toggle(
+                        model.headlightControlTitle,
+                        isOn: Binding(
+                            get: { model.headlightOn },
+                            set: { model.setHeadlight($0) }
+                        )
                     )
-                )
-                .disabled(model.phase != .live || !model.headlightControlAvailable)
-                .accessibilityHint(model.headlightStatusText)
-            } header: {
-                Text(localizedAppText("settings.lights.title"))
-            } footer: {
-                Text(model.headlightStatusText)
+                    .disabled(model.phase != .live || !model.headlightControlAvailable)
+                    .accessibilityHint(model.headlightStatusText)
+                } header: {
+                    Text(localizedAppText("settings.lights.title"))
+                } footer: {
+                    Text(model.headlightStatusText)
+                }
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
