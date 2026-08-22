@@ -426,6 +426,7 @@ pub struct RideRecording {
     last_point: Option<RoutePoint>,
     next_sequence: u64,
     force_new_segment: bool,
+    started_at: MonotonicMilliseconds,
     candidate_vehicle: Option<VehicleIdentity>,
     associated_vehicle: Option<VehicleIdentity>,
     associated_at: Option<MonotonicMilliseconds>,
@@ -435,7 +436,7 @@ impl RideRecording {
     /// Starts a GPS-only ride and snapshots the last connected PEV candidate, if any.
     #[must_use]
     pub fn start_gps_only(
-        _started_at: MonotonicMilliseconds,
+        started_at: MonotonicMilliseconds,
         candidate_vehicle: Option<VehicleIdentity>,
         policy: LocationAdmissionPolicy,
     ) -> Self {
@@ -453,6 +454,7 @@ impl RideRecording {
             last_point: None,
             next_sequence: 0,
             force_new_segment: true,
+            started_at,
             candidate_vehicle,
             associated_vehicle: None,
             associated_at: None,
@@ -462,6 +464,7 @@ impl RideRecording {
     pub(crate) fn from_persisted(
         ride_id: Uuid,
         state: RideState,
+        started_at: MonotonicMilliseconds,
         candidate_vehicle: Option<VehicleIdentity>,
         associated_vehicle: Option<VehicleIdentity>,
         associated_at: Option<MonotonicMilliseconds>,
@@ -476,6 +479,9 @@ impl RideRecording {
         let mut point_count = 0_u64;
 
         for point in points {
+            if point.sample.monotonic_at() < started_at {
+                return Err("persisted route point predates ride start".to_owned());
+            }
             if point.sequence == 0
                 || previous.is_some_and(|previous: RoutePoint| {
                     point.sequence <= previous.sequence
@@ -509,6 +515,10 @@ impl RideRecording {
             previous = Some(point);
         }
 
+        if associated_at.is_some_and(|at| at < started_at) {
+            return Err("persisted association predates ride start".to_owned());
+        }
+
         Ok(Self {
             ride_id,
             state,
@@ -523,6 +533,7 @@ impl RideRecording {
             last_point: previous,
             next_sequence,
             force_new_segment: true,
+            started_at,
             candidate_vehicle,
             associated_vehicle,
             associated_at,
@@ -539,6 +550,12 @@ impl RideRecording {
     #[must_use]
     pub const fn state(&self) -> RideState {
         self.state
+    }
+
+    /// Returns the monotonic instant at which this logical ride began.
+    #[must_use]
+    pub const fn started_at(&self) -> MonotonicMilliseconds {
+        self.started_at
     }
 
     /// Returns the cumulative summary.
@@ -644,9 +661,10 @@ impl RideRecording {
         if candidate != identity {
             return VehicleAssociationOutcome::IdentityMismatch;
         }
-        if self
-            .last_point
-            .is_some_and(|point| at < point.sample.monotonic_at())
+        if at < self.started_at
+            || self
+                .last_point
+                .is_some_and(|point| at < point.sample.monotonic_at())
         {
             return VehicleAssociationOutcome::TimestampOutOfOrder;
         }
@@ -919,6 +937,10 @@ mod tests {
             Some(vehicle.clone()),
             LocationAdmissionPolicy::default(),
         );
+        assert_eq!(
+            out_of_order.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(99)),
+            VehicleAssociationOutcome::TimestampOutOfOrder
+        );
         out_of_order.append_location(sample(200, 39.7392, -104.9903));
         assert_eq!(
             out_of_order.observe_vehicle_connection(&vehicle, MonotonicMilliseconds::new(199)),
@@ -1050,6 +1072,7 @@ mod tests {
             .expect("open ride is recoverable");
         assert_eq!(recovered.ride_id(), ride.ride_id());
         assert_eq!(recovered.state(), RideState::Recording);
+        assert_eq!(recovered.started_at(), MonotonicMilliseconds::new(100));
         assert_eq!(recovered.summary().point_count(), 1);
         assert_eq!(recovered.associated_vehicle(), None);
         assert_eq!(
@@ -1121,7 +1144,7 @@ mod tests {
         let version = connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .expect("schema version reads");
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         let candidate_column = connection
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('ride_map_ride') WHERE name = 'candidate_vehicle'",
@@ -1130,6 +1153,14 @@ mod tests {
             )
             .expect("candidate column reads");
         assert_eq!(candidate_column, 1);
+        let started_at_column = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('ride_map_ride') WHERE name = 'started_at_monotonic_ms'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("ride start column reads");
+        assert_eq!(started_at_column, 1);
         std::fs::remove_file(path).expect("fixture database is removable");
     }
 
