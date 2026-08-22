@@ -31,10 +31,69 @@ mod tests {
 
     use super::{
         Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
-        RideDatabase, RideEvent, RideLifecycleState, RideSource, RideSummary, TransitionError,
+        RideDatabase, RideEvent, RideLifecycleState, RideSource, RideSummary, StorageError,
+        TransitionError,
     };
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn create_legacy_schema(path: &std::path::Path, version: i64) {
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE rides (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    source TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    point_count INTEGER NOT NULL,
+                    distance_mm INTEGER NOT NULL
+                );
+                CREATE TABLE ride_points (
+                    ride_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    monotonic_ms INTEGER NOT NULL,
+                    wall_clock_ms INTEGER NOT NULL,
+                    latitude_e7 INTEGER NOT NULL,
+                    longitude_e7 INTEGER NOT NULL,
+                    horizontal_accuracy_mm INTEGER,
+                    source TEXT NOT NULL,
+                    PRIMARY KEY (ride_id, sequence)
+                );
+                ",
+            )
+            .unwrap();
+        if version >= 2 {
+            connection
+                .execute_batch(
+                    "
+                    CREATE TABLE selected_device (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        platform_identifier TEXT NOT NULL,
+                        updated_at_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE voltage_sag_models (
+                        device_identity TEXT PRIMARY KEY NOT NULL,
+                        schema_version INTEGER NOT NULL,
+                        effective_resistance_milliohms INTEGER NOT NULL,
+                        observations INTEGER NOT NULL,
+                        hardware_verified INTEGER NOT NULL,
+                        last_learned_wall_clock_ms INTEGER NOT NULL
+                    );
+                    CREATE TABLE ride_session_marker (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        marker BLOB NOT NULL
+                    );
+                    ",
+                )
+                .unwrap();
+        }
+        connection
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+    }
 
     #[test]
     fn coordinate_rejects_non_finite_and_out_of_range_values() {
@@ -283,6 +342,60 @@ mod tests {
         let _ = std::fs::remove_file(database_path);
         let _ = std::fs::remove_file(artifact_path);
         let _ = std::fs::remove_file(backup_path);
+    }
+
+    #[test]
+    fn legacy_schema_versions_migrate_to_the_current_schema() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        for version in [1_i64, 2_i64] {
+            let path = std::env::temp_dir().join(format!(
+                "cutout-ride-maps-legacy-v{version}-{}.sqlite",
+                uuid::Uuid::new_v4()
+            ));
+            create_legacy_schema(&path, version);
+            let database = RideDatabase::open(&path).unwrap();
+            database.shutdown().unwrap();
+
+            let connection = Connection::open(&path).unwrap();
+            let current_version: i64 = connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(current_version, 3);
+            let pevcap_table: String = connection
+                .query_row(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pevcap_imports'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(pevcap_table, "pevcap_imports");
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn newer_schema_is_rejected_without_resetting_the_database() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "cutout-ride-maps-newer-schema-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .pragma_update(None, "user_version", 99_i64)
+            .unwrap();
+        drop(connection);
+
+        assert!(matches!(
+            RideDatabase::open(&path),
+            Err(StorageError::UnsupportedSchemaVersion(99))
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 99);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
