@@ -68,6 +68,7 @@ struct CutoutApp: App {
         )
         #endif
     }
+    }
 
     private var currentRoute: CutoutAppRoute {
         navigationPath.last ?? .devicePicker
