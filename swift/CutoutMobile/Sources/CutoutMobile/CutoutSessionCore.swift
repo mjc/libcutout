@@ -658,8 +658,8 @@ public final class CutoutSessionCore: NSObject {
                 return .accepted
             } catch let error as CutoutSessionError {
                 record("set_lights_error=\(error)")
-                if case .commandRefused = error {
-                    return .refused
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
                 }
                 return .failed
             } catch {

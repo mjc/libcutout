@@ -223,7 +223,7 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
         driver.headlightWriteSucceeds = true
-        driver.headlightCommandResult = .refused
+        driver.headlightCommandResult = .refused(.unsupportedCommand)
         let model = CutoutAppModel(core: driver)
 
         XCTAssertFalse(model.setHeadlight(true))

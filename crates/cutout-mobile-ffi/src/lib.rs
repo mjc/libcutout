@@ -2452,6 +2452,28 @@ pub enum MobileSessionStepErrorKindDto {
     UnsupportedFalconProfile,
 }
 
+/// Typed reason a mobile control request was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileControlRefusalReasonDto {
+    /// Command safety classification does not allow this control path.
+    WrongSafetyClass,
+
+    /// The required arming token was not supplied.
+    MissingArm,
+
+    /// The arming token belongs to another model.
+    WrongModel,
+
+    /// The arming token has expired.
+    ExpiredArm,
+
+    /// The requested value exceeds the configured current limit.
+    CurrentLimitExceeded,
+
+    /// The command is unsupported by this model or session.
+    UnsupportedCommand,
+}
+
 /// Mobile session step error DTO.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileSessionStepErrorDto {
@@ -2462,7 +2484,7 @@ pub struct MobileSessionStepErrorDto {
     pub command: Option<MobileCommandDto>,
 
     /// Refusal reason, if any.
-    pub reason: Option<String>,
+    pub reason: Option<MobileControlRefusalReasonDto>,
 }
 
 /// Mobile result of one session step.
@@ -9932,13 +9954,26 @@ impl From<ConcreteSessionErrorDto> for MobileSessionStepErrorDto {
             ConcreteSessionErrorDto::CommandRefused { refusal } => Self {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
                 command: mobile_command_from_command_kind(refusal.command),
-                reason: Some(control_refusal_reason_text(refusal.reason).to_owned()),
+                reason: Some(refusal.reason.into()),
             },
             ConcreteSessionErrorDto::UnsupportedFalconProfile { .. } => Self {
                 kind: MobileSessionStepErrorKindDto::UnsupportedFalconProfile,
                 command: None,
                 reason: None,
             },
+        }
+    }
+}
+
+impl From<ControlRefusalReasonDto> for MobileControlRefusalReasonDto {
+    fn from(reason: ControlRefusalReasonDto) -> Self {
+        match reason {
+            ControlRefusalReasonDto::WrongSafetyClass => Self::WrongSafetyClass,
+            ControlRefusalReasonDto::MissingArm => Self::MissingArm,
+            ControlRefusalReasonDto::WrongModel => Self::WrongModel,
+            ControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
+            ControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            ControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
         }
     }
 }
@@ -10706,17 +10741,6 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
                 Self::UnsupportedFalconProfile
             }
         }
-    }
-}
-
-fn control_refusal_reason_text(reason: ControlRefusalReasonDto) -> &'static str {
-    match reason {
-        ControlRefusalReasonDto::WrongSafetyClass => "wrong_safety_class",
-        ControlRefusalReasonDto::MissingArm => "missing_arm",
-        ControlRefusalReasonDto::WrongModel => "wrong_model",
-        ControlRefusalReasonDto::ExpiredArm => "expired_arm",
-        ControlRefusalReasonDto::CurrentLimitExceeded => "current_limit_exceeded",
-        ControlRefusalReasonDto::UnsupportedCommand => "unsupported_command",
     }
 }
 
@@ -13662,6 +13686,7 @@ mod tests {
             result.error,
             Some(MobileSessionStepErrorDto {
                 kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
                 ..
             })
         ));

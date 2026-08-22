@@ -1239,7 +1239,7 @@ public enum LightCommandResult: Equatable, Hashable, Sendable {
     case accepted
 
     /// The session refused the command before producing a transport write.
-    case refused
+    case refused(CommandRefusalReason?)
 
     /// The command could not be submitted because the session or transport failed.
     case failed
@@ -4407,15 +4407,44 @@ public struct ParserDiagnostics: Equatable, Hashable, Sendable {
     }
 }
 
+public enum CommandRefusalReason: Equatable, Hashable, Sendable {
+    case wrongSafetyClass
+    case missingArm
+    case wrongModel
+    case expiredArm
+    case currentLimitExceeded
+    case unsupportedCommand
+
+    fileprivate init(_ dto: MobileControlRefusalReasonDto) {
+        switch dto {
+        case .wrongSafetyClass:
+            self = .wrongSafetyClass
+        case .missingArm:
+            self = .missingArm
+        case .wrongModel:
+            self = .wrongModel
+        case .expiredArm:
+            self = .expiredArm
+        case .currentLimitExceeded:
+            self = .currentLimitExceeded
+        case .unsupportedCommand:
+            self = .unsupportedCommand
+        }
+    }
+}
+
 public enum CutoutSessionError: Error, Equatable, Sendable {
-    case commandRefused(DeviceCommand?, String?)
+    case commandRefused(DeviceCommand?, CommandRefusalReason?)
     case unsupportedFalconProfile
     case unexpectedStepError(String?)
 
     fileprivate init(_ dto: MobileSessionStepErrorDto) {
         switch dto.kind {
         case .commandRefused:
-            self = .commandRefused(dto.command.map(DeviceCommand.init), dto.reason)
+            self = .commandRefused(
+                dto.command.map(DeviceCommand.init),
+                dto.reason.map(CommandRefusalReason.init)
+            )
         case .unsupportedFalconProfile:
             self = .unsupportedFalconProfile
         }
