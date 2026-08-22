@@ -1329,9 +1329,14 @@ final class CutoutAppModel {
             headlightState = .failed(headlightState.lightState)
             return false
         }
-        switch core.setLights(state) {
+        return applyHeadlightSubmission(core.setLights(state), for: state)
+    }
+
+    private func applyHeadlightSubmission(_ result: LightCommandResult, for state: LightState) -> Bool {
+        switch result {
         case .accepted:
-            break
+            recordHeadlightCommand(state, sentAt: core.now())
+            return true
         case .refused:
             headlightState = .refused(headlightState.lightState)
             return false
@@ -1339,8 +1344,6 @@ final class CutoutAppModel {
             headlightState = .failed(headlightState.lightState)
             return false
         }
-        recordHeadlightCommand(state, sentAt: core.now())
-        return true
     }
 
     private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
