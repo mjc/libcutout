@@ -352,7 +352,7 @@ private func uniffiTraitInterfaceCallWithError<T, E>(
         callStatus.pointee.errorBuf = FfiConverterString.lower(String(describing: error))
     }
 }
-// Initial value and increment amount for handles.
+// Initial value and increment amount for handles. 
 // These ensure that SWIFT handles always have the lowest bit set
 fileprivate let UNIFFI_HANDLEMAP_INITIAL: UInt64 = 1
 fileprivate let UNIFFI_HANDLEMAP_DELTA: UInt64 = 2
@@ -634,27 +634,27 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
  * Mobile-facing wrapper for a NOSFET Aero read-only session.
  */
 public protocol AeroReadOnlySessionProtocol: AnyObject, Sendable {
-
+    
     /**
      * Returns the latest telemetry snapshot as an owned DTO.
      */
     func currentSnapshot()  -> MobileTelemetrySnapshotDto
-
+    
     /**
      * Returns accumulated parser diagnostics as an owned DTO.
      */
     func diagnostics()  -> MobileParserDiagnosticsDto
-
+    
     /**
      * Drains owned output DTOs accumulated since the previous drain.
      */
     func drainOutputs()  -> [MobileSessionOutputDto]
-
+    
     /**
      * Drives one input and returns owned outputs plus any stable error DTO.
      */
     func ingestChecked(input: MobileSessionInputDto)  -> MobileSessionStepResultDto
-
+    
 }
 /**
  * Mobile-facing wrapper for a NOSFET Aero read-only session.
@@ -719,9 +719,9 @@ public convenience init() {
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_aeroreadonlysession(handle, $0) }
     }
 
+    
 
-
-
+    
     /**
      * Returns the latest telemetry snapshot as an owned DTO.
      */
@@ -732,7 +732,7 @@ open func currentSnapshot() -> MobileTelemetrySnapshotDto  {
     )
 })
 }
-
+    
     /**
      * Returns accumulated parser diagnostics as an owned DTO.
      */
@@ -743,7 +743,7 @@ open func diagnostics() -> MobileParserDiagnosticsDto  {
     )
 })
 }
-
+    
     /**
      * Drains owned output DTOs accumulated since the previous drain.
      */
@@ -754,7 +754,7 @@ open func drainOutputs() -> [MobileSessionOutputDto]  {
     )
 })
 }
-
+    
     /**
      * Drives one input and returns owned outputs plus any stable error DTO.
      */
@@ -766,9 +766,9 @@ open func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResult
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -821,22 +821,22 @@ public func FfiConverterTypeAeroReadOnlySession_lower(_ value: AeroReadOnlySessi
  * Mobile-facing Rust-owned `CutOut` session state handle.
  */
 public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
-
+    
     /**
      * Begins the complete ordered non-mutating identification query sequence.
      */
     func beginIdentificationProbeAt(startedAtMs: UInt64)  -> MobileIdentificationProbeOutcomeDto
-
+    
     /**
      * Returns the current discovery snapshot.
      */
     func discoverySnapshot()  -> DiscoverySnapshot
-
+    
     /**
      * Expires pending Begode probes strictly older than the response timeout.
      */
     func expireBegodeProbeResponses(nowMs: UInt64, timeoutMs: UInt64)  -> [MobilePendingProbeDto]
-
+    
     /**
      * Returns the opaque Rust-owned marker for a ride that can be reconciled after relaunch.
      *
@@ -845,82 +845,82 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * Returns an error only when Rust cannot encode its own marker schema.
      */
     func exportRideSessionMarker() throws  -> Data?
-
+    
     /**
      * Marks every pending Begode probe as missing.
      */
     func markBegodeProbeResponsesMissing()  -> [MobilePendingProbeDto]
-
+    
     /**
      * Returns the next strict Begode probe-expiration deadline.
      */
     func nextBegodeProbeExpiry(timeoutMs: UInt64)  -> UInt64?
-
+    
     /**
      * Observes raw advertisement-name bytes from the mobile BLE stack.
      */
     func observeAdvertisement(name: Data?)  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records that the caller issued a Begode `V` firmware probe.
      */
     func observeBegodeFirmwareProbe()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records a Begode `V` firmware probe with its monotonic write time.
      */
     func observeBegodeFirmwareProbeAt(startedAtMs: UInt64)  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records that the Begode `V` firmware probe did not produce a matching response.
      */
     func observeBegodeFirmwareProbeTimeout()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records that the caller issued a Begode `M` IMU probe.
      */
     func observeBegodeImuProbe()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records a Begode `M` IMU probe with its monotonic write time.
      */
     func observeBegodeImuProbeAt(startedAtMs: UInt64)  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records that the Begode `M` IMU probe did not produce a matching response.
      */
     func observeBegodeImuProbeTimeout()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records that the caller issued a Begode `N` name probe.
      */
     func observeBegodeNameProbe()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records a Begode `N` name probe with its monotonic write time.
      */
     func observeBegodeNameProbeAt(startedAtMs: UInt64)  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Records that the Begode `N` name probe did not produce a matching response.
      */
     func observeBegodeNameProbeTimeout()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Observes one mobile discovery advertisement.
      */
     func observeDiscovery(observation: DiscoveryObservation)  -> DiscoverySnapshot
-
+    
     /**
      * Observes the current mobile GATT fingerprint snapshot.
      */
     func observeGatt(fingerprints: [MobileGattFingerprintDto])  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Observes raw notification bytes from the mobile BLE stack.
      */
     func observeNotification(bytes: Data)  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Reconciles a persisted marker with the platform identity restored by `CoreBluetooth`.
      *
@@ -930,7 +930,7 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * mutate the current Rust-owned session state.
      */
     func recoverRideSessionMarker(marker: Data, restoredPlatformIdentifier: String?) throws  -> MobileRideSessionDecisionDto
-
+    
     /**
      * Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
      *
@@ -940,17 +940,17 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * a session identifier that was not produced by this Rust boundary.
      */
     func reduceRideSession(input: MobileRideSessionInputDto) throws  -> MobileRideSessionDecisionDto
-
+    
     /**
      * Clears device-specific detection state while preserving discovery observations.
      */
-    func resetDeviceDetection()
-
+    func resetDeviceDetection() 
+    
     /**
      * Returns the current detection resolution.
      */
     func resolution()  -> DeviceDetectionResolutionRecord
-
+    
     /**
      * Compares an opaque persisted marker with a platform identity without exposing marker
      * parsing to Swift.
@@ -960,17 +960,17 @@ public protocol CutoutSessionStateHandleProtocol: AnyObject, Sendable {
      * Returns an error when the persisted bytes are invalid or unsupported.
      */
     func rideSessionMarkerMatchesPlatformIdentifier(marker: Data, platformIdentifier: String) throws  -> Bool
-
+    
     /**
      * Returns the current Rust-owned ride-session snapshot.
      */
     func rideSessionSnapshot()  -> MobileRideSessionSnapshotDto
-
+    
     /**
      * Selects a discovered platform identifier for this session.
      */
     func selectDiscoveredPlatform(platformIdentifier: String)  -> DiscoverySnapshot
-
+    
 }
 /**
  * Mobile-facing Rust-owned `CutOut` session state handle.
@@ -1035,9 +1035,9 @@ public convenience init() {
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_cutoutsessionstatehandle(handle, $0) }
     }
 
+    
 
-
-
+    
     /**
      * Begins the complete ordered non-mutating identification query sequence.
      */
@@ -1049,7 +1049,7 @@ open func beginIdentificationProbeAt(startedAtMs: UInt64) -> MobileIdentificatio
     )
 })
 }
-
+    
     /**
      * Returns the current discovery snapshot.
      */
@@ -1060,7 +1060,7 @@ open func discoverySnapshot() -> DiscoverySnapshot  {
     )
 })
 }
-
+    
     /**
      * Expires pending Begode probes strictly older than the response timeout.
      */
@@ -1073,7 +1073,7 @@ open func expireBegodeProbeResponses(nowMs: UInt64, timeoutMs: UInt64) -> [Mobil
     )
 })
 }
-
+    
     /**
      * Returns the opaque Rust-owned marker for a ride that can be reconciled after relaunch.
      *
@@ -1088,7 +1088,7 @@ open func exportRideSessionMarker()throws  -> Data?  {
     )
 })
 }
-
+    
     /**
      * Marks every pending Begode probe as missing.
      */
@@ -1099,7 +1099,7 @@ open func markBegodeProbeResponsesMissing() -> [MobilePendingProbeDto]  {
     )
 })
 }
-
+    
     /**
      * Returns the next strict Begode probe-expiration deadline.
      */
@@ -1111,7 +1111,7 @@ open func nextBegodeProbeExpiry(timeoutMs: UInt64) -> UInt64?  {
     )
 })
 }
-
+    
     /**
      * Observes raw advertisement-name bytes from the mobile BLE stack.
      */
@@ -1123,7 +1123,7 @@ open func observeAdvertisement(name: Data?) -> DeviceDetectionResolutionRecord  
     )
 })
 }
-
+    
     /**
      * Records that the caller issued a Begode `V` firmware probe.
      */
@@ -1134,7 +1134,7 @@ open func observeBegodeFirmwareProbe() -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Records a Begode `V` firmware probe with its monotonic write time.
      */
@@ -1146,7 +1146,7 @@ open func observeBegodeFirmwareProbeAt(startedAtMs: UInt64) -> DeviceDetectionRe
     )
 })
 }
-
+    
     /**
      * Records that the Begode `V` firmware probe did not produce a matching response.
      */
@@ -1157,7 +1157,7 @@ open func observeBegodeFirmwareProbeTimeout() -> DeviceDetectionResolutionRecord
     )
 })
 }
-
+    
     /**
      * Records that the caller issued a Begode `M` IMU probe.
      */
@@ -1168,7 +1168,7 @@ open func observeBegodeImuProbe() -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Records a Begode `M` IMU probe with its monotonic write time.
      */
@@ -1180,7 +1180,7 @@ open func observeBegodeImuProbeAt(startedAtMs: UInt64) -> DeviceDetectionResolut
     )
 })
 }
-
+    
     /**
      * Records that the Begode `M` IMU probe did not produce a matching response.
      */
@@ -1191,7 +1191,7 @@ open func observeBegodeImuProbeTimeout() -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Records that the caller issued a Begode `N` name probe.
      */
@@ -1202,7 +1202,7 @@ open func observeBegodeNameProbe() -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Records a Begode `N` name probe with its monotonic write time.
      */
@@ -1214,7 +1214,7 @@ open func observeBegodeNameProbeAt(startedAtMs: UInt64) -> DeviceDetectionResolu
     )
 })
 }
-
+    
     /**
      * Records that the Begode `N` name probe did not produce a matching response.
      */
@@ -1225,7 +1225,7 @@ open func observeBegodeNameProbeTimeout() -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Observes one mobile discovery advertisement.
      */
@@ -1237,7 +1237,7 @@ open func observeDiscovery(observation: DiscoveryObservation) -> DiscoverySnapsh
     )
 })
 }
-
+    
     /**
      * Observes the current mobile GATT fingerprint snapshot.
      */
@@ -1249,7 +1249,7 @@ open func observeGatt(fingerprints: [MobileGattFingerprintDto]) -> DeviceDetecti
     )
 })
 }
-
+    
     /**
      * Observes raw notification bytes from the mobile BLE stack.
      */
@@ -1261,7 +1261,7 @@ open func observeNotification(bytes: Data) -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Reconciles a persisted marker with the platform identity restored by `CoreBluetooth`.
      *
@@ -1279,7 +1279,7 @@ open func recoverRideSessionMarker(marker: Data, restoredPlatformIdentifier: Str
     )
 })
 }
-
+    
     /**
      * Applies one typed Apple-platform event to the Rust-owned ride lifecycle.
      *
@@ -1296,7 +1296,7 @@ open func reduceRideSession(input: MobileRideSessionInputDto)throws  -> MobileRi
     )
 })
 }
-
+    
     /**
      * Clears device-specific detection state while preserving discovery observations.
      */
@@ -1306,7 +1306,7 @@ open func resetDeviceDetection()  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Returns the current detection resolution.
      */
@@ -1317,7 +1317,7 @@ open func resolution() -> DeviceDetectionResolutionRecord  {
     )
 })
 }
-
+    
     /**
      * Compares an opaque persisted marker with a platform identity without exposing marker
      * parsing to Swift.
@@ -1335,7 +1335,7 @@ open func rideSessionMarkerMatchesPlatformIdentifier(marker: Data, platformIdent
     )
 })
 }
-
+    
     /**
      * Returns the current Rust-owned ride-session snapshot.
      */
@@ -1346,7 +1346,7 @@ open func rideSessionSnapshot() -> MobileRideSessionSnapshotDto  {
     )
 })
 }
-
+    
     /**
      * Selects a discovered platform identifier for this session.
      */
@@ -1358,9 +1358,9 @@ open func selectDiscoveredPlatform(platformIdentifier: String) -> DiscoverySnaps
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -1413,27 +1413,27 @@ public func FfiConverterTypeCutoutSessionStateHandle_lower(_ value: CutoutSessio
  * Mobile-facing wrapper for a Begode Falcon read-only session.
  */
 public protocol FalconReadOnlySessionProtocol: AnyObject, Sendable {
-
+    
     /**
      * Returns the latest telemetry snapshot as an owned DTO.
      */
     func currentSnapshot()  -> MobileTelemetrySnapshotDto
-
+    
     /**
      * Returns accumulated parser diagnostics as an owned DTO.
      */
     func diagnostics()  -> MobileParserDiagnosticsDto
-
+    
     /**
      * Drains owned output DTOs accumulated since the previous drain.
      */
     func drainOutputs()  -> [MobileSessionOutputDto]
-
+    
     /**
      * Drives one input and returns owned outputs plus any stable error DTO.
      */
     func ingestChecked(input: MobileSessionInputDto)  -> MobileSessionStepResultDto
-
+    
 }
 /**
  * Mobile-facing wrapper for a Begode Falcon read-only session.
@@ -1503,7 +1503,7 @@ public convenience init()throws  {
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_falconreadonlysession(handle, $0) }
     }
 
-
+    
     /**
      * Creates a Begode Falcon read-only session with an explicit profile.
      *
@@ -1519,9 +1519,9 @@ public static func withProfile(profile: MobileFalconProfileDto)throws  -> Falcon
     )
 })
 }
+    
 
-
-
+    
     /**
      * Returns the latest telemetry snapshot as an owned DTO.
      */
@@ -1532,7 +1532,7 @@ open func currentSnapshot() -> MobileTelemetrySnapshotDto  {
     )
 })
 }
-
+    
     /**
      * Returns accumulated parser diagnostics as an owned DTO.
      */
@@ -1543,7 +1543,7 @@ open func diagnostics() -> MobileParserDiagnosticsDto  {
     )
 })
 }
-
+    
     /**
      * Drains owned output DTOs accumulated since the previous drain.
      */
@@ -1554,7 +1554,7 @@ open func drainOutputs() -> [MobileSessionOutputDto]  {
     )
 })
 }
-
+    
     /**
      * Drives one input and returns owned outputs plus any stable error DTO.
      */
@@ -1566,9 +1566,9 @@ open func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResult
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -1621,67 +1621,67 @@ public func FfiConverterTypeFalconReadOnlySession_lower(_ value: FalconReadOnlyS
  * Rust-owned charging estimate engine for mobile sessions.
  */
 public protocol MobileChargeEstimatorProtocol: AnyObject, Sendable {
-
+    
     /**
      * Removes the usable pack profile and resets bounded history.
      */
-    func clearProfile()
-
+    func clearProfile() 
+    
     /**
      * Explicitly clears the durable learned resistance for the active EUC.
      */
-    func clearVoltageSagModel()
-
+    func clearVoltageSagModel() 
+    
     /**
      * Configures the current Falcon battery basis: 24s2p Samsung 50S,
      * 100.8 V full-charge class and approximately 900 Wh nominal energy.
      * Charge-flow polarity remains unverified until the LIBCU-521 hardware
      * matrix is complete.
      */
-    func configureBegodeFalcon24s2pSamsung50sProfile()
-
+    func configureBegodeFalcon24s2pSamsung50sProfile() 
+    
     /**
      * Selects the Rust-owned battery profile for a supported EUC model.
      */
-    func configureElectricUnicycleProfile(model: DiscoveryElectricUnicycleModel)
-
+    func configureElectricUnicycleProfile(model: DiscoveryElectricUnicycleModel) 
+    
     /**
      * Configures the confirmed NOSFET Aero pack basis: 30s2p Samsung 50S,
      * with a 10 Ah profile capacity. Charge-flow polarity remains unverified
      * until the LIBCU-521 hardware matrix is complete.
      */
-    func configureNosfetAero30s2pSamsung50sProfile()
-
+    func configureNosfetAero30s2pSamsung50sProfile() 
+    
     /**
      * Replaces the usable pack profile and resets bounded history.
      */
-    func configureProfile(profile: MobileChargeProfileDto)
-
+    func configureProfile(profile: MobileChargeProfileDto) 
+    
     /**
      * Applies the optional charge basis carried by a device-specific VESC profile.
      */
-    func configureVescBoardProfile(boardProfile: VescBoardProfile)
-
+    func configureVescBoardProfile(boardProfile: VescBoardProfile) 
+    
     /**
      * Resets the bounded current and sag windows.
      */
-    func reset()
-
+    func reset() 
+    
     /**
      * Restores a validated resistance model already scoped to the active EUC identity.
      */
     func restoreVoltageSagModel(model: MobileVoltageSagModelDto)  -> Bool
-
+    
     /**
      * Admits one typed telemetry sample and returns its presentation state.
      */
     func update(input: MobileChargeEstimateInputDto)  -> MobileChargeEstimateStateDto
-
+    
     /**
      * Returns the durable learned resistance for persistence by the platform layer.
      */
     func voltageSagModel()  -> MobileVoltageSagModelDto?
-
+    
 }
 /**
  * Rust-owned charging estimate engine for mobile sessions.
@@ -1746,9 +1746,9 @@ public convenience init() {
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilechargeestimator(handle, $0) }
     }
 
+    
 
-
-
+    
     /**
      * Removes the usable pack profile and resets bounded history.
      */
@@ -1758,7 +1758,7 @@ open func clearProfile()  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Explicitly clears the durable learned resistance for the active EUC.
      */
@@ -1768,7 +1768,7 @@ open func clearVoltageSagModel()  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Configures the current Falcon battery basis: 24s2p Samsung 50S,
      * 100.8 V full-charge class and approximately 900 Wh nominal energy.
@@ -1781,7 +1781,7 @@ open func configureBegodeFalcon24s2pSamsung50sProfile()  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Selects the Rust-owned battery profile for a supported EUC model.
      */
@@ -1792,7 +1792,7 @@ open func configureElectricUnicycleProfile(model: DiscoveryElectricUnicycleModel
     )
 }
 }
-
+    
     /**
      * Configures the confirmed NOSFET Aero pack basis: 30s2p Samsung 50S,
      * with a 10 Ah profile capacity. Charge-flow polarity remains unverified
@@ -1804,7 +1804,7 @@ open func configureNosfetAero30s2pSamsung50sProfile()  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Replaces the usable pack profile and resets bounded history.
      */
@@ -1815,7 +1815,7 @@ open func configureProfile(profile: MobileChargeProfileDto)  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Applies the optional charge basis carried by a device-specific VESC profile.
      */
@@ -1826,7 +1826,7 @@ open func configureVescBoardProfile(boardProfile: VescBoardProfile)  {try! rustC
     )
 }
 }
-
+    
     /**
      * Resets the bounded current and sag windows.
      */
@@ -1836,7 +1836,7 @@ open func reset()  {try! rustCall() {
     )
 }
 }
-
+    
     /**
      * Restores a validated resistance model already scoped to the active EUC identity.
      */
@@ -1848,7 +1848,7 @@ open func restoreVoltageSagModel(model: MobileVoltageSagModelDto) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Admits one typed telemetry sample and returns its presentation state.
      */
@@ -1860,7 +1860,7 @@ open func update(input: MobileChargeEstimateInputDto) -> MobileChargeEstimateSta
     )
 })
 }
-
+    
     /**
      * Returns the durable learned resistance for persistence by the platform layer.
      */
@@ -1871,9 +1871,9 @@ open func voltageSagModel() -> MobileVoltageSagModelDto?  {
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -1923,75 +1923,270 @@ public func FfiConverterTypeMobileChargeEstimator_lower(_ value: MobileChargeEst
 
 
 /**
+ * Rust-owned candidate profile for an observed `MELK-OC21` controller.
+ */
+public protocol MobileMelkLightingProfileProtocol: AnyObject, Sendable {
+    
+    /**
+     * Creates a brightness command write.
+     *
+     * # Errors
+     *
+     * Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` is greater than
+     * 100.
+     */
+    func setBrightness(percentage: UInt8) throws  -> MobileMelkLightingWriteDto
+    
+    /**
+     * Creates an on/off command write.
+     */
+    func setPower(on: Bool)  -> MobileMelkLightingWriteDto
+    
+    /**
+     * Creates a solid RGB command write.
+     */
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8)  -> MobileMelkLightingWriteDto
+    
+}
+/**
+ * Rust-owned candidate profile for an observed `MELK-OC21` controller.
+ */
+open class MobileMelkLightingProfile: MobileMelkLightingProfileProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilemelklightingprofile(self.handle, $0) }
+    }
+    /**
+     * Selects the profile only when the family name and all observed channels agree.
+     *
+     * # Errors
+     *
+     * Returns [`MobileMelkLightingError::InvalidGattChannel`] for malformed channel bytes or
+     * [`MobileMelkLightingError::InvalidGattEvidence`] when the identity evidence does not
+     * match the candidate profile.
+     */
+public convenience init(name: String, service: Data, write: Data, notify: Data)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileMelkLightingError_lift) {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilemelklightingprofile_new(
+        FfiConverterString.lower(name),
+        FfiConverterData.lower(service),
+        FfiConverterData.lower(write),
+        FfiConverterData.lower(notify),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilemelklightingprofile(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Creates a brightness command write.
+     *
+     * # Errors
+     *
+     * Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` is greater than
+     * 100.
+     */
+open func setBrightness(percentage: UInt8)throws  -> MobileMelkLightingWriteDto  {
+    return try  FfiConverterTypeMobileMelkLightingWriteDto_lift(try rustCallWithError(FfiConverterTypeMobileMelkLightingError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingprofile_set_brightness(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt8.lower(percentage),$0
+    )
+})
+}
+    
+    /**
+     * Creates an on/off command write.
+     */
+open func setPower(on: Bool) -> MobileMelkLightingWriteDto  {
+    return try!  FfiConverterTypeMobileMelkLightingWriteDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingprofile_set_power(
+            self.uniffiCloneHandle(),
+        FfiConverterBool.lower(on),$0
+    )
+})
+}
+    
+    /**
+     * Creates a solid RGB command write.
+     */
+open func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> MobileMelkLightingWriteDto  {
+    return try!  FfiConverterTypeMobileMelkLightingWriteDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingprofile_set_solid_color(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt8.lower(red),
+        FfiConverterUInt8.lower(green),
+        FfiConverterUInt8.lower(blue),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingProfile: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileMelkLightingProfile
+
+    public static func lift(_ handle: UInt64) throws -> MobileMelkLightingProfile {
+        return MobileMelkLightingProfile(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileMelkLightingProfile) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingProfile {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileMelkLightingProfile, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingProfile_lift(_ handle: UInt64) throws -> MobileMelkLightingProfile {
+    return try FfiConverterTypeMobileMelkLightingProfile.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingProfile_lower(_ value: MobileMelkLightingProfile) -> UInt64 {
+    return FfiConverterTypeMobileMelkLightingProfile.lower(value)
+}
+
+
+
+
+
+
+/**
  * Mobile-facing builder for a PEVCAP capture export.
  */
 public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
-
+    
     /**
      * Adds an advertised service UUID observed by the mobile BLE stack.
      */
     func addAdvertisedService(service: Data)  -> Bool
-
+    
     /**
      * Adds a capture annotation, preserving key/value text exactly.
      */
     func addAnnotation(annotation: String)  -> Bool
-
+    
     /**
      * Adds an observed GATT service/characteristic fingerprint.
      */
     func addGattFingerprint(fingerprint: MobileGattFingerprintDto)  -> Bool
-
+    
     /**
      * Finishes the Rust-owned streaming writer.
      */
     func finishWriter()  -> Bool
-
+    
     /**
      * Flushes buffered capture bytes and syncs them to durable storage.
      */
     func flushWriter()  -> Bool
-
+    
     /**
      * Records a link-down lifecycle event.
      */
     func recordLinkDown(monotonicMs: MobileMonotonicMillisDto)  -> Bool
-
+    
     /**
      * Records a link-up lifecycle event.
      */
     func recordLinkUp(monotonicMs: MobileMonotonicMillisDto, maxWriteLen: MobileTransportWriteLimitDto?)  -> Bool
-
+    
     /**
      * Records inbound notification bytes.
      */
     func recordNotification(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data)  -> Bool
-
+    
     /**
      * Records an inbound notification with Rust-decoded telemetry and phone location context.
      */
     func recordNotificationWithContext(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data, telemetry: MobileRawTelemetryReadbackDto?, phoneLocation: MobilePhoneLocationSampleDto?)  -> Bool
-
+    
     /**
      * Records outbound write-without-response bytes.
      */
     func recordWriteWithoutResponse(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, bytes: Data)  -> Bool
-
+    
     /**
      * Sets the resolved model/firmware identity for the capture.
      */
     func setResolvedIdentity(identity: MobileResolvedIdentityDto)  -> Bool
-
+    
     /**
      * Starts the Rust-owned streaming writer for a JSONL capture.
      */
     func startWriter(path: String)  -> Bool
-
+    
     /**
      * Returns bounded writer queue instrumentation.
      */
     func writerStatus()  -> MobileCaptureWriterStatusDto
-
+    
 }
 /**
  * Mobile-facing builder for a PEVCAP capture export.
@@ -2059,9 +2254,9 @@ public convenience init(wallClockStartUnixMs: MobileWallClockUnixMillisDto, plat
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilepevcapcapturebuilder(handle, $0) }
     }
 
+    
 
-
-
+    
     /**
      * Adds an advertised service UUID observed by the mobile BLE stack.
      */
@@ -2073,7 +2268,7 @@ open func addAdvertisedService(service: Data) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Adds a capture annotation, preserving key/value text exactly.
      */
@@ -2085,7 +2280,7 @@ open func addAnnotation(annotation: String) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Adds an observed GATT service/characteristic fingerprint.
      */
@@ -2097,7 +2292,7 @@ open func addGattFingerprint(fingerprint: MobileGattFingerprintDto) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Finishes the Rust-owned streaming writer.
      */
@@ -2108,7 +2303,7 @@ open func finishWriter() -> Bool  {
     )
 })
 }
-
+    
     /**
      * Flushes buffered capture bytes and syncs them to durable storage.
      */
@@ -2119,7 +2314,7 @@ open func flushWriter() -> Bool  {
     )
 })
 }
-
+    
     /**
      * Records a link-down lifecycle event.
      */
@@ -2131,7 +2326,7 @@ open func recordLinkDown(monotonicMs: MobileMonotonicMillisDto) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Records a link-up lifecycle event.
      */
@@ -2144,7 +2339,7 @@ open func recordLinkUp(monotonicMs: MobileMonotonicMillisDto, maxWriteLen: Mobil
     )
 })
 }
-
+    
     /**
      * Records inbound notification bytes.
      */
@@ -2159,7 +2354,7 @@ open func recordNotification(monotonicMs: MobileMonotonicMillisDto, characterist
     )
 })
 }
-
+    
     /**
      * Records an inbound notification with Rust-decoded telemetry and phone location context.
      */
@@ -2176,7 +2371,7 @@ open func recordNotificationWithContext(monotonicMs: MobileMonotonicMillisDto, c
     )
 })
 }
-
+    
     /**
      * Records outbound write-without-response bytes.
      */
@@ -2190,7 +2385,7 @@ open func recordWriteWithoutResponse(monotonicMs: MobileMonotonicMillisDto, char
     )
 })
 }
-
+    
     /**
      * Sets the resolved model/firmware identity for the capture.
      */
@@ -2202,7 +2397,7 @@ open func setResolvedIdentity(identity: MobileResolvedIdentityDto) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Starts the Rust-owned streaming writer for a JSONL capture.
      */
@@ -2214,7 +2409,7 @@ open func startWriter(path: String) -> Bool  {
     )
 })
 }
-
+    
     /**
      * Returns bounded writer queue instrumentation.
      */
@@ -2225,9 +2420,9 @@ open func writerStatus() -> MobileCaptureWriterStatusDto  {
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -2280,11 +2475,11 @@ public func FfiConverterTypeMobilePevcapCaptureBuilder_lower(_ value: MobilePevc
  * Rust-owned phone location state. Swift only gathers and forwards Core Location values.
  */
 public protocol MobilePhoneLocationStateProtocol: AnyObject, Sendable {
-
+    
     func currentSnapshot()  -> MobilePhoneLocationSnapshotDto
-
+    
     func ingest(sample: MobilePhoneLocationSampleDto)  -> MobilePhoneLocationSnapshotDto
-
+    
 }
 /**
  * Rust-owned phone location state. Swift only gathers and forwards Core Location values.
@@ -2346,9 +2541,9 @@ public convenience init() {
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilephonelocationstate(handle, $0) }
     }
 
+    
 
-
-
+    
 open func currentSnapshot() -> MobilePhoneLocationSnapshotDto  {
     return try!  FfiConverterTypeMobilePhoneLocationSnapshotDto_lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_mobilephonelocationstate_current_snapshot(
@@ -2356,7 +2551,7 @@ open func currentSnapshot() -> MobilePhoneLocationSnapshotDto  {
     )
 })
 }
-
+    
 open func ingest(sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto  {
     return try!  FfiConverterTypeMobilePhoneLocationSnapshotDto_lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_mobilephonelocationstate_ingest(
@@ -2365,9 +2560,9 @@ open func ingest(sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSna
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -2420,27 +2615,27 @@ public func FfiConverterTypeMobilePhoneLocationState_lower(_ value: MobilePhoneL
  * Mobile-facing wrapper for a generic VESC read-only session.
  */
 public protocol VescReadOnlySessionProtocol: AnyObject, Sendable {
-
+    
     /**
      * Returns the latest telemetry snapshot as an owned DTO.
      */
     func currentSnapshot()  -> MobileTelemetrySnapshotDto
-
+    
     /**
      * Returns accumulated parser diagnostics as an owned DTO.
      */
     func diagnostics()  -> MobileParserDiagnosticsDto
-
+    
     /**
      * Drains owned output DTOs accumulated since the previous drain.
      */
     func drainOutputs()  -> [MobileSessionOutputDto]
-
+    
     /**
      * Drives one input and returns owned outputs plus any stable error DTO.
      */
     func ingestChecked(input: MobileSessionInputDto)  -> MobileSessionStepResultDto
-
+    
 }
 /**
  * Mobile-facing wrapper for a generic VESC read-only session.
@@ -2505,7 +2700,7 @@ public convenience init() {
         try! rustCall { uniffi_cutout_mobile_ffi_fn_free_vescreadonlysession(handle, $0) }
     }
 
-
+    
     /**
      * Creates a VESC read-only session with explicit board geometry and pack facts.
      */
@@ -2516,9 +2711,9 @@ public static func withBoardProfile(boardProfile: VescBoardProfile) -> VescReadO
     )
 })
 }
+    
 
-
-
+    
     /**
      * Returns the latest telemetry snapshot as an owned DTO.
      */
@@ -2529,7 +2724,7 @@ open func currentSnapshot() -> MobileTelemetrySnapshotDto  {
     )
 })
 }
-
+    
     /**
      * Returns accumulated parser diagnostics as an owned DTO.
      */
@@ -2540,7 +2735,7 @@ open func diagnostics() -> MobileParserDiagnosticsDto  {
     )
 })
 }
-
+    
     /**
      * Drains owned output DTOs accumulated since the previous drain.
      */
@@ -2551,7 +2746,7 @@ open func drainOutputs() -> [MobileSessionOutputDto]  {
     )
 })
 }
-
+    
     /**
      * Drives one input and returns owned outputs plus any stable error DTO.
      */
@@ -2563,9 +2758,9 @@ open func ingestChecked(input: MobileSessionInputDto) -> MobileSessionStepResult
     )
 })
 }
+    
 
-
-
+    
 }
 
 
@@ -2630,9 +2825,9 @@ public struct Angle: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2697,13 +2892,13 @@ public struct AngleReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: Angle,
+         */value: Angle, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -2713,9 +2908,9 @@ public struct AngleReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2729,9 +2924,9 @@ public struct FfiConverterTypeAngleReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AngleReading {
         return
             try AngleReading(
-                value: FfiConverterTypeAngle.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeAngle.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -2778,9 +2973,9 @@ public struct BatteryCurrent: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2845,13 +3040,13 @@ public struct BatteryCurrentReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: BatteryCurrent,
+         */value: BatteryCurrent, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -2861,9 +3056,9 @@ public struct BatteryCurrentReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2877,9 +3072,9 @@ public struct FfiConverterTypeBatteryCurrentReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryCurrentReading {
         return
             try BatteryCurrentReading(
-                value: FfiConverterTypeBatteryCurrent.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeBatteryCurrent.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -2926,9 +3121,9 @@ public struct BatteryLevel: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -2993,13 +3188,13 @@ public struct BatteryLevelReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: BatteryLevel,
+         */value: BatteryLevel, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -3009,9 +3204,9 @@ public struct BatteryLevelReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3025,9 +3220,9 @@ public struct FfiConverterTypeBatteryLevelReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> BatteryLevelReading {
         return
             try BatteryLevelReading(
-                value: FfiConverterTypeBatteryLevel.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeBatteryLevel.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -3102,28 +3297,28 @@ public struct DeviceDetectionResolutionRecord: Equatable, Hashable {
     public init(
         /**
          * Resolved protocol family, when known.
-         */protocolFamily: MobileProtocolFamilyDto?,
+         */protocolFamily: MobileProtocolFamilyDto?, 
         /**
          * Strong wire evidence reported incompatible protocol families.
-         */protocolConflict: Bool,
+         */protocolConflict: Bool, 
         /**
          * Veteran/NOSFET protocol-native model id, when decoded.
-         */veteranProtocolModelId: UInt16?,
+         */veteranProtocolModelId: UInt16?, 
         /**
          * Raw advertised-name bytes retained by the detector.
-         */advertisedName: Data?,
+         */advertisedName: Data?, 
         /**
          * Raw model-banner bytes retained by the detector.
-         */modelBanner: Data?,
+         */modelBanner: Data?, 
         /**
          * Raw firmware-banner bytes retained by the detector.
-         */firmwareBanner: Data?,
+         */firmwareBanner: Data?, 
         /**
          * Raw IMU-banner bytes retained by the detector.
-         */imuBanner: Data?,
+         */imuBanner: Data?, 
         /**
          * Probe that was issued but did not produce a matching response.
-         */missingProbeResponse: MobilePendingProbeDto?,
+         */missingProbeResponse: MobilePendingProbeDto?, 
         /**
          * Probe that produced malformed identity evidence.
          */malformedProbeResponse: MobilePendingProbeDto?) {
@@ -3138,9 +3333,9 @@ public struct DeviceDetectionResolutionRecord: Equatable, Hashable {
         self.malformedProbeResponse = malformedProbeResponse
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3154,14 +3349,14 @@ public struct FfiConverterTypeDeviceDetectionResolutionRecord: FfiConverterRustB
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeviceDetectionResolutionRecord {
         return
             try DeviceDetectionResolutionRecord(
-                protocolFamily: FfiConverterOptionTypeMobileProtocolFamilyDto.read(from: &buf),
-                protocolConflict: FfiConverterBool.read(from: &buf),
-                veteranProtocolModelId: FfiConverterOptionUInt16.read(from: &buf),
-                advertisedName: FfiConverterOptionData.read(from: &buf),
-                modelBanner: FfiConverterOptionData.read(from: &buf),
-                firmwareBanner: FfiConverterOptionData.read(from: &buf),
-                imuBanner: FfiConverterOptionData.read(from: &buf),
-                missingProbeResponse: FfiConverterOptionTypeMobilePendingProbeDto.read(from: &buf),
+                protocolFamily: FfiConverterOptionTypeMobileProtocolFamilyDto.read(from: &buf), 
+                protocolConflict: FfiConverterBool.read(from: &buf), 
+                veteranProtocolModelId: FfiConverterOptionUInt16.read(from: &buf), 
+                advertisedName: FfiConverterOptionData.read(from: &buf), 
+                modelBanner: FfiConverterOptionData.read(from: &buf), 
+                firmwareBanner: FfiConverterOptionData.read(from: &buf), 
+                imuBanner: FfiConverterOptionData.read(from: &buf), 
+                missingProbeResponse: FfiConverterOptionTypeMobilePendingProbeDto.read(from: &buf), 
                 malformedProbeResponse: FfiConverterOptionTypeMobilePendingProbeDto.read(from: &buf)
         )
     }
@@ -3253,37 +3448,37 @@ public struct DiscoveryCandidate: Equatable, Hashable {
     public init(
         /**
          * Platform-local peripheral identifier; not a Bluetooth MAC address.
-         */platformIdentifier: String,
+         */platformIdentifier: String, 
         /**
          * Observed display name for UI use.
-         */displayName: String,
+         */displayName: String, 
         /**
          * Product category for grouping and copy.
-         */productCategory: String,
+         */productCategory: String, 
         /**
          * Human-readable evidence summary.
-         */evidence: String,
+         */evidence: String, 
         /**
          * Row detail or disabled reason.
-         */detail: String,
+         */detail: String, 
         /**
          * Whether this advertisement is relevant to the mobile picker.
-         */isPickerCandidate: Bool,
+         */isPickerCandidate: Bool, 
         /**
          * Support state.
-         */support: DiscoveryCandidateSupport,
+         */support: DiscoveryCandidateSupport, 
         /**
          * Picker action recommended by Rust-owned projection.
-         */recommendedAction: DiscoveryCandidateAction,
+         */recommendedAction: DiscoveryCandidateAction, 
         /**
          * Picker section recommended by Rust-owned projection.
-         */section: DiscoveryCandidateSection,
+         */section: DiscoveryCandidateSection, 
         /**
          * Supported connection route, when connecting is allowed.
-         */connectionRoute: DiscoveryConnectionRoute?,
+         */connectionRoute: DiscoveryConnectionRoute?, 
         /**
          * Electric-unicycle session model to construct for the route.
-         */electricUnicycleModel: DiscoveryElectricUnicycleModel?,
+         */electricUnicycleModel: DiscoveryElectricUnicycleModel?, 
         /**
          * Disabled reason, when connecting is not allowed.
          */disabledReason: String?) {
@@ -3301,9 +3496,9 @@ public struct DiscoveryCandidate: Equatable, Hashable {
         self.disabledReason = disabledReason
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3317,17 +3512,17 @@ public struct FfiConverterTypeDiscoveryCandidate: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryCandidate {
         return
             try DiscoveryCandidate(
-                platformIdentifier: FfiConverterString.read(from: &buf),
-                displayName: FfiConverterString.read(from: &buf),
-                productCategory: FfiConverterString.read(from: &buf),
-                evidence: FfiConverterString.read(from: &buf),
-                detail: FfiConverterString.read(from: &buf),
-                isPickerCandidate: FfiConverterBool.read(from: &buf),
-                support: FfiConverterTypeDiscoveryCandidateSupport.read(from: &buf),
-                recommendedAction: FfiConverterTypeDiscoveryCandidateAction.read(from: &buf),
-                section: FfiConverterTypeDiscoveryCandidateSection.read(from: &buf),
-                connectionRoute: FfiConverterOptionTypeDiscoveryConnectionRoute.read(from: &buf),
-                electricUnicycleModel: FfiConverterOptionTypeDiscoveryElectricUnicycleModel.read(from: &buf),
+                platformIdentifier: FfiConverterString.read(from: &buf), 
+                displayName: FfiConverterString.read(from: &buf), 
+                productCategory: FfiConverterString.read(from: &buf), 
+                evidence: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                isPickerCandidate: FfiConverterBool.read(from: &buf), 
+                support: FfiConverterTypeDiscoveryCandidateSupport.read(from: &buf), 
+                recommendedAction: FfiConverterTypeDiscoveryCandidateAction.read(from: &buf), 
+                section: FfiConverterTypeDiscoveryCandidateSection.read(from: &buf), 
+                connectionRoute: FfiConverterOptionTypeDiscoveryConnectionRoute.read(from: &buf), 
+                electricUnicycleModel: FfiConverterOptionTypeDiscoveryElectricUnicycleModel.read(from: &buf), 
                 disabledReason: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -3382,7 +3577,7 @@ public struct DiscoveryManufacturerDataSummary: Equatable, Hashable {
     public init(
         /**
          * Bluetooth company identifier.
-         */companyIdentifier: UInt16,
+         */companyIdentifier: UInt16, 
         /**
          * Opaque manufacturer payload length in bytes.
          */payloadLen: UInt64) {
@@ -3390,9 +3585,9 @@ public struct DiscoveryManufacturerDataSummary: Equatable, Hashable {
         self.payloadLen = payloadLen
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3406,7 +3601,7 @@ public struct FfiConverterTypeDiscoveryManufacturerDataSummary: FfiConverterRust
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryManufacturerDataSummary {
         return
             try DiscoveryManufacturerDataSummary(
-                companyIdentifier: FfiConverterUInt16.read(from: &buf),
+                companyIdentifier: FfiConverterUInt16.read(from: &buf), 
                 payloadLen: FfiConverterUInt64.read(from: &buf)
         )
     }
@@ -3463,16 +3658,16 @@ public struct DiscoveryObservation: Equatable, Hashable {
     public init(
         /**
          * Platform-local peripheral identifier; not a Bluetooth MAC address.
-         */platformIdentifier: String,
+         */platformIdentifier: String, 
         /**
          * Raw advertised-name bytes from the mobile BLE stack.
-         */advertisedName: Data?,
+         */advertisedName: Data?, 
         /**
          * Advertised 16-bit service UUID values relevant to picker routing.
-         */advertisedServiceUuids: [UInt16],
+         */advertisedServiceUuids: [UInt16], 
         /**
          * Manufacturer data summaries without opaque payload bytes.
-         */manufacturerData: [DiscoveryManufacturerDataSummary],
+         */manufacturerData: [DiscoveryManufacturerDataSummary], 
         /**
          * Last observed RSSI in dBm.
          */rssiDbm: Int16?) {
@@ -3483,9 +3678,9 @@ public struct DiscoveryObservation: Equatable, Hashable {
         self.rssiDbm = rssiDbm
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3499,10 +3694,10 @@ public struct FfiConverterTypeDiscoveryObservation: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryObservation {
         return
             try DiscoveryObservation(
-                platformIdentifier: FfiConverterString.read(from: &buf),
-                advertisedName: FfiConverterOptionData.read(from: &buf),
-                advertisedServiceUuids: FfiConverterSequenceUInt16.read(from: &buf),
-                manufacturerData: FfiConverterSequenceTypeDiscoveryManufacturerDataSummary.read(from: &buf),
+                platformIdentifier: FfiConverterString.read(from: &buf), 
+                advertisedName: FfiConverterOptionData.read(from: &buf), 
+                advertisedServiceUuids: FfiConverterSequenceUInt16.read(from: &buf), 
+                manufacturerData: FfiConverterSequenceTypeDiscoveryManufacturerDataSummary.read(from: &buf), 
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf)
         )
     }
@@ -3566,19 +3761,19 @@ public struct DiscoveryObservationSnapshot: Equatable, Hashable {
     public init(
         /**
          * Platform-local peripheral identifier; not a Bluetooth MAC address.
-         */platformIdentifier: String,
+         */platformIdentifier: String, 
         /**
          * Raw advertised-name bytes retained by Rust state.
-         */advertisedName: Data?,
+         */advertisedName: Data?, 
         /**
          * UTF-8 advertised-name view, when valid.
-         */advertisedNameText: String?,
+         */advertisedNameText: String?, 
         /**
          * Advertised 16-bit service UUID values relevant to picker routing.
-         */advertisedServiceUuids: [UInt16],
+         */advertisedServiceUuids: [UInt16], 
         /**
          * Manufacturer data summaries without opaque payload bytes.
-         */manufacturerData: [DiscoveryManufacturerDataSummary],
+         */manufacturerData: [DiscoveryManufacturerDataSummary], 
         /**
          * Last observed RSSI in dBm.
          */rssiDbm: Int16?) {
@@ -3590,9 +3785,9 @@ public struct DiscoveryObservationSnapshot: Equatable, Hashable {
         self.rssiDbm = rssiDbm
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3606,11 +3801,11 @@ public struct FfiConverterTypeDiscoveryObservationSnapshot: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryObservationSnapshot {
         return
             try DiscoveryObservationSnapshot(
-                platformIdentifier: FfiConverterString.read(from: &buf),
-                advertisedName: FfiConverterOptionData.read(from: &buf),
-                advertisedNameText: FfiConverterOptionString.read(from: &buf),
-                advertisedServiceUuids: FfiConverterSequenceUInt16.read(from: &buf),
-                manufacturerData: FfiConverterSequenceTypeDiscoveryManufacturerDataSummary.read(from: &buf),
+                platformIdentifier: FfiConverterString.read(from: &buf), 
+                advertisedName: FfiConverterOptionData.read(from: &buf), 
+                advertisedNameText: FfiConverterOptionString.read(from: &buf), 
+                advertisedServiceUuids: FfiConverterSequenceUInt16.read(from: &buf), 
+                manufacturerData: FfiConverterSequenceTypeDiscoveryManufacturerDataSummary.read(from: &buf), 
                 rssiDbm: FfiConverterOptionInt16.read(from: &buf)
         )
     }
@@ -3663,10 +3858,10 @@ public struct DiscoverySnapshot: Equatable, Hashable {
     public init(
         /**
          * Retained discovery observations.
-         */observations: [DiscoveryObservationSnapshot],
+         */observations: [DiscoveryObservationSnapshot], 
         /**
          * Picker candidates derived from retained Rust discovery evidence.
-         */pickerCandidates: [DiscoveryCandidate],
+         */pickerCandidates: [DiscoveryCandidate], 
         /**
          * Platform identifier selected for the current mobile session.
          */selectedPlatformIdentifier: String?) {
@@ -3675,9 +3870,9 @@ public struct DiscoverySnapshot: Equatable, Hashable {
         self.selectedPlatformIdentifier = selectedPlatformIdentifier
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3691,8 +3886,8 @@ public struct FfiConverterTypeDiscoverySnapshot: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoverySnapshot {
         return
             try DiscoverySnapshot(
-                observations: FfiConverterSequenceTypeDiscoveryObservationSnapshot.read(from: &buf),
-                pickerCandidates: FfiConverterSequenceTypeDiscoveryCandidate.read(from: &buf),
+                observations: FfiConverterSequenceTypeDiscoveryObservationSnapshot.read(from: &buf), 
+                pickerCandidates: FfiConverterSequenceTypeDiscoveryCandidate.read(from: &buf), 
                 selectedPlatformIdentifier: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -3738,9 +3933,9 @@ public struct Distance: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3805,13 +4000,13 @@ public struct DistanceReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: Distance,
+         */value: Distance, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -3821,9 +4016,9 @@ public struct DistanceReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3837,9 +4032,9 @@ public struct FfiConverterTypeDistanceReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DistanceReading {
         return
             try DistanceReading(
-                value: FfiConverterTypeDistance.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeDistance.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -3886,9 +4081,9 @@ public struct DutyCycle: Equatable, Hashable {
         self.permille = permille
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -3969,25 +4164,25 @@ public struct MobileBegodeIdentityProbeDto: Equatable, Hashable {
     public init(
         /**
          * Model text returned by the `N` probe when available.
-         */reportedModel: String?,
+         */reportedModel: String?, 
         /**
          * Firmware or model-code text returned by the `V` probe when available.
-         */reportedCodeName: String?,
+         */reportedCodeName: String?, 
         /**
          * IMU text returned by the `M` probe when available.
-         */reportedImu: String?,
+         */reportedImu: String?, 
         /**
          * Firmware version text returned by the wheel when available.
-         */reportedFirmwareVersion: String?,
+         */reportedFirmwareVersion: String?, 
         /**
          * Stable device serial or other persistent identity text when available.
-         */reportedSerial: String?,
+         */reportedSerial: String?, 
         /**
          * Nominal voltage hint or pack-class observation, in millivolts.
-         */nominalVoltageHintMv: UInt32?,
+         */nominalVoltageHintMv: UInt32?, 
         /**
          * Probe that was issued but did not produce a matching response.
-         */missingProbeResponse: MobilePendingProbeDto?,
+         */missingProbeResponse: MobilePendingProbeDto?, 
         /**
          * Probe that produced malformed identity evidence.
          */malformedProbeResponse: MobilePendingProbeDto?) {
@@ -4001,9 +4196,9 @@ public struct MobileBegodeIdentityProbeDto: Equatable, Hashable {
         self.malformedProbeResponse = malformedProbeResponse
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4017,13 +4212,13 @@ public struct FfiConverterTypeMobileBegodeIdentityProbeDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBegodeIdentityProbeDto {
         return
             try MobileBegodeIdentityProbeDto(
-                reportedModel: FfiConverterOptionString.read(from: &buf),
-                reportedCodeName: FfiConverterOptionString.read(from: &buf),
-                reportedImu: FfiConverterOptionString.read(from: &buf),
-                reportedFirmwareVersion: FfiConverterOptionString.read(from: &buf),
-                reportedSerial: FfiConverterOptionString.read(from: &buf),
-                nominalVoltageHintMv: FfiConverterOptionUInt32.read(from: &buf),
-                missingProbeResponse: FfiConverterOptionTypeMobilePendingProbeDto.read(from: &buf),
+                reportedModel: FfiConverterOptionString.read(from: &buf), 
+                reportedCodeName: FfiConverterOptionString.read(from: &buf), 
+                reportedImu: FfiConverterOptionString.read(from: &buf), 
+                reportedFirmwareVersion: FfiConverterOptionString.read(from: &buf), 
+                reportedSerial: FfiConverterOptionString.read(from: &buf), 
+                nominalVoltageHintMv: FfiConverterOptionUInt32.read(from: &buf), 
+                missingProbeResponse: FfiConverterOptionTypeMobilePendingProbeDto.read(from: &buf), 
                 malformedProbeResponse: FfiConverterOptionTypeMobilePendingProbeDto.read(from: &buf)
         )
     }
@@ -4078,10 +4273,10 @@ public struct MobileBmsFaultDto: Equatable, Hashable {
     public init(
         /**
          * Fault code or bitmask label.
-         */code: String,
+         */code: String, 
         /**
          * Human-readable fault label.
-         */label: String,
+         */label: String, 
         /**
          * Severity for operator-facing treatment.
          */alertLevel: MobileBmsAlertLevelDto) {
@@ -4090,9 +4285,9 @@ public struct MobileBmsFaultDto: Equatable, Hashable {
         self.alertLevel = alertLevel
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4106,8 +4301,8 @@ public struct FfiConverterTypeMobileBmsFaultDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBmsFaultDto {
         return
             try MobileBmsFaultDto(
-                code: FfiConverterString.read(from: &buf),
-                label: FfiConverterString.read(from: &buf),
+                code: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
                 alertLevel: FfiConverterTypeMobileBmsAlertLevelDto.read(from: &buf)
         )
     }
@@ -4177,25 +4372,25 @@ public struct MobileBmsGroupSnapshotDto: Equatable, Hashable {
     public init(
         /**
          * One-based group index used in the UI.
-         */index: UInt16,
+         */index: UInt16, 
         /**
          * Optional explicit label such as `left pack`.
-         */label: String?,
+         */label: String?, 
         /**
          * Group voltage.
-         */voltage: VoltageReading?,
+         */voltage: VoltageReading?, 
         /**
          * Group temperature.
-         */temperature: TemperatureReading?,
+         */temperature: TemperatureReading?, 
         /**
          * Estimated internal resistance.
-         */resistance: Resistance?,
+         */resistance: Resistance?, 
         /**
          * Whether balancing is active for this group when known.
-         */isBalancing: Bool?,
+         */isBalancing: Bool?, 
         /**
          * Alert level for coloring and prioritization.
-         */alertLevel: MobileBmsAlertLevelDto,
+         */alertLevel: MobileBmsAlertLevelDto, 
         /**
          * Optional UI-safe detail string such as a trend note.
          */detail: String?) {
@@ -4209,9 +4404,9 @@ public struct MobileBmsGroupSnapshotDto: Equatable, Hashable {
         self.detail = detail
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4225,13 +4420,13 @@ public struct FfiConverterTypeMobileBmsGroupSnapshotDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBmsGroupSnapshotDto {
         return
             try MobileBmsGroupSnapshotDto(
-                index: FfiConverterUInt16.read(from: &buf),
-                label: FfiConverterOptionString.read(from: &buf),
-                voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf),
-                temperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf),
-                resistance: FfiConverterOptionTypeResistance.read(from: &buf),
-                isBalancing: FfiConverterOptionBool.read(from: &buf),
-                alertLevel: FfiConverterTypeMobileBmsAlertLevelDto.read(from: &buf),
+                index: FfiConverterUInt16.read(from: &buf), 
+                label: FfiConverterOptionString.read(from: &buf), 
+                voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf), 
+                temperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf), 
+                resistance: FfiConverterOptionTypeResistance.read(from: &buf), 
+                isBalancing: FfiConverterOptionBool.read(from: &buf), 
+                alertLevel: FfiConverterTypeMobileBmsAlertLevelDto.read(from: &buf), 
                 detail: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4370,73 +4565,73 @@ public struct MobileBmsSnapshotDto: Equatable, Hashable {
     public init(
         /**
          * Whether BMS or pack-health data is available for display.
-         */availability: MobileReadbackAvailabilityDto,
+         */availability: MobileReadbackAvailabilityDto, 
         /**
          * Topology summary for this reading.
-         */topology: MobileBmsTopologyDto,
+         */topology: MobileBmsTopologyDto, 
         /**
          * BMS page selector that produced this snapshot.
-         */pageSelector: UInt8?,
+         */pageSelector: UInt8?, 
         /**
          * Protocol tag/opcode that produced this snapshot.
-         */pageTag: UInt16?,
+         */pageTag: UInt16?, 
         /**
          * BMS page kind that produced this snapshot.
-         */pageKind: String?,
+         */pageKind: String?, 
         /**
          * Verification for the BMS page interpretation.
-         */pageVerification: MobileVerificationStatusDto?,
+         */pageVerification: MobileVerificationStatusDto?, 
         /**
          * State of charge or usable energy percent when known.
-         */energyPercent: BatteryLevelReading?,
+         */energyPercent: BatteryLevelReading?, 
         /**
          * Pack voltage.
-         */voltage: VoltageReading?,
+         */voltage: VoltageReading?, 
         /**
          * Pack current.
-         */current: BatteryCurrentReading?,
+         */current: BatteryCurrentReading?, 
         /**
          * First page-specific BMS pack current.
-         */bmsPackCurrent0: BatteryCurrentReading?,
+         */bmsPackCurrent0: BatteryCurrentReading?, 
         /**
          * Second page-specific BMS pack current.
-         */bmsPackCurrent1: BatteryCurrentReading?,
+         */bmsPackCurrent1: BatteryCurrentReading?, 
         /**
          * Cell-group voltage delta.
-         */cellDelta: VoltageDeltaReading?,
+         */cellDelta: VoltageDeltaReading?, 
         /**
          * One-based index of the lowest group when known.
-         */lowestGroupIndex: UInt16?,
+         */lowestGroupIndex: UInt16?, 
         /**
          * Highest observed temperature.
-         */highestTemperature: TemperatureReading?,
+         */highestTemperature: TemperatureReading?, 
         /**
          * Page-specific BMS temperature readings.
-         */temperatures: [TemperatureReading],
+         */temperatures: [TemperatureReading], 
         /**
          * Human-readable label for the hottest area.
-         */highestTemperatureLabel: String?,
+         */highestTemperatureLabel: String?, 
         /**
          * Pack-level balancing summary.
-         */balancingSummary: String?,
+         */balancingSummary: String?, 
         /**
          * Additional balancing detail.
-         */balancingDetail: String?,
+         */balancingDetail: String?, 
         /**
          * Pack-level fault summary.
-         */faultSummary: String?,
+         */faultSummary: String?, 
         /**
          * Additional fault detail.
-         */faultDetail: String?,
+         */faultDetail: String?, 
         /**
          * Per-group readings.
-         */groups: [MobileBmsGroupSnapshotDto],
+         */groups: [MobileBmsGroupSnapshotDto], 
         /**
          * Decoded faults or advisories.
-         */faults: [MobileBmsFaultDto],
+         */faults: [MobileBmsFaultDto], 
         /**
          * Optional unsupported-device capture action title.
-         */captureActionTitle: String?,
+         */captureActionTitle: String?, 
         /**
          * Optional state label for the capture action.
          */captureActionState: String?) {
@@ -4466,9 +4661,9 @@ public struct MobileBmsSnapshotDto: Equatable, Hashable {
         self.captureActionState = captureActionState
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4482,29 +4677,29 @@ public struct FfiConverterTypeMobileBmsSnapshotDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBmsSnapshotDto {
         return
             try MobileBmsSnapshotDto(
-                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf),
-                topology: FfiConverterTypeMobileBmsTopologyDto.read(from: &buf),
-                pageSelector: FfiConverterOptionUInt8.read(from: &buf),
-                pageTag: FfiConverterOptionUInt16.read(from: &buf),
-                pageKind: FfiConverterOptionString.read(from: &buf),
-                pageVerification: FfiConverterOptionTypeMobileVerificationStatusDto.read(from: &buf),
-                energyPercent: FfiConverterOptionTypeBatteryLevelReading.read(from: &buf),
-                voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf),
-                current: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf),
-                bmsPackCurrent0: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf),
-                bmsPackCurrent1: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf),
-                cellDelta: FfiConverterOptionTypeVoltageDeltaReading.read(from: &buf),
-                lowestGroupIndex: FfiConverterOptionUInt16.read(from: &buf),
-                highestTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf),
-                temperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf),
-                highestTemperatureLabel: FfiConverterOptionString.read(from: &buf),
-                balancingSummary: FfiConverterOptionString.read(from: &buf),
-                balancingDetail: FfiConverterOptionString.read(from: &buf),
-                faultSummary: FfiConverterOptionString.read(from: &buf),
-                faultDetail: FfiConverterOptionString.read(from: &buf),
-                groups: FfiConverterSequenceTypeMobileBmsGroupSnapshotDto.read(from: &buf),
-                faults: FfiConverterSequenceTypeMobileBmsFaultDto.read(from: &buf),
-                captureActionTitle: FfiConverterOptionString.read(from: &buf),
+                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf), 
+                topology: FfiConverterTypeMobileBmsTopologyDto.read(from: &buf), 
+                pageSelector: FfiConverterOptionUInt8.read(from: &buf), 
+                pageTag: FfiConverterOptionUInt16.read(from: &buf), 
+                pageKind: FfiConverterOptionString.read(from: &buf), 
+                pageVerification: FfiConverterOptionTypeMobileVerificationStatusDto.read(from: &buf), 
+                energyPercent: FfiConverterOptionTypeBatteryLevelReading.read(from: &buf), 
+                voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf), 
+                current: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf), 
+                bmsPackCurrent0: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf), 
+                bmsPackCurrent1: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf), 
+                cellDelta: FfiConverterOptionTypeVoltageDeltaReading.read(from: &buf), 
+                lowestGroupIndex: FfiConverterOptionUInt16.read(from: &buf), 
+                highestTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf), 
+                temperatures: FfiConverterSequenceTypeTemperatureReading.read(from: &buf), 
+                highestTemperatureLabel: FfiConverterOptionString.read(from: &buf), 
+                balancingSummary: FfiConverterOptionString.read(from: &buf), 
+                balancingDetail: FfiConverterOptionString.read(from: &buf), 
+                faultSummary: FfiConverterOptionString.read(from: &buf), 
+                faultDetail: FfiConverterOptionString.read(from: &buf), 
+                groups: FfiConverterSequenceTypeMobileBmsGroupSnapshotDto.read(from: &buf), 
+                faults: FfiConverterSequenceTypeMobileBmsFaultDto.read(from: &buf), 
+                captureActionTitle: FfiConverterOptionString.read(from: &buf), 
                 captureActionState: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4587,19 +4782,19 @@ public struct MobileBmsTopologyDto: Equatable, Hashable {
     public init(
         /**
          * Human-readable topology label such as `20S4P split pack`.
-         */layoutLabel: String,
+         */layoutLabel: String, 
         /**
          * Series group count when known.
-         */seriesGroupCount: UInt16?,
+         */seriesGroupCount: UInt16?, 
         /**
          * Parallel count when known.
-         */parallelCount: UInt16?,
+         */parallelCount: UInt16?, 
         /**
          * Number of packs or modules visible in the snapshot.
-         */packCount: UInt8,
+         */packCount: UInt8, 
         /**
          * Number of BMS controllers reporting in the snapshot.
-         */bmsCount: UInt8,
+         */bmsCount: UInt8, 
         /**
          * Confidence in the current topology mapping.
          */confidence: MobileBmsTopologyConfidenceDto) {
@@ -4611,9 +4806,9 @@ public struct MobileBmsTopologyDto: Equatable, Hashable {
         self.confidence = confidence
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4627,11 +4822,11 @@ public struct FfiConverterTypeMobileBmsTopologyDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBmsTopologyDto {
         return
             try MobileBmsTopologyDto(
-                layoutLabel: FfiConverterString.read(from: &buf),
-                seriesGroupCount: FfiConverterOptionUInt16.read(from: &buf),
-                parallelCount: FfiConverterOptionUInt16.read(from: &buf),
-                packCount: FfiConverterUInt8.read(from: &buf),
-                bmsCount: FfiConverterUInt8.read(from: &buf),
+                layoutLabel: FfiConverterString.read(from: &buf), 
+                seriesGroupCount: FfiConverterOptionUInt16.read(from: &buf), 
+                parallelCount: FfiConverterOptionUInt16.read(from: &buf), 
+                packCount: FfiConverterUInt8.read(from: &buf), 
+                bmsCount: FfiConverterUInt8.read(from: &buf), 
                 confidence: FfiConverterTypeMobileBmsTopologyConfidenceDto.read(from: &buf)
         )
     }
@@ -4700,22 +4895,22 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
     public init(
         /**
          * Messages accepted by the queue and not yet written.
-         */queuedMessages: UInt64,
+         */queuedMessages: UInt64, 
         /**
          * Highest number of accepted messages waiting to be written.
-         */peakQueuedMessages: UInt64,
+         */peakQueuedMessages: UInt64, 
         /**
          * Messages rejected because the queue was full or closed.
-         */droppedMessages: UInt64,
+         */droppedMessages: UInt64, 
         /**
          * Bytes written to the capture file.
-         */bytesWritten: UInt64,
+         */bytesWritten: UInt64, 
         /**
          * Total successful write payload bytes, including header rewrites.
-         */physicalBytesWritten: UInt64,
+         */physicalBytesWritten: UInt64, 
         /**
          * Whether the writer has encountered an unrecoverable error.
-         */failed: Bool,
+         */failed: Bool, 
         /**
          * Last writer error, if one exists.
          */lastError: String?) {
@@ -4728,9 +4923,9 @@ public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
         self.lastError = lastError
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4744,12 +4939,12 @@ public struct FfiConverterTypeMobileCaptureWriterStatusDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCaptureWriterStatusDto {
         return
             try MobileCaptureWriterStatusDto(
-                queuedMessages: FfiConverterUInt64.read(from: &buf),
-                peakQueuedMessages: FfiConverterUInt64.read(from: &buf),
-                droppedMessages: FfiConverterUInt64.read(from: &buf),
-                bytesWritten: FfiConverterUInt64.read(from: &buf),
-                physicalBytesWritten: FfiConverterUInt64.read(from: &buf),
-                failed: FfiConverterBool.read(from: &buf),
+                queuedMessages: FfiConverterUInt64.read(from: &buf), 
+                peakQueuedMessages: FfiConverterUInt64.read(from: &buf), 
+                droppedMessages: FfiConverterUInt64.read(from: &buf), 
+                bytesWritten: FfiConverterUInt64.read(from: &buf), 
+                physicalBytesWritten: FfiConverterUInt64.read(from: &buf), 
+                failed: FfiConverterBool.read(from: &buf), 
                 lastError: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4803,10 +4998,10 @@ public struct MobileChargeEstimateInputDto: Equatable, Hashable {
     public init(
         /**
          * Host evaluation timestamp.
-         */at: MobileMonotonicMillisDto,
+         */at: MobileMonotonicMillisDto, 
         /**
          * Latest typed telemetry snapshot.
-         */snapshot: MobileTelemetrySnapshotDto,
+         */snapshot: MobileTelemetrySnapshotDto, 
         /**
          * Maximum age and allowed gap for telemetry samples.
          */freshness: MobileDurationDto) {
@@ -4815,9 +5010,9 @@ public struct MobileChargeEstimateInputDto: Equatable, Hashable {
         self.freshness = freshness
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4831,8 +5026,8 @@ public struct FfiConverterTypeMobileChargeEstimateInputDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeEstimateInputDto {
         return
             try MobileChargeEstimateInputDto(
-                at: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf),
-                snapshot: FfiConverterTypeMobileTelemetrySnapshotDto.read(from: &buf),
+                at: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf), 
+                snapshot: FfiConverterTypeMobileTelemetrySnapshotDto.read(from: &buf), 
                 freshness: FfiConverterTypeMobileDurationDto.read(from: &buf)
         )
     }
@@ -4902,25 +5097,25 @@ public struct MobileChargeEstimateStateDto: Equatable, Hashable {
     public init(
         /**
          * Current state kind.
-         */kind: MobileChargeEstimateStateKindDto,
+         */kind: MobileChargeEstimateStateKindDto, 
         /**
          * Current estimate when available.
-         */estimate: MobileChargeTimeEstimateDto?,
+         */estimate: MobileChargeTimeEstimateDto?, 
         /**
          * Latest observed load-step sag, independent of charge-estimate availability.
-         */voltageSag: MobileVoltageSagEstimateDto?,
+         */voltageSag: MobileVoltageSagEstimateDto?, 
         /**
          * Unavailable reason, when applicable.
-         */unavailableReason: MobileChargeEstimateUnavailableReasonDto?,
+         */unavailableReason: MobileChargeEstimateUnavailableReasonDto?, 
         /**
          * Invariant/arithmetic error, when applicable.
-         */error: MobileChargeEstimateErrorDto?,
+         */error: MobileChargeEstimateErrorDto?, 
         /**
          * Most recent reset reason.
-         */resetReason: MobileChargeEstimateResetReasonDto?,
+         */resetReason: MobileChargeEstimateResetReasonDto?, 
         /**
          * Number of admitted samples.
-         */samples: UInt16,
+         */samples: UInt16, 
         /**
          * Observation duration covered by the bounded window.
          */observedFor: MobileDurationDto) {
@@ -4934,9 +5129,9 @@ public struct MobileChargeEstimateStateDto: Equatable, Hashable {
         self.observedFor = observedFor
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -4950,13 +5145,13 @@ public struct FfiConverterTypeMobileChargeEstimateStateDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeEstimateStateDto {
         return
             try MobileChargeEstimateStateDto(
-                kind: FfiConverterTypeMobileChargeEstimateStateKindDto.read(from: &buf),
-                estimate: FfiConverterOptionTypeMobileChargeTimeEstimateDto.read(from: &buf),
-                voltageSag: FfiConverterOptionTypeMobileVoltageSagEstimateDto.read(from: &buf),
-                unavailableReason: FfiConverterOptionTypeMobileChargeEstimateUnavailableReasonDto.read(from: &buf),
-                error: FfiConverterOptionTypeMobileChargeEstimateErrorDto.read(from: &buf),
-                resetReason: FfiConverterOptionTypeMobileChargeEstimateResetReasonDto.read(from: &buf),
-                samples: FfiConverterUInt16.read(from: &buf),
+                kind: FfiConverterTypeMobileChargeEstimateStateKindDto.read(from: &buf), 
+                estimate: FfiConverterOptionTypeMobileChargeTimeEstimateDto.read(from: &buf), 
+                voltageSag: FfiConverterOptionTypeMobileVoltageSagEstimateDto.read(from: &buf), 
+                unavailableReason: FfiConverterOptionTypeMobileChargeEstimateUnavailableReasonDto.read(from: &buf), 
+                error: FfiConverterOptionTypeMobileChargeEstimateErrorDto.read(from: &buf), 
+                resetReason: FfiConverterOptionTypeMobileChargeEstimateResetReasonDto.read(from: &buf), 
+                samples: FfiConverterUInt16.read(from: &buf), 
                 observedFor: FfiConverterTypeMobileDurationDto.read(from: &buf)
         )
     }
@@ -5015,13 +5210,13 @@ public struct MobileChargeModeReadingDto: Equatable, Hashable {
     public init(
         /**
          * Charging-state value.
-         */value: MobileChargeModeDto,
+         */value: MobileChargeModeDto, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -5031,9 +5226,9 @@ public struct MobileChargeModeReadingDto: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5047,9 +5242,9 @@ public struct FfiConverterTypeMobileChargeModeReadingDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeModeReadingDto {
         return
             try MobileChargeModeReadingDto(
-                value: FfiConverterTypeMobileChargeModeDto.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeMobileChargeModeDto.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -5112,19 +5307,19 @@ public struct MobileChargeProfileDto: Equatable, Hashable {
     public init(
         /**
          * Stable active session identity.
-         */sessionId: UInt64,
+         */sessionId: UInt64, 
         /**
          * Verified battery/charger profile identity.
-         */profileId: UInt32,
+         */profileId: UInt32, 
         /**
          * Usable capacity in milliamp-hours.
-         */capacityMilliampHours: UInt32,
+         */capacityMilliampHours: UInt32, 
         /**
          * Capacity provenance.
-         */capacitySource: MobileChargeCapacitySourceDto,
+         */capacitySource: MobileChargeCapacitySourceDto, 
         /**
          * Capacity verification state.
-         */verification: MobileVerificationStatusDto,
+         */verification: MobileVerificationStatusDto, 
         /**
          * Independent charge-flow/polarity verification from LIBCU-521.
          */chargeFlowVerification: MobileVerificationStatusDto) {
@@ -5136,9 +5331,9 @@ public struct MobileChargeProfileDto: Equatable, Hashable {
         self.chargeFlowVerification = chargeFlowVerification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5152,11 +5347,11 @@ public struct FfiConverterTypeMobileChargeProfileDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeProfileDto {
         return
             try MobileChargeProfileDto(
-                sessionId: FfiConverterUInt64.read(from: &buf),
-                profileId: FfiConverterUInt32.read(from: &buf),
-                capacityMilliampHours: FfiConverterUInt32.read(from: &buf),
-                capacitySource: FfiConverterTypeMobileChargeCapacitySourceDto.read(from: &buf),
-                verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf),
+                sessionId: FfiConverterUInt64.read(from: &buf), 
+                profileId: FfiConverterUInt32.read(from: &buf), 
+                capacityMilliampHours: FfiConverterUInt32.read(from: &buf), 
+                capacitySource: FfiConverterTypeMobileChargeCapacitySourceDto.read(from: &buf), 
+                verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf), 
                 chargeFlowVerification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -5249,40 +5444,40 @@ public struct MobileChargeTimeEstimateDto: Equatable, Hashable {
     public init(
         /**
          * Conservative lower duration.
-         */lower: MobileDurationDto,
+         */lower: MobileDurationDto, 
         /**
          * Expected duration at the admitted current rate.
-         */expected: MobileDurationDto,
+         */expected: MobileDurationDto, 
         /**
          * Conservative upper duration.
-         */upper: MobileDurationDto,
+         */upper: MobileDurationDto, 
         /**
          * Estimate semantics.
-         */kind: MobileEstimateKindDto,
+         */kind: MobileEstimateKindDto, 
         /**
          * Combined evidence confidence.
-         */confidence: MobileEstimateConfidenceDto,
+         */confidence: MobileEstimateConfidenceDto, 
         /**
          * Current-rate evidence.
-         */currentRate: MobileCurrentRateSummaryDto,
+         */currentRate: MobileCurrentRateSummaryDto, 
         /**
          * SOC value used by the calculation.
-         */batteryLevel: BatteryLevelReading,
+         */batteryLevel: BatteryLevelReading, 
         /**
          * Whether SOC was reported or profile-estimated.
-         */batteryLevelBasis: MobileBatteryLevelBasisDto,
+         */batteryLevelBasis: MobileBatteryLevelBasisDto, 
         /**
          * Profile identity when SOC was profile-estimated.
-         */batteryProfileId: UInt32?,
+         */batteryProfileId: UInt32?, 
         /**
          * Capacity provenance.
-         */capacitySource: MobileChargeCapacitySourceDto,
+         */capacitySource: MobileChargeCapacitySourceDto, 
         /**
          * Sag evidence incorporated into the bounds.
-         */voltageSag: MobileVoltageSagEstimateDto?,
+         */voltageSag: MobileVoltageSagEstimateDto?, 
         /**
          * Host calculation timestamp.
-         */calculatedAt: MobileMonotonicMillisDto,
+         */calculatedAt: MobileMonotonicMillisDto, 
         /**
          * Timestamp after which this result is stale.
          */validUntil: MobileMonotonicMillisDto) {
@@ -5301,9 +5496,9 @@ public struct MobileChargeTimeEstimateDto: Equatable, Hashable {
         self.validUntil = validUntil
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5317,18 +5512,18 @@ public struct FfiConverterTypeMobileChargeTimeEstimateDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeTimeEstimateDto {
         return
             try MobileChargeTimeEstimateDto(
-                lower: FfiConverterTypeMobileDurationDto.read(from: &buf),
-                expected: FfiConverterTypeMobileDurationDto.read(from: &buf),
-                upper: FfiConverterTypeMobileDurationDto.read(from: &buf),
-                kind: FfiConverterTypeMobileEstimateKindDto.read(from: &buf),
-                confidence: FfiConverterTypeMobileEstimateConfidenceDto.read(from: &buf),
-                currentRate: FfiConverterTypeMobileCurrentRateSummaryDto.read(from: &buf),
-                batteryLevel: FfiConverterTypeBatteryLevelReading.read(from: &buf),
-                batteryLevelBasis: FfiConverterTypeMobileBatteryLevelBasisDto.read(from: &buf),
-                batteryProfileId: FfiConverterOptionUInt32.read(from: &buf),
-                capacitySource: FfiConverterTypeMobileChargeCapacitySourceDto.read(from: &buf),
-                voltageSag: FfiConverterOptionTypeMobileVoltageSagEstimateDto.read(from: &buf),
-                calculatedAt: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf),
+                lower: FfiConverterTypeMobileDurationDto.read(from: &buf), 
+                expected: FfiConverterTypeMobileDurationDto.read(from: &buf), 
+                upper: FfiConverterTypeMobileDurationDto.read(from: &buf), 
+                kind: FfiConverterTypeMobileEstimateKindDto.read(from: &buf), 
+                confidence: FfiConverterTypeMobileEstimateConfidenceDto.read(from: &buf), 
+                currentRate: FfiConverterTypeMobileCurrentRateSummaryDto.read(from: &buf), 
+                batteryLevel: FfiConverterTypeBatteryLevelReading.read(from: &buf), 
+                batteryLevelBasis: FfiConverterTypeMobileBatteryLevelBasisDto.read(from: &buf), 
+                batteryProfileId: FfiConverterOptionUInt32.read(from: &buf), 
+                capacitySource: FfiConverterTypeMobileChargeCapacitySourceDto.read(from: &buf), 
+                voltageSag: FfiConverterOptionTypeMobileVoltageSagEstimateDto.read(from: &buf), 
+                calculatedAt: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf), 
                 validUntil: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf)
         )
     }
@@ -5392,13 +5587,13 @@ public struct MobileCurrentRateSummaryDto: Equatable, Hashable {
     public init(
         /**
          * Smoothed charging current magnitude in milliamps.
-         */meanMilliamps: Int32,
+         */meanMilliamps: Int32, 
         /**
          * Minimum admitted charging current magnitude.
-         */minimumMilliamps: Int32,
+         */minimumMilliamps: Int32, 
         /**
          * Maximum admitted charging current magnitude.
-         */maximumMilliamps: Int32,
+         */maximumMilliamps: Int32, 
         /**
          * Current range divided by mean, in permille.
          */variabilityPermille: UInt16) {
@@ -5408,9 +5603,9 @@ public struct MobileCurrentRateSummaryDto: Equatable, Hashable {
         self.variabilityPermille = variabilityPermille
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5424,9 +5619,9 @@ public struct FfiConverterTypeMobileCurrentRateSummaryDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCurrentRateSummaryDto {
         return
             try MobileCurrentRateSummaryDto(
-                meanMilliamps: FfiConverterInt32.read(from: &buf),
-                minimumMilliamps: FfiConverterInt32.read(from: &buf),
-                maximumMilliamps: FfiConverterInt32.read(from: &buf),
+                meanMilliamps: FfiConverterInt32.read(from: &buf), 
+                minimumMilliamps: FfiConverterInt32.read(from: &buf), 
+                maximumMilliamps: FfiConverterInt32.read(from: &buf), 
                 variabilityPermille: FfiConverterUInt16.read(from: &buf)
         )
     }
@@ -5473,9 +5668,9 @@ public struct MobileDurationDto: Equatable, Hashable {
         self.milliseconds = milliseconds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5540,13 +5735,13 @@ public struct MobileEucGarageSettingsDto: Equatable, Hashable {
     public init(
         /**
          * Whether this projected settings readback is available.
-         */availability: MobileReadbackAvailabilityDto,
+         */availability: MobileReadbackAvailabilityDto, 
         /**
          * Beep margin speed setting, when understood.
-         */beepMargin: SpeedReading?,
+         */beepMargin: SpeedReading?, 
         /**
          * Tiltback speed setting, when understood.
-         */tiltback: SpeedReading?,
+         */tiltback: SpeedReading?, 
         /**
          * Pedal mode setting, when understood.
          */pedalMode: MobilePedalModeDto?) {
@@ -5556,9 +5751,9 @@ public struct MobileEucGarageSettingsDto: Equatable, Hashable {
         self.pedalMode = pedalMode
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5572,9 +5767,9 @@ public struct FfiConverterTypeMobileEucGarageSettingsDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileEucGarageSettingsDto {
         return
             try MobileEucGarageSettingsDto(
-                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf),
-                beepMargin: FfiConverterOptionTypeSpeedReading.read(from: &buf),
-                tiltback: FfiConverterOptionTypeSpeedReading.read(from: &buf),
+                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf), 
+                beepMargin: FfiConverterOptionTypeSpeedReading.read(from: &buf), 
+                tiltback: FfiConverterOptionTypeSpeedReading.read(from: &buf), 
                 pedalMode: FfiConverterOptionTypeMobilePedalModeDto.read(from: &buf)
         )
     }
@@ -5621,9 +5816,9 @@ public struct MobileFaultCodeDto: Equatable, Hashable {
         self.raw = raw
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5688,13 +5883,13 @@ public struct MobileFaultHistoryEntryDto: Equatable, Hashable {
     public init(
         /**
          * Protocol-specific fault code without proven semantic mapping.
-         */code: MobileFaultCodeDto,
+         */code: MobileFaultCodeDto, 
         /**
          * Source of the fault code.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Confidence in the fault-code interpretation.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Verification state for the fault-code interpretation.
          */verification: MobileVerificationStatusDto) {
@@ -5704,9 +5899,9 @@ public struct MobileFaultHistoryEntryDto: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5720,9 +5915,9 @@ public struct FfiConverterTypeMobileFaultHistoryEntryDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFaultHistoryEntryDto {
         return
             try MobileFaultHistoryEntryDto(
-                code: FfiConverterTypeMobileFaultCodeDto.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                code: FfiConverterTypeMobileFaultCodeDto.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -5773,10 +5968,10 @@ public struct MobileFaultHistoryReadbackDto: Equatable, Hashable {
     public init(
         /**
          * Whether fault history is available for display.
-         */availability: MobileReadbackAvailabilityDto,
+         */availability: MobileReadbackAvailabilityDto, 
         /**
          * Last reported fault, if any.
-         */lastFault: MobileFaultHistoryEntryDto?,
+         */lastFault: MobileFaultHistoryEntryDto?, 
         /**
          * Distance since the last fault, if reported separately.
          */sinceDistance: DistanceReading?) {
@@ -5785,9 +5980,9 @@ public struct MobileFaultHistoryReadbackDto: Equatable, Hashable {
         self.sinceDistance = sinceDistance
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5801,8 +5996,8 @@ public struct FfiConverterTypeMobileFaultHistoryReadbackDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFaultHistoryReadbackDto {
         return
             try MobileFaultHistoryReadbackDto(
-                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf),
-                lastFault: FfiConverterOptionTypeMobileFaultHistoryEntryDto.read(from: &buf),
+                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf), 
+                lastFault: FfiConverterOptionTypeMobileFaultHistoryEntryDto.read(from: &buf), 
                 sinceDistance: FfiConverterOptionTypeDistanceReading.read(from: &buf)
         )
     }
@@ -5856,13 +6051,13 @@ public struct MobileFootpadTelemetryDto: Equatable, Hashable {
     public init(
         /**
          * Protocol-specific footpad state bitfield/nibble.
-         */state: UInt8,
+         */state: UInt8, 
         /**
          * Semantically decoded contact state when the protocol defines one.
-         */contactState: MobileFootpadContactState?,
+         */contactState: MobileFootpadContactState?, 
         /**
          * First footpad ADC reading in protocol units, scaled by 1000.
-         */adc1Milliunits: Int32?,
+         */adc1Milliunits: Int32?, 
         /**
          * Second footpad ADC reading in protocol units, scaled by 1000.
          */adc2Milliunits: Int32?) {
@@ -5872,9 +6067,9 @@ public struct MobileFootpadTelemetryDto: Equatable, Hashable {
         self.adc2Milliunits = adc2Milliunits
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5888,9 +6083,9 @@ public struct FfiConverterTypeMobileFootpadTelemetryDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFootpadTelemetryDto {
         return
             try MobileFootpadTelemetryDto(
-                state: FfiConverterUInt8.read(from: &buf),
-                contactState: FfiConverterOptionTypeMobileFootpadContactState.read(from: &buf),
-                adc1Milliunits: FfiConverterOptionInt32.read(from: &buf),
+                state: FfiConverterUInt8.read(from: &buf), 
+                contactState: FfiConverterOptionTypeMobileFootpadContactState.read(from: &buf), 
+                adc1Milliunits: FfiConverterOptionInt32.read(from: &buf), 
                 adc2Milliunits: FfiConverterOptionInt32.read(from: &buf)
         )
     }
@@ -5945,13 +6140,13 @@ public struct MobileGattFingerprintDto: Equatable, Hashable {
     public init(
         /**
          * Service UUID bytes.
-         */service: Data,
+         */service: Data, 
         /**
          * Characteristic UUID bytes.
-         */characteristic: Data,
+         */characteristic: Data, 
         /**
          * Observed characteristic roles.
-         */roles: [MobileGattRoleDto],
+         */roles: [MobileGattRoleDto], 
         /**
          * Verification status for this fingerprint.
          */verification: MobileVerificationStatusDto) {
@@ -5961,9 +6156,9 @@ public struct MobileGattFingerprintDto: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -5977,9 +6172,9 @@ public struct FfiConverterTypeMobileGattFingerprintDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileGattFingerprintDto {
         return
             try MobileGattFingerprintDto(
-                service: FfiConverterData.read(from: &buf),
-                characteristic: FfiConverterData.read(from: &buf),
-                roles: FfiConverterSequenceTypeMobileGattRoleDto.read(from: &buf),
+                service: FfiConverterData.read(from: &buf), 
+                characteristic: FfiConverterData.read(from: &buf), 
+                roles: FfiConverterSequenceTypeMobileGattRoleDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -6030,10 +6225,10 @@ public struct MobileIdentificationProbeWriteDto: Equatable, Hashable {
     public init(
         /**
          * Characteristic UUID bytes.
-         */characteristic: Data,
+         */characteristic: Data, 
         /**
          * Protocol-owned bounded payload bytes.
-         */payload: Data,
+         */payload: Data, 
         /**
          * Required GATT write mode.
          */mode: MobileIdentificationProbeWriteModeDto) {
@@ -6042,9 +6237,9 @@ public struct MobileIdentificationProbeWriteDto: Equatable, Hashable {
         self.mode = mode
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6058,8 +6253,8 @@ public struct FfiConverterTypeMobileIdentificationProbeWriteDto: FfiConverterRus
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentificationProbeWriteDto {
         return
             try MobileIdentificationProbeWriteDto(
-                characteristic: FfiConverterData.read(from: &buf),
-                payload: FfiConverterData.read(from: &buf),
+                characteristic: FfiConverterData.read(from: &buf), 
+                payload: FfiConverterData.read(from: &buf), 
                 mode: FfiConverterTypeMobileIdentificationProbeWriteModeDto.read(from: &buf)
         )
     }
@@ -6117,16 +6312,16 @@ public struct MobileIgnoredNotificationEvidenceDto: Equatable, Hashable {
     public init(
         /**
          * Protocol family when classification got that far.
-         */family: MobileProtocolFamilyDto?,
+         */family: MobileProtocolFamilyDto?, 
         /**
          * GATT channel UUID bytes.
-         */channel: Data,
+         */channel: Data, 
         /**
          * Notification payload length without retaining payload bytes.
-         */len: MobileNotificationByteLenDto,
+         */len: MobileNotificationByteLenDto, 
         /**
          * Host monotonic receive timestamp.
-         */monotonicMs: MobileMonotonicMillisDto,
+         */monotonicMs: MobileMonotonicMillisDto, 
         /**
          * Bounded raw payload retained for capture correlation.
          */retainedPayload: Data) {
@@ -6137,9 +6332,9 @@ public struct MobileIgnoredNotificationEvidenceDto: Equatable, Hashable {
         self.retainedPayload = retainedPayload
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6153,10 +6348,10 @@ public struct FfiConverterTypeMobileIgnoredNotificationEvidenceDto: FfiConverter
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIgnoredNotificationEvidenceDto {
         return
             try MobileIgnoredNotificationEvidenceDto(
-                family: FfiConverterOptionTypeMobileProtocolFamilyDto.read(from: &buf),
-                channel: FfiConverterData.read(from: &buf),
-                len: FfiConverterTypeMobileNotificationByteLenDto.read(from: &buf),
-                monotonicMs: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf),
+                family: FfiConverterOptionTypeMobileProtocolFamilyDto.read(from: &buf), 
+                channel: FfiConverterData.read(from: &buf), 
+                len: FfiConverterTypeMobileNotificationByteLenDto.read(from: &buf), 
+                monotonicMs: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf), 
                 retainedPayload: FfiConverterData.read(from: &buf)
         )
     }
@@ -6187,6 +6382,105 @@ public func FfiConverterTypeMobileIgnoredNotificationEvidenceDto_lower(_ value: 
 
 
 /**
+ * One bounded MELK lighting write plus its independent confirmation policy.
+ */
+public struct MobileMelkLightingWriteDto: Equatable, Hashable {
+    /**
+     * Characteristic receiving the command frame.
+     */
+    public var characteristic: Data
+    /**
+     * Candidate protocol frame emitted by Rust.
+     */
+    public var payload: Data
+    /**
+     * Required transport write mode.
+     */
+    public var mode: MobileMelkLightingWriteModeDto
+    /**
+     * Characteristic whose notifications may confirm the command.
+     */
+    public var confirmationCharacteristic: Data
+    /**
+     * Capture-backed minimum command interval, when known.
+     */
+    public var minimumIntervalMs: UInt16?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Characteristic receiving the command frame.
+         */characteristic: Data, 
+        /**
+         * Candidate protocol frame emitted by Rust.
+         */payload: Data, 
+        /**
+         * Required transport write mode.
+         */mode: MobileMelkLightingWriteModeDto, 
+        /**
+         * Characteristic whose notifications may confirm the command.
+         */confirmationCharacteristic: Data, 
+        /**
+         * Capture-backed minimum command interval, when known.
+         */minimumIntervalMs: UInt16?) {
+        self.characteristic = characteristic
+        self.payload = payload
+        self.mode = mode
+        self.confirmationCharacteristic = confirmationCharacteristic
+        self.minimumIntervalMs = minimumIntervalMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingWriteDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingWriteDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingWriteDto {
+        return
+            try MobileMelkLightingWriteDto(
+                characteristic: FfiConverterData.read(from: &buf), 
+                payload: FfiConverterData.read(from: &buf), 
+                mode: FfiConverterTypeMobileMelkLightingWriteModeDto.read(from: &buf), 
+                confirmationCharacteristic: FfiConverterData.read(from: &buf), 
+                minimumIntervalMs: FfiConverterOptionUInt16.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingWriteDto, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.characteristic, into: &buf)
+        FfiConverterData.write(value.payload, into: &buf)
+        FfiConverterTypeMobileMelkLightingWriteModeDto.write(value.mode, into: &buf)
+        FfiConverterData.write(value.confirmationCharacteristic, into: &buf)
+        FfiConverterOptionUInt16.write(value.minimumIntervalMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingWriteDto {
+    return try FfiConverterTypeMobileMelkLightingWriteDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteDto_lower(_ value: MobileMelkLightingWriteDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingWriteDto.lower(value)
+}
+
+
+/**
  * Mobile DTO monotonic timestamp.
  */
 public struct MobileMonotonicMillisDto: Equatable, Hashable {
@@ -6204,9 +6498,9 @@ public struct MobileMonotonicMillisDto: Equatable, Hashable {
         self.milliseconds = milliseconds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6263,9 +6557,9 @@ public struct MobileNotificationByteLenDto: Equatable, Hashable {
         self.bytes = bytes
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6330,13 +6624,13 @@ public struct MobileNotificationEvidenceDto: Equatable, Hashable {
     public init(
         /**
          * Protocol family that accepted or classified the notification.
-         */family: MobileProtocolFamilyDto,
+         */family: MobileProtocolFamilyDto, 
         /**
          * GATT channel UUID bytes.
-         */channel: Data,
+         */channel: Data, 
         /**
          * Notification payload length without retaining payload bytes.
-         */len: MobileNotificationByteLenDto,
+         */len: MobileNotificationByteLenDto, 
         /**
          * Host monotonic receive timestamp.
          */monotonicMs: MobileMonotonicMillisDto) {
@@ -6346,9 +6640,9 @@ public struct MobileNotificationEvidenceDto: Equatable, Hashable {
         self.monotonicMs = monotonicMs
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6362,9 +6656,9 @@ public struct FfiConverterTypeMobileNotificationEvidenceDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileNotificationEvidenceDto {
         return
             try MobileNotificationEvidenceDto(
-                family: FfiConverterTypeMobileProtocolFamilyDto.read(from: &buf),
-                channel: FfiConverterData.read(from: &buf),
-                len: FfiConverterTypeMobileNotificationByteLenDto.read(from: &buf),
+                family: FfiConverterTypeMobileProtocolFamilyDto.read(from: &buf), 
+                channel: FfiConverterData.read(from: &buf), 
+                len: FfiConverterTypeMobileNotificationByteLenDto.read(from: &buf), 
                 monotonicMs: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf)
         )
     }
@@ -6435,25 +6729,25 @@ public struct MobileNotificationIngestOutcomeDto: Equatable, Hashable {
     public init(
         /**
          * Outcome kind.
-         */kind: MobileNotificationIngestOutcomeKindDto,
+         */kind: MobileNotificationIngestOutcomeKindDto, 
         /**
          * Accepted notification evidence without raw payload bytes.
-         */notification: MobileNotificationEvidenceDto?,
+         */notification: MobileNotificationEvidenceDto?, 
         /**
          * Number of semantic events emitted from this notification.
-         */eventCount: MobileSemanticEventCountDto?,
+         */eventCount: MobileSemanticEventCountDto?, 
         /**
          * Parser error for diagnostic outcomes.
-         */parserError: MobileParserErrorDto?,
+         */parserError: MobileParserErrorDto?, 
         /**
          * Reserved payload evidence for known-reserved outcomes.
-         */reserved: MobileReservedPayloadEvidenceDto?,
+         */reserved: MobileReservedPayloadEvidenceDto?, 
         /**
          * Parser gap evidence for parser-gap outcomes.
-         */gap: MobileParserGapEvidenceDto?,
+         */gap: MobileParserGapEvidenceDto?, 
         /**
          * Ignored notification evidence.
-         */ignored: MobileIgnoredNotificationEvidenceDto?,
+         */ignored: MobileIgnoredNotificationEvidenceDto?, 
         /**
          * Reason an ignored notification did not enter a decoder path.
          */ignoredReason: MobileIgnoredNotificationReasonDto?) {
@@ -6467,9 +6761,9 @@ public struct MobileNotificationIngestOutcomeDto: Equatable, Hashable {
         self.ignoredReason = ignoredReason
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6483,13 +6777,13 @@ public struct FfiConverterTypeMobileNotificationIngestOutcomeDto: FfiConverterRu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileNotificationIngestOutcomeDto {
         return
             try MobileNotificationIngestOutcomeDto(
-                kind: FfiConverterTypeMobileNotificationIngestOutcomeKindDto.read(from: &buf),
-                notification: FfiConverterOptionTypeMobileNotificationEvidenceDto.read(from: &buf),
-                eventCount: FfiConverterOptionTypeMobileSemanticEventCountDto.read(from: &buf),
-                parserError: FfiConverterOptionTypeMobileParserErrorDto.read(from: &buf),
-                reserved: FfiConverterOptionTypeMobileReservedPayloadEvidenceDto.read(from: &buf),
-                gap: FfiConverterOptionTypeMobileParserGapEvidenceDto.read(from: &buf),
-                ignored: FfiConverterOptionTypeMobileIgnoredNotificationEvidenceDto.read(from: &buf),
+                kind: FfiConverterTypeMobileNotificationIngestOutcomeKindDto.read(from: &buf), 
+                notification: FfiConverterOptionTypeMobileNotificationEvidenceDto.read(from: &buf), 
+                eventCount: FfiConverterOptionTypeMobileSemanticEventCountDto.read(from: &buf), 
+                parserError: FfiConverterOptionTypeMobileParserErrorDto.read(from: &buf), 
+                reserved: FfiConverterOptionTypeMobileReservedPayloadEvidenceDto.read(from: &buf), 
+                gap: FfiConverterOptionTypeMobileParserGapEvidenceDto.read(from: &buf), 
+                ignored: FfiConverterOptionTypeMobileIgnoredNotificationEvidenceDto.read(from: &buf), 
                 ignoredReason: FfiConverterOptionTypeMobileIgnoredNotificationReasonDto.read(from: &buf)
         )
     }
@@ -6540,9 +6834,9 @@ public struct MobileParserDiagnosticCountDto: Equatable, Hashable {
         self.count = count
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6619,22 +6913,22 @@ public struct MobileParserDiagnosticsDto: Equatable, Hashable {
     public init(
         /**
          * Bytes dropped while recovering from malformed or excessive input.
-         */droppedBytes: MobileParserDroppedBytesDto,
+         */droppedBytes: MobileParserDroppedBytesDto, 
         /**
          * Parser resynchronization attempts.
-         */resyncs: MobileParserDiagnosticCountDto,
+         */resyncs: MobileParserDiagnosticCountDto, 
         /**
          * Malformed frame count.
-         */malformedFrames: MobileParserDiagnosticCountDto,
+         */malformedFrames: MobileParserDiagnosticCountDto, 
         /**
          * Bad checksum count.
-         */badChecksums: MobileParserDiagnosticCountDto,
+         */badChecksums: MobileParserDiagnosticCountDto, 
         /**
          * Parser timeout count.
-         */timeouts: MobileParserDiagnosticCountDto,
+         */timeouts: MobileParserDiagnosticCountDto, 
         /**
          * Oversized frame count.
-         */oversizedFrames: MobileParserDiagnosticCountDto,
+         */oversizedFrames: MobileParserDiagnosticCountDto, 
         /**
          * Unmatched reply count.
          */unmatchedReplies: MobileParserDiagnosticCountDto) {
@@ -6647,9 +6941,9 @@ public struct MobileParserDiagnosticsDto: Equatable, Hashable {
         self.unmatchedReplies = unmatchedReplies
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6663,12 +6957,12 @@ public struct FfiConverterTypeMobileParserDiagnosticsDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileParserDiagnosticsDto {
         return
             try MobileParserDiagnosticsDto(
-                droppedBytes: FfiConverterTypeMobileParserDroppedBytesDto.read(from: &buf),
-                resyncs: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf),
-                malformedFrames: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf),
-                badChecksums: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf),
-                timeouts: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf),
-                oversizedFrames: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf),
+                droppedBytes: FfiConverterTypeMobileParserDroppedBytesDto.read(from: &buf), 
+                resyncs: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf), 
+                malformedFrames: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf), 
+                badChecksums: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf), 
+                timeouts: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf), 
+                oversizedFrames: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf), 
                 unmatchedReplies: FfiConverterTypeMobileParserDiagnosticCountDto.read(from: &buf)
         )
     }
@@ -6718,9 +7012,9 @@ public struct MobileParserDroppedBytesDto: Equatable, Hashable {
         self.bytes = bytes
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6789,16 +7083,16 @@ public struct MobileParserErrorDto: Equatable, Hashable {
     public init(
         /**
          * Error kind.
-         */kind: MobileParserErrorKindDto,
+         */kind: MobileParserErrorKindDto, 
         /**
          * Claimed or observed frame length.
-         */claimed: MobileParserFrameLenDto?,
+         */claimed: MobileParserFrameLenDto?, 
         /**
          * Configured maximum accepted frame length.
-         */max: MobileParserFrameLenDto?,
+         */max: MobileParserFrameLenDto?, 
         /**
          * Elapsed monotonic time.
-         */elapsedMs: MobileMonotonicMillisDto?,
+         */elapsedMs: MobileMonotonicMillisDto?, 
         /**
          * Timeout threshold in monotonic time.
          */timeoutMs: MobileMonotonicMillisDto?) {
@@ -6809,9 +7103,9 @@ public struct MobileParserErrorDto: Equatable, Hashable {
         self.timeoutMs = timeoutMs
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6825,10 +7119,10 @@ public struct FfiConverterTypeMobileParserErrorDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileParserErrorDto {
         return
             try MobileParserErrorDto(
-                kind: FfiConverterTypeMobileParserErrorKindDto.read(from: &buf),
-                claimed: FfiConverterOptionTypeMobileParserFrameLenDto.read(from: &buf),
-                max: FfiConverterOptionTypeMobileParserFrameLenDto.read(from: &buf),
-                elapsedMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf),
+                kind: FfiConverterTypeMobileParserErrorKindDto.read(from: &buf), 
+                claimed: FfiConverterOptionTypeMobileParserFrameLenDto.read(from: &buf), 
+                max: FfiConverterOptionTypeMobileParserFrameLenDto.read(from: &buf), 
+                elapsedMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf), 
                 timeoutMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf)
         )
     }
@@ -6876,9 +7170,9 @@ public struct MobileParserFrameLenDto: Equatable, Hashable {
         self.bytes = bytes
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6943,13 +7237,13 @@ public struct MobileParserGapEvidenceDto: Equatable, Hashable {
     public init(
         /**
          * Selector/page identifier when present.
-         */selector: UInt8?,
+         */selector: UInt8?, 
         /**
          * Tag/opcode when present.
-         */tag: UInt16?,
+         */tag: UInt16?, 
         /**
          * Unparsed body length.
-         */bodyLen: MobilePayloadBodyLenDto,
+         */bodyLen: MobilePayloadBodyLenDto, 
         /**
          * Bounded raw payload retained for capture correlation.
          */retainedPayload: Data) {
@@ -6959,9 +7253,9 @@ public struct MobileParserGapEvidenceDto: Equatable, Hashable {
         self.retainedPayload = retainedPayload
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -6975,9 +7269,9 @@ public struct FfiConverterTypeMobileParserGapEvidenceDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileParserGapEvidenceDto {
         return
             try MobileParserGapEvidenceDto(
-                selector: FfiConverterOptionUInt8.read(from: &buf),
-                tag: FfiConverterOptionUInt16.read(from: &buf),
-                bodyLen: FfiConverterTypeMobilePayloadBodyLenDto.read(from: &buf),
+                selector: FfiConverterOptionUInt8.read(from: &buf), 
+                tag: FfiConverterOptionUInt16.read(from: &buf), 
+                bodyLen: FfiConverterTypeMobilePayloadBodyLenDto.read(from: &buf), 
                 retainedPayload: FfiConverterData.read(from: &buf)
         )
     }
@@ -7024,9 +7318,9 @@ public struct MobilePayloadBodyLenDto: Equatable, Hashable {
         self.bytes = bytes
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7083,9 +7377,9 @@ public struct MobilePedalModeDto: Equatable, Hashable {
         self.rawMode = rawMode
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7154,9 +7448,9 @@ public struct MobilePhoneLocationSampleDto: Equatable, Hashable {
         self.courseAccuracyDegrees = courseAccuracyDegrees
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7170,15 +7464,15 @@ public struct FfiConverterTypeMobilePhoneLocationSampleDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePhoneLocationSampleDto {
         return
             try MobilePhoneLocationSampleDto(
-                wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
-                latitudeDegrees: FfiConverterDouble.read(from: &buf),
-                longitudeDegrees: FfiConverterDouble.read(from: &buf),
-                altitudeMeters: FfiConverterDouble.read(from: &buf),
-                horizontalAccuracyMeters: FfiConverterDouble.read(from: &buf),
-                verticalAccuracyMeters: FfiConverterDouble.read(from: &buf),
-                speedMetersPerSecond: FfiConverterDouble.read(from: &buf),
-                speedAccuracyMetersPerSecond: FfiConverterDouble.read(from: &buf),
-                courseDegrees: FfiConverterDouble.read(from: &buf),
+                wallClockUnixMs: FfiConverterUInt64.read(from: &buf), 
+                latitudeDegrees: FfiConverterDouble.read(from: &buf), 
+                longitudeDegrees: FfiConverterDouble.read(from: &buf), 
+                altitudeMeters: FfiConverterDouble.read(from: &buf), 
+                horizontalAccuracyMeters: FfiConverterDouble.read(from: &buf), 
+                verticalAccuracyMeters: FfiConverterDouble.read(from: &buf), 
+                speedMetersPerSecond: FfiConverterDouble.read(from: &buf), 
+                speedAccuracyMetersPerSecond: FfiConverterDouble.read(from: &buf), 
+                courseDegrees: FfiConverterDouble.read(from: &buf), 
                 courseAccuracyDegrees: FfiConverterDouble.read(from: &buf)
         )
     }
@@ -7227,9 +7521,9 @@ public struct MobilePhoneLocationSnapshotDto: Equatable, Hashable {
         self.gpsSpeed = gpsSpeed
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7243,7 +7537,7 @@ public struct FfiConverterTypeMobilePhoneLocationSnapshotDto: FfiConverterRustBu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePhoneLocationSnapshotDto {
         return
             try MobilePhoneLocationSnapshotDto(
-                latestSample: FfiConverterOptionTypeMobilePhoneLocationSampleDto.read(from: &buf),
+                latestSample: FfiConverterOptionTypeMobilePhoneLocationSampleDto.read(from: &buf), 
                 gpsSpeed: FfiConverterOptionTypeSpeedReading.read(from: &buf)
         )
     }
@@ -7288,7 +7582,7 @@ public struct MobileRawFieldValueDto: Equatable, Hashable {
     public init(
         /**
          * Protocol-family field identifier.
-         */id: UInt16,
+         */id: UInt16, 
         /**
          * Sign-extended value exactly as reported by the protocol layer.
          */value: Int64) {
@@ -7296,9 +7590,9 @@ public struct MobileRawFieldValueDto: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7312,7 +7606,7 @@ public struct FfiConverterTypeMobileRawFieldValueDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRawFieldValueDto {
         return
             try MobileRawFieldValueDto(
-                id: FfiConverterUInt16.read(from: &buf),
+                id: FfiConverterUInt16.read(from: &buf), 
                 value: FfiConverterInt64.read(from: &buf)
         )
     }
@@ -7353,9 +7647,9 @@ public struct MobileRawFloatFieldValueDto: Equatable, Hashable {
         self.valueBits = valueBits
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7369,7 +7663,7 @@ public struct FfiConverterTypeMobileRawFloatFieldValueDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRawFloatFieldValueDto {
         return
             try MobileRawFloatFieldValueDto(
-                id: FfiConverterUInt16.read(from: &buf),
+                id: FfiConverterUInt16.read(from: &buf), 
                 valueBits: FfiConverterUInt32.read(from: &buf)
         )
     }
@@ -7410,9 +7704,9 @@ public struct MobileRawTelemetryReadbackDto: Equatable, Hashable {
         self.floatFields = floatFields
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7426,7 +7720,7 @@ public struct FfiConverterTypeMobileRawTelemetryReadbackDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRawTelemetryReadbackDto {
         return
             try MobileRawTelemetryReadbackDto(
-                fields: FfiConverterSequenceTypeMobileRawFieldValueDto.read(from: &buf),
+                fields: FfiConverterSequenceTypeMobileRawFieldValueDto.read(from: &buf), 
                 floatFields: FfiConverterSequenceTypeMobileRawFloatFieldValueDto.read(from: &buf)
         )
     }
@@ -7483,16 +7777,16 @@ public struct MobileReservedPayloadEvidenceDto: Equatable, Hashable {
     public init(
         /**
          * Selector/page identifier when present.
-         */selector: UInt8?,
+         */selector: UInt8?, 
         /**
          * Tag/opcode when present.
-         */tag: UInt16?,
+         */tag: UInt16?, 
         /**
          * Reserved payload body length.
-         */bodyLen: MobilePayloadBodyLenDto,
+         */bodyLen: MobilePayloadBodyLenDto, 
         /**
          * Bounded raw payload retained for capture correlation.
-         */retainedPayload: Data,
+         */retainedPayload: Data, 
         /**
          * Evidence verification status.
          */verification: MobileVerificationStatusDto) {
@@ -7503,9 +7797,9 @@ public struct MobileReservedPayloadEvidenceDto: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7519,10 +7813,10 @@ public struct FfiConverterTypeMobileReservedPayloadEvidenceDto: FfiConverterRust
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileReservedPayloadEvidenceDto {
         return
             try MobileReservedPayloadEvidenceDto(
-                selector: FfiConverterOptionUInt8.read(from: &buf),
-                tag: FfiConverterOptionUInt16.read(from: &buf),
-                bodyLen: FfiConverterTypeMobilePayloadBodyLenDto.read(from: &buf),
-                retainedPayload: FfiConverterData.read(from: &buf),
+                selector: FfiConverterOptionUInt8.read(from: &buf), 
+                tag: FfiConverterOptionUInt16.read(from: &buf), 
+                bodyLen: FfiConverterTypeMobilePayloadBodyLenDto.read(from: &buf), 
+                retainedPayload: FfiConverterData.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -7574,10 +7868,10 @@ public struct MobileResolvedIdentityDto: Equatable, Hashable {
     public init(
         /**
          * Resolved protocol family, when known.
-         */protocolFamily: MobileProtocolFamilyDto?,
+         */protocolFamily: MobileProtocolFamilyDto?, 
         /**
          * Resolved model name, when known.
-         */model: MobileVerifiedStringDto?,
+         */model: MobileVerifiedStringDto?, 
         /**
          * Resolved firmware string, when known.
          */firmware: MobileVerifiedStringDto?) {
@@ -7586,9 +7880,9 @@ public struct MobileResolvedIdentityDto: Equatable, Hashable {
         self.firmware = firmware
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7602,8 +7896,8 @@ public struct FfiConverterTypeMobileResolvedIdentityDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileResolvedIdentityDto {
         return
             try MobileResolvedIdentityDto(
-                protocolFamily: FfiConverterOptionTypeMobileProtocolFamilyDto.read(from: &buf),
-                model: FfiConverterOptionTypeMobileVerifiedStringDto.read(from: &buf),
+                protocolFamily: FfiConverterOptionTypeMobileProtocolFamilyDto.read(from: &buf), 
+                model: FfiConverterOptionTypeMobileVerifiedStringDto.read(from: &buf), 
                 firmware: FfiConverterOptionTypeMobileVerifiedStringDto.read(from: &buf)
         )
     }
@@ -7649,7 +7943,7 @@ public struct MobileRideSessionDecisionDto: Equatable, Hashable {
     public init(
         /**
          * Next immutable Rust-owned state.
-         */snapshot: MobileRideSessionSnapshotDto,
+         */snapshot: MobileRideSessionSnapshotDto, 
         /**
          * At most one requested Apple-platform effect.
          */effect: MobileRideSessionEffectDto) {
@@ -7657,9 +7951,9 @@ public struct MobileRideSessionDecisionDto: Equatable, Hashable {
         self.effect = effect
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7673,7 +7967,7 @@ public struct FfiConverterTypeMobileRideSessionDecisionDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionDecisionDto {
         return
             try MobileRideSessionDecisionDto(
-                snapshot: FfiConverterTypeMobileRideSessionSnapshotDto.read(from: &buf),
+                snapshot: FfiConverterTypeMobileRideSessionSnapshotDto.read(from: &buf), 
                 effect: FfiConverterTypeMobileRideSessionEffectDto.read(from: &buf)
         )
     }
@@ -7718,7 +8012,7 @@ public struct MobileRideSessionIdentityDto: Equatable, Hashable {
     public init(
         /**
          * Platform-local device identifier.
-         */platformIdentifier: String,
+         */platformIdentifier: String, 
         /**
          * Rust-created UUID for this logical ride.
          */sessionId: String) {
@@ -7726,9 +8020,9 @@ public struct MobileRideSessionIdentityDto: Equatable, Hashable {
         self.sessionId = sessionId
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7742,7 +8036,7 @@ public struct FfiConverterTypeMobileRideSessionIdentityDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionIdentityDto {
         return
             try MobileRideSessionIdentityDto(
-                platformIdentifier: FfiConverterString.read(from: &buf),
+                platformIdentifier: FfiConverterString.read(from: &buf), 
                 sessionId: FfiConverterString.read(from: &buf)
         )
     }
@@ -7803,19 +8097,19 @@ public struct MobileRideSessionSnapshotDto: Equatable, Hashable {
     public init(
         /**
          * Logical ride identity, when a ride exists.
-         */identity: MobileRideSessionIdentityDto?,
+         */identity: MobileRideSessionIdentityDto?, 
         /**
          * Logical ride phase.
-         */phase: MobileRideSessionPhaseDto,
+         */phase: MobileRideSessionPhaseDto, 
         /**
          * Desired `ActivityKit` projection state.
-         */activity: MobileActivityProjectionStateDto,
+         */activity: MobileActivityProjectionStateDto, 
         /**
          * Most recent monotonic telemetry timestamp.
-         */lastTelemetryAtMs: UInt64?,
+         */lastTelemetryAtMs: UInt64?, 
         /**
          * Rust-owned maximum telemetry age before the activity becomes stale.
-         */staleAfterMs: UInt64,
+         */staleAfterMs: UInt64, 
         /**
          * Current app UI presence.
          */appPresence: MobileRideSessionAppPresenceDto) {
@@ -7827,9 +8121,9 @@ public struct MobileRideSessionSnapshotDto: Equatable, Hashable {
         self.appPresence = appPresence
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7843,11 +8137,11 @@ public struct FfiConverterTypeMobileRideSessionSnapshotDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionSnapshotDto {
         return
             try MobileRideSessionSnapshotDto(
-                identity: FfiConverterOptionTypeMobileRideSessionIdentityDto.read(from: &buf),
-                phase: FfiConverterTypeMobileRideSessionPhaseDto.read(from: &buf),
-                activity: FfiConverterTypeMobileActivityProjectionStateDto.read(from: &buf),
-                lastTelemetryAtMs: FfiConverterOptionUInt64.read(from: &buf),
-                staleAfterMs: FfiConverterUInt64.read(from: &buf),
+                identity: FfiConverterOptionTypeMobileRideSessionIdentityDto.read(from: &buf), 
+                phase: FfiConverterTypeMobileRideSessionPhaseDto.read(from: &buf), 
+                activity: FfiConverterTypeMobileActivityProjectionStateDto.read(from: &buf), 
+                lastTelemetryAtMs: FfiConverterOptionUInt64.read(from: &buf), 
+                staleAfterMs: FfiConverterUInt64.read(from: &buf), 
                 appPresence: FfiConverterTypeMobileRideSessionAppPresenceDto.read(from: &buf)
         )
     }
@@ -7896,9 +8190,9 @@ public struct MobileSemanticEventCountDto: Equatable, Hashable {
         self.count = count
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -7971,19 +8265,19 @@ public struct MobileSessionInputDto: Equatable, Hashable {
     public init(
         /**
          * Input kind.
-         */kind: MobileSessionInputKindDto,
+         */kind: MobileSessionInputKindDto, 
         /**
          * Monotonic timestamp.
-         */monotonicMs: MobileMonotonicMillisDto,
+         */monotonicMs: MobileMonotonicMillisDto, 
         /**
          * Maximum write length, when known.
-         */maxWriteLen: MobileTransportWriteLimitDto?,
+         */maxWriteLen: MobileTransportWriteLimitDto?, 
         /**
          * Transport channel bytes for notification inputs.
-         */channel: Data,
+         */channel: Data, 
         /**
          * Owned notification bytes.
-         */bytes: Data,
+         */bytes: Data, 
         /**
          * Command for command inputs.
          */command: MobileCommandDto?) {
@@ -7995,9 +8289,9 @@ public struct MobileSessionInputDto: Equatable, Hashable {
         self.command = command
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8011,11 +8305,11 @@ public struct FfiConverterTypeMobileSessionInputDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionInputDto {
         return
             try MobileSessionInputDto(
-                kind: FfiConverterTypeMobileSessionInputKindDto.read(from: &buf),
-                monotonicMs: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf),
-                maxWriteLen: FfiConverterOptionTypeMobileTransportWriteLimitDto.read(from: &buf),
-                channel: FfiConverterData.read(from: &buf),
-                bytes: FfiConverterData.read(from: &buf),
+                kind: FfiConverterTypeMobileSessionInputKindDto.read(from: &buf), 
+                monotonicMs: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf), 
+                maxWriteLen: FfiConverterOptionTypeMobileTransportWriteLimitDto.read(from: &buf), 
+                channel: FfiConverterData.read(from: &buf), 
+                bytes: FfiConverterData.read(from: &buf), 
                 command: FfiConverterOptionTypeMobileCommandDto.read(from: &buf)
         )
     }
@@ -8092,28 +8386,28 @@ public struct MobileSessionOutputDto: Equatable, Hashable {
     public init(
         /**
          * Output kind.
-         */kind: MobileSessionOutputKindDto,
+         */kind: MobileSessionOutputKindDto, 
         /**
          * Transport channel bytes.
-         */channel: Data,
+         */channel: Data, 
         /**
          * Transport payload bytes.
-         */bytes: Data,
+         */bytes: Data, 
         /**
          * Typed parser-first ingest outcome.
-         */ingest: MobileNotificationIngestOutcomeDto?,
+         */ingest: MobileNotificationIngestOutcomeDto?, 
         /**
          * Typed read-only settings response.
-         */settingsReadback: MobileSettingsReadbackDto?,
+         */settingsReadback: MobileSettingsReadbackDto?, 
         /**
          * Typed read-only fault-history response.
-         */faultHistoryReadback: MobileFaultHistoryReadbackDto?,
+         */faultHistoryReadback: MobileFaultHistoryReadbackDto?, 
         /**
          * Typed read-only BMS or pack-health response.
-         */bmsSnapshot: MobileBmsSnapshotDto?,
+         */bmsSnapshot: MobileBmsSnapshotDto?, 
         /**
          * Full protocol-native raw telemetry.
-         */rawTelemetry: MobileRawTelemetryReadbackDto?,
+         */rawTelemetry: MobileRawTelemetryReadbackDto?, 
         /**
          * Veteran/NOSFET protocol model id when an Aero-family session decoded it.
          */veteranProtocolModelId: UInt16?) {
@@ -8128,9 +8422,9 @@ public struct MobileSessionOutputDto: Equatable, Hashable {
         self.veteranProtocolModelId = veteranProtocolModelId
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8144,14 +8438,14 @@ public struct FfiConverterTypeMobileSessionOutputDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionOutputDto {
         return
             try MobileSessionOutputDto(
-                kind: FfiConverterTypeMobileSessionOutputKindDto.read(from: &buf),
-                channel: FfiConverterData.read(from: &buf),
-                bytes: FfiConverterData.read(from: &buf),
-                ingest: FfiConverterOptionTypeMobileNotificationIngestOutcomeDto.read(from: &buf),
-                settingsReadback: FfiConverterOptionTypeMobileSettingsReadbackDto.read(from: &buf),
-                faultHistoryReadback: FfiConverterOptionTypeMobileFaultHistoryReadbackDto.read(from: &buf),
-                bmsSnapshot: FfiConverterOptionTypeMobileBmsSnapshotDto.read(from: &buf),
-                rawTelemetry: FfiConverterOptionTypeMobileRawTelemetryReadbackDto.read(from: &buf),
+                kind: FfiConverterTypeMobileSessionOutputKindDto.read(from: &buf), 
+                channel: FfiConverterData.read(from: &buf), 
+                bytes: FfiConverterData.read(from: &buf), 
+                ingest: FfiConverterOptionTypeMobileNotificationIngestOutcomeDto.read(from: &buf), 
+                settingsReadback: FfiConverterOptionTypeMobileSettingsReadbackDto.read(from: &buf), 
+                faultHistoryReadback: FfiConverterOptionTypeMobileFaultHistoryReadbackDto.read(from: &buf), 
+                bmsSnapshot: FfiConverterOptionTypeMobileBmsSnapshotDto.read(from: &buf), 
+                rawTelemetry: FfiConverterOptionTypeMobileRawTelemetryReadbackDto.read(from: &buf), 
                 veteranProtocolModelId: FfiConverterOptionUInt16.read(from: &buf)
         )
     }
@@ -8207,10 +8501,10 @@ public struct MobileSessionStepErrorDto: Equatable, Hashable {
     public init(
         /**
          * Error kind.
-         */kind: MobileSessionStepErrorKindDto,
+         */kind: MobileSessionStepErrorKindDto, 
         /**
          * Command associated with the error, if any.
-         */command: MobileCommandDto?,
+         */command: MobileCommandDto?, 
         /**
          * Refusal reason, if any.
          */reason: String?) {
@@ -8219,9 +8513,9 @@ public struct MobileSessionStepErrorDto: Equatable, Hashable {
         self.reason = reason
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8235,8 +8529,8 @@ public struct FfiConverterTypeMobileSessionStepErrorDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionStepErrorDto {
         return
             try MobileSessionStepErrorDto(
-                kind: FfiConverterTypeMobileSessionStepErrorKindDto.read(from: &buf),
-                command: FfiConverterOptionTypeMobileCommandDto.read(from: &buf),
+                kind: FfiConverterTypeMobileSessionStepErrorKindDto.read(from: &buf), 
+                command: FfiConverterOptionTypeMobileCommandDto.read(from: &buf), 
                 reason: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -8282,7 +8576,7 @@ public struct MobileSessionStepResultDto: Equatable, Hashable {
     public init(
         /**
          * Owned outputs from the step.
-         */outputs: [MobileSessionOutputDto],
+         */outputs: [MobileSessionOutputDto], 
         /**
          * Stable error from the step, if any.
          */error: MobileSessionStepErrorDto?) {
@@ -8290,9 +8584,9 @@ public struct MobileSessionStepResultDto: Equatable, Hashable {
         self.error = error
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8306,7 +8600,7 @@ public struct FfiConverterTypeMobileSessionStepResultDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionStepResultDto {
         return
             try MobileSessionStepResultDto(
-                outputs: FfiConverterSequenceTypeMobileSessionOutputDto.read(from: &buf),
+                outputs: FfiConverterSequenceTypeMobileSessionOutputDto.read(from: &buf), 
                 error: FfiConverterOptionTypeMobileSessionStepErrorDto.read(from: &buf)
         )
     }
@@ -8359,13 +8653,13 @@ public struct MobileSettingsEntryDto: Equatable, Hashable {
     public init(
         /**
          * Raw field value with protocol identity preserved.
-         */field: MobileRawFieldValueDto,
+         */field: MobileRawFieldValueDto, 
         /**
          * Source of the settings value.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Confidence in the settings value.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Verification state for the settings value.
          */verification: MobileVerificationStatusDto) {
@@ -8375,9 +8669,9 @@ public struct MobileSettingsEntryDto: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8391,9 +8685,9 @@ public struct FfiConverterTypeMobileSettingsEntryDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSettingsEntryDto {
         return
             try MobileSettingsEntryDto(
-                field: FfiConverterTypeMobileRawFieldValueDto.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                field: FfiConverterTypeMobileRawFieldValueDto.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -8444,10 +8738,10 @@ public struct MobileSettingsReadbackDto: Equatable, Hashable {
     public init(
         /**
          * Whether the requested settings readback is available for display.
-         */availability: MobileReadbackAvailabilityDto,
+         */availability: MobileReadbackAvailabilityDto, 
         /**
          * Product-shaped EUC garage settings projection.
-         */eucGarage: MobileEucGarageSettingsDto,
+         */eucGarage: MobileEucGarageSettingsDto, 
         /**
          * Present settings entries.
          */entries: [MobileSettingsEntryDto]) {
@@ -8456,9 +8750,9 @@ public struct MobileSettingsReadbackDto: Equatable, Hashable {
         self.entries = entries
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8472,8 +8766,8 @@ public struct FfiConverterTypeMobileSettingsReadbackDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSettingsReadbackDto {
         return
             try MobileSettingsReadbackDto(
-                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf),
-                eucGarage: FfiConverterTypeMobileEucGarageSettingsDto.read(from: &buf),
+                availability: FfiConverterTypeMobileReadbackAvailabilityDto.read(from: &buf), 
+                eucGarage: FfiConverterTypeMobileEucGarageSettingsDto.read(from: &buf), 
                 entries: FfiConverterSequenceTypeMobileSettingsEntryDto.read(from: &buf)
         )
     }
@@ -8611,76 +8905,76 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
     public init(
         /**
          * Snapshot timestamp.
-         */atMs: MobileMonotonicMillisDto?,
+         */atMs: MobileMonotonicMillisDto?, 
         /**
          * Reported or calculated speed.
-         */speed: SpeedReading?,
+         */speed: SpeedReading?, 
         /**
          * Conservative operating state inferred from currently available telemetry.
-         */operatingState: RideOperatingState,
+         */operatingState: RideOperatingState, 
         /**
          * Protocol-decoded controller operating mode.
-         */vescOperatingMode: MobileVescRideOperatingModeDto?,
+         */vescOperatingMode: MobileVescRideOperatingModeDto?, 
         /**
          * Protocol-decoded VESC ride warning, when the active protocol reports one.
-         */vescWarning: MobileVescRideWarningDto?,
+         */vescWarning: MobileVescRideWarningDto?, 
         /**
          * Protocol-decoded reason the controller stopped balancing.
-         */vescStopReason: MobileVescRideStopReasonDto?,
+         */vescStopReason: MobileVescRideStopReasonDto?, 
         /**
          * Reported voltage.
-         */voltage: VoltageReading?,
+         */voltage: VoltageReading?, 
         /**
          * Reported battery current.
-         */batteryCurrent: BatteryCurrentReading?,
+         */batteryCurrent: BatteryCurrentReading?, 
         /**
          * Explicit protocol charging state with provenance.
-         */chargeMode: MobileChargeModeReadingDto?,
+         */chargeMode: MobileChargeModeReadingDto?, 
         /**
          * Reported motor current.
-         */motorCurrent: PhaseCurrentReading?,
+         */motorCurrent: PhaseCurrentReading?, 
         /**
          * Reported power.
-         */power: PowerReading?,
+         */power: PowerReading?, 
         /**
          * Signed power/current flow direction when known enough for conservative UI labels.
-         */powerFlow: PowerFlowDirection?,
+         */powerFlow: PowerFlowDirection?, 
         /**
          * Voltage sag/loaded-pack delta when modeled by the product contract.
-         */voltageSag: VoltageDeltaReading?,
+         */voltageSag: VoltageDeltaReading?, 
         /**
          * Reported controller temperature.
-         */controllerTemperature: TemperatureReading?,
+         */controllerTemperature: TemperatureReading?, 
         /**
          * Reported motor temperature.
-         */motorTemperature: TemperatureReading?,
+         */motorTemperature: TemperatureReading?, 
         /**
          * Reported battery temperature.
-         */batteryTemperature: TemperatureReading?,
+         */batteryTemperature: TemperatureReading?, 
         /**
          * Reported PWM duty in permille.
-         */pwm: DutyCycle?,
+         */pwm: DutyCycle?, 
         /**
          * Reported distance.
-         */distance: DistanceReading?,
+         */distance: DistanceReading?, 
         /**
          * Limp-home/range estimate when modeled by the product contract.
-         */limpHomeRange: DistanceReading?,
+         */limpHomeRange: DistanceReading?, 
         /**
          * Reported pitch.
-         */pitch: AngleReading?,
+         */pitch: AngleReading?, 
         /**
          * Reported balance-loop target angle.
-         */balanceAngle: AngleReading?,
+         */balanceAngle: AngleReading?, 
         /**
          * Reported roll.
-         */roll: AngleReading?,
+         */roll: AngleReading?, 
         /**
          * Footpad/sensor state.
-         */footpad: MobileFootpadTelemetryDto?,
+         */footpad: MobileFootpadTelemetryDto?, 
         /**
          * Reported battery level.
-         */batteryLevelReported: BatteryLevelReading?,
+         */batteryLevelReported: BatteryLevelReading?, 
         /**
          * Estimated battery percent.
          */batteryLevelEstimated: BatteryLevelReading?) {
@@ -8711,9 +9005,9 @@ public struct MobileTelemetrySnapshotDto: Equatable, Hashable {
         self.batteryLevelEstimated = batteryLevelEstimated
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8727,30 +9021,30 @@ public struct FfiConverterTypeMobileTelemetrySnapshotDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTelemetrySnapshotDto {
         return
             try MobileTelemetrySnapshotDto(
-                atMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf),
-                speed: FfiConverterOptionTypeSpeedReading.read(from: &buf),
-                operatingState: FfiConverterTypeRideOperatingState.read(from: &buf),
-                vescOperatingMode: FfiConverterOptionTypeMobileVescRideOperatingModeDto.read(from: &buf),
-                vescWarning: FfiConverterOptionTypeMobileVescRideWarningDto.read(from: &buf),
-                vescStopReason: FfiConverterOptionTypeMobileVescRideStopReasonDto.read(from: &buf),
-                voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf),
-                batteryCurrent: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf),
-                chargeMode: FfiConverterOptionTypeMobileChargeModeReadingDto.read(from: &buf),
-                motorCurrent: FfiConverterOptionTypePhaseCurrentReading.read(from: &buf),
-                power: FfiConverterOptionTypePowerReading.read(from: &buf),
-                powerFlow: FfiConverterOptionTypePowerFlowDirection.read(from: &buf),
-                voltageSag: FfiConverterOptionTypeVoltageDeltaReading.read(from: &buf),
-                controllerTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf),
-                motorTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf),
-                batteryTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf),
-                pwm: FfiConverterOptionTypeDutyCycle.read(from: &buf),
-                distance: FfiConverterOptionTypeDistanceReading.read(from: &buf),
-                limpHomeRange: FfiConverterOptionTypeDistanceReading.read(from: &buf),
-                pitch: FfiConverterOptionTypeAngleReading.read(from: &buf),
-                balanceAngle: FfiConverterOptionTypeAngleReading.read(from: &buf),
-                roll: FfiConverterOptionTypeAngleReading.read(from: &buf),
-                footpad: FfiConverterOptionTypeMobileFootpadTelemetryDto.read(from: &buf),
-                batteryLevelReported: FfiConverterOptionTypeBatteryLevelReading.read(from: &buf),
+                atMs: FfiConverterOptionTypeMobileMonotonicMillisDto.read(from: &buf), 
+                speed: FfiConverterOptionTypeSpeedReading.read(from: &buf), 
+                operatingState: FfiConverterTypeRideOperatingState.read(from: &buf), 
+                vescOperatingMode: FfiConverterOptionTypeMobileVescRideOperatingModeDto.read(from: &buf), 
+                vescWarning: FfiConverterOptionTypeMobileVescRideWarningDto.read(from: &buf), 
+                vescStopReason: FfiConverterOptionTypeMobileVescRideStopReasonDto.read(from: &buf), 
+                voltage: FfiConverterOptionTypeVoltageReading.read(from: &buf), 
+                batteryCurrent: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf), 
+                chargeMode: FfiConverterOptionTypeMobileChargeModeReadingDto.read(from: &buf), 
+                motorCurrent: FfiConverterOptionTypePhaseCurrentReading.read(from: &buf), 
+                power: FfiConverterOptionTypePowerReading.read(from: &buf), 
+                powerFlow: FfiConverterOptionTypePowerFlowDirection.read(from: &buf), 
+                voltageSag: FfiConverterOptionTypeVoltageDeltaReading.read(from: &buf), 
+                controllerTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf), 
+                motorTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf), 
+                batteryTemperature: FfiConverterOptionTypeTemperatureReading.read(from: &buf), 
+                pwm: FfiConverterOptionTypeDutyCycle.read(from: &buf), 
+                distance: FfiConverterOptionTypeDistanceReading.read(from: &buf), 
+                limpHomeRange: FfiConverterOptionTypeDistanceReading.read(from: &buf), 
+                pitch: FfiConverterOptionTypeAngleReading.read(from: &buf), 
+                balanceAngle: FfiConverterOptionTypeAngleReading.read(from: &buf), 
+                roll: FfiConverterOptionTypeAngleReading.read(from: &buf), 
+                footpad: FfiConverterOptionTypeMobileFootpadTelemetryDto.read(from: &buf), 
+                batteryLevelReported: FfiConverterOptionTypeBatteryLevelReading.read(from: &buf), 
                 batteryLevelEstimated: FfiConverterOptionTypeBatteryLevelReading.read(from: &buf)
         )
     }
@@ -8818,9 +9112,9 @@ public struct MobileTransportWriteLimitDto: Equatable, Hashable {
         self.bytes = bytes
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8877,7 +9171,7 @@ public struct MobileVerifiedStringDto: Equatable, Hashable {
     public init(
         /**
          * Field value.
-         */value: String,
+         */value: String, 
         /**
          * Verification status for the value.
          */verification: MobileVerificationStatusDto) {
@@ -8885,9 +9179,9 @@ public struct MobileVerifiedStringDto: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -8901,7 +9195,7 @@ public struct FfiConverterTypeMobileVerifiedStringDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVerifiedStringDto {
         return
             try MobileVerifiedStringDto(
-                value: FfiConverterString.read(from: &buf),
+                value: FfiConverterString.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -8986,37 +9280,37 @@ public struct MobileVescDebugSnapshotDto: Equatable, Hashable {
     public init(
         /**
          * Profile or setup label.
-         */profileTitle: String,
+         */profileTitle: String, 
         /**
          * VESC implementation and firmware label.
-         */transportDetail: String,
+         */transportDetail: String, 
         /**
          * Current duty cycle.
-         */dutyCycle: DutyCycle?,
+         */dutyCycle: DutyCycle?, 
         /**
          * Maximum duty observed in the session.
-         */maxSeenDutyCycle: DutyCycle?,
+         */maxSeenDutyCycle: DutyCycle?, 
         /**
          * Pack voltage.
-         */packVoltage: VoltageReading?,
+         */packVoltage: VoltageReading?, 
         /**
          * Battery current limit.
-         */batteryCurrentLimit: BatteryCurrentReading?,
+         */batteryCurrentLimit: BatteryCurrentReading?, 
         /**
          * Motor/phase current limit.
-         */motorCurrentLimit: PhaseCurrentReading?,
+         */motorCurrentLimit: PhaseCurrentReading?, 
         /**
          * Last fault label from read-only state.
-         */lastFault: String?,
+         */lastFault: String?, 
         /**
          * Input app label.
-         */inputApp: String?,
+         */inputApp: String?, 
         /**
          * CAN status label.
-         */canStatus: String?,
+         */canStatus: String?, 
         /**
          * Logging state label.
-         */logging: String?,
+         */logging: String?, 
         /**
          * Current write guardrail.
          */writeGuardrail: MobileVescWriteGuardrailDto) {
@@ -9034,9 +9328,9 @@ public struct MobileVescDebugSnapshotDto: Equatable, Hashable {
         self.writeGuardrail = writeGuardrail
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9050,17 +9344,17 @@ public struct FfiConverterTypeMobileVescDebugSnapshotDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescDebugSnapshotDto {
         return
             try MobileVescDebugSnapshotDto(
-                profileTitle: FfiConverterString.read(from: &buf),
-                transportDetail: FfiConverterString.read(from: &buf),
-                dutyCycle: FfiConverterOptionTypeDutyCycle.read(from: &buf),
-                maxSeenDutyCycle: FfiConverterOptionTypeDutyCycle.read(from: &buf),
-                packVoltage: FfiConverterOptionTypeVoltageReading.read(from: &buf),
-                batteryCurrentLimit: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf),
-                motorCurrentLimit: FfiConverterOptionTypePhaseCurrentReading.read(from: &buf),
-                lastFault: FfiConverterOptionString.read(from: &buf),
-                inputApp: FfiConverterOptionString.read(from: &buf),
-                canStatus: FfiConverterOptionString.read(from: &buf),
-                logging: FfiConverterOptionString.read(from: &buf),
+                profileTitle: FfiConverterString.read(from: &buf), 
+                transportDetail: FfiConverterString.read(from: &buf), 
+                dutyCycle: FfiConverterOptionTypeDutyCycle.read(from: &buf), 
+                maxSeenDutyCycle: FfiConverterOptionTypeDutyCycle.read(from: &buf), 
+                packVoltage: FfiConverterOptionTypeVoltageReading.read(from: &buf), 
+                batteryCurrentLimit: FfiConverterOptionTypeBatteryCurrentReading.read(from: &buf), 
+                motorCurrentLimit: FfiConverterOptionTypePhaseCurrentReading.read(from: &buf), 
+                lastFault: FfiConverterOptionString.read(from: &buf), 
+                inputApp: FfiConverterOptionString.read(from: &buf), 
+                canStatus: FfiConverterOptionString.read(from: &buf), 
+                logging: FfiConverterOptionString.read(from: &buf), 
                 writeGuardrail: FfiConverterTypeMobileVescWriteGuardrailDto.read(from: &buf)
         )
     }
@@ -9135,22 +9429,22 @@ public struct MobileVoltageSagEstimateDto: Equatable, Hashable {
     public init(
         /**
          * Estimated loaded-minus-no-load pack voltage in millivolts.
-         */deltaMillivolts: Int32,
+         */deltaMillivolts: Int32, 
         /**
          * Latest observed current used to project sag.
-         */loadCurrent: BatteryCurrentReading,
+         */loadCurrent: BatteryCurrentReading, 
         /**
          * Effective pack resistance learned from observed load steps, in milliohms.
-         */effectiveResistanceMilliohms: UInt32,
+         */effectiveResistanceMilliohms: UInt32, 
         /**
          * Number of admitted load-step observations.
-         */observations: UInt16,
+         */observations: UInt16, 
         /**
          * Confidence in this sag evidence.
-         */confidence: MobileEstimateConfidenceDto,
+         */confidence: MobileEstimateConfidenceDto, 
         /**
          * Timestamp at which the evidence was calculated.
-         */calculatedAt: MobileMonotonicMillisDto,
+         */calculatedAt: MobileMonotonicMillisDto, 
         /**
          * Timestamp after which the evidence is stale.
          */validUntil: MobileMonotonicMillisDto) {
@@ -9163,9 +9457,9 @@ public struct MobileVoltageSagEstimateDto: Equatable, Hashable {
         self.validUntil = validUntil
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9179,12 +9473,12 @@ public struct FfiConverterTypeMobileVoltageSagEstimateDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVoltageSagEstimateDto {
         return
             try MobileVoltageSagEstimateDto(
-                deltaMillivolts: FfiConverterInt32.read(from: &buf),
-                loadCurrent: FfiConverterTypeBatteryCurrentReading.read(from: &buf),
-                effectiveResistanceMilliohms: FfiConverterUInt32.read(from: &buf),
-                observations: FfiConverterUInt16.read(from: &buf),
-                confidence: FfiConverterTypeMobileEstimateConfidenceDto.read(from: &buf),
-                calculatedAt: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf),
+                deltaMillivolts: FfiConverterInt32.read(from: &buf), 
+                loadCurrent: FfiConverterTypeBatteryCurrentReading.read(from: &buf), 
+                effectiveResistanceMilliohms: FfiConverterUInt32.read(from: &buf), 
+                observations: FfiConverterUInt16.read(from: &buf), 
+                confidence: FfiConverterTypeMobileEstimateConfidenceDto.read(from: &buf), 
+                calculatedAt: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf), 
                 validUntil: FfiConverterTypeMobileMonotonicMillisDto.read(from: &buf)
         )
     }
@@ -9242,13 +9536,13 @@ public struct MobileVoltageSagModelDto: Equatable, Hashable {
     public init(
         /**
          * Persisted schema version.
-         */schemaVersion: UInt16,
+         */schemaVersion: UInt16, 
         /**
          * Learned effective pack resistance in milliohms.
-         */effectiveResistanceMilliohms: UInt32,
+         */effectiveResistanceMilliohms: UInt32, 
         /**
          * Number of admitted load-step observations.
-         */observations: UInt16,
+         */observations: UInt16, 
         /**
          * Whether every admitted step came from hardware-verified telemetry.
          */hardwareVerified: Bool) {
@@ -9258,9 +9552,9 @@ public struct MobileVoltageSagModelDto: Equatable, Hashable {
         self.hardwareVerified = hardwareVerified
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9274,9 +9568,9 @@ public struct FfiConverterTypeMobileVoltageSagModelDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVoltageSagModelDto {
         return
             try MobileVoltageSagModelDto(
-                schemaVersion: FfiConverterUInt16.read(from: &buf),
-                effectiveResistanceMilliohms: FfiConverterUInt32.read(from: &buf),
-                observations: FfiConverterUInt16.read(from: &buf),
+                schemaVersion: FfiConverterUInt16.read(from: &buf), 
+                effectiveResistanceMilliohms: FfiConverterUInt32.read(from: &buf), 
+                observations: FfiConverterUInt16.read(from: &buf), 
                 hardwareVerified: FfiConverterBool.read(from: &buf)
         )
     }
@@ -9323,9 +9617,9 @@ public struct MobileWallClockUnixMillisDto: Equatable, Hashable {
         self.milliseconds = milliseconds
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9382,9 +9676,9 @@ public struct PhaseCurrent: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9449,13 +9743,13 @@ public struct PhaseCurrentReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: PhaseCurrent,
+         */value: PhaseCurrent, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -9465,9 +9759,9 @@ public struct PhaseCurrentReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9481,9 +9775,9 @@ public struct FfiConverterTypePhaseCurrentReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PhaseCurrentReading {
         return
             try PhaseCurrentReading(
-                value: FfiConverterTypePhaseCurrent.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypePhaseCurrent.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -9530,9 +9824,9 @@ public struct Power: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9597,13 +9891,13 @@ public struct PowerReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: Power,
+         */value: Power, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -9613,9 +9907,9 @@ public struct PowerReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9629,9 +9923,9 @@ public struct FfiConverterTypePowerReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowerReading {
         return
             try PowerReading(
-                value: FfiConverterTypePower.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypePower.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -9678,9 +9972,9 @@ public struct Resistance: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9737,9 +10031,9 @@ public struct Speed: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9804,13 +10098,13 @@ public struct SpeedReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: Speed,
+         */value: Speed, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -9820,9 +10114,9 @@ public struct SpeedReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9836,9 +10130,9 @@ public struct FfiConverterTypeSpeedReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SpeedReading {
         return
             try SpeedReading(
-                value: FfiConverterTypeSpeed.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeSpeed.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -9885,9 +10179,9 @@ public struct Temperature: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9952,13 +10246,13 @@ public struct TemperatureReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: Temperature,
+         */value: Temperature, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -9968,9 +10262,9 @@ public struct TemperatureReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -9984,9 +10278,9 @@ public struct FfiConverterTypeTemperatureReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TemperatureReading {
         return
             try TemperatureReading(
-                value: FfiConverterTypeTemperature.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeTemperature.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -10061,28 +10355,28 @@ public struct VescBoardProfile: Equatable, Hashable {
     public init(
         /**
          * Motor pole pairs used to convert electrical RPM to mechanical RPM.
-         */motorPolePairs: UInt8,
+         */motorPolePairs: UInt8, 
         /**
          * Mechanical gear reduction denominator.
-         */gearRatioDenominator: UInt8,
+         */gearRatioDenominator: UInt8, 
         /**
          * Wheel circumference used for direct-drive speed calculations.
-         */wheelCircumference: Distance,
+         */wheelCircumference: Distance, 
         /**
          * VESC battery type used for voltage-derived pack level.
-         */batteryType: VescBatteryType,
+         */batteryType: VescBatteryType, 
         /**
          * Number of series cells in the pack.
-         */batteryCells: UInt8,
+         */batteryCells: UInt8, 
         /**
          * Number of parallel cells in each series group.
-         */batteryParallelCells: UInt8,
+         */batteryParallelCells: UInt8, 
         /**
          * Physical cell model, independent of the generic voltage curve family.
-         */batteryCellModel: VescBatteryCellModel,
+         */batteryCellModel: VescBatteryCellModel, 
         /**
          * Optional verified usable-capacity basis for charge estimation.
-         */chargeProfile: MobileChargeProfileDto?,
+         */chargeProfile: MobileChargeProfileDto?, 
         /**
          * Whether the controller reports battery current directly.
          */reportsBatteryCurrent: Bool) {
@@ -10097,9 +10391,9 @@ public struct VescBoardProfile: Equatable, Hashable {
         self.reportsBatteryCurrent = reportsBatteryCurrent
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10113,14 +10407,14 @@ public struct FfiConverterTypeVescBoardProfile: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VescBoardProfile {
         return
             try VescBoardProfile(
-                motorPolePairs: FfiConverterUInt8.read(from: &buf),
-                gearRatioDenominator: FfiConverterUInt8.read(from: &buf),
-                wheelCircumference: FfiConverterTypeDistance.read(from: &buf),
-                batteryType: FfiConverterTypeVescBatteryType.read(from: &buf),
-                batteryCells: FfiConverterUInt8.read(from: &buf),
-                batteryParallelCells: FfiConverterUInt8.read(from: &buf),
-                batteryCellModel: FfiConverterTypeVescBatteryCellModel.read(from: &buf),
-                chargeProfile: FfiConverterOptionTypeMobileChargeProfileDto.read(from: &buf),
+                motorPolePairs: FfiConverterUInt8.read(from: &buf), 
+                gearRatioDenominator: FfiConverterUInt8.read(from: &buf), 
+                wheelCircumference: FfiConverterTypeDistance.read(from: &buf), 
+                batteryType: FfiConverterTypeVescBatteryType.read(from: &buf), 
+                batteryCells: FfiConverterUInt8.read(from: &buf), 
+                batteryParallelCells: FfiConverterUInt8.read(from: &buf), 
+                batteryCellModel: FfiConverterTypeVescBatteryCellModel.read(from: &buf), 
+                chargeProfile: FfiConverterOptionTypeMobileChargeProfileDto.read(from: &buf), 
                 reportsBatteryCurrent: FfiConverterBool.read(from: &buf)
         )
     }
@@ -10172,9 +10466,9 @@ public struct Voltage: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10231,9 +10525,9 @@ public struct VoltageDelta: Equatable, Hashable {
         self.value = value
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10298,13 +10592,13 @@ public struct VoltageDeltaReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: VoltageDelta,
+         */value: VoltageDelta, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -10314,9 +10608,9 @@ public struct VoltageDeltaReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10330,9 +10624,9 @@ public struct FfiConverterTypeVoltageDeltaReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoltageDeltaReading {
         return
             try VoltageDeltaReading(
-                value: FfiConverterTypeVoltageDelta.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeVoltageDelta.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -10387,13 +10681,13 @@ public struct VoltageReading: Equatable, Hashable {
     public init(
         /**
          * Semantic quantity value.
-         */value: Voltage,
+         */value: Voltage, 
         /**
          * Value source.
-         */source: MobileValueSourceDto,
+         */source: MobileValueSourceDto, 
         /**
          * Value quality.
-         */quality: MobileValueQualityDto,
+         */quality: MobileValueQualityDto, 
         /**
          * Value verification status.
          */verification: MobileVerificationStatusDto) {
@@ -10403,9 +10697,9 @@ public struct VoltageReading: Equatable, Hashable {
         self.verification = verification
     }
 
+    
 
-
-
+    
 }
 
 #if compiler(>=6)
@@ -10419,9 +10713,9 @@ public struct FfiConverterTypeVoltageReading: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoltageReading {
         return
             try VoltageReading(
-                value: FfiConverterTypeVoltage.read(from: &buf),
-                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf),
-                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf),
+                value: FfiConverterTypeVoltage.read(from: &buf), 
+                source: FfiConverterTypeMobileValueSourceDto.read(from: &buf), 
+                quality: FfiConverterTypeMobileValueQualityDto.read(from: &buf), 
                 verification: FfiConverterTypeMobileVerificationStatusDto.read(from: &buf)
         )
     }
@@ -10456,7 +10750,7 @@ public func FfiConverterTypeVoltageReading_lower(_ value: VoltageReading) -> Rus
  */
 
 public enum DiscoveryCandidateAction: Equatable, Hashable {
-
+    
     /**
      * Use a routeable candidate.
      */
@@ -10501,50 +10795,50 @@ public struct FfiConverterTypeDiscoveryCandidateAction: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryCandidateAction {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .use
-
+        
         case 2: return .probe
-
+        
         case 3: return .record
-
+        
         case 4: return .confirm
-
+        
         case 5: return .review
-
+        
         case 6: return .later
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiscoveryCandidateAction, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .use:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .probe:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .record:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .confirm:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .review:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .later:
             writeInt(&buf, Int32(6))
-
+        
         }
     }
 }
@@ -10572,7 +10866,7 @@ public func FfiConverterTypeDiscoveryCandidateAction_lower(_ value: DiscoveryCan
  */
 
 public enum DiscoveryCandidateSection: Equatable, Hashable {
-
+    
     /**
      * Routeable candidates.
      */
@@ -10609,38 +10903,38 @@ public struct FfiConverterTypeDiscoveryCandidateSection: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryCandidateSection {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .supported
-
+        
         case 2: return .probeFirst
-
+        
         case 3: return .recordOnly
-
+        
         case 4: return .manual
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiscoveryCandidateSection, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .supported:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .probeFirst:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .recordOnly:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .manual:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -10668,7 +10962,7 @@ public func FfiConverterTypeDiscoveryCandidateSection_lower(_ value: DiscoveryCa
  */
 
 public enum DiscoveryCandidateSupport: Equatable, Hashable {
-
+    
     /**
      * Candidate has a supported read-only route.
      */
@@ -10729,74 +11023,74 @@ public struct FfiConverterTypeDiscoveryCandidateSupport: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryCandidateSupport {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .supported
-
+        
         case 2: return .provisionalRoute
-
+        
         case 3: return .probeRecommended
-
+        
         case 4: return .unknownRecordable
-
+        
         case 5: return .knownUnsupported
-
+        
         case 6: return .ambiguous
-
+        
         case 7: return .conflicting
-
+        
         case 8: return .rejectedNoise
-
+        
         case 9: return .manualPlaceholder
-
+        
         case 10: return .unsupported
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiscoveryCandidateSupport, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .supported:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .provisionalRoute:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .probeRecommended:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .unknownRecordable:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .knownUnsupported:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .ambiguous:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .conflicting:
             writeInt(&buf, Int32(7))
-
-
+        
+        
         case .rejectedNoise:
             writeInt(&buf, Int32(8))
-
-
+        
+        
         case .manualPlaceholder:
             writeInt(&buf, Int32(9))
-
-
+        
+        
         case .unsupported:
             writeInt(&buf, Int32(10))
-
+        
         }
     }
 }
@@ -10824,7 +11118,7 @@ public func FfiConverterTypeDiscoveryCandidateSupport_lower(_ value: DiscoveryCa
  */
 
 public enum DiscoveryConnectionRoute: Equatable, Hashable {
-
+    
     /**
      * Electric unicycle read-only session route.
      */
@@ -10853,26 +11147,26 @@ public struct FfiConverterTypeDiscoveryConnectionRoute: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryConnectionRoute {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .electricUnicycle
-
+        
         case 2: return .vescOnewheel
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiscoveryConnectionRoute, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .electricUnicycle:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .vescOnewheel:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -10900,7 +11194,7 @@ public func FfiConverterTypeDiscoveryConnectionRoute_lower(_ value: DiscoveryCon
  */
 
 public enum DiscoveryElectricUnicycleModel: Equatable, Hashable {
-
+    
     /**
      * NOSFET Aero session.
      */
@@ -10929,26 +11223,26 @@ public struct FfiConverterTypeDiscoveryElectricUnicycleModel: FfiConverterRustBu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiscoveryElectricUnicycleModel {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .aero
-
+        
         case 2: return .falcon
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: DiscoveryElectricUnicycleModel, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .aero:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .falcon:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -10976,7 +11270,7 @@ public func FfiConverterTypeDiscoveryElectricUnicycleModel_lower(_ value: Discov
  */
 
 public enum MobileActivityProjectionStateDto: Equatable, Hashable {
-
+    
     /**
      * No activity exists.
      */
@@ -11027,60 +11321,60 @@ public struct FfiConverterTypeMobileActivityProjectionStateDto: FfiConverterRust
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileActivityProjectionStateDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .absent
-
+        
         case 2: return .starting
-
+        
         case 3: return .active(activityId: try FfiConverterString.read(from: &buf)
         )
-
+        
         case 4: return .stale(activityId: try FfiConverterString.read(from: &buf)
         )
-
+        
         case 5: return .ending
-
+        
         case 6: return .ended
-
+        
         case 7: return .unavailable
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileActivityProjectionStateDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .absent:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .starting:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case let .active(activityId):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(activityId, into: &buf)
-
-
+            
+        
         case let .stale(activityId):
             writeInt(&buf, Int32(4))
             FfiConverterString.write(activityId, into: &buf)
-
-
+            
+        
         case .ending:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .ended:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .unavailable:
             writeInt(&buf, Int32(7))
-
+        
         }
     }
 }
@@ -11108,7 +11402,7 @@ public func FfiConverterTypeMobileActivityProjectionStateDto_lower(_ value: Mobi
  */
 
 public enum MobileBatteryLevelBasisDto: Equatable, Hashable {
-
+    
     /**
      * SOC was reported by the device.
      */
@@ -11137,26 +11431,26 @@ public struct FfiConverterTypeMobileBatteryLevelBasisDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBatteryLevelBasisDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .reported
-
+        
         case 2: return .profileEstimated
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileBatteryLevelBasisDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .reported:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .profileEstimated:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -11184,7 +11478,7 @@ public func FfiConverterTypeMobileBatteryLevelBasisDto_lower(_ value: MobileBatt
  */
 
 public enum MobileBmsAlertLevelDto: Equatable, Hashable {
-
+    
     /**
      * Value is in the nominal range.
      */
@@ -11221,38 +11515,38 @@ public struct FfiConverterTypeMobileBmsAlertLevelDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBmsAlertLevelDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .nominal
-
+        
         case 2: return .warning
-
+        
         case 3: return .critical
-
+        
         case 4: return .unknown
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileBmsAlertLevelDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .nominal:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .warning:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .critical:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -11280,7 +11574,7 @@ public func FfiConverterTypeMobileBmsAlertLevelDto_lower(_ value: MobileBmsAlert
  */
 
 public enum MobileBmsTopologyConfidenceDto: Equatable, Hashable {
-
+    
     /**
      * Topology and group mapping were verified from known device evidence.
      */
@@ -11313,32 +11607,32 @@ public struct FfiConverterTypeMobileBmsTopologyConfidenceDto: FfiConverterRustBu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBmsTopologyConfidenceDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .verified
-
+        
         case 2: return .inferred
-
+        
         case 3: return .unverified
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileBmsTopologyConfidenceDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .verified:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .inferred:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .unverified:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -11366,7 +11660,7 @@ public func FfiConverterTypeMobileBmsTopologyConfidenceDto_lower(_ value: Mobile
  */
 
 public enum MobileChargeCapacitySourceDto: Equatable, Hashable {
-
+    
     /**
      * Capacity selected from a verified protocol profile.
      */
@@ -11399,32 +11693,32 @@ public struct FfiConverterTypeMobileChargeCapacitySourceDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeCapacitySourceDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .protocolProfile
-
+        
         case 2: return .hardwareMeasured
-
+        
         case 3: return .estimated
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileChargeCapacitySourceDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .protocolProfile:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .hardwareMeasured:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .estimated:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -11452,7 +11746,7 @@ public func FfiConverterTypeMobileChargeCapacitySourceDto_lower(_ value: MobileC
  */
 
 public enum MobileChargeEstimateErrorDto: Equatable, Hashable {
-
+    
     /**
      * Input timestamps were invalid.
      */
@@ -11481,26 +11775,26 @@ public struct FfiConverterTypeMobileChargeEstimateErrorDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeEstimateErrorDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .timestampOrder
-
+        
         case 2: return .arithmeticOverflow
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileChargeEstimateErrorDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .timestampOrder:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .arithmeticOverflow:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -11528,7 +11822,7 @@ public func FfiConverterTypeMobileChargeEstimateErrorDto_lower(_ value: MobileCh
  */
 
 public enum MobileChargeEstimateResetReasonDto: Equatable, Hashable {
-
+    
     /**
      * The active session changed.
      */
@@ -11581,62 +11875,62 @@ public struct FfiConverterTypeMobileChargeEstimateResetReasonDto: FfiConverterRu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeEstimateResetReasonDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .sessionChanged
-
+        
         case 2: return .chargingStopped
-
+        
         case 3: return .staleGap
-
+        
         case 4: return .timestampOrder
-
+        
         case 5: return .currentEvidenceChanged
-
+        
         case 6: return .capacityChanged
-
+        
         case 7: return .profileChanged
-
+        
         case 8: return .manual
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileChargeEstimateResetReasonDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .sessionChanged:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .chargingStopped:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .staleGap:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .timestampOrder:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .currentEvidenceChanged:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .capacityChanged:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .profileChanged:
             writeInt(&buf, Int32(7))
-
-
+        
+        
         case .manual:
             writeInt(&buf, Int32(8))
-
+        
         }
     }
 }
@@ -11664,7 +11958,7 @@ public func FfiConverterTypeMobileChargeEstimateResetReasonDto_lower(_ value: Mo
  */
 
 public enum MobileChargeEstimateStateKindDto: Equatable, Hashable {
-
+    
     /**
      * Samples are still being collected.
      */
@@ -11705,44 +11999,44 @@ public struct FfiConverterTypeMobileChargeEstimateStateKindDto: FfiConverterRust
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeEstimateStateKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .collectingSamples
-
+        
         case 2: return .available
-
+        
         case 3: return .unavailable
-
+        
         case 4: return .stale
-
+        
         case 5: return .failed
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileChargeEstimateStateKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .collectingSamples:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .available:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .unavailable:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .stale:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .failed:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -11770,7 +12064,7 @@ public func FfiConverterTypeMobileChargeEstimateStateKindDto_lower(_ value: Mobi
  */
 
 public enum MobileChargeEstimateUnavailableReasonDto: Equatable, Hashable {
-
+    
     /**
      * The device is not explicitly charging.
      */
@@ -11839,86 +12133,86 @@ public struct FfiConverterTypeMobileChargeEstimateUnavailableReasonDto: FfiConve
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeEstimateUnavailableReasonDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .notCharging
-
+        
         case 2: return .currentMissing
-
+        
         case 3: return .currentDirectionUnverified
-
+        
         case 4: return .currentTooSmall
-
+        
         case 5: return .batteryLevelMissing
-
+        
         case 6: return .capacityMissing
-
+        
         case 7: return .unsupportedProfile
-
+        
         case 8: return .unstableCurrent
-
+        
         case 9: return .staleInput
-
+        
         case 10: return .temperatureOutOfModel
-
+        
         case 11: return .fullOrNearFull
-
+        
         case 12: return .contradictoryInputs
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileChargeEstimateUnavailableReasonDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .notCharging:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .currentMissing:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .currentDirectionUnverified:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .currentTooSmall:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .batteryLevelMissing:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .capacityMissing:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .unsupportedProfile:
             writeInt(&buf, Int32(7))
-
-
+        
+        
         case .unstableCurrent:
             writeInt(&buf, Int32(8))
-
-
+        
+        
         case .staleInput:
             writeInt(&buf, Int32(9))
-
-
+        
+        
         case .temperatureOutOfModel:
             writeInt(&buf, Int32(10))
-
-
+        
+        
         case .fullOrNearFull:
             writeInt(&buf, Int32(11))
-
-
+        
+        
         case .contradictoryInputs:
             writeInt(&buf, Int32(12))
-
+        
         }
     }
 }
@@ -11946,7 +12240,7 @@ public func FfiConverterTypeMobileChargeEstimateUnavailableReasonDto_lower(_ val
  */
 
 public enum MobileChargeModeDto: Equatable, Hashable {
-
+    
     /**
      * The device reports that charging is active.
      */
@@ -11975,26 +12269,26 @@ public struct FfiConverterTypeMobileChargeModeDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileChargeModeDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .charging
-
+        
         case 2: return .notCharging
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileChargeModeDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .charging:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .notCharging:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -12022,7 +12316,7 @@ public func FfiConverterTypeMobileChargeModeDto_lower(_ value: MobileChargeModeD
  */
 
 public enum MobileCommandDto: Equatable, Hashable {
-
+    
     /**
      * Request protocol or device identity.
      */
@@ -12075,62 +12369,62 @@ public struct FfiConverterTypeMobileCommandDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCommandDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .requestIdentity
-
+        
         case 2: return .requestTelemetry
-
+        
         case 3: return .requestFirmwareInfo
-
+        
         case 4: return .requestBatteryInfo
-
+        
         case 5: return .requestDiagnostics
-
+        
         case 6: return .requestFaultHistory
-
+        
         case 7: return .requestSettings
-
+        
         case 8: return .soundHorn
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileCommandDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .requestIdentity:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .requestTelemetry:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .requestFirmwareInfo:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .requestBatteryInfo:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .requestDiagnostics:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .requestFaultHistory:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .requestSettings:
             writeInt(&buf, Int32(7))
-
-
+        
+        
         case .soundHorn:
             writeInt(&buf, Int32(8))
-
+        
         }
     }
 }
@@ -12158,7 +12452,7 @@ public func FfiConverterTypeMobileCommandDto_lower(_ value: MobileCommandDto) ->
  */
 
 public enum MobileEstimateConfidenceDto: Equatable, Hashable {
-
+    
     /**
      * Weak or substantially inferred evidence.
      */
@@ -12191,32 +12485,32 @@ public struct FfiConverterTypeMobileEstimateConfidenceDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileEstimateConfidenceDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .low
-
+        
         case 2: return .medium
-
+        
         case 3: return .high
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileEstimateConfidenceDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .low:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .medium:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .high:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -12244,7 +12538,7 @@ public func FfiConverterTypeMobileEstimateConfidenceDto_lower(_ value: MobileEst
  */
 
 public enum MobileEstimateKindDto: Equatable, Hashable {
-
+    
     /**
      * Time at the currently observed charging rate.
      */
@@ -12277,32 +12571,32 @@ public struct FfiConverterTypeMobileEstimateKindDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileEstimateKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .atPresentCurrent
-
+        
         case 2: return .profileBackedTimeToFull
-
+        
         case 3: return .observedTaperTimeToFull
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileEstimateKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .atPresentCurrent:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .profileBackedTimeToFull:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .observedTaperTimeToFull:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -12330,7 +12624,7 @@ public func FfiConverterTypeMobileEstimateKindDto_lower(_ value: MobileEstimateK
  */
 
 public enum MobileFalconProfileDto: Equatable, Hashable {
-
+    
     /**
      * Default known Falcon profile.
      */
@@ -12359,26 +12653,26 @@ public struct FfiConverterTypeMobileFalconProfileDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFalconProfileDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .`default`
-
+        
         case 2: return .unsupported
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileFalconProfileDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .`default`:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .unsupported:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -12406,7 +12700,7 @@ public func FfiConverterTypeMobileFalconProfileDto_lower(_ value: MobileFalconPr
  */
 
 public enum MobileFootpadContactState: Equatable, Hashable {
-
+    
     /**
      * Neither footpad contact is active.
      */
@@ -12443,38 +12737,38 @@ public struct FfiConverterTypeMobileFootpadContactState: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileFootpadContactState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .none
-
+        
         case 2: return .left
-
+        
         case 3: return .right
-
+        
         case 4: return .both
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileFootpadContactState, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .none:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .left:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .right:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .both:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -12502,7 +12796,7 @@ public func FfiConverterTypeMobileFootpadContactState_lower(_ value: MobileFootp
  */
 
 public enum MobileGattRoleDto: Equatable, Hashable {
-
+    
     /**
      * Characteristic supports reads.
      */
@@ -12543,44 +12837,44 @@ public struct FfiConverterTypeMobileGattRoleDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileGattRoleDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .read
-
+        
         case 2: return .write
-
+        
         case 3: return .writeWithoutResponse
-
+        
         case 4: return .notify
-
+        
         case 5: return .indicate
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileGattRoleDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .read:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .write:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .writeWithoutResponse:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .notify:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .indicate:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -12608,7 +12902,7 @@ public func FfiConverterTypeMobileGattRoleDto_lower(_ value: MobileGattRoleDto) 
  */
 
 public enum MobileIdentificationProbeOutcomeDto: Equatable, Hashable {
-
+    
     /**
      * The selected device is already identified and requires no query.
      */
@@ -12649,40 +12943,40 @@ public struct FfiConverterTypeMobileIdentificationProbeOutcomeDto: FfiConverterR
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentificationProbeOutcomeDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .noProbeNeeded
-
+        
         case 2: return .unsupported
-
+        
         case 3: return .writes(writes: try FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.read(from: &buf)
         )
-
+        
         case 4: return .alreadyPending
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileIdentificationProbeOutcomeDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .noProbeNeeded:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .unsupported:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case let .writes(writes):
             writeInt(&buf, Int32(3))
             FfiConverterSequenceTypeMobileIdentificationProbeWriteDto.write(writes, into: &buf)
-
-
+            
+        
         case .alreadyPending:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -12710,7 +13004,7 @@ public func FfiConverterTypeMobileIdentificationProbeOutcomeDto_lower(_ value: M
  */
 
 public enum MobileIdentificationProbeWriteModeDto: Equatable, Hashable {
-
+    
     /**
      * Write without waiting for a GATT response acknowledgement.
      */
@@ -12735,20 +13029,20 @@ public struct FfiConverterTypeMobileIdentificationProbeWriteModeDto: FfiConverte
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIdentificationProbeWriteModeDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .withoutResponse
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileIdentificationProbeWriteModeDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .withoutResponse:
             writeInt(&buf, Int32(1))
-
+        
         }
     }
 }
@@ -12776,7 +13070,7 @@ public func FfiConverterTypeMobileIdentificationProbeWriteModeDto_lower(_ value:
  */
 
 public enum MobileIgnoredNotificationReasonDto: Equatable, Hashable {
-
+    
     /**
      * Notification arrived on a channel the selected protocol does not consume.
      */
@@ -12821,50 +13115,50 @@ public struct FfiConverterTypeMobileIgnoredNotificationReasonDto: FfiConverterRu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileIgnoredNotificationReasonDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .wrongChannel
-
+        
         case 2: return .unsupportedFamily
-
+        
         case 3: return .unsupportedChannel
-
+        
         case 4: return .acceptedButUnmapped
-
+        
         case 5: return .seekingFrameBoundary
-
+        
         case 6: return .intentionallyDropped
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileIgnoredNotificationReasonDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .wrongChannel:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .unsupportedFamily:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .unsupportedChannel:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .acceptedButUnmapped:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .seekingFrameBoundary:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .intentionallyDropped:
             writeInt(&buf, Int32(6))
-
+        
         }
     }
 }
@@ -12885,6 +13179,166 @@ public func FfiConverterTypeMobileIgnoredNotificationReasonDto_lower(_ value: Mo
 }
 
 
+
+/**
+ * Invalid input presented to the MELK lighting boundary.
+ */
+public enum MobileMelkLightingError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+    
+    
+    /**
+     * A GATT UUID did not contain exactly 16 bytes.
+     */
+    case InvalidGattChannel
+    /**
+     * Name and observed GATT evidence did not identify the candidate profile.
+     */
+    case InvalidGattEvidence
+    /**
+     * Brightness was outside the protocol's 0..=100 range.
+     */
+    case InvalidBrightness
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingError: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .InvalidGattChannel
+        case 2: return .InvalidGattEvidence
+        case 3: return .InvalidBrightness
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMelkLightingError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case .InvalidGattChannel:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .InvalidGattEvidence:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .InvalidBrightness:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingError_lift(_ buf: RustBuffer) throws -> MobileMelkLightingError {
+    return try FfiConverterTypeMobileMelkLightingError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingError_lower(_ value: MobileMelkLightingError) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingError.lower(value)
+}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * GATT write mode for a standalone MELK lighting command.
+ */
+
+public enum MobileMelkLightingWriteModeDto: Equatable, Hashable {
+    
+    /**
+     * Write without waiting for a transport acknowledgement.
+     */
+    case withoutResponse
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingWriteModeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingWriteModeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingWriteModeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingWriteModeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .withoutResponse
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMelkLightingWriteModeDto, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .withoutResponse:
+            writeInt(&buf, Int32(1))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteModeDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingWriteModeDto {
+    return try FfiConverterTypeMobileMelkLightingWriteModeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingWriteModeDto_lower(_ value: MobileMelkLightingWriteModeDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingWriteModeDto.lower(value)
+}
+
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
@@ -12892,7 +13346,7 @@ public func FfiConverterTypeMobileIgnoredNotificationReasonDto_lower(_ value: Mo
  */
 
 public enum MobileNotificationIngestOutcomeKindDto: Equatable, Hashable {
-
+    
     /**
      * Notification produced semantic protocol events.
      */
@@ -12937,50 +13391,50 @@ public struct FfiConverterTypeMobileNotificationIngestOutcomeKindDto: FfiConvert
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileNotificationIngestOutcomeKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .semanticEvents
-
+        
         case 2: return .bufferedFragment
-
+        
         case 3: return .parserDiagnostic
-
+        
         case 4: return .knownReserved
-
+        
         case 5: return .parserGap
-
+        
         case 6: return .ignored
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileNotificationIngestOutcomeKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .semanticEvents:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .bufferedFragment:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .parserDiagnostic:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .knownReserved:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .parserGap:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .ignored:
             writeInt(&buf, Int32(6))
-
+        
         }
     }
 }
@@ -13008,7 +13462,7 @@ public func FfiConverterTypeMobileNotificationIngestOutcomeKindDto_lower(_ value
  */
 
 public enum MobileParserErrorKindDto: Equatable, Hashable {
-
+    
     /**
      * A frame claimed or accumulated more bytes than allowed.
      */
@@ -13049,44 +13503,44 @@ public struct FfiConverterTypeMobileParserErrorKindDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileParserErrorKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .oversizedFrame
-
+        
         case 2: return .badChecksum
-
+        
         case 3: return .malformedFrame
-
+        
         case 4: return .timeout
-
+        
         case 5: return .unmatchedReply
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileParserErrorKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .oversizedFrame:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .badChecksum:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .malformedFrame:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .timeout:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .unmatchedReply:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -13114,7 +13568,7 @@ public func FfiConverterTypeMobileParserErrorKindDto_lower(_ value: MobileParser
  */
 
 public enum MobilePendingProbeDto: Equatable, Hashable {
-
+    
     /**
      * Begode `N` probe awaiting a model/name response.
      */
@@ -13147,32 +13601,32 @@ public struct FfiConverterTypeMobilePendingProbeDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePendingProbeDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .begodeName
-
+        
         case 2: return .begodeFirmware
-
+        
         case 3: return .begodeImu
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobilePendingProbeDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .begodeName:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .begodeFirmware:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .begodeImu:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -13200,7 +13654,7 @@ public func FfiConverterTypeMobilePendingProbeDto_lower(_ value: MobilePendingPr
  */
 
 public enum MobileProtocolFamilyDto: Equatable, Hashable {
-
+    
     /**
      * Veteran/LeaperKim/NOSFET frame family.
      */
@@ -13233,32 +13687,32 @@ public struct FfiConverterTypeMobileProtocolFamilyDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileProtocolFamilyDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .veteranLeaperkimNosfet
-
+        
         case 2: return .begodeGotway
-
+        
         case 3: return .vesc
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileProtocolFamilyDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .veteranLeaperkimNosfet:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .begodeGotway:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .vesc:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -13286,7 +13740,7 @@ public func FfiConverterTypeMobileProtocolFamilyDto_lower(_ value: MobileProtoco
  */
 
 public enum MobileReadbackAvailabilityDto: Equatable, Hashable {
-
+    
     /**
      * The device reported the requested readback.
      */
@@ -13319,32 +13773,32 @@ public struct FfiConverterTypeMobileReadbackAvailabilityDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileReadbackAvailabilityDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .available
-
+        
         case 2: return .unavailable
-
+        
         case 3: return .unsupported
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileReadbackAvailabilityDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .available:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .unavailable:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .unsupported:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -13372,7 +13826,7 @@ public func FfiConverterTypeMobileReadbackAvailabilityDto_lower(_ value: MobileR
  */
 
 public enum MobileRideSessionAppPresenceDto: Equatable, Hashable {
-
+    
     /**
      * App UI is foregrounded.
      */
@@ -13401,26 +13855,26 @@ public struct FfiConverterTypeMobileRideSessionAppPresenceDto: FfiConverterRustB
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionAppPresenceDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .foreground
-
+        
         case 2: return .background
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileRideSessionAppPresenceDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .foreground:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .background:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -13448,7 +13902,7 @@ public func FfiConverterTypeMobileRideSessionAppPresenceDto_lower(_ value: Mobil
  */
 
 public enum MobileRideSessionEffectDto: Equatable, Hashable {
-
+    
     /**
      * No platform work is required.
      */
@@ -13498,61 +13952,61 @@ public struct FfiConverterTypeMobileRideSessionEffectDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionEffectDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .none
-
+        
         case 2: return .startActivity(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
         )
-
+        
         case 3: return .updateActivity(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
         )
-
+        
         case 4: return .markActivityStale(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
         )
-
+        
         case 5: return .endActivity(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf), reason: try FfiConverterTypeMobileRideSessionEndReasonDto.read(from: &buf)
         )
-
+        
         case 6: return .requestCaptureFlush(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
         )
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileRideSessionEffectDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .none:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case let .startActivity(identity):
             writeInt(&buf, Int32(2))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
-
-
+            
+        
         case let .updateActivity(identity):
             writeInt(&buf, Int32(3))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
-
-
+            
+        
         case let .markActivityStale(identity):
             writeInt(&buf, Int32(4))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
-
-
+            
+        
         case let .endActivity(identity,reason):
             writeInt(&buf, Int32(5))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
             FfiConverterTypeMobileRideSessionEndReasonDto.write(reason, into: &buf)
-
-
+            
+        
         case let .requestCaptureFlush(identity):
             writeInt(&buf, Int32(6))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
-
+            
         }
     }
 }
@@ -13580,7 +14034,7 @@ public func FfiConverterTypeMobileRideSessionEffectDto_lower(_ value: MobileRide
  */
 
 public enum MobileRideSessionEndReasonDto: Equatable, Hashable {
-
+    
     /**
      * Rider explicitly disconnected the device.
      */
@@ -13625,50 +14079,50 @@ public struct FfiConverterTypeMobileRideSessionEndReasonDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionEndReasonDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .userDisconnect
-
+        
         case 2: return .userStop
-
+        
         case 3: return .replacedByNewSession
-
+        
         case 4: return .reconnectExhausted
-
+        
         case 5: return .appReset
-
+        
         case 6: return .unrecoverableSessionFailure
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileRideSessionEndReasonDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .userDisconnect:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .userStop:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .replacedByNewSession:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .reconnectExhausted:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .appReset:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .unrecoverableSessionFailure:
             writeInt(&buf, Int32(6))
-
+        
         }
     }
 }
@@ -13696,7 +14150,7 @@ public func FfiConverterTypeMobileRideSessionEndReasonDto_lower(_ value: MobileR
  */
 
 public enum MobileRideSessionInputDto: Equatable, Hashable {
-
+    
     /**
      * Starts a logical ride with a Rust-created UUID.
      */
@@ -13784,119 +14238,119 @@ public struct FfiConverterTypeMobileRideSessionInputDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionInputDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .start(platformIdentifier: try FfiConverterString.read(from: &buf)
         )
-
+        
         case 2: return .activityStarted(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf), activityId: try FfiConverterString.read(from: &buf)
         )
-
+        
         case 3: return .activityEnded(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
         )
-
+        
         case 4: return .activityUnavailable(identity: try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
         )
-
+        
         case 5: return .appBackgrounded
-
+        
         case 6: return .appForegrounded
-
+        
         case 7: return .bluetoothDisconnected(atMs: try FfiConverterUInt64.read(from: &buf)
         )
-
+        
         case 8: return .bluetoothConnected
-
+        
         case 9: return .telemetryObserved(atMs: try FfiConverterUInt64.read(from: &buf)
         )
-
+        
         case 10: return .freshnessChecked(nowMs: try FfiConverterUInt64.read(from: &buf)
         )
-
+        
         case 11: return .userDisconnected
-
+        
         case 12: return .userStopped
-
+        
         case 13: return .reconnectExhausted
-
+        
         case 14: return .appReset
-
+        
         case 15: return .unrecoverableSessionFailure
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileRideSessionInputDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case let .start(platformIdentifier):
             writeInt(&buf, Int32(1))
             FfiConverterString.write(platformIdentifier, into: &buf)
-
-
+            
+        
         case let .activityStarted(identity,activityId):
             writeInt(&buf, Int32(2))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
             FfiConverterString.write(activityId, into: &buf)
-
-
+            
+        
         case let .activityEnded(identity):
             writeInt(&buf, Int32(3))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
-
-
+            
+        
         case let .activityUnavailable(identity):
             writeInt(&buf, Int32(4))
             FfiConverterTypeMobileRideSessionIdentityDto.write(identity, into: &buf)
-
-
+            
+        
         case .appBackgrounded:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .appForegrounded:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case let .bluetoothDisconnected(atMs):
             writeInt(&buf, Int32(7))
             FfiConverterUInt64.write(atMs, into: &buf)
-
-
+            
+        
         case .bluetoothConnected:
             writeInt(&buf, Int32(8))
-
-
+        
+        
         case let .telemetryObserved(atMs):
             writeInt(&buf, Int32(9))
             FfiConverterUInt64.write(atMs, into: &buf)
-
-
+            
+        
         case let .freshnessChecked(nowMs):
             writeInt(&buf, Int32(10))
             FfiConverterUInt64.write(nowMs, into: &buf)
-
-
+            
+        
         case .userDisconnected:
             writeInt(&buf, Int32(11))
-
-
+        
+        
         case .userStopped:
             writeInt(&buf, Int32(12))
-
-
+        
+        
         case .reconnectExhausted:
             writeInt(&buf, Int32(13))
-
-
+        
+        
         case .appReset:
             writeInt(&buf, Int32(14))
-
-
+        
+        
         case .unrecoverableSessionFailure:
             writeInt(&buf, Int32(15))
-
+        
         }
     }
 }
@@ -13923,22 +14377,22 @@ public func FfiConverterTypeMobileRideSessionInputDto_lower(_ value: MobileRideS
  */
 public enum MobileRideSessionInputError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
-
-
+    
+    
     /**
      * A callback did not carry a valid UUID returned by Rust.
      */
     case InvalidSessionIdentifier
 
+    
 
+    
 
-
-
-
+    
     public var errorDescription: String? {
         String(reflecting: self)
     }
-
+    
 }
 
 #if compiler(>=6)
@@ -13955,9 +14409,9 @@ public struct FfiConverterTypeMobileRideSessionInputError: FfiConverterRustBuffe
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
+        
 
-
-
+        
         case 1: return .InvalidSessionIdentifier
 
          default: throw UniffiInternalError.unexpectedEnumCase
@@ -13967,13 +14421,13 @@ public struct FfiConverterTypeMobileRideSessionInputError: FfiConverterRustBuffe
     public static func write(_ value: MobileRideSessionInputError, into buf: inout [UInt8]) {
         switch value {
 
+        
 
-
-
-
+        
+        
         case .InvalidSessionIdentifier:
             writeInt(&buf, Int32(1))
-
+        
         }
     }
 }
@@ -13999,8 +14453,8 @@ public func FfiConverterTypeMobileRideSessionInputError_lower(_ value: MobileRid
  */
 public enum MobileRideSessionMarkerError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
-
-
+    
+    
     /**
      * Bytes do not match the marker schema.
      */
@@ -14014,15 +14468,15 @@ public enum MobileRideSessionMarkerError: Swift.Error, Equatable, Hashable, Foun
      */
     case InvalidIdentity
 
+    
 
+    
 
-
-
-
+    
     public var errorDescription: String? {
         String(reflecting: self)
     }
-
+    
 }
 
 #if compiler(>=6)
@@ -14039,9 +14493,9 @@ public struct FfiConverterTypeMobileRideSessionMarkerError: FfiConverterRustBuff
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
+        
 
-
-
+        
         case 1: return .InvalidEncoding
         case 2: return .UnsupportedVersion
         case 3: return .InvalidIdentity
@@ -14053,21 +14507,21 @@ public struct FfiConverterTypeMobileRideSessionMarkerError: FfiConverterRustBuff
     public static func write(_ value: MobileRideSessionMarkerError, into buf: inout [UInt8]) {
         switch value {
 
+        
 
-
-
-
+        
+        
         case .InvalidEncoding:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .UnsupportedVersion:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .InvalidIdentity:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -14094,7 +14548,7 @@ public func FfiConverterTypeMobileRideSessionMarkerError_lower(_ value: MobileRi
  */
 
 public enum MobileRideSessionPhaseDto: Equatable, Hashable {
-
+    
     /**
      * No logical ride exists.
      */
@@ -14145,60 +14599,60 @@ public struct FfiConverterTypeMobileRideSessionPhaseDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSessionPhaseDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .idle
-
+        
         case 2: return .starting
-
+        
         case 3: return .active
-
+        
         case 4: return .reconnecting
-
+        
         case 5: return .stale
-
+        
         case 6: return .ending(reason: try FfiConverterTypeMobileRideSessionEndReasonDto.read(from: &buf)
         )
-
+        
         case 7: return .ended(reason: try FfiConverterTypeMobileRideSessionEndReasonDto.read(from: &buf)
         )
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileRideSessionPhaseDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .idle:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .starting:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .active:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .reconnecting:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .stale:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case let .ending(reason):
             writeInt(&buf, Int32(6))
             FfiConverterTypeMobileRideSessionEndReasonDto.write(reason, into: &buf)
-
-
+            
+        
         case let .ended(reason):
             writeInt(&buf, Int32(7))
             FfiConverterTypeMobileRideSessionEndReasonDto.write(reason, into: &buf)
-
+            
         }
     }
 }
@@ -14225,22 +14679,22 @@ public func FfiConverterTypeMobileRideSessionPhaseDto_lower(_ value: MobileRideS
  */
 public enum MobileSessionConstructorError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
-
-
+    
+    
     /**
      * Requested Falcon profile is not supported.
      */
     case UnsupportedFalconProfile
 
+    
 
+    
 
-
-
-
+    
     public var errorDescription: String? {
         String(reflecting: self)
     }
-
+    
 }
 
 #if compiler(>=6)
@@ -14257,9 +14711,9 @@ public struct FfiConverterTypeMobileSessionConstructorError: FfiConverterRustBuf
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
+        
 
-
-
+        
         case 1: return .UnsupportedFalconProfile
 
          default: throw UniffiInternalError.unexpectedEnumCase
@@ -14269,13 +14723,13 @@ public struct FfiConverterTypeMobileSessionConstructorError: FfiConverterRustBuf
     public static func write(_ value: MobileSessionConstructorError, into buf: inout [UInt8]) {
         switch value {
 
+        
 
-
-
-
+        
+        
         case .UnsupportedFalconProfile:
             writeInt(&buf, Int32(1))
-
+        
         }
     }
 }
@@ -14302,7 +14756,7 @@ public func FfiConverterTypeMobileSessionConstructorError_lower(_ value: MobileS
  */
 
 public enum MobileSessionInputKindDto: Equatable, Hashable {
-
+    
     /**
      * Link-up input.
      */
@@ -14343,44 +14797,44 @@ public struct FfiConverterTypeMobileSessionInputKindDto: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionInputKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .linkUp
-
+        
         case 2: return .linkDown
-
+        
         case 3: return .notification
-
+        
         case 4: return .tick
-
+        
         case 5: return .command
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileSessionInputKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .linkUp:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .linkDown:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .notification:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .tick:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .command:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -14408,7 +14862,7 @@ public func FfiConverterTypeMobileSessionInputKindDto_lower(_ value: MobileSessi
  */
 
 public enum MobileSessionOutputKindDto: Equatable, Hashable {
-
+    
     /**
      * Subscribe transport action.
      */
@@ -14461,62 +14915,62 @@ public struct FfiConverterTypeMobileSessionOutputKindDto: FfiConverterRustBuffer
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionOutputKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .subscribe
-
+        
         case 2: return .write
-
+        
         case 3: return .event
-
+        
         case 4: return .disconnect
-
+        
         case 5: return .notificationIngest
-
+        
         case 6: return .settingsReadback
-
+        
         case 7: return .faultHistoryReadback
-
+        
         case 8: return .bmsSnapshot
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileSessionOutputKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .subscribe:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .write:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .event:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .disconnect:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .notificationIngest:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .settingsReadback:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .faultHistoryReadback:
             writeInt(&buf, Int32(7))
-
-
+        
+        
         case .bmsSnapshot:
             writeInt(&buf, Int32(8))
-
+        
         }
     }
 }
@@ -14544,7 +14998,7 @@ public func FfiConverterTypeMobileSessionOutputKindDto_lower(_ value: MobileSess
  */
 
 public enum MobileSessionStepErrorKindDto: Equatable, Hashable {
-
+    
     /**
      * Command was refused.
      */
@@ -14573,26 +15027,26 @@ public struct FfiConverterTypeMobileSessionStepErrorKindDto: FfiConverterRustBuf
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSessionStepErrorKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .commandRefused
-
+        
         case 2: return .unsupportedFalconProfile
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileSessionStepErrorKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .commandRefused:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .unsupportedFalconProfile:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -14620,7 +15074,7 @@ public func FfiConverterTypeMobileSessionStepErrorKindDto_lower(_ value: MobileS
  */
 
 public enum MobileValueQualityDto: Equatable, Hashable {
-
+    
     /**
      * Value is directly supported by observed data.
      */
@@ -14649,26 +15103,26 @@ public struct FfiConverterTypeMobileValueQualityDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileValueQualityDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .known
-
+        
         case 2: return .inferred
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileValueQualityDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .known:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .inferred:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -14696,7 +15150,7 @@ public func FfiConverterTypeMobileValueQualityDto_lower(_ value: MobileValueQual
  */
 
 public enum MobileValueSourceDto: Equatable, Hashable {
-
+    
     /**
      * Value was reported directly by the device.
      */
@@ -14729,32 +15183,32 @@ public struct FfiConverterTypeMobileValueSourceDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileValueSourceDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .reported
-
+        
         case 2: return .calculated
-
+        
         case 3: return .estimated
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileValueSourceDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .reported:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .calculated:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .estimated:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -14782,7 +15236,7 @@ public func FfiConverterTypeMobileValueSourceDto_lower(_ value: MobileValueSourc
  */
 
 public enum MobileVerificationStatusDto: Equatable, Hashable {
-
+    
     /**
      * Not yet verified.
      */
@@ -14823,44 +15277,44 @@ public struct FfiConverterTypeMobileVerificationStatusDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVerificationStatusDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .unverified
-
+        
         case 2: return .inferred
-
+        
         case 3: return .sourceVerified
-
+        
         case 4: return .hardwareVerified
-
+        
         case 5: return .sourceAndHardwareVerified
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVerificationStatusDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .unverified:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .inferred:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .sourceVerified:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .hardwareVerified:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .sourceAndHardwareVerified:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -14888,7 +15342,7 @@ public func FfiConverterTypeMobileVerificationStatusDto_lower(_ value: MobileVer
  */
 
 public enum MobileVescControllerStateDto: Equatable, Hashable {
-
+    
     /**
      * Controller is armed and balancing/riding data is relevant.
      */
@@ -14921,32 +15375,32 @@ public struct FfiConverterTypeMobileVescControllerStateDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescControllerStateDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .armed
-
+        
         case 2: return .disarmed
-
+        
         case 3: return .unknown
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescControllerStateDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .armed:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .disarmed:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(3))
-
+        
         }
     }
 }
@@ -14974,7 +15428,7 @@ public func FfiConverterTypeMobileVescControllerStateDto_lower(_ value: MobileVe
  */
 
 public enum MobileVescRideOperatingModeDto: Equatable, Hashable {
-
+    
     /**
      * The protocol reported an unsupported mode value.
      */
@@ -15015,44 +15469,44 @@ public struct FfiConverterTypeMobileVescRideOperatingModeDto: FfiConverterRustBu
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescRideOperatingModeDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .unknown
-
+        
         case 2: return .normal
-
+        
         case 3: return .darkride
-
+        
         case 4: return .handtest
-
+        
         case 5: return .flywheel
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescRideOperatingModeDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .normal:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .darkride:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .handtest:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .flywheel:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -15080,7 +15534,7 @@ public func FfiConverterTypeMobileVescRideOperatingModeDto_lower(_ value: Mobile
  */
 
 public enum MobileVescRideStopReasonDto: Equatable, Hashable {
-
+    
     /**
      * No stop condition is active.
      */
@@ -15129,56 +15583,56 @@ public struct FfiConverterTypeMobileVescRideStopReasonDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescRideStopReasonDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .none
-
+        
         case 2: return .pitch
-
+        
         case 3: return .roll
-
+        
         case 4: return .switchHalf
-
+        
         case 5: return .switchFull
-
+        
         case 6: return .reverse
-
+        
         case 7: return .quickStop
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescRideStopReasonDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .none:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .pitch:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .roll:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .switchHalf:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .switchFull:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .reverse:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .quickStop:
             writeInt(&buf, Int32(7))
-
+        
         }
     }
 }
@@ -15206,7 +15660,7 @@ public func FfiConverterTypeMobileVescRideStopReasonDto_lower(_ value: MobileVes
  */
 
 public enum MobileVescRideWarningDto: Equatable, Hashable {
-
+    
     /**
      * No ride warning is active.
      */
@@ -15275,86 +15729,86 @@ public struct FfiConverterTypeMobileVescRideWarningDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescRideWarningDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .none
-
+        
         case 2: return .lowVoltage
-
+        
         case 3: return .highVoltage
-
+        
         case 4: return .mosfetTemperature
-
+        
         case 5: return .motorTemperature
-
+        
         case 6: return .current
-
+        
         case 7: return .dutyPushback
-
+        
         case 8: return .temperaturePushback
-
+        
         case 9: return .wheelslip
-
+        
         case 10: return .sensors
-
+        
         case 11: return .lowBattery
-
+        
         case 12: return .error
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescRideWarningDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .none:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .lowVoltage:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .highVoltage:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .mosfetTemperature:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .motorTemperature:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .current:
             writeInt(&buf, Int32(6))
-
-
+        
+        
         case .dutyPushback:
             writeInt(&buf, Int32(7))
-
-
+        
+        
         case .temperaturePushback:
             writeInt(&buf, Int32(8))
-
-
+        
+        
         case .wheelslip:
             writeInt(&buf, Int32(9))
-
-
+        
+        
         case .sensors:
             writeInt(&buf, Int32(10))
-
-
+        
+        
         case .lowBattery:
             writeInt(&buf, Int32(11))
-
-
+        
+        
         case .error:
             writeInt(&buf, Int32(12))
-
+        
         }
     }
 }
@@ -15382,7 +15836,7 @@ public func FfiConverterTypeMobileVescRideWarningDto_lower(_ value: MobileVescRi
  */
 
 public enum MobileVescSubProtocolDto: Equatable, Hashable {
-
+    
     /**
      * Refloat sub-protocol is present.
      */
@@ -15419,38 +15873,38 @@ public struct FfiConverterTypeMobileVescSubProtocolDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescSubProtocolDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .refloat
-
+        
         case 2: return .bike
-
+        
         case 3: return .eskate
-
+        
         case 4: return .generic
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescSubProtocolDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .refloat:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .bike:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .eskate:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .generic:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -15478,7 +15932,7 @@ public func FfiConverterTypeMobileVescSubProtocolDto_lower(_ value: MobileVescSu
  */
 
 public enum MobileVescVehicleKindDto: Equatable, Hashable {
-
+    
     /**
      * Float/Onewheel-style VESC build.
      */
@@ -15519,44 +15973,44 @@ public struct FfiConverterTypeMobileVescVehicleKindDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescVehicleKindDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .float
-
+        
         case 2: return .bike
-
+        
         case 3: return .skateboard
-
+        
         case 4: return .electricUnicycle
-
+        
         case 5: return .unknown
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescVehicleKindDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .float:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .bike:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .skateboard:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .electricUnicycle:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -15584,7 +16038,7 @@ public func FfiConverterTypeMobileVescVehicleKindDto_lower(_ value: MobileVescVe
  */
 
 public enum MobileVescWriteGuardrailDto: Equatable, Hashable {
-
+    
     /**
      * Debug screen is read-only for the current state.
      */
@@ -15629,50 +16083,50 @@ public struct FfiConverterTypeMobileVescWriteGuardrailDto: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVescWriteGuardrailDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .readOnly
-
+        
         case 2: return .unsupportedCommand
-
+        
         case 3: return .policyRefusal
-
+        
         case 4: return .authorizedButUnimplemented
-
+        
         case 5: return .parkedAndConfirmed
-
+        
         case 6: return .unknown
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: MobileVescWriteGuardrailDto, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .readOnly:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .unsupportedCommand:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .policyRefusal:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .authorizedButUnimplemented:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .parkedAndConfirmed:
             writeInt(&buf, Int32(5))
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(6))
-
+        
         }
     }
 }
@@ -15700,7 +16154,7 @@ public func FfiConverterTypeMobileVescWriteGuardrailDto_lower(_ value: MobileVes
  */
 
 public enum PowerFlowDirection: Equatable, Hashable {
-
+    
     /**
      * Positive discharge from pack to controller/motor.
      */
@@ -15741,44 +16195,44 @@ public struct FfiConverterTypePowerFlowDirection: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PowerFlowDirection {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .discharge
-
+        
         case 2: return .zero
-
+        
         case 3: return .charging
-
+        
         case 4: return .regeneration
-
+        
         case 5: return .negativeUnknown
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: PowerFlowDirection, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .discharge:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .zero:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .charging:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .regeneration:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .negativeUnknown:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -15806,7 +16260,7 @@ public func FfiConverterTypePowerFlowDirection_lower(_ value: PowerFlowDirection
  */
 
 public enum RideOperatingState: Equatable, Hashable {
-
+    
     /**
      * No live evidence has established whether the EUC is parked, riding, or charging.
      */
@@ -15847,44 +16301,44 @@ public struct FfiConverterTypeRideOperatingState: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RideOperatingState {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .unknown
-
+        
         case 2: return .parked
-
+        
         case 3: return .standing
-
+        
         case 4: return .riding
-
+        
         case 5: return .charging
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: RideOperatingState, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .parked:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .standing:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .riding:
             writeInt(&buf, Int32(4))
-
-
+        
+        
         case .charging:
             writeInt(&buf, Int32(5))
-
+        
         }
     }
 }
@@ -15912,7 +16366,7 @@ public func FfiConverterTypeRideOperatingState_lower(_ value: RideOperatingState
  */
 
 public enum VescBatteryCellModel: Equatable, Hashable {
-
+    
     /**
      * Cell model is not known.
      */
@@ -15941,26 +16395,26 @@ public struct FfiConverterTypeVescBatteryCellModel: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VescBatteryCellModel {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .unknown
-
+        
         case 2: return .sonyVtc6
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: VescBatteryCellModel, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .unknown:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .sonyVtc6:
             writeInt(&buf, Int32(2))
-
+        
         }
     }
 }
@@ -15988,7 +16442,7 @@ public func FfiConverterTypeVescBatteryCellModel_lower(_ value: VescBatteryCellM
  */
 
 public enum VescBatteryType: Equatable, Hashable {
-
+    
     /**
      * Li-ion 3.0-4.2 V pack type.
      */
@@ -16025,38 +16479,38 @@ public struct FfiConverterTypeVescBatteryType: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VescBatteryType {
         let variant: Int32 = try readInt(&buf)
         switch variant {
-
+        
         case 1: return .liIon
-
+        
         case 2: return .liIron
-
+        
         case 3: return .leadAcid
-
+        
         case 4: return .other
-
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
     public static func write(_ value: VescBatteryType, into buf: inout [UInt8]) {
         switch value {
-
-
+        
+        
         case .liIon:
             writeInt(&buf, Int32(1))
-
-
+        
+        
         case .liIron:
             writeInt(&buf, Int32(2))
-
-
+        
+        
         case .leadAcid:
             writeInt(&buf, Int32(3))
-
-
+        
+        
         case .other:
             writeInt(&buf, Int32(4))
-
+        
         }
     }
 }
@@ -18220,6 +18674,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilechargeestimator_voltage_sag_model() != 1861) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_brightness() != 50193) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_power() != 54431) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_solid_color() != 10213) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_add_advertised_service() != 1575) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -18290,6 +18753,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilechargeestimator_new() != 7351) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilemelklightingprofile_new() != 45165) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilepevcapcapturebuilder_new() != 58179) {
