@@ -172,6 +172,23 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testTuneUsesRustOwnedConfirmedLightState() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        driver.headlightState = LightSettingState(
+            kind: .confirmed,
+            current: .on,
+            source: .liveReadback,
+            confirmedAt: MonotonicMilliseconds(7)
+        )
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .confirmed)
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+    }
+
+    @MainActor
     func testFalconHeadlightToggleWaitsForMatchingWheelTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
@@ -2804,6 +2821,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var electricUnicycleModel: ElectricUnicycleModel?
+    var headlightState: LightSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
     var settingsCapabilities: EucSettingsCapabilities? {
         settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities
