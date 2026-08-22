@@ -1233,15 +1233,19 @@ final class CutoutAppModel {
     func setHeadlight(_ enabled: Bool) -> Bool {
         let state = enabled ? LightState.on : .off
         guard core.setLights(state) else { return false }
+        recordHeadlightCommand(state)
+        return true
+    }
+
+    private func recordHeadlightCommand(_ state: LightState) {
         if core.electricUnicycleModel == .falcon {
             pendingHeadlightState = state
             headlightCommandStatus = .waitingForConfirmation
         } else {
-            headlightOn = enabled
+            headlightOn = state == .on
             pendingHeadlightState = nil
             headlightCommandStatus = .sentWithoutConfirmation
         }
-        return true
     }
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
         settingsReadback = readback
