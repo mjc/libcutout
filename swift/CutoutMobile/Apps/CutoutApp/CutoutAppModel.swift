@@ -52,6 +52,20 @@ private enum HeadlightSettingState: Equatable {
         }
     }
 
+    var isWaitingForConfirmation: Bool {
+        if case .waitingForConfirmation = self {
+            return true
+        }
+        return false
+    }
+
+    var pendingRequestedState: LightState? {
+        guard case let .waitingForConfirmation(requested, _, _) = self else {
+            return nil
+        }
+        return requested
+    }
+
     func commandStatus(
         at now: MonotonicMilliseconds,
         timeout: MonotonicMilliseconds
@@ -1330,12 +1344,12 @@ final class CutoutAppModel {
         settingsReadback = readback
         guard core.electricUnicycleModel == .falcon else { return }
         guard let reportedState = readback?.eucGarageSettings.lightState else {
-            if case .waitingForConfirmation = headlightState {
+            if headlightState.isWaitingForConfirmation {
                 headlightState = .failed(headlightState.lightState)
             }
             return
         }
-        if case let .waitingForConfirmation(requestedState, _, _) = headlightState,
+        if let requestedState = headlightState.pendingRequestedState,
            requestedState != reportedState
         {
             return
