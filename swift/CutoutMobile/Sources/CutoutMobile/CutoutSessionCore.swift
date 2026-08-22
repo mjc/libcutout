@@ -2092,12 +2092,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
-        if let association = try? rideMapState.observeVehicleConnection(
-            platformIdentifier: peripheral.identifier.uuidString,
-            atMs: clock.now().rawValue
-        ), association == .associated {
-            publishRideMapSnapshot()
-        }
+        observeRideMapConnection(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {
@@ -2107,6 +2102,18 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
+    }
+
+    private func observeRideMapConnection(platformIdentifier: String) {
+        guard let outcome = try? rideMapState.observeVehicleConnection(
+            platformIdentifier: platformIdentifier,
+            atMs: clock.now().rawValue
+        ) else {
+            return
+        }
+        if outcome == .associated {
+            publishRideMapSnapshot()
+        }
     }
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {

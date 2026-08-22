@@ -3356,7 +3356,7 @@ impl MobileRideMapState {
         let previous = current.clone();
         let outcome =
             current.observe_vehicle_connection(&identity, RideMapMonotonicMilliseconds::new(at_ms));
-        if outcome == RideMapAssociationOutcome::Associated {
+        if outcome.is_associated() {
             if let Err(error) = self.persist_metadata(current) {
                 *current = previous;
                 return Err(error);

@@ -120,6 +120,14 @@ pub enum VehicleAssociationOutcome {
     RideNotOpen,
 }
 
+impl VehicleAssociationOutcome {
+    /// Returns whether this event created the ride association.
+    #[must_use]
+    pub const fn is_associated(self) -> bool {
+        matches!(self, Self::Associated)
+    }
+}
+
 /// A location observation received from the platform.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LocationSample {
