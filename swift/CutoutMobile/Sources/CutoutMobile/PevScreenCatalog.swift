@@ -18,6 +18,7 @@ public enum PevNavigationTarget: Equatable, Hashable, Sendable {
     case eucPack
     case vescRide
     case rideMap
+    case lighting
 }
 
 public enum DevicePickerConnectionRoute: String, Equatable, Hashable, Sendable {
@@ -150,6 +151,7 @@ public struct PevDashboardTile: Equatable, Hashable, Sendable, Identifiable {
 
 public enum PevScreenTabID: String, Equatable, Hashable, Sendable {
     case ride
+    case lighting
     case pack
     case map
     case tune
