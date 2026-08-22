@@ -13732,6 +13732,33 @@ mod tests {
     }
 
     #[test]
+    fn euc_settings_capabilities_preserve_validation_state() {
+        let aero = AeroBenignControlSession::new();
+        let falcon = FalconBenignControlSession::new().expect("default profile should construct");
+
+        assert_eq!(
+            aero.settings_capabilities().headlight,
+            MobileSettingWriteSupportDto::Supported
+        );
+        assert_eq!(
+            falcon.settings_capabilities().headlight,
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            aero.settings_capabilities().taillight,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            aero.settings_capabilities().pedal_mode,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            aero.settings_capabilities().acceleration_assist,
+            MobileSettingWriteSupportDto::Unsupported
+        );
+    }
+
+    #[test]
     fn falcon_wrapper_rejects_unsupported_profile() {
         let result = FalconBenignControlSession::with_profile(MobileFalconProfileDto::Unsupported);
 
