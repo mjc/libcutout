@@ -108,6 +108,16 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapCoreStorageFailureRemainsVisibleAfterLocationDelivery() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        driver.onRideMapErrorChange?(.Storage("disk full"))
+
+        XCTAssertEqual(model.rideMapError, .Storage("disk full"))
+    }
+
+    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -2036,6 +2046,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?

@@ -182,6 +182,9 @@ final class CutoutAppModel {
         self.core.onRideMapSnapshotChange = { [weak self] snapshot in
             self?.rideMapSnapshot = snapshot
         }
+        self.core.onRideMapErrorChange = { [weak self] error in
+            self?.rideMapError = error
+        }
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }

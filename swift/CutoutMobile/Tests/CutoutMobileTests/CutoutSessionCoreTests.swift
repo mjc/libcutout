@@ -1,5 +1,6 @@
 import XCTest
 import CutoutMobileFFI
+import CoreLocation
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 #endif
@@ -57,6 +58,23 @@ final class CutoutSessionCoreTests: XCTestCase {
             MonotonicMilliseconds(1_000).elapsed(since: MonotonicMilliseconds(1_333)),
             MonotonicMilliseconds(0)
         )
+    }
+
+    func testInvalidLocationPublishesTheTypedRideMapError() {
+        let core = CutoutSessionCore(clock: MonotonicClock { MonotonicMilliseconds(100) })
+        var observed: MobileRideMapError?
+        core.onRideMapErrorChange = { observed = $0 }
+
+        let invalidLocation = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 91, longitude: 0),
+            altitude: 0,
+            horizontalAccuracy: 1,
+            verticalAccuracy: 1,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [invalidLocation])
+
+        XCTAssertEqual(observed, .InvalidLocationSample("latitude is invalid"))
     }
 
     func testCaptureElapsedTimeUsesTheInjectedMonotonicClockAtExactBoundaries() {

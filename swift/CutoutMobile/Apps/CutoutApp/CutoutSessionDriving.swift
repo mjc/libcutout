@@ -17,6 +17,7 @@ protocol CutoutSessionDriving: AnyObject {
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
     var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? { get set }
     var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? { get set }
+    var onRideMapErrorChange: ((MobileRideMapError) -> Void)? { get set }
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }

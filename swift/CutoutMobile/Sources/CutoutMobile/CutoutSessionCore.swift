@@ -335,6 +335,7 @@ public final class CutoutSessionCore: NSObject {
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
     public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
@@ -1544,6 +1545,11 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
     }
 
+    private func publishRideMapError(_ error: MobileRideMapError) {
+        guard error != .NoActiveRide else { return }
+        publishOnMain { self.onRideMapErrorChange?(error) }
+    }
+
     private func publishProtocolIdentityCandidate() {
         let value = protocolIdentityCandidate
         publishOnMain { self.onProtocolIdentityCandidateChange?(value) }
@@ -2105,14 +2111,18 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     }
 
     private func observeRideMapConnection(platformIdentifier: String) {
-        guard let outcome = try? rideMapState.observeVehicleConnection(
-            platformIdentifier: platformIdentifier,
-            atMs: clock.now().rawValue
-        ) else {
+        do {
+            let outcome = try rideMapState.observeVehicleConnection(
+                platformIdentifier: platformIdentifier,
+                atMs: clock.now().rawValue
+            )
+            if outcome == .associated {
+                publishRideMapSnapshot()
+            }
+        } catch let error as MobileRideMapError {
+            publishRideMapError(error)
+        } catch {
             return
-        }
-        if outcome == .associated {
-            publishRideMapSnapshot()
         }
     }
 
@@ -2579,14 +2589,21 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             courseAccuracyDegrees: location.courseAccuracy
         )
         phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
-        if let decision = try? rideMapState.ingestLocation(
-            monotonicMs: clock.now().rawValue,
-            wallClockUnixMs: sample.wallClockUnixMs,
-            latitudeDegrees: sample.latitudeDegrees,
-            longitudeDegrees: sample.longitudeDegrees,
-            horizontalAccuracyMeters: sample.horizontalAccuracyMeters
-        ) {
+        do {
+            let decision = try rideMapState.ingestLocation(
+                monotonicMs: clock.now().rawValue,
+                wallClockUnixMs: sample.wallClockUnixMs,
+                latitudeDegrees: sample.latitudeDegrees,
+                longitudeDegrees: sample.longitudeDegrees,
+                horizontalAccuracyMeters: sample.horizontalAccuracyMeters
+            )
             publishRideMapDecision(decision)
+        } catch let error as MobileRideMapError {
+            publishRideMapError(error)
+        } catch {
+            // Keep the existing phone-location publication path alive for an
+            // unexpected bridge error; the typed Rust error path above is the
+            // only ride-map failure the app can render.
         }
         publishPhoneLocationSnapshot()
     }
