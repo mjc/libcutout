@@ -353,6 +353,95 @@ pub enum RgbLightingCommand {
     SetBrightness(LightingBrightness),
 }
 
+/// Last requested solid-lighting state eligible for explicit restoration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RgbLightingRequestedState {
+    power: LightingPowerState,
+    color: RgbColor,
+    brightness: LightingBrightness,
+}
+
+impl RgbLightingRequestedState {
+    /// Creates a complete solid-lighting state.
+    #[must_use]
+    pub const fn new(
+        power: LightingPowerState,
+        color: RgbColor,
+        brightness: LightingBrightness,
+    ) -> Self {
+        Self {
+            power,
+            color,
+            brightness,
+        }
+    }
+
+    /// Returns the requested power state.
+    #[must_use]
+    pub const fn power(self) -> LightingPowerState {
+        self.power
+    }
+
+    /// Returns the requested solid color.
+    #[must_use]
+    pub const fn color(self) -> RgbColor {
+        self.color
+    }
+
+    /// Returns the requested brightness.
+    #[must_use]
+    pub const fn brightness(self) -> LightingBrightness {
+        self.brightness
+    }
+}
+
+/// Persisted marker for one selected standalone lighting accessory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RgbLightingRestoreMarker {
+    platform_identifier: String,
+    requested: RgbLightingRequestedState,
+}
+
+impl RgbLightingRestoreMarker {
+    /// Creates a marker after the requested state has been confirmed.
+    #[must_use]
+    pub fn new(platform_identifier: String, requested: RgbLightingRequestedState) -> Self {
+        Self {
+            platform_identifier,
+            requested,
+        }
+    }
+
+    /// Reconciles an opted-in restore with the platform identity `CoreBluetooth` restored.
+    #[must_use]
+    pub fn recover(
+        &self,
+        restored_platform_identifier: &str,
+        restore_enabled: bool,
+    ) -> RgbLightingRestoreDecision {
+        if !restore_enabled {
+            return RgbLightingRestoreDecision::Disabled;
+        }
+        if self.platform_identifier != restored_platform_identifier {
+            return RgbLightingRestoreDecision::DifferentAccessory;
+        }
+        RgbLightingRestoreDecision::Restore(self.requested)
+    }
+}
+
+/// Outcome of reconciling a persisted lighting marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RgbLightingRestoreDecision {
+    /// The user did not opt into restoration.
+    Disabled,
+
+    /// The restored platform identity is not the remembered accessory.
+    DifferentAccessory,
+
+    /// The remembered state may be restored to the reverified accessory.
+    Restore(RgbLightingRequestedState),
+}
+
 /// Stable command discriminator, excluding command payload values.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum CommandKind {
@@ -7886,6 +7975,31 @@ mod tests {
         assert_eq!(
             crate::RgbLightingCommand::SetBrightness(brightness),
             crate::RgbLightingCommand::SetBrightness(brightness)
+        );
+    }
+
+    #[test]
+    fn lighting_restore_requires_opt_in_and_same_platform_identity() {
+        let brightness =
+            crate::LightingBrightness::try_from_percent(42).expect("brightness is in range");
+        let requested = crate::RgbLightingRequestedState::new(
+            crate::LightingPowerState::On,
+            crate::RgbColor::new(1, 2, 3),
+            brightness,
+        );
+        let marker = crate::RgbLightingRestoreMarker::new("melk-1".to_owned(), requested);
+
+        assert_eq!(
+            marker.recover("melk-1", false),
+            crate::RgbLightingRestoreDecision::Disabled
+        );
+        assert_eq!(
+            marker.recover("melk-2", true),
+            crate::RgbLightingRestoreDecision::DifferentAccessory
+        );
+        assert_eq!(
+            marker.recover("melk-1", true),
+            crate::RgbLightingRestoreDecision::Restore(requested)
         );
     }
 
