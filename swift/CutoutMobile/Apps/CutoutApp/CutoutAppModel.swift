@@ -1323,26 +1323,29 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setHeadlight(_ enabled: Bool) -> Bool {
+    func setHeadlight(_ enabled: Bool) -> LightCommandResult {
         let state = enabled ? LightState.on : .off
         guard core.electricUnicycleModel != nil else {
             headlightState = .failed(headlightState.lightState)
-            return false
+            return .failed
         }
         return applyHeadlightSubmission(core.setLights(state), for: state)
     }
 
-    private func applyHeadlightSubmission(_ result: LightCommandResult, for state: LightState) -> Bool {
+    private func applyHeadlightSubmission(
+        _ result: LightCommandResult,
+        for state: LightState
+    ) -> LightCommandResult {
         switch result {
         case .accepted:
             recordHeadlightCommand(state, sentAt: core.now())
-            return true
-        case .refused:
+            return .accepted
+        case let .refused(reason):
             headlightState = .refused(headlightState.lightState)
-            return false
+            return .refused(reason)
         case .failed:
             headlightState = .failed(headlightState.lightState)
-            return false
+            return .failed
         }
     }
 

@@ -103,7 +103,7 @@ final class CutoutAppModelTests: XCTestCase {
             model.headlightStatusText,
             "Headlight is unavailable until a supported wheel is connected."
         )
-        XCTAssertFalse(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .failed)
         XCTAssertEqual(model.headlightCommandStatus, .failed)
         XCTAssertEqual(driver.headlightStates, [])
     }
@@ -114,14 +114,14 @@ final class CutoutAppModelTests: XCTestCase {
         driver.electricUnicycleModel = .aero
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .failed)
         XCTAssertFalse(model.headlightOn)
         XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
         XCTAssertEqual(driver.headlightStates, [])
 
         driver.headlightWriteSucceeds = true
 
-        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
         XCTAssertEqual(model.headlightControlTitle, "High beam")
@@ -132,7 +132,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.headlightStates, [.on])
 
         driver.headlightWriteSucceeds = false
-        XCTAssertFalse(model.setHeadlight(false))
+        XCTAssertEqual(model.setHeadlight(false), .failed)
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .failed)
     }
@@ -144,7 +144,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertFalse(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
         XCTAssertEqual(model.headlightControlTitle, "Headlight")
@@ -168,7 +168,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
 
-        XCTAssertTrue(model.setHeadlight(false))
+        XCTAssertEqual(model.setHeadlight(false), .accepted)
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
 
@@ -189,7 +189,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
 
         driver.onSettingsReadbackChange?(
@@ -208,7 +208,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
 
         driver.nowValue = 2_000
@@ -226,7 +226,7 @@ final class CutoutAppModelTests: XCTestCase {
         driver.headlightCommandResult = .refused(.unsupportedCommand)
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .refused(.unsupportedCommand))
         XCTAssertEqual(model.headlightCommandStatus, .refused)
         XCTAssertEqual(model.headlightStatusText, "Wheel refused the headlight command.")
         XCTAssertFalse(model.headlightOn)
@@ -251,11 +251,11 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         model.start()
 
-        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         model.disconnectTransport()
         XCTAssertFalse(model.headlightOn)
 
-        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
         XCTAssertFalse(model.headlightOn)
     }
