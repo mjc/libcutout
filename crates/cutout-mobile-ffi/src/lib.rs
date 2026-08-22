@@ -3243,10 +3243,7 @@ impl MobileRideMapState {
         if !current.pause() {
             return Err(MobileRideMapError::InvalidTransition);
         }
-        if let Err(error) = self.persist_metadata(current) {
-            *current = previous;
-            return Err(error);
-        }
+        self.persist_metadata_or_restore(current, previous)?;
         Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
     }
 
@@ -3262,10 +3259,7 @@ impl MobileRideMapState {
         if !current.resume() {
             return Err(MobileRideMapError::InvalidTransition);
         }
-        if let Err(error) = self.persist_metadata(current) {
-            *current = previous;
-            return Err(error);
-        }
+        self.persist_metadata_or_restore(current, previous)?;
         Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
     }
 
@@ -3281,10 +3275,7 @@ impl MobileRideMapState {
         if !current.stop() {
             return Err(MobileRideMapError::InvalidTransition);
         }
-        if let Err(error) = self.persist_metadata(current) {
-            *current = previous;
-            return Err(error);
-        }
+        self.persist_metadata_or_restore(current, previous)?;
         Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
     }
 
@@ -3301,10 +3292,7 @@ impl MobileRideMapState {
         if !current.save() {
             return Err(MobileRideMapError::InvalidTransition);
         }
-        if let Err(error) = self.persist_metadata(current) {
-            *current = previous;
-            return Err(error);
-        }
+        self.persist_metadata_or_restore(current, previous)?;
         Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
     }
 
@@ -3391,10 +3379,7 @@ impl MobileRideMapState {
         let outcome =
             current.observe_vehicle_connection(&identity, RideMapMonotonicMilliseconds::new(at_ms));
         if outcome.is_associated() {
-            if let Err(error) = self.persist_metadata(current) {
-                *current = previous;
-                return Err(error);
-            }
+            self.persist_metadata_or_restore(current, previous)?;
         }
         Ok(outcome.into())
     }
@@ -3418,10 +3403,7 @@ impl MobileRideMapState {
         let previous = current.clone();
         let outcome = current.observe_telemetry(RideMapMonotonicMilliseconds::new(at_ms));
         if outcome == RideMapTelemetryObservationOutcome::Observed {
-            if let Err(error) = self.persist_metadata(current) {
-                *current = previous;
-                return Err(error);
-            }
+            self.persist_metadata_or_restore(current, previous)?;
         }
         Ok(outcome.into())
     }
@@ -3537,6 +3519,18 @@ impl MobileRideMapState {
         store
             .save_metadata(recording)
             .map_err(|error| MobileRideMapError::Storage(error.to_string()))
+    }
+
+    fn persist_metadata_or_restore(
+        &self,
+        recording: &mut RideMapRecording,
+        previous: RideMapRecording,
+    ) -> Result<(), MobileRideMapError> {
+        if let Err(error) = self.persist_metadata(recording) {
+            *recording = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     fn persist_point(
