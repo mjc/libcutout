@@ -131,6 +131,26 @@ struct RideMapRouteView: View {
 
     private var historyContent: some View {
         VStack(spacing: 0) {
+            if model.isRideMapRecording {
+                HStack(spacing: 12) {
+                    Label(
+                        localizedAppText("ride_map.history_recording_continues"),
+                        systemImage: "record.circle.fill"
+                    )
+                    .font(.subheadline)
+                    Spacer()
+                    Button(localizedAppText("ride_map.return_live")) {
+                        mode = .live
+                        recenterOnLatestPoint()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("ride-map.return-live")
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(PevColors.pageBackground)
+                .accessibilityIdentifier("ride-map.history-recording-banner")
+            }
             if model.rideMapHistory.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Image(systemName: "clock.arrow.circlepath")

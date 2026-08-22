@@ -118,6 +118,20 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapRecordingProjectionStaysActiveWhileHistoryIsSelected() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.pauseRideMap())
+        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertFalse(model.isRideMapRecording)
+    }
+
+    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

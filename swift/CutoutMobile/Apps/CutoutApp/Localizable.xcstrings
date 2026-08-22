@@ -709,6 +709,10 @@
       "comment" : "History route warning when the bounded UI point preview is incomplete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }
     },
+    "ride_map.history_recording_continues" : {
+      "comment" : "Persistent history-mode status while the Rust-owned ride recording continues in the background.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording continues" } } }
+    },
     "ride_map.pause" : {
       "comment" : "Ride-map control that pauses the active recording.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pause" } } }
@@ -728,6 +732,10 @@
     "ride_map.resume" : {
       "comment" : "Ride-map control that resumes a paused recording.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Resume" } } }
+    },
+    "ride_map.return_live" : {
+      "comment" : "History-mode action that returns to the active live ride map.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Return to Live" } } }
     },
     "ride_map.save" : {
       "comment" : "Ride-map control that finalizes a stopped ride as saved.",

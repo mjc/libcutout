@@ -60,6 +60,15 @@ final class CutoutAppModel {
         core.now()
     }
 
+    var isRideMapRecording: Bool {
+        switch rideMapSnapshot?.state {
+        case .recording, .paused:
+            true
+        case .stopped, .saved, .discarded, nil:
+            false
+        }
+    }
+
     var rideState: EucRideScreenState {
         EucRideScreenState(phase: phase, displayState: displayState)
     }
