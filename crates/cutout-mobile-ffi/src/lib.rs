@@ -24,7 +24,8 @@ use cutout_core::{
     ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
     ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
-    ControlRefusalReasonDto, CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
+    ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto, CutoutSessionState,
+    DeviceCommandDto, DiscoveryCandidateSnapshot,
     DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
@@ -34,7 +35,8 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
+    LightState as CoreLightState, LightStateDto, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    NotificationByteLenDto,
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
@@ -50,14 +52,15 @@ use cutout_core::{
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
-    SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
-    Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
-    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
-    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
-    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
+    SessionOutputDto, SettingState as CoreSettingState,
+    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
+    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
+    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
+    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
     WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
@@ -73,8 +76,6 @@ use cutout_protocols::{
     identify_known_model, new_nosfet_aero_benign_control_session,
     try_new_begode_falcon_benign_control_session,
 };
-use cutout_ride_maps as ride_maps;
-use libcutout_persistence as persistence;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
@@ -2067,6 +2068,86 @@ impl MobileEucSettingsCapabilitiesDto {
     }
 }
 
+/// Lifecycle phase for a typed mobile setting write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingStateKindDto {
+    /// No current value or write request is known.
+    Unknown,
+
+    /// A current value is available without a pending write.
+    Current,
+
+    /// A write was accepted and awaits matching readback.
+    Pending,
+
+    /// Readback confirmed the requested value.
+    Confirmed,
+
+    /// The write was refused before transport.
+    Refused,
+
+    /// No matching readback arrived before timeout.
+    TimedOut,
+
+    /// Transport or session failure prevented completion.
+    Failed,
+}
+
+/// Provenance for the current value in a mobile setting state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingValueSourceDto {
+    /// Value was observed in live device telemetry or readback.
+    LiveReadback,
+
+    /// Value came from a capture or replay fixture.
+    CaptureReplay,
+
+    /// Value was supplied by a user request and is not device-confirmed.
+    UserRequest,
+
+    /// Value provenance is unknown.
+    Unknown,
+}
+
+/// Typed headlight state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileLightSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current light value, when known.
+    pub current: Option<MobileLightStateDto>,
+
+    /// Requested light value, when a write is pending or terminal.
+    pub requested: Option<MobileLightStateDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileLightSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
@@ -2544,6 +2625,182 @@ pub struct MobileSessionStepResultDto {
 
     /// Stable error from the step, if any.
     pub error: Option<MobileSessionStepErrorDto>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MobileLightSettingTracker {
+    state: CoreSettingState<CoreLightState>,
+}
+
+impl Default for MobileLightSettingTracker {
+    fn default() -> Self {
+        Self {
+            state: CoreSettingState::unknown(),
+        }
+    }
+}
+
+impl MobileLightSettingTracker {
+    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+        if input.kind == MobileSessionInputKindDto::LinkDown {
+            self.state = CoreSettingState::unknown();
+        }
+
+        if let Some(MobileCommandDto::SetLights(requested)) = input.command {
+            match result.error.as_ref() {
+                None => self
+                    .state
+                    .submit(requested.into(), input.monotonic_ms.into_core()),
+                Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+                    if let Some(reason) = error.reason {
+                        self.state.refuse(reason.into());
+                    } else {
+                        self.state.fail();
+                    }
+                }
+                Some(_) => self.state.fail(),
+            }
+        }
+
+        for output in &result.outputs {
+            if let Some(light_state) = output
+                .settings_readback
+                .as_ref()
+                .and_then(|readback| readback.euc_garage.light_state)
+            {
+                let _ = self.state.observe(
+                    light_state.into(),
+                    CoreSettingValueSource::LiveReadback,
+                    input.monotonic_ms.into_core(),
+                );
+            }
+        }
+    }
+
+    fn snapshot(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.state)
+    }
+}
+
+fn mobile_light_setting_state(
+    state: CoreSettingState<CoreLightState>,
+) -> MobileLightSettingStateDto {
+    let mut snapshot = MobileLightSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+impl From<CoreSettingValueSource> for MobileSettingValueSourceDto {
+    fn from(source: CoreSettingValueSource) -> Self {
+        match source {
+            CoreSettingValueSource::LiveReadback => Self::LiveReadback,
+            CoreSettingValueSource::CaptureReplay => Self::CaptureReplay,
+            CoreSettingValueSource::UserRequest => Self::UserRequest,
+            CoreSettingValueSource::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<MobileLightStateDto> for CoreLightState {
+    fn from(state: MobileLightStateDto) -> Self {
+        match state {
+            MobileLightStateDto::Off => Self::Off,
+            MobileLightStateDto::On => Self::On,
+        }
+    }
+}
+
+impl From<CoreLightState> for MobileLightStateDto {
+    fn from(state: CoreLightState) -> Self {
+        match state {
+            CoreLightState::Off => Self::Off,
+            CoreLightState::On => Self::On,
+        }
+    }
+}
+
+impl From<MobileControlRefusalReasonDto> for CoreControlRefusalReason {
+    fn from(reason: MobileControlRefusalReasonDto) -> Self {
+        match reason {
+            MobileControlRefusalReasonDto::WrongSafetyClass => Self::WrongSafetyClass,
+            MobileControlRefusalReasonDto::MissingArm => Self::MissingArm,
+            MobileControlRefusalReasonDto::WrongModel => Self::WrongModel,
+            MobileControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
+            MobileControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            MobileControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+        }
+    }
+}
+
+impl From<CoreControlRefusalReason> for MobileControlRefusalReasonDto {
+    fn from(reason: CoreControlRefusalReason) -> Self {
+        match reason {
+            CoreControlRefusalReason::WrongSafetyClass => Self::WrongSafetyClass,
+            CoreControlRefusalReason::MissingArm => Self::MissingArm,
+            CoreControlRefusalReason::WrongModel => Self::WrongModel,
+            CoreControlRefusalReason::ExpiredArm => Self::ExpiredArm,
+            CoreControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
+            CoreControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+        }
+    }
 }
 
 /// Fixed-unit duration used by the charging estimator boundary.
@@ -6850,6 +7107,1093 @@ fn map_core_error(error: MobileRideDatabaseError) -> MobileRideMapCoreErrorDto {
     }
 }
 
+||||||| parent of c8ad8cf8 (Expose Rust-owned light state through mobile FFI)
+/// Source of a Rust-owned canonical ride.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSourceDto {
+    /// A ride recorded from live location updates.
+    Live,
+    /// A ride reconstructed from a PEVCAP artifact.
+    PevcapImport,
+}
+
+impl From<MobileRideSourceDto> for persistence::RideSource {
+    fn from(source: MobileRideSourceDto) -> Self {
+        match source {
+            MobileRideSourceDto::Live => Self::Live,
+            MobileRideSourceDto::PevcapImport => Self::PevcapImport,
+        }
+    }
+}
+
+impl From<persistence::RideSource> for MobileRideSourceDto {
+    fn from(source: persistence::RideSource) -> Self {
+        match source {
+            persistence::RideSource::Live => Self::Live,
+            persistence::RideSource::PevcapImport => Self::PevcapImport,
+        }
+    }
+}
+
+/// Lifecycle state of a canonical ride.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideLifecycleStateDto {
+    /// Ride is being assembled.
+    Draft,
+    /// Ride is receiving samples.
+    Active,
+    /// Ride is temporarily paused.
+    Paused,
+    /// Ride has stopped but is not yet saved.
+    Stopped,
+    /// Ride ended because transport or capture was interrupted.
+    Interrupted,
+    /// Ride was discarded.
+    Discarded,
+    /// Ride was durably saved.
+    Saved,
+    /// Ride was imported from an artifact.
+    Imported,
+}
+
+impl From<ride_maps::RideLifecycleState> for MobileRideLifecycleStateDto {
+    fn from(state: ride_maps::RideLifecycleState) -> Self {
+        match state {
+            ride_maps::RideLifecycleState::Draft => Self::Draft,
+            ride_maps::RideLifecycleState::Active => Self::Active,
+            ride_maps::RideLifecycleState::Paused => Self::Paused,
+            ride_maps::RideLifecycleState::Stopped => Self::Stopped,
+            ride_maps::RideLifecycleState::Interrupted => Self::Interrupted,
+            ride_maps::RideLifecycleState::Discarded => Self::Discarded,
+            ride_maps::RideLifecycleState::Saved => Self::Saved,
+            ride_maps::RideLifecycleState::Imported => Self::Imported,
+        }
+    }
+}
+
+/// Lifecycle event applied to a canonical ride.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideEventDto {
+    /// Start a draft ride.
+    Start,
+    /// Pause an active ride.
+    Pause,
+    /// Resume a paused ride.
+    Resume,
+    /// Stop an active or paused ride.
+    Stop,
+    /// Mark a ride interrupted.
+    Interrupt,
+    /// Discard a ride.
+    Discard,
+    /// Save a stopped or interrupted ride.
+    Save,
+    /// Mark an imported ride.
+    Import,
+}
+
+impl From<MobileRideEventDto> for ride_maps::RideEvent {
+    fn from(event: MobileRideEventDto) -> Self {
+        match event {
+            MobileRideEventDto::Start => Self::Start,
+            MobileRideEventDto::Pause => Self::Pause,
+            MobileRideEventDto::Resume => Self::Resume,
+            MobileRideEventDto::Stop => Self::Stop,
+            MobileRideEventDto::Interrupt => Self::Interrupt,
+            MobileRideEventDto::Discard => Self::Discard,
+            MobileRideEventDto::Save => Self::Save,
+            MobileRideEventDto::Import => Self::Import,
+        }
+    }
+}
+
+/// Location sample accepted by the Rust-owned ride database.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideLocationDto {
+    /// Latitude in WGS84 decimal degrees.
+    pub latitude_degrees: f64,
+    /// Longitude in WGS84 decimal degrees.
+    pub longitude_degrees: f64,
+    /// Monotonic sample timestamp in milliseconds.
+    pub monotonic_milliseconds: u64,
+    /// Wall-clock Unix timestamp in milliseconds.
+    pub wall_clock_unix_milliseconds: u64,
+    /// Horizontal accuracy in millimetres, when provided.
+    pub horizontal_accuracy_millimetres: Option<u32>,
+    /// Origin of this sample.
+    pub source: MobileRideSourceDto,
+}
+
+/// Stable ride identifier returned by Rust.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideIdDto {
+    /// UUID string created by Rust.
+    pub value: String,
+}
+
+/// Result of admitting a location sample.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideLocationAdmissionDto {
+    /// Sample was durably appended.
+    Accepted,
+    /// Sample repeated the latest durable sample.
+    Duplicate,
+    /// Sample was older than the latest durable sample.
+    OutOfOrder,
+}
+
+impl From<ride_maps::LocationAdmission> for MobileRideLocationAdmissionDto {
+    fn from(admission: ride_maps::LocationAdmission) -> Self {
+        match admission {
+            ride_maps::LocationAdmission::Accepted => Self::Accepted,
+            ride_maps::LocationAdmission::Duplicate => Self::Duplicate,
+            ride_maps::LocationAdmission::OutOfOrder => Self::OutOfOrder,
+        }
+    }
+}
+
+/// Durable ride summary projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideSummaryDto {
+    /// Number of accepted location samples.
+    pub point_count: u64,
+    /// Accumulated path distance in millimetres.
+    pub distance_millimetres: u64,
+}
+
+/// Stable cursor for a subsequent ride-history page.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideCursorDto {
+    pub created_at_milliseconds: u64,
+    pub ride_id: MobileRideIdDto,
+}
+
+/// One bounded ride-history projection.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideRecordDto {
+    pub id: MobileRideIdDto,
+    pub source: MobileRideSourceDto,
+    pub state: MobileRideLifecycleStateDto,
+    pub created_at_milliseconds: u64,
+    pub updated_at_milliseconds: u64,
+    pub summary: MobileRideSummaryDto,
+}
+
+/// One bounded page of ride-history projections.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRidePageDto {
+    pub rides: Vec<MobileRideRecordDto>,
+    pub next_cursor: Option<MobileRideCursorDto>,
+}
+
+/// Stable cursor for a subsequent route-point page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRoutePointCursorDto {
+    pub sequence: u64,
+}
+
+/// One canonical route point with its stable ride sequence.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRoutePointDto {
+    pub sequence: u64,
+    pub location: MobileRideLocationDto,
+}
+
+/// One bounded page of canonical route points.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRoutePointPageDto {
+    pub points: Vec<MobileRoutePointDto>,
+    pub next_cursor: Option<MobileRoutePointCursorDto>,
+}
+
+/// Bounded startup state produced by Rust after recovering interrupted rides.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBootstrapSnapshotDto {
+    pub recovered_rides: Vec<MobileRideIdDto>,
+}
+
+/// Runtime `SQLite` capabilities observed by Rust.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSqliteCapabilitiesDto {
+    /// `SQLite` major version.
+    pub major: u32,
+    /// `SQLite` minor version.
+    pub minor: u32,
+    /// `SQLite` patch version.
+    pub patch: u32,
+    /// Whether R*Tree is compiled in.
+    pub has_rtree: bool,
+    /// Whether FTS5 is compiled in.
+    pub has_fts5: bool,
+}
+
+/// Supported PEVCAP artifact encodings.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapEncodingDto {
+    /// Review-friendly line-delimited JSON.
+    Jsonl,
+    /// Compact binary PEVCAP container.
+    Binary,
+}
+
+impl From<MobilePevcapEncodingDto> for CorePevcapEncoding {
+    fn from(encoding: MobilePevcapEncodingDto) -> Self {
+        match encoding {
+            MobilePevcapEncodingDto::Jsonl => Self::Jsonl,
+            MobilePevcapEncodingDto::Binary => Self::Binary,
+        }
+    }
+}
+
+impl From<CorePevcapEncoding> for MobilePevcapEncodingDto {
+    fn from(encoding: CorePevcapEncoding) -> Self {
+        match encoding {
+            CorePevcapEncoding::Jsonl => Self::Jsonl,
+            CorePevcapEncoding::Binary => Self::Binary,
+        }
+    }
+}
+
+/// Durable outcome selected by PEVCAP preflight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapImportOutcomeDto {
+    /// Confirmation produces a canonical ride and a managed capture.
+    RideAndCapture,
+    /// Confirmation produces only a managed capture because no route locations exist.
+    CaptureOnly,
+}
+
+impl From<persistence::PevcapImportOutcome> for MobilePevcapImportOutcomeDto {
+    fn from(outcome: persistence::PevcapImportOutcome) -> Self {
+        match outcome {
+            persistence::PevcapImportOutcome::RideAndCapture => Self::RideAndCapture,
+            persistence::PevcapImportOutcome::CaptureOnly => Self::CaptureOnly,
+        }
+    }
+}
+
+/// Non-fatal PEVCAP preflight warning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapImportWarningDto {
+    /// No phone route locations were present.
+    NoRouteLocations,
+}
+
+/// Bounded PEVCAP facts presented before explicit confirmation.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobilePevcapImportPreviewDto {
+    pub source_path: String,
+    pub encoding: MobilePevcapEncodingDto,
+    pub artifact_digest: String,
+    pub artifact_size: u64,
+    pub record_count: u64,
+    pub location_count: u64,
+    pub duration_milliseconds: u64,
+    pub outcome: MobilePevcapImportOutcomeDto,
+    pub warnings: Vec<MobilePevcapImportWarningDto>,
+}
+
+/// Durable result of importing one PEVCAP artifact.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePevcapImportReceiptDto {
+    /// Rust-created ride UUID, when route locations were present.
+    pub ride_id: Option<MobileRideIdDto>,
+    /// SHA-256 digest of the source artifact.
+    pub artifact_digest: String,
+    /// Immutable application-managed artifact path.
+    pub managed_artifact_path: String,
+    /// Whether confirmation produced a ride and capture or only a capture.
+    pub outcome: MobilePevcapImportOutcomeDto,
+    /// Number of transport records read.
+    pub record_count: u64,
+    /// Number of phone locations admitted.
+    pub location_count: u64,
+    /// Whether this artifact digest was already imported.
+    pub duplicate: bool,
+}
+
+/// Coordinate used by map and trail DTOs.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileMapCoordinateDto {
+    /// Latitude in WGS84 decimal degrees.
+    pub latitude_degrees: f64,
+    /// Longitude in WGS84 decimal degrees.
+    pub longitude_degrees: f64,
+}
+
+/// Stable trail identifier returned by Rust.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileTrailIdDto {
+    /// UUID string created by Rust.
+    pub value: String,
+}
+
+/// One indexed trail segment.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileTrailSegmentDto {
+    /// Stable trail identifier owning this segment.
+    pub trail_id: MobileTrailIdDto,
+    /// Segment sequence within its trail.
+    pub sequence: u32,
+    /// Segment start coordinate.
+    pub start: MobileMapCoordinateDto,
+    /// Segment end coordinate.
+    pub end: MobileMapCoordinateDto,
+}
+
+/// Validated WGS84 viewport bounds. A minimum longitude greater than the maximum crosses the
+/// antimeridian.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileGeoBoundsDto {
+    pub minimum_latitude_degrees: f64,
+    pub maximum_latitude_degrees: f64,
+    pub minimum_longitude_degrees: f64,
+    pub maximum_longitude_degrees: f64,
+}
+
+/// Stable cursor for a subsequent trail-segment page.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileTrailSegmentCursorDto {
+    pub trail_id: MobileTrailIdDto,
+    pub sequence: u32,
+}
+
+/// One bounded page of indexed trail segments.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileTrailSegmentPageDto {
+    pub segments: Vec<MobileTrailSegmentDto>,
+    pub next_cursor: Option<MobileTrailSegmentCursorDto>,
+}
+
+/// One indexed charging/food map point.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileMapPointDto {
+    /// Stable point identifier.
+    pub id: u64,
+    /// User-visible point name.
+    pub name: String,
+    /// Point coordinate.
+    pub coordinate: MobileMapCoordinateDto,
+}
+
+/// Stable cursor for a subsequent map-point page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMapPointCursorDto {
+    pub id: u64,
+}
+
+/// One bounded page of indexed map points.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileMapPointPageDto {
+    pub points: Vec<MobileMapPointDto>,
+    pub next_cursor: Option<MobileMapPointCursorDto>,
+}
+
+/// Stable error categories for the Rust-owned ride database boundary.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRideDatabaseError {
+    /// The database path cannot be opened.
+    #[error("invalid database path")]
+    InvalidPath,
+    /// A different database is already owned by this process.
+    #[error("a different database is already open")]
+    AlreadyOpenForDifferentPath,
+    /// A supplied ride or trail identifier is not a Rust-created UUID.
+    #[error("invalid ride or trail identifier")]
+    InvalidIdentifier,
+    /// The database schema is newer than this build supports.
+    #[error("unsupported database schema")]
+    UnsupportedSchemaVersion,
+    /// The file is `SQLite` but belongs to another application.
+    #[error("invalid Cutout database identity")]
+    InvalidDatabaseIdentity,
+    /// The database failed `SQLite`'s integrity check.
+    #[error("database integrity check failed")]
+    IntegrityCheckFailed,
+    /// A growing query was not bounded by a supported limit.
+    #[error("invalid query limit")]
+    InvalidQueryLimit,
+    /// Geographic query bounds were non-finite, out of range, or reversed.
+    #[error("invalid geographic bounds")]
+    InvalidGeographicBounds,
+    /// PEVCAP preflight rejected an artifact that exceeded a hard resource limit.
+    #[error("PEVCAP resource limit exceeded")]
+    PevcapLimitExceeded,
+    /// The PEVCAP source changed after the preview was presented.
+    #[error("PEVCAP source changed after preflight")]
+    PevcapPreviewChanged,
+    /// Another confirmation for the same artifact is already active.
+    #[error("PEVCAP import is already in progress")]
+    PevcapImportInProgress,
+    /// A coordinate failed WGS84 validation.
+    #[error("invalid coordinate")]
+    InvalidCoordinate,
+    /// The requested ride does not exist.
+    #[error("ride was not found")]
+    NotFound,
+    /// The requested lifecycle transition is invalid.
+    #[error("invalid ride transition")]
+    InvalidTransition,
+    /// The ride is not accepting location samples.
+    #[error("ride is not accepting samples")]
+    InvalidRideState,
+    /// The bounded Rust worker queue is full.
+    #[error("ride database queue is full")]
+    QueueFull,
+    /// The Rust worker is no longer available.
+    #[error("ride database worker stopped")]
+    WorkerStopped,
+    /// An internal storage failure occurred.
+    #[error("ride database storage failure")]
+    StorageFailure,
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
+    match error {
+        persistence::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
+        persistence::StorageError::AlreadyOpenForDifferentPath => {
+            MobileRideDatabaseError::AlreadyOpenForDifferentPath
+        }
+        persistence::StorageError::UnsupportedSchemaVersion(_) => {
+            MobileRideDatabaseError::UnsupportedSchemaVersion
+        }
+        persistence::StorageError::InvalidDatabaseIdentity => {
+            MobileRideDatabaseError::InvalidDatabaseIdentity
+        }
+        persistence::StorageError::IntegrityCheckFailed(_) => {
+            MobileRideDatabaseError::IntegrityCheckFailed
+        }
+        persistence::StorageError::InvalidQueryLimit(_) => {
+            MobileRideDatabaseError::InvalidQueryLimit
+        }
+        persistence::StorageError::InvalidGeographicBounds => {
+            MobileRideDatabaseError::InvalidGeographicBounds
+        }
+        persistence::StorageError::PevcapLimitExceeded { .. } => {
+            MobileRideDatabaseError::PevcapLimitExceeded
+        }
+        persistence::StorageError::PevcapPreviewChanged => {
+            MobileRideDatabaseError::PevcapPreviewChanged
+        }
+        persistence::StorageError::PevcapImportInProgress => {
+            MobileRideDatabaseError::PevcapImportInProgress
+        }
+        persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
+        persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
+        persistence::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
+        persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
+        persistence::StorageError::WorkerStopped
+        | persistence::StorageError::ResponseDropped
+        | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
+        persistence::StorageError::Sqlite(_)
+        | persistence::StorageError::Io(_)
+        | persistence::StorageError::InvalidStoredValue { .. }
+        | persistence::StorageError::InvalidSqliteVersion(_)
+        | persistence::StorageError::PevcapImport(_)
+        | persistence::StorageError::SystemClock(_)
+        | persistence::StorageError::SpatialCapabilityUnavailable
+        | persistence::StorageError::SpatialSchemaInitialization(_) => {
+            MobileRideDatabaseError::StorageFailure
+        }
+    }
+}
+
+fn parse_mobile_ride_id(
+    id: &MobileRideIdDto,
+) -> Result<persistence::RideId, MobileRideDatabaseError> {
+    Uuid::parse_str(&id.value)
+        .map(persistence::RideId::from_uuid)
+        .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+}
+
+fn parse_mobile_trail_id(
+    id: &MobileTrailIdDto,
+) -> Result<persistence::TrailId, MobileRideDatabaseError> {
+    Uuid::parse_str(&id.value)
+        .map(persistence::TrailId::from_uuid)
+        .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+}
+
+fn mobile_map_coordinate(
+    coordinate: MobileMapCoordinateDto,
+) -> Result<ride_maps::Coordinate, MobileRideDatabaseError> {
+    ride_maps::Coordinate::from_degrees(coordinate.latitude_degrees, coordinate.longitude_degrees)
+        .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)
+}
+
+fn mobile_map_coordinate_dto(coordinate: ride_maps::Coordinate) -> MobileMapCoordinateDto {
+    MobileMapCoordinateDto {
+        latitude_degrees: coordinate.latitude_degrees(),
+        longitude_degrees: coordinate.longitude_degrees(),
+    }
+}
+
+fn mobile_geo_bounds(
+    bounds: MobileGeoBoundsDto,
+) -> Result<persistence::GeoBounds, MobileRideDatabaseError> {
+    persistence::GeoBounds::new(
+        bounds.minimum_latitude_degrees,
+        bounds.maximum_latitude_degrees,
+        bounds.minimum_longitude_degrees,
+        bounds.maximum_longitude_degrees,
+    )
+    .map_err(map_ride_database_error)
+}
+
+fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
+    persistence::QueryLimit::new(value).map_err(map_ride_database_error)
+}
+
+fn mobile_pevcap_preview(
+    preview: &persistence::PevcapImportPreview,
+) -> MobilePevcapImportPreviewDto {
+    MobilePevcapImportPreviewDto {
+        source_path: preview.source_path().to_string_lossy().into_owned(),
+        encoding: preview.encoding().into(),
+        artifact_digest: preview.artifact_digest().to_owned(),
+        artifact_size: preview.artifact_size(),
+        record_count: preview.record_count(),
+        location_count: preview.location_count(),
+        duration_milliseconds: preview.duration_milliseconds(),
+        outcome: preview.outcome().into(),
+        warnings: preview
+            .warnings()
+            .iter()
+            .map(|warning| match warning {
+                persistence::PevcapImportWarning::NoRouteLocations => {
+                    MobilePevcapImportWarningDto::NoRouteLocations
+                }
+            })
+            .collect(),
+    }
+}
+
+fn mobile_pevcap_receipt(
+    receipt: persistence::PevcapImportReceipt,
+) -> MobilePevcapImportReceiptDto {
+    MobilePevcapImportReceiptDto {
+        ride_id: receipt.ride_id.map(|ride_id| MobileRideIdDto {
+            value: ride_id.uuid().to_string(),
+        }),
+        artifact_digest: receipt.artifact_digest,
+        managed_artifact_path: receipt.managed_artifact_path.to_string_lossy().into_owned(),
+        outcome: receipt.outcome.into(),
+        record_count: receipt.record_count,
+        location_count: receipt.location_count,
+        duplicate: receipt.duplicate,
+    }
+}
+
+fn mobile_ride_location(
+    location: MobileRideLocationDto,
+) -> Result<ride_maps::LocationSample, MobileRideDatabaseError> {
+    let coordinate =
+        ride_maps::Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
+            .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)?;
+    Ok(ride_maps::LocationSample::new(
+        coordinate,
+        location.monotonic_milliseconds,
+        location.wall_clock_unix_milliseconds,
+        location.horizontal_accuracy_millimetres,
+        match location.source {
+            MobileRideSourceDto::Live => ride_maps::LocationSource::Live,
+            MobileRideSourceDto::PevcapImport => ride_maps::LocationSource::PevcapImport,
+        },
+    ))
+}
+
+fn mobile_ride_location_dto(location: ride_maps::LocationSample) -> MobileRideLocationDto {
+    MobileRideLocationDto {
+        latitude_degrees: location.coordinate().latitude_degrees(),
+        longitude_degrees: location.coordinate().longitude_degrees(),
+        monotonic_milliseconds: location.monotonic_milliseconds(),
+        wall_clock_unix_milliseconds: location.wall_clock_unix_milliseconds(),
+        horizontal_accuracy_millimetres: location.horizontal_accuracy_millimetres(),
+        source: match location.source() {
+            ride_maps::LocationSource::Live => MobileRideSourceDto::Live,
+            ride_maps::LocationSource::PevcapImport => MobileRideSourceDto::PevcapImport,
+        },
+    }
+}
+
+/// Rust-owned synchronous ride database handle for mobile clients.
+#[derive(Debug, uniffi::Object)]
+pub struct RideDatabaseHandle {
+    inner: persistence::RideDatabase,
+}
+
+/// Acquires the process-wide Rust-owned ride database service for `path`.
+///
+/// # Errors
+///
+/// Returns a stable database error when the path cannot be acquired, migrated, or validated.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
+pub fn open_ride_database(
+    path: String,
+) -> Result<Arc<RideDatabaseHandle>, MobileRideDatabaseError> {
+    persistence::RideDatabase::open(Path::new(&path))
+        .map(|inner| Arc::new(RideDatabaseHandle { inner }))
+        .map_err(map_ride_database_error)
+}
+
+#[uniffi::export]
+#[allow(
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::needless_pass_by_value
+)]
+impl RideDatabaseHandle {
+    /// Returns the stable identity of the process-wide database service.
+    pub fn service_id(&self) -> String {
+        self.inner.service_id().to_string()
+    }
+
+    /// Returns the bounded startup recovery state captured while acquiring this service.
+    pub fn bootstrap_snapshot(&self) -> MobileBootstrapSnapshotDto {
+        MobileBootstrapSnapshotDto {
+            recovered_rides: self
+                .inner
+                .bootstrap()
+                .recovered_rides()
+                .iter()
+                .map(|id| MobileRideIdDto {
+                    value: id.uuid().to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Lists one bounded page of ride history in stable newest-first order.
+    pub fn list_rides(
+        &self,
+        cursor: Option<MobileRideCursorDto>,
+        limit: u32,
+    ) -> Result<MobileRidePageDto, MobileRideDatabaseError> {
+        let cursor = cursor
+            .map(|cursor| {
+                parse_mobile_ride_id(&cursor.ride_id).map(|ride_id| {
+                    persistence::RideCursor::new(cursor.created_at_milliseconds, ride_id)
+                })
+            })
+            .transpose()?;
+        let limit = mobile_query_limit(limit)?;
+        self.inner
+            .list_rides(cursor, limit)
+            .map(|page| MobileRidePageDto {
+                rides: page
+                    .rides()
+                    .iter()
+                    .map(|ride| {
+                        let summary = ride.summary();
+                        MobileRideRecordDto {
+                            id: MobileRideIdDto {
+                                value: ride.id().uuid().to_string(),
+                            },
+                            source: ride.source().into(),
+                            state: ride.state().into(),
+                            created_at_milliseconds: ride.created_at_milliseconds(),
+                            updated_at_milliseconds: ride.updated_at_milliseconds(),
+                            summary: MobileRideSummaryDto {
+                                point_count: summary.point_count(),
+                                distance_millimetres: summary.distance_millimetres(),
+                            },
+                        }
+                    })
+                    .collect(),
+                next_cursor: page.next_cursor().map(|cursor| MobileRideCursorDto {
+                    created_at_milliseconds: cursor.created_at_milliseconds(),
+                    ride_id: MobileRideIdDto {
+                        value: cursor.ride_id().uuid().to_string(),
+                    },
+                }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads one bounded page of canonical route points in stable sequence order.
+    pub fn route_points(
+        &self,
+        ride_id: MobileRideIdDto,
+        cursor: Option<MobileRoutePointCursorDto>,
+        limit: u32,
+    ) -> Result<MobileRoutePointPageDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        let cursor = cursor.map(|cursor| persistence::RoutePointCursor::new(cursor.sequence));
+        let limit = mobile_query_limit(limit)?;
+        self.inner
+            .route_points(ride_id, cursor, limit)
+            .map(|page| MobileRoutePointPageDto {
+                points: page
+                    .points()
+                    .iter()
+                    .map(|point| MobileRoutePointDto {
+                        sequence: point.sequence(),
+                        location: mobile_ride_location_dto(point.sample()),
+                    })
+                    .collect(),
+                next_cursor: page.next_cursor().map(|cursor| MobileRoutePointCursorDto {
+                    sequence: cursor.sequence(),
+                }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Returns runtime `SQLite` capabilities.
+    pub fn capabilities(&self) -> Result<MobileSqliteCapabilitiesDto, MobileRideDatabaseError> {
+        self.inner
+            .capabilities()
+            .map(|capabilities| {
+                let version = capabilities.sqlite_version();
+                MobileSqliteCapabilitiesDto {
+                    major: version.major(),
+                    minor: version.minor(),
+                    patch: version.patch(),
+                    has_rtree: capabilities.has_rtree(),
+                    has_fts5: capabilities.has_fts5(),
+                }
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Validates a PEVCAP artifact and returns bounded facts for explicit confirmation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a stable database error when the path, encoding, replay, or limits are invalid.
+    pub fn preflight_pevcap(
+        &self,
+        path: String,
+        encoding: MobilePevcapEncodingDto,
+    ) -> Result<MobilePevcapImportPreviewDto, MobileRideDatabaseError> {
+        self.inner
+            .preflight_pevcap(Path::new(&path), encoding.into())
+            .map(|preview| mobile_pevcap_preview(&preview))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+    pub fn confirm_pevcap_import(
+        &self,
+        preview: MobilePevcapImportPreviewDto,
+        created_at_milliseconds: u64,
+    ) -> Result<MobilePevcapImportReceiptDto, MobileRideDatabaseError> {
+        let current = self
+            .inner
+            .preflight_pevcap(Path::new(&preview.source_path), preview.encoding.into())
+            .map_err(map_ride_database_error)?;
+        if mobile_pevcap_preview(&current) != preview {
+            return Err(MobileRideDatabaseError::PevcapPreviewChanged);
+        }
+        self.inner
+            .confirm_pevcap_import(&current, created_at_milliseconds)
+            .map(mobile_pevcap_receipt)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Creates an indexed trail definition.
+    pub fn create_trail(&self, name: String) -> Result<MobileTrailIdDto, MobileRideDatabaseError> {
+        self.inner
+            .create_trail(&name)
+            .map(|id| MobileTrailIdDto {
+                value: id.uuid().to_string(),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Appends and spatially indexes one trail segment.
+    pub fn append_trail_segment(
+        &self,
+        trail_id: MobileTrailIdDto,
+        sequence: u32,
+        start: MobileMapCoordinateDto,
+        end: MobileMapCoordinateDto,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let trail_id = parse_mobile_trail_id(&trail_id)?;
+        let start = mobile_map_coordinate(start)?;
+        let end = mobile_map_coordinate(end)?;
+        self.inner
+            .append_trail_segment(trail_id, sequence, start, end)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Queries indexed trail segments intersecting a WGS84 bounding box.
+    pub fn trail_segments_in_bounds(
+        &self,
+        bounds: MobileGeoBoundsDto,
+        cursor: Option<MobileTrailSegmentCursorDto>,
+        limit: u32,
+    ) -> Result<MobileTrailSegmentPageDto, MobileRideDatabaseError> {
+        let bounds = mobile_geo_bounds(bounds)?;
+        let cursor = cursor
+            .map(|cursor| {
+                parse_mobile_trail_id(&cursor.trail_id)
+                    .map(|trail_id| persistence::TrailSegmentCursor::new(trail_id, cursor.sequence))
+            })
+            .transpose()?;
+        let limit = mobile_query_limit(limit)?;
+        self.inner
+            .trail_segments_in_bounds(bounds, cursor, limit)
+            .map(|page| MobileTrailSegmentPageDto {
+                segments: page
+                    .segments()
+                    .iter()
+                    .map(|segment| MobileTrailSegmentDto {
+                        trail_id: MobileTrailIdDto {
+                            value: segment.trail_id.uuid().to_string(),
+                        },
+                        sequence: segment.sequence,
+                        start: mobile_map_coordinate_dto(segment.start),
+                        end: mobile_map_coordinate_dto(segment.end),
+                    })
+                    .collect(),
+                next_cursor: page
+                    .next_cursor()
+                    .map(|cursor| MobileTrailSegmentCursorDto {
+                        trail_id: MobileTrailIdDto {
+                            value: cursor.trail_id().uuid().to_string(),
+                        },
+                        sequence: cursor.sequence(),
+                    }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Stores and spatially indexes one charging/food map point.
+    pub fn create_map_point(
+        &self,
+        name: String,
+        coordinate: MobileMapCoordinateDto,
+    ) -> Result<u64, MobileRideDatabaseError> {
+        let coordinate = mobile_map_coordinate(coordinate)?;
+        self.inner
+            .create_map_point(&name, coordinate)
+            .map(persistence::MapPointId::get)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Queries indexed map points intersecting a WGS84 bounding box.
+    pub fn map_points_in_bounds(
+        &self,
+        bounds: MobileGeoBoundsDto,
+        cursor: Option<MobileMapPointCursorDto>,
+        limit: u32,
+    ) -> Result<MobileMapPointPageDto, MobileRideDatabaseError> {
+        let bounds = mobile_geo_bounds(bounds)?;
+        let cursor = cursor.map(|cursor| {
+            persistence::MapPointCursor::new(persistence::MapPointId::from_u64(cursor.id))
+        });
+        let limit = mobile_query_limit(limit)?;
+        self.inner
+            .map_points_in_bounds(bounds, cursor, limit)
+            .map(|page| MobileMapPointPageDto {
+                points: page
+                    .points()
+                    .iter()
+                    .map(|point| MobileMapPointDto {
+                        id: point.id.get(),
+                        name: point.name.clone(),
+                        coordinate: mobile_map_coordinate_dto(point.coordinate),
+                    })
+                    .collect(),
+                next_cursor: page.next_cursor().map(|cursor| MobileMapPointCursorDto {
+                    id: cursor.id().get(),
+                }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Rebuilds all derived spatial indexes from their canonical tables.
+    pub fn rebuild_spatial_indexes(&self) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .rebuild_spatial_indexes()
+            .map_err(map_ride_database_error)
+    }
+
+    /// Writes a consistent `SQLite` backup to a caller-selected file.
+    pub fn backup_to(&self, path: String) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .backup_to(Path::new(&path))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Exports one ride summary as a versioned JSON document.
+    pub fn export_ride_json(
+        &self,
+        id: MobileRideIdDto,
+        path: String,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        self.inner
+            .export_ride_json(id, Path::new(&path))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads the selected platform-local device identifier.
+    pub fn selected_device(&self) -> Result<Option<String>, MobileRideDatabaseError> {
+        self.inner
+            .selected_device()
+            .map_err(map_ride_database_error)
+    }
+
+    /// Stores the selected platform-local device identifier.
+    pub fn save_selected_device(
+        &self,
+        platform_identifier: String,
+        updated_at_milliseconds: u64,
+    ) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .save_selected_device(&platform_identifier, updated_at_milliseconds)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Clears the selected platform-local device identifier.
+    pub fn clear_selected_device(&self) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .clear_selected_device()
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads a learned voltage-sag model for one device identity.
+    pub fn voltage_sag_model(
+        &self,
+        device_identity: String,
+    ) -> Result<Option<MobileVoltageSagModelDto>, MobileRideDatabaseError> {
+        self.inner
+            .voltage_sag_model(&device_identity)
+            .map(|model| {
+                model.map(|model| MobileVoltageSagModelDto {
+                    schema_version: model.schema_version,
+                    effective_resistance_milliohms: model.effective_resistance_milliohms,
+                    observations: model.observations,
+                    hardware_verified: model.hardware_verified,
+                })
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Stores a learned voltage-sag model for one device identity.
+    pub fn save_voltage_sag_model(
+        &self,
+        device_identity: String,
+        model: MobileVoltageSagModelDto,
+        learned_at_milliseconds: u64,
+    ) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .save_voltage_sag_model(
+                &device_identity,
+                persistence::VoltageSagModelRecord {
+                    schema_version: model.schema_version,
+                    effective_resistance_milliohms: model.effective_resistance_milliohms,
+                    observations: model.observations,
+                    hardware_verified: model.hardware_verified,
+                    last_learned_wall_clock_milliseconds: learned_at_milliseconds,
+                },
+            )
+            .map_err(map_ride_database_error)
+    }
+
+    /// Removes a learned voltage-sag model.
+    pub fn remove_voltage_sag_model(
+        &self,
+        device_identity: String,
+    ) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .remove_voltage_sag_model(&device_identity)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads opaque Rust-owned ride-session marker bytes.
+    pub fn ride_session_marker(&self) -> Result<Option<Vec<u8>>, MobileRideDatabaseError> {
+        self.inner
+            .ride_session_marker()
+            .map_err(map_ride_database_error)
+    }
+
+    /// Stores opaque Rust-owned ride-session marker bytes.
+    pub fn save_ride_session_marker(&self, marker: Vec<u8>) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .save_ride_session_marker(&marker)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Clears opaque Rust-owned ride-session marker bytes.
+    pub fn clear_ride_session_marker(&self) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .clear_ride_session_marker()
+            .map_err(map_ride_database_error)
+    }
+
+    /// Creates a draft ride and returns its Rust-created identifier.
+    pub fn create_ride(
+        &self,
+        source: MobileRideSourceDto,
+        created_at_milliseconds: u64,
+    ) -> Result<MobileRideIdDto, MobileRideDatabaseError> {
+        self.inner
+            .create_ride(source.into(), created_at_milliseconds)
+            .map(|id| MobileRideIdDto {
+                value: id.uuid().to_string(),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Applies a lifecycle event to a Rust-created ride.
+    pub fn transition(
+        &self,
+        id: MobileRideIdDto,
+        event: MobileRideEventDto,
+    ) -> Result<MobileRideLifecycleStateDto, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        self.inner
+            .transition(id, event.into())
+            .map(Into::into)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Appends a location sample and reports duplicate/out-of-order admission.
+    pub fn append_location(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        let location = mobile_ride_location(location)?;
+        self.inner
+            .append_location(id, location)
+            .map(Into::into)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads the durable summary projection for a ride.
+    pub fn summary(
+        &self,
+        id: MobileRideIdDto,
+    ) -> Result<MobileRideSummaryDto, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        self.inner
+            .summary(id)
+            .map(|summary| MobileRideSummaryDto {
+                point_count: summary.point_count(),
+                distance_millimetres: summary.distance_millimetres(),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Stops the process-wide worker and invalidates every handle to it.
+    ///
+    /// This is an explicit process-wide teardown operation. Callers must not use any
+    /// `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
+    /// `WorkerStopped` until the process opens a new database service.
+    pub fn shutdown(&self) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .clone()
+            .shutdown()
+            .map_err(map_ride_database_error)
+    }
+}
+
 #[uniffi::export]
 impl MobilePhoneLocationState {
     #[uniffi::constructor]
@@ -9487,6 +10831,7 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
 #[derive(Debug, uniffi::Object)]
 pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
+    light_state: Mutex<MobileLightSettingTracker>,
 }
 
 #[uniffi::export]
@@ -9497,13 +10842,18 @@ impl AeroBenignControlSession {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
+            light_state: Mutex::new(MobileLightSettingTracker::default()),
         })
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input))
+        let result = mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input));
+        self.lock_light_state()
+            .observe_step(&tracked_input, &result);
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -9529,11 +10879,22 @@ impl AeroBenignControlSession {
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
         MobileEucSettingsCapabilitiesDto::aero()
     }
+
+    /// Returns the Rust-owned headlight write lifecycle state.
+    pub fn headlight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_light_state().snapshot()
+    }
 }
 
 impl AeroBenignControlSession {
     fn lock_inner(&self) -> MutexGuard<'_, ConcreteAeroBenignControlSession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
+        self.light_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -9541,6 +10902,7 @@ impl Default for AeroBenignControlSession {
     fn default() -> Self {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
+            light_state: Mutex::new(MobileLightSettingTracker::default()),
         }
     }
 }
@@ -10802,6 +12164,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
 #[derive(Debug, uniffi::Object)]
 pub struct FalconBenignControlSession {
     inner: Mutex<ConcreteFalconBenignControlSession>,
+    light_state: Mutex<MobileLightSettingTracker>,
 }
 
 #[uniffi::export]
@@ -10831,13 +12194,18 @@ impl FalconBenignControlSession {
             inner: Mutex::new(try_new_begode_falcon_benign_control_session(
                 profile.into(),
             )?),
+            light_state: Mutex::new(MobileLightSettingTracker::default()),
         }))
     }
 
     /// Drives one input and returns owned outputs plus any stable error DTO.
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
+        let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input))
+        let result = MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input));
+        self.lock_light_state()
+            .observe_step(&tracked_input, &result);
+        result
     }
 
     /// Drains owned output DTOs accumulated since the previous drain.
@@ -10863,11 +12231,22 @@ impl FalconBenignControlSession {
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
         MobileEucSettingsCapabilitiesDto::falcon()
     }
+
+    /// Returns the Rust-owned headlight write lifecycle state.
+    pub fn headlight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_light_state().snapshot()
+    }
 }
 
 impl FalconBenignControlSession {
     fn lock_inner(&self) -> MutexGuard<'_, ConcreteFalconBenignControlSession> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
+        self.light_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -13788,6 +15167,14 @@ mod tests {
                 .iter()
                 .all(|output| output.kind != MobileSessionOutputKindDto::Write)
         );
+        assert_eq!(
+            falcon.headlight_state().kind,
+            MobileSettingStateKindDto::Refused
+        );
+        assert_eq!(
+            falcon.headlight_state().refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
     }
 
     #[test]
@@ -14831,7 +16218,6 @@ mod tests {
         let estimate = result.estimate.expect("stable samples produce an estimate");
         assert_eq!(estimate.voltage_sag, None);
     }
-
     #[test]
     fn spatial_pages_round_trip_mobile_cursors_and_antimeridian_bounds() {
         let _guard = RIDE_DATABASE_TEST_LOCK
@@ -16036,5 +17422,114 @@ mod tests {
             .expect("no-active-ride batches are ignored");
 
         assert!(decisions.is_empty());
+    }
+||||||| parent of c8ad8cf8 (Expose Rust-owned light state through mobile FFI)
+
+    #[test]
+    fn spatial_pages_round_trip_mobile_cursors_and_antimeridian_bounds() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-spatial-{}-{}.sqlite3",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("mobile database opens");
+        database
+            .create_map_point(
+                "east".into(),
+                MobileMapCoordinateDto {
+                    latitude_degrees: 0.0,
+                    longitude_degrees: 179.5,
+                },
+            )
+            .expect("east point is stored");
+        database
+            .create_map_point(
+                "west".into(),
+                MobileMapCoordinateDto {
+                    latitude_degrees: 0.0,
+                    longitude_degrees: -179.5,
+                },
+            )
+            .expect("west point is stored");
+
+        let bounds = MobileGeoBoundsDto {
+            minimum_latitude_degrees: -1.0,
+            maximum_latitude_degrees: 1.0,
+            minimum_longitude_degrees: 179.0,
+            maximum_longitude_degrees: -179.0,
+        };
+        let first = database
+            .map_points_in_bounds(bounds, None, 1)
+            .expect("first page is returned");
+        assert_eq!(first.points.len(), 1);
+        let second = database
+            .map_points_in_bounds(bounds, first.next_cursor, 1)
+            .expect("cursor returns the second page");
+        assert_eq!(second.points.len(), 1);
+        assert_ne!(first.points[0].id, second.points[0].id);
+        assert!(second.next_cursor.is_none());
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_pevcap_requires_preview_confirmation_and_reports_capture_only() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let database_path =
+            std::env::temp_dir().join(format!("cutout-mobile-pevcap-{}.sqlite3", Uuid::new_v4()));
+        let artifact_path =
+            std::env::temp_dir().join(format!("cutout-mobile-pevcap-{}.jsonl", Uuid::new_v4()));
+        let header = PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
+        );
+        fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+        let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+
+        let preview = database
+            .preflight_pevcap(
+                artifact_path.to_string_lossy().into_owned(),
+                MobilePevcapEncodingDto::Jsonl,
+            )
+            .unwrap();
+        assert_eq!(preview.outcome, MobilePevcapImportOutcomeDto::CaptureOnly);
+        assert_eq!(
+            preview.warnings,
+            vec![MobilePevcapImportWarningDto::NoRouteLocations]
+        );
+        let receipt = database
+            .confirm_pevcap_import(preview, 1_700_000_000_000)
+            .unwrap();
+        assert_eq!(receipt.ride_id, None);
+        assert_eq!(receipt.outcome, MobilePevcapImportOutcomeDto::CaptureOnly);
+        let managed_path = PathBuf::from(&receipt.managed_artifact_path);
+        assert!(managed_path.exists());
+
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(&managed_path);
+        let _ = fs::remove_dir(managed_path.parent().unwrap());
+        let _ = fs::remove_file(database_path);
+        let _ = fs::remove_file(artifact_path);
     }
 }
