@@ -573,6 +573,7 @@ dependencies = [
 name = "cutout-ride-maps"
 version = "0.1.0"
 dependencies = [
+ "cutout-core",
  "rusqlite",
  "thiserror 2.0.18",
  "uuid",

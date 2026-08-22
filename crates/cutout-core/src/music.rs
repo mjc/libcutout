@@ -323,7 +323,44 @@ pub struct MusicRideEvent {
     clock_uncertainty_milliseconds: u64,
 }
 
+/// Clock values associated with one ride music transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MusicEventTiming {
+    /// Host monotonic event time.
+    pub monotonic_at: MonotonicTimestamp,
+    /// Wall-clock event time.
+    pub wall_clock_at: WallClockUnixTimestamp,
+    /// Host clock uncertainty in milliseconds.
+    pub clock_uncertainty_milliseconds: u64,
+}
+
 impl MusicRideEvent {
+    /// Creates a validated event read from the ride store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MusicValidationError`] when an identifier or display field is
+    /// invalid.
+    pub fn new(
+        provider: MusicProvider,
+        item_identifier: Option<String>,
+        title: Option<String>,
+        artist: Option<String>,
+        kind: MusicRideEventKind,
+        timing: MusicEventTiming,
+    ) -> Result<Self, MusicValidationError> {
+        Ok(Self {
+            provider,
+            item_identifier: item_identifier.map(MusicIdentifier::new).transpose()?,
+            title: validate_optional_text(title, MusicTextField::Title)?,
+            artist: validate_optional_text(artist, MusicTextField::Artist)?,
+            kind,
+            monotonic_at: timing.monotonic_at,
+            wall_clock_at: timing.wall_clock_at,
+            clock_uncertainty_milliseconds: timing.clock_uncertainty_milliseconds,
+        })
+    }
+
     /// Builds a privacy-filtered event from a provider observation.
     #[must_use]
     pub fn from_snapshot(
@@ -349,16 +386,19 @@ impl MusicRideEvent {
                 item.and_then(|item| item.artist().map(str::to_owned)),
             ),
         };
-        Some(Self {
-            provider: snapshot.provider(),
-            item_identifier,
+        Self::new(
+            snapshot.provider(),
+            item_identifier.map(|identifier| identifier.as_str().to_owned()),
             title,
             artist,
             kind,
-            monotonic_at,
-            wall_clock_at,
-            clock_uncertainty_milliseconds,
-        })
+            MusicEventTiming {
+                monotonic_at,
+                wall_clock_at,
+                clock_uncertainty_milliseconds,
+            },
+        )
+        .ok()
     }
 
     /// Returns the event kind.
@@ -436,6 +476,8 @@ pub enum MusicTimelineOutcome {
     OutOfOrder,
     /// History association is disabled.
     Disabled,
+    /// The ride is no longer accepting music transitions.
+    RideNotOpen,
     /// The bounded event capacity has been reached.
     Full,
 }

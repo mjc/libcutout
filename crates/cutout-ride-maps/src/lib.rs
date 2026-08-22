@@ -11,6 +11,11 @@
 use thiserror::Error;
 use uuid::Uuid;
 
+use cutout_core::{
+    MusicHistoryPolicy, MusicRideEvent, MusicRideEventKind, MusicSnapshot, MusicTimeline,
+    MusicTimelineOutcome, WallClockUnixTimestamp,
+};
+
 mod storage;
 
 pub use storage::{
@@ -497,6 +502,8 @@ pub struct RideRecording {
     associated_vehicle: Option<VehicleIdentity>,
     associated_at: Option<MonotonicMilliseconds>,
     last_telemetry_at: Option<MonotonicMilliseconds>,
+    music_history_policy: MusicHistoryPolicy,
+    music_timeline: MusicTimeline,
 }
 
 pub(crate) struct PersistedRide {
@@ -507,6 +514,8 @@ pub(crate) struct PersistedRide {
     pub(crate) associated_vehicle: Option<VehicleIdentity>,
     pub(crate) associated_at: Option<MonotonicMilliseconds>,
     pub(crate) last_telemetry_at: Option<MonotonicMilliseconds>,
+    pub(crate) music_history_policy: MusicHistoryPolicy,
+    pub(crate) music_events: Vec<MusicRideEvent>,
     pub(crate) points: Vec<RoutePoint>,
 }
 
@@ -537,6 +546,8 @@ impl RideRecording {
             associated_vehicle: None,
             associated_at: None,
             last_telemetry_at: None,
+            music_history_policy: MusicHistoryPolicy::Disabled,
+            music_timeline: MusicTimeline::new(),
         }
     }
 
@@ -549,6 +560,8 @@ impl RideRecording {
             associated_vehicle,
             associated_at,
             last_telemetry_at,
+            music_history_policy,
+            music_events,
             points,
         } = persisted;
         let mut segments = Vec::new();
@@ -613,6 +626,8 @@ impl RideRecording {
             return Err("persisted telemetry requires an associated vehicle".to_owned());
         }
 
+        let music_timeline = restore_music_timeline(music_history_policy, music_events)?;
+
         Ok(Self {
             ride_id,
             state,
@@ -632,6 +647,8 @@ impl RideRecording {
             associated_vehicle,
             associated_at,
             last_telemetry_at,
+            music_history_policy,
+            music_timeline,
         })
     }
 
@@ -687,6 +704,55 @@ impl RideRecording {
     #[must_use]
     pub const fn last_telemetry_at(&self) -> Option<MonotonicMilliseconds> {
         self.last_telemetry_at
+    }
+
+    /// Returns the current ride music-history policy.
+    #[must_use]
+    pub const fn music_history_policy(&self) -> MusicHistoryPolicy {
+        self.music_history_policy
+    }
+
+    /// Returns the bounded Rust-owned music timeline.
+    #[must_use]
+    pub fn music_events(&self) -> &[MusicRideEvent] {
+        self.music_timeline.events()
+    }
+
+    /// Changes music-history policy while the ride is open.
+    pub fn set_music_history_policy(&mut self, policy: MusicHistoryPolicy) -> bool {
+        if !matches!(self.state, RideState::Recording | RideState::Paused) {
+            return false;
+        }
+        self.music_history_policy = policy;
+        if policy == MusicHistoryPolicy::Disabled {
+            self.music_timeline = MusicTimeline::new();
+        }
+        true
+    }
+
+    /// Records one provider transition after applying the ride policy.
+    pub fn record_music_snapshot(
+        &mut self,
+        snapshot: &MusicSnapshot,
+        kind: MusicRideEventKind,
+        monotonic_at: MonotonicMilliseconds,
+        wall_clock_at: u64,
+        clock_uncertainty_milliseconds: u64,
+    ) -> MusicTimelineOutcome {
+        if !matches!(self.state, RideState::Recording | RideState::Paused) {
+            return MusicTimelineOutcome::RideNotOpen;
+        }
+        let Some(event) = MusicRideEvent::from_snapshot(
+            snapshot,
+            kind,
+            cutout_core::MonotonicTimestamp::new(monotonic_at.as_milliseconds()),
+            WallClockUnixTimestamp::new(wall_clock_at),
+            clock_uncertainty_milliseconds,
+            self.music_history_policy,
+        ) else {
+            return MusicTimelineOutcome::Disabled;
+        };
+        self.music_timeline.append(event)
     }
 
     /// Pauses point admission without ending the logical ride.
@@ -925,6 +991,22 @@ impl RideRecording {
     }
 }
 
+fn restore_music_timeline(
+    policy: MusicHistoryPolicy,
+    events: Vec<MusicRideEvent>,
+) -> Result<MusicTimeline, String> {
+    let mut timeline = MusicTimeline::new();
+    for event in events {
+        if timeline.append(event) != MusicTimelineOutcome::Recorded {
+            return Err("persisted music events are not strictly ordered".to_owned());
+        }
+    }
+    if policy == MusicHistoryPolicy::Disabled && !timeline.events().is_empty() {
+        return Err("disabled music history contains persisted events".to_owned());
+    }
+    Ok(timeline)
+}
+
 fn distance_meters(previous: LocationSample, current: LocationSample) -> f64 {
     let lat1 = previous.latitude().as_degrees().to_radians();
     let lat2 = current.latitude().as_degrees().to_radians();
@@ -939,6 +1021,11 @@ fn distance_meters(previous: LocationSample, current: LocationSample) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use cutout_core::{
+        MonotonicTimestamp, MusicCapabilities, MusicCommand, MusicHistoryPolicy, MusicItem,
+        MusicPlaybackPosition, MusicPlaybackState, MusicProvider, MusicRideEventKind,
+        MusicSnapshot, MusicTimelineOutcome,
+    };
     use uuid::Uuid;
 
     use super::{
@@ -957,6 +1044,126 @@ mod tests {
             5.0,
         )
         .expect("fixture is valid")
+    }
+
+    fn music_snapshot() -> MusicSnapshot {
+        MusicSnapshot::new(
+            MusicProvider::AppleMusic,
+            "session",
+            MusicPlaybackState::Playing,
+            Some(
+                MusicItem::new(
+                    "track-1",
+                    Some("Song".to_owned()),
+                    Some("Artist".to_owned()),
+                )
+                .expect("music fixture is valid"),
+            ),
+            MusicPlaybackPosition::new(Some(10), Some(100)).expect("position is valid"),
+            MonotonicTimestamp::new(10),
+            MusicCapabilities::new()
+                .with(MusicCommand::Play)
+                .with(MusicCommand::Pause)
+                .with(MusicCommand::Next)
+                .with(MusicCommand::OpenProvider),
+        )
+        .expect("snapshot is valid")
+    }
+
+    #[test]
+    fn ride_music_history_is_opt_in_and_ordered() {
+        let mut ride = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            None,
+            LocationAdmissionPolicy::default(),
+        );
+        let snapshot = music_snapshot();
+        assert_eq!(
+            ride.record_music_snapshot(
+                &snapshot,
+                MusicRideEventKind::Play,
+                MonotonicMilliseconds::new(200),
+                1_700_000_000_200,
+                3,
+            ),
+            MusicTimelineOutcome::Disabled
+        );
+        assert!(ride.set_music_history_policy(MusicHistoryPolicy::OpaqueItem));
+        assert_eq!(
+            ride.record_music_snapshot(
+                &snapshot,
+                MusicRideEventKind::Play,
+                MonotonicMilliseconds::new(200),
+                1_700_000_000_200,
+                3,
+            ),
+            MusicTimelineOutcome::Recorded
+        );
+        assert_eq!(
+            ride.record_music_snapshot(
+                &snapshot,
+                MusicRideEventKind::Play,
+                MonotonicMilliseconds::new(200),
+                1_700_000_000_200,
+                3,
+            ),
+            MusicTimelineOutcome::Duplicate
+        );
+        assert_eq!(
+            ride.record_music_snapshot(
+                &snapshot,
+                MusicRideEventKind::Pause,
+                MonotonicMilliseconds::new(199),
+                1_700_000_000_199,
+                3,
+            ),
+            MusicTimelineOutcome::OutOfOrder
+        );
+        assert_eq!(ride.music_events().len(), 1);
+        assert_eq!(ride.music_events()[0].title(), None);
+        assert_eq!(
+            ride.music_events()[0]
+                .item_identifier()
+                .map(cutout_core::MusicIdentifier::as_str),
+            Some("track-1")
+        );
+    }
+
+    #[test]
+    fn ride_music_history_round_trips_through_sqlite() {
+        let mut store = RideMapStore::open_in_memory().expect("store opens");
+        let mut ride = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            None,
+            LocationAdmissionPolicy::default(),
+        );
+        assert!(ride.set_music_history_policy(MusicHistoryPolicy::HumanReadable));
+        let snapshot = music_snapshot();
+        assert_eq!(
+            ride.record_music_snapshot(
+                &snapshot,
+                MusicRideEventKind::ItemChanged,
+                MonotonicMilliseconds::new(200),
+                1_700_000_000_200,
+                3,
+            ),
+            MusicTimelineOutcome::Recorded
+        );
+        store.save_recording(&ride).expect("recording saves");
+        let recovered = store
+            .recover_open_recording()
+            .expect("recovery succeeds")
+            .expect("open recording is present");
+        assert_eq!(
+            recovered.music_history_policy(),
+            MusicHistoryPolicy::HumanReadable
+        );
+        assert_eq!(recovered.music_events().len(), 1);
+        assert_eq!(recovered.music_events()[0].title(), Some("Song"));
+        assert_eq!(
+            recovered.music_events()[0].kind(),
+            MusicRideEventKind::ItemChanged
+        );
     }
 
     #[test]
@@ -1335,7 +1542,7 @@ mod tests {
         let version = connection
             .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
             .expect("schema version reads");
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let candidate_column = connection
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('ride_map_ride') WHERE name = 'candidate_vehicle'",

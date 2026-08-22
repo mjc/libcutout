@@ -7,6 +7,11 @@ use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 use uuid::Uuid;
 
+use cutout_core::{
+    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
+    WallClockUnixTimestamp,
+};
+
 use crate::{
     LocationSample, MonotonicMilliseconds, PersistedRide, RideRecording, RideState, RoutePoint,
     RoutePointBatch, RouteTelemetryState, VehicleIdentity,
@@ -26,7 +31,8 @@ CREATE TABLE IF NOT EXISTS ride_map_ride (
     candidate_vehicle TEXT,
     associated_vehicle TEXT,
     associated_at_monotonic_ms INTEGER,
-    last_telemetry_at_monotonic_ms INTEGER
+    last_telemetry_at_monotonic_ms INTEGER,
+    music_history_policy TEXT NOT NULL DEFAULT 'disabled'
 );
 
 CREATE TABLE IF NOT EXISTS ride_map_point (
@@ -45,10 +51,27 @@ CREATE TABLE IF NOT EXISTS ride_map_point (
 CREATE INDEX IF NOT EXISTS ride_map_point_cursor
     ON ride_map_point (ride_id, sequence);
 
-PRAGMA user_version = 4;
+CREATE TABLE IF NOT EXISTS ride_music_event (
+    ride_id TEXT NOT NULL REFERENCES ride_map_ride(ride_id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence > 0),
+    provider TEXT NOT NULL CHECK (provider IN ('apple_music', 'spotify')),
+    item_identifier TEXT,
+    title TEXT,
+    artist TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('play', 'pause', 'skip', 'item_changed', 'provider_disconnected')),
+    monotonic_ms INTEGER NOT NULL,
+    wall_clock_unix_ms INTEGER NOT NULL CHECK (wall_clock_unix_ms > 0),
+    clock_uncertainty_ms INTEGER NOT NULL,
+    PRIMARY KEY (ride_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS ride_music_event_cursor
+    ON ride_music_event (ride_id, sequence);
+
+PRAGMA user_version = 5;
 ";
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 /// A bounded, Rust-owned history summary.
 #[derive(Clone, Debug, PartialEq)]
@@ -137,6 +160,7 @@ struct RideMetadata {
     associated_vehicle: Option<String>,
     associated_at_monotonic_ms: Option<u64>,
     last_telemetry_at_monotonic_ms: Option<u64>,
+    music_history_policy: MusicHistoryPolicy,
 }
 
 impl RideMetadata {
@@ -162,6 +186,7 @@ impl RideMetadata {
             last_telemetry_at_monotonic_ms: recording
                 .last_telemetry_at()
                 .map(MonotonicMilliseconds::as_milliseconds),
+            music_history_policy: recording.music_history_policy(),
         }
     }
 }
@@ -192,6 +217,13 @@ enum StoreCommand {
     AppendPoint {
         metadata: RideMetadata,
         point: RoutePoint,
+        reply: mpsc::Sender<Result<(), RideMapStoreError>>,
+    },
+    MusicEvent {
+        ride_id: Uuid,
+        policy: MusicHistoryPolicy,
+        sequence: u64,
+        event: MusicRideEvent,
         reply: mpsc::Sender<Result<(), RideMapStoreError>>,
     },
     Save {
@@ -306,6 +338,16 @@ impl RideMapStore {
                  PRAGMA user_version = 4;",
             )?;
             transaction.commit()?;
+            version = 4;
+        }
+        if version == 4 {
+            let transaction = self.connection.unchecked_transaction()?;
+            transaction.execute_batch(
+                "ALTER TABLE ride_map_ride
+                     ADD COLUMN music_history_policy TEXT NOT NULL DEFAULT 'disabled';
+                 PRAGMA user_version = 5;",
+            )?;
+            transaction.commit()?;
         }
         self.connection.execute_batch(SCHEMA)?;
         Ok(())
@@ -352,6 +394,11 @@ impl RideMapStore {
             }
         }
         drop(insert_point);
+        transaction.execute(
+            "DELETE FROM ride_music_event WHERE ride_id = ?1",
+            params![metadata.ride_id.to_string()],
+        )?;
+        insert_music_events(&transaction, metadata.ride_id, recording.music_events())?;
         transaction.commit()?;
         Ok(())
     }
@@ -359,6 +406,12 @@ impl RideMapStore {
     fn save_metadata(&mut self, metadata: &RideMetadata) -> Result<(), RideMapStoreError> {
         let transaction = self.connection.transaction()?;
         insert_metadata(&transaction, metadata)?;
+        if metadata.music_history_policy == MusicHistoryPolicy::Disabled {
+            transaction.execute(
+                "DELETE FROM ride_music_event WHERE ride_id = ?1",
+                params![metadata.ride_id.to_string()],
+            )?;
+        }
         transaction.commit()?;
         Ok(())
     }
@@ -389,6 +442,23 @@ impl RideMapStore {
                 point.telemetry_state().storage_value(),
             ],
         )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn save_music_event(
+        &mut self,
+        ride_id: Uuid,
+        policy: MusicHistoryPolicy,
+        sequence: u64,
+        event: &MusicRideEvent,
+    ) -> Result<(), RideMapStoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE ride_map_ride SET music_history_policy = ?2 WHERE ride_id = ?1",
+            params![ride_id.to_string(), policy_name(policy)],
+        )?;
+        insert_music_event(&transaction, ride_id, sequence, event)?;
         transaction.commit()?;
         Ok(())
     }
@@ -484,7 +554,7 @@ impl RideMapStore {
             .query_row(
                 "SELECT ride_id, state, point_count, started_at_monotonic_ms,
                         candidate_vehicle, associated_vehicle, associated_at_monotonic_ms,
-                        last_telemetry_at_monotonic_ms
+                        last_telemetry_at_monotonic_ms, music_history_policy
                  FROM ride_map_ride
                  WHERE state IN ('recording', 'paused', 'stopped')
                  ORDER BY rowid DESC
@@ -500,6 +570,7 @@ impl RideMapStore {
                         row.get::<_, Option<String>>(5)?,
                         row.get::<_, Option<i64>>(6)?,
                         row.get::<_, Option<i64>>(7)?,
+                        row.get::<_, String>(8)?,
                     ))
                 },
             )
@@ -513,6 +584,7 @@ impl RideMapStore {
             associated_vehicle,
             associated_at_monotonic_ms,
             last_telemetry_at_monotonic_ms,
+            music_history_policy,
         )) = metadata
         else {
             return Ok(None);
@@ -545,6 +617,17 @@ impl RideMapStore {
         let last_telemetry_at = last_telemetry_at_monotonic_ms
             .map(|value| decode_monotonic(value, "negative telemetry time"))
             .transpose()?;
+        let music_history_policy = parse_policy(&music_history_policy)?;
+        let mut music_statement = self.connection.prepare(
+            "SELECT provider, item_identifier, title, artist, kind,
+                    monotonic_ms, wall_clock_unix_ms, clock_uncertainty_ms
+             FROM ride_music_event
+             WHERE ride_id = ?1
+             ORDER BY sequence ASC",
+        )?;
+        let music_events = music_statement
+            .query_map(params![ride_id.to_string()], decode_music_event)?
+            .collect::<Result<Vec<_>, _>>()?;
         let recovered = RideRecording::from_persisted(PersistedRide {
             ride_id,
             state,
@@ -553,6 +636,8 @@ impl RideMapStore {
             associated_vehicle,
             associated_at,
             last_telemetry_at,
+            music_history_policy,
+            music_events,
             points,
         })
         .map_err(RideMapStoreError::InvalidPoint)?;
@@ -655,6 +740,29 @@ impl RideMapDatabase {
         self.send(StoreCommand::AppendPoint {
             metadata: RideMetadata::from_recording(recording),
             point,
+            reply,
+        })?;
+        receiver.recv().map_err(worker_closed)?
+    }
+
+    /// Persists one newly accepted music transition for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage or worker-shutdown errors.
+    pub fn save_music_event(
+        &self,
+        ride_id: Uuid,
+        policy: MusicHistoryPolicy,
+        sequence: u64,
+        event: MusicRideEvent,
+    ) -> Result<(), RideMapStoreError> {
+        let (reply, receiver) = mpsc::channel();
+        self.send(StoreCommand::MusicEvent {
+            ride_id,
+            policy,
+            sequence,
+            event,
             reply,
         })?;
         receiver.recv().map_err(worker_closed)?
@@ -777,6 +885,16 @@ fn run_worker(
                 let result = store.append_point(&metadata, point);
                 let _ = reply.send(result);
             }
+            StoreCommand::MusicEvent {
+                ride_id,
+                policy,
+                sequence,
+                event,
+                reply,
+            } => {
+                let result = store.save_music_event(ride_id, policy, sequence, &event);
+                let _ = reply.send(result);
+            }
             StoreCommand::Save { recording, reply } => {
                 let _ = reply.send(store.save_recording(&recording));
             }
@@ -825,8 +943,9 @@ fn insert_metadata(
         "INSERT INTO ride_map_ride
             (ride_id, state, point_count, distance_meters, duration_milliseconds,
              started_at_monotonic_ms, candidate_vehicle, associated_vehicle,
-             associated_at_monotonic_ms, last_telemetry_at_monotonic_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             associated_at_monotonic_ms, last_telemetry_at_monotonic_ms,
+             music_history_policy)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(ride_id) DO UPDATE SET
             state = excluded.state,
             point_count = excluded.point_count,
@@ -836,7 +955,8 @@ fn insert_metadata(
             candidate_vehicle = excluded.candidate_vehicle,
             associated_vehicle = excluded.associated_vehicle,
             associated_at_monotonic_ms = excluded.associated_at_monotonic_ms,
-            last_telemetry_at_monotonic_ms = excluded.last_telemetry_at_monotonic_ms",
+            last_telemetry_at_monotonic_ms = excluded.last_telemetry_at_monotonic_ms,
+            music_history_policy = excluded.music_history_policy",
         params![
             metadata.ride_id.to_string(),
             state_name(metadata.state),
@@ -854,9 +974,147 @@ fn insert_metadata(
                 .last_telemetry_at_monotonic_ms
                 .map(sqlite_i64)
                 .transpose()?,
+            policy_name(metadata.music_history_policy),
         ],
     )?;
     Ok(())
+}
+
+fn insert_music_events(
+    transaction: &rusqlite::Transaction<'_>,
+    ride_id: Uuid,
+    events: &[MusicRideEvent],
+) -> Result<(), RideMapStoreError> {
+    for (index, event) in events.iter().enumerate() {
+        let sequence = u64::try_from(index)
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .ok_or(RideMapStoreError::ValueOutOfRange)?;
+        insert_music_event(transaction, ride_id, sequence, event)?;
+    }
+    Ok(())
+}
+
+fn insert_music_event(
+    transaction: &rusqlite::Transaction<'_>,
+    ride_id: Uuid,
+    sequence: u64,
+    event: &MusicRideEvent,
+) -> Result<(), RideMapStoreError> {
+    transaction.execute(
+        "INSERT INTO ride_music_event
+             (ride_id, sequence, provider, item_identifier, title, artist, kind,
+              monotonic_ms, wall_clock_unix_ms, clock_uncertainty_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(ride_id, sequence) DO UPDATE SET
+             provider = excluded.provider,
+             item_identifier = excluded.item_identifier,
+             title = excluded.title,
+             artist = excluded.artist,
+             kind = excluded.kind,
+             monotonic_ms = excluded.monotonic_ms,
+             wall_clock_unix_ms = excluded.wall_clock_unix_ms,
+             clock_uncertainty_ms = excluded.clock_uncertainty_ms",
+        params![
+            ride_id.to_string(),
+            sqlite_i64(sequence)?,
+            provider_name(event.provider()),
+            event
+                .item_identifier()
+                .map(cutout_core::MusicIdentifier::as_str),
+            event.title(),
+            event.artist(),
+            event_kind_name(event.kind()),
+            sqlite_i64(event.monotonic_at().as_milliseconds())?,
+            sqlite_i64(event.wall_clock_at().as_milliseconds())?,
+            sqlite_i64(event.clock_uncertainty_milliseconds())?,
+        ],
+    )?;
+    Ok(())
+}
+
+fn policy_name(policy: MusicHistoryPolicy) -> &'static str {
+    match policy {
+        MusicHistoryPolicy::Disabled => "disabled",
+        MusicHistoryPolicy::OpaqueItem => "opaque_item",
+        MusicHistoryPolicy::HumanReadable => "human_readable",
+    }
+}
+
+fn parse_policy(value: &str) -> Result<MusicHistoryPolicy, RideMapStoreError> {
+    match value {
+        "disabled" => Ok(MusicHistoryPolicy::Disabled),
+        "opaque_item" => Ok(MusicHistoryPolicy::OpaqueItem),
+        "human_readable" => Ok(MusicHistoryPolicy::HumanReadable),
+        other => Err(RideMapStoreError::InvalidPoint(format!(
+            "invalid music history policy: {other}"
+        ))),
+    }
+}
+
+fn provider_name(provider: MusicProvider) -> &'static str {
+    match provider {
+        MusicProvider::AppleMusic => "apple_music",
+        MusicProvider::Spotify => "spotify",
+    }
+}
+
+fn parse_provider(value: &str) -> Result<MusicProvider, String> {
+    match value {
+        "apple_music" => Ok(MusicProvider::AppleMusic),
+        "spotify" => Ok(MusicProvider::Spotify),
+        other => Err(format!("invalid music provider: {other}")),
+    }
+}
+
+fn event_kind_name(kind: MusicRideEventKind) -> &'static str {
+    match kind {
+        MusicRideEventKind::Play => "play",
+        MusicRideEventKind::Pause => "pause",
+        MusicRideEventKind::Skip => "skip",
+        MusicRideEventKind::ItemChanged => "item_changed",
+        MusicRideEventKind::ProviderDisconnected => "provider_disconnected",
+    }
+}
+
+fn parse_event_kind(value: &str) -> Result<MusicRideEventKind, String> {
+    match value {
+        "play" => Ok(MusicRideEventKind::Play),
+        "pause" => Ok(MusicRideEventKind::Pause),
+        "skip" => Ok(MusicRideEventKind::Skip),
+        "item_changed" => Ok(MusicRideEventKind::ItemChanged),
+        "provider_disconnected" => Ok(MusicRideEventKind::ProviderDisconnected),
+        other => Err(format!("invalid music event kind: {other}")),
+    }
+}
+
+fn decode_music_event(row: &rusqlite::Row<'_>) -> Result<MusicRideEvent, rusqlite::Error> {
+    let provider = row.get::<_, String>(0)?;
+    let item_identifier = row.get::<_, Option<String>>(1)?;
+    let title = row.get::<_, Option<String>>(2)?;
+    let artist = row.get::<_, Option<String>>(3)?;
+    let kind = row.get::<_, String>(4)?;
+    let monotonic_ms = row.get::<_, i64>(5)?;
+    let wall_clock_unix_ms = row.get::<_, i64>(6)?;
+    let clock_uncertainty_ms = row.get::<_, i64>(7)?;
+    let monotonic_ms = u64::try_from(monotonic_ms).map_err(|error| conversion_error(5, error))?;
+    let wall_clock_unix_ms =
+        u64::try_from(wall_clock_unix_ms).map_err(|error| conversion_error(6, error))?;
+    let clock_uncertainty_ms =
+        u64::try_from(clock_uncertainty_ms).map_err(|error| conversion_error(7, error))?;
+    MusicRideEvent::new(
+        parse_provider(&provider).map_err(|error| conversion_error(0, error))?,
+        item_identifier,
+        title,
+        artist,
+        parse_event_kind(&kind).map_err(|error| conversion_error(4, error))?,
+        MusicEventTiming {
+            monotonic_at: cutout_core::MonotonicTimestamp::new(monotonic_ms),
+            wall_clock_at: WallClockUnixTimestamp::new(wall_clock_unix_ms),
+            clock_uncertainty_milliseconds: clock_uncertainty_ms,
+        },
+    )
+    .map_err(|error| conversion_error(1, error))
 }
 
 fn decode_summary(row: &rusqlite::Row<'_>) -> Result<StoredRideSummary, rusqlite::Error> {
