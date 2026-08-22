@@ -267,14 +267,8 @@ final class CutoutAppModel {
                 return
             }
             selectRideMapHistory(first.rideId)
-        } catch let error as MobileRideMapError {
-            rideMapError = error
-            rideMapHistory = []
-            selectedRideMapHistoryID = nil
-            rideMapHistoryPoints = []
-            rideMapHistoryPointsTruncated = false
         } catch {
-            rideMapError = nil
+            rideMapError = error as? MobileRideMapError
             rideMapHistory = []
             selectedRideMapHistoryID = nil
             rideMapHistoryPoints = []
@@ -301,12 +295,8 @@ final class CutoutAppModel {
             rideMapError = nil
             rideMapHistoryPoints = points
             rideMapHistoryPointsTruncated = truncated
-        } catch let error as MobileRideMapError {
-            rideMapError = error
-            rideMapHistoryPoints = []
-            rideMapHistoryPointsTruncated = false
         } catch {
-            rideMapError = nil
+            rideMapError = error as? MobileRideMapError
             rideMapHistoryPoints = []
             rideMapHistoryPointsTruncated = false
         }
@@ -356,10 +346,8 @@ final class CutoutAppModel {
                 rideMapLastDecision = nil
             }
             return true
-        } catch let error as MobileRideMapError {
-            rideMapError = error
-            return false
         } catch {
+            rideMapError = error as? MobileRideMapError
             return false
         }
     }
