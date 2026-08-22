@@ -1,9 +1,10 @@
 //! Rust-owned session-state root and typed state slices.
 
 use crate::{
-    BatteryPageMetadata, BatteryReadback, DeviceEvent, FirmwareInfo, GattFingerprint,
-    MonotonicTimestamp, ParserDiagnostics, ProtocolFamily, RawTelemetryReadback, ReadOnlyResponse,
-    RideSessionLifecycle, SessionOutput, TelemetryDelta, TelemetrySnapshot,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, CameraSessionState, DeviceEvent,
+    FirmwareInfo, GattFingerprint, MonotonicTimestamp, ParserDiagnostics, ProtocolFamily,
+    RawTelemetryReadback, ReadOnlyResponse, RideSessionLifecycle, SessionOutput, TelemetryDelta,
+    TelemetrySnapshot,
 };
 use arrayvec::ArrayVec;
 use bytes::Bytes;
@@ -11,11 +12,11 @@ use bytes::Bytes;
 /// Rust-owned durable state for one `CutOut` mobile/device session.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CutoutSessionState {
-    /// Purpose of the selected device connection across transport attempts.
-    pub device_connection_intent: DeviceConnectionIntent,
-
     /// Logical ride and Live Activity lifecycle state.
     pub ride_session: RideSessionLifecycle,
+
+    /// External ride-camera state, independent of the ride lifecycle.
+    pub camera: CameraSessionState,
 
     /// Device identity state accumulated from discovery, protocol, and model evidence.
     pub identity: DeviceIdentityState,
@@ -28,13 +29,16 @@ pub struct CutoutSessionState {
 }
 
 impl CutoutSessionState {
-    /// Whether unresolved identification should retry the selected connection.
+    /// Returns external ride-camera state without cloning the session root.
     #[must_use]
-    pub const fn should_retry_identification(&self) -> bool {
-        matches!(
-            self.device_connection_intent,
-            DeviceConnectionIntent::Reconnect
-        )
+    pub const fn camera(&self) -> &CameraSessionState {
+        &self.camera
+    }
+
+    /// Returns mutable external ride-camera state to typed camera adapters.
+    #[must_use]
+    pub const fn camera_mut(&mut self) -> &mut CameraSessionState {
+        &mut self.camera
     }
 
     /// Returns the current identity state without cloning the whole root.
@@ -184,13 +188,6 @@ pub struct DeviceIdentityState {
 }
 
 impl DeviceIdentityState {
-    /// Clears response bookkeeping from the previous physical link.
-    pub fn reset_link_probes(&mut self) {
-        self.pending_probe_started_at.fill(None);
-        self.missing_probe_response = None;
-        self.malformed_probe_response = None;
-    }
-
     /// Records an identity probe and the monotonic time at which it was written.
     pub fn observe_probe_write(&mut self, probe: PendingProbe, started_at: MonotonicTimestamp) {
         self.pending_probe_started_at[probe.index()].get_or_insert(started_at);
@@ -535,6 +532,9 @@ pub enum DiscoveryCandidateSupport {
     /// Candidate can be paired through the current mobile route.
     Supported,
 
+    /// Candidate can use a read-only test route but is not confirmed identity.
+    ProvisionalRoute,
+
     /// Candidate should be identified with a read-only probe before routing.
     ProbeRecommended,
 
@@ -578,18 +578,6 @@ pub enum DiscoveryConnectionRoute {
 
     /// VESC/Onewheel read-only route.
     VescOnewheel,
-}
-
-/// Purpose of a selected device connection, independent of the current link.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum DeviceConnectionIntent {
-    /// Identify a device selected for use.
-    #[default]
-    Use,
-    /// Recover a previously selected connection without falling back to capture-only.
-    Reconnect,
-    /// Capture an explicitly selected device without requiring a supported protocol.
-    RecordOnly,
 }
 
 /// Picker/discovery candidate derived from Rust-owned discovery evidence.
@@ -651,7 +639,7 @@ impl DiscoveryCandidateSnapshot {
                 product_category: "VESC Onewheel".to_owned(),
                 evidence: "FFF0 transport hint".to_owned(),
                 detail: "VESC protocol route".to_owned(),
-                support: DiscoveryCandidateSupport::Supported,
+                support: DiscoveryCandidateSupport::ProvisionalRoute,
                 connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
                 electric_unicycle_model: None,
             }),
@@ -685,84 +673,25 @@ pub struct BmsTelemetryState {
     /// Latest BMS or battery readback event.
     pub latest: BatteryReadback,
 
-    /// Latest complete readback for each observed BMS page identity.
-    ///
-    /// Keeping the complete readback preserves decoder-assigned observation identity alongside
-    /// its page payload after later BMS packets replace `latest`.
-    pub pages: Vec<BatteryReadback>,
-
-    /// Timestamped cell-page readbacks retained across complete page cycles.
-    observation_history: Vec<BatteryReadback>,
+    /// Latest page payload for each observed BMS page identity.
+    pub pages: Vec<BatteryPagePayload>,
 }
 
 impl BmsTelemetryState {
-    /// Summarizes retained observations, not a simultaneous scan or physical pack topology.
-    #[must_use]
-    pub fn observation_summary(&self) -> crate::BmsObservationSummary {
-        crate::BmsObservationSummary::from_readbacks(&self.observation_history)
-    }
-
     fn observe_readback(&mut self, readback: &BatteryReadback) {
         self.latest = readback.clone();
-        if readback.availability() != crate::BatteryReadbackAvailability::Available {
-            self.pages.clear();
-            self.observation_history.clear();
-        }
-        self.observe_page(readback);
+        readback
+            .page()
+            .into_iter()
+            .for_each(|page| self.observe_page(page));
     }
 
-    fn observe_page(&mut self, readback: &BatteryReadback) {
-        let Some(page) = readback.page() else {
-            return;
-        };
+    fn observe_page(&mut self, page: &BatteryPagePayload) {
         let identity = page.page();
-        self.pages.retain(|existing| {
-            existing
-                .page()
-                .is_none_or(|existing_page| !same_bms_page(existing_page.page(), identity))
-        });
-        self.pages.push(readback.clone());
-        if matches!(page, crate::BatteryPagePayload::CellVoltage(_))
-            && readback.observed_at().is_some()
-        {
-            let matching_history_count = self
-                .observation_history
-                .iter()
-                .filter(|existing| {
-                    existing
-                        .page()
-                        .is_some_and(|existing| same_bms_page(existing.page(), identity))
-                })
-                .count();
-            if matching_history_count == crate::BMS_OBSERVATION_HISTORY_CYCLES
-                && let Some(position) = self.observation_history.iter().position(|existing| {
-                    existing
-                        .page()
-                        .is_some_and(|existing| same_bms_page(existing.page(), identity))
-                })
-            {
-                self.observation_history.remove(position);
-            }
-            self.observation_history.push(readback.clone());
-            let page_count = self
-                .pages
-                .iter()
-                .filter(|readback| {
-                    matches!(
-                        readback.page(),
-                        Some(crate::BatteryPagePayload::CellVoltage(_))
-                    )
-                })
-                .count();
-            debug_assert!(
-                self.observation_history.len() <= bms_observation_history_max(page_count)
-            );
-        }
+        self.pages
+            .retain(|existing| !same_bms_page(existing.page(), identity));
+        self.pages.push(page.clone());
     }
-}
-
-const fn bms_observation_history_max(cell_page_count: usize) -> usize {
-    cell_page_count.saturating_mul(crate::BMS_OBSERVATION_HISTORY_CYCLES)
 }
 
 const fn same_bms_page(left: BatteryPageMetadata, right: BatteryPageMetadata) -> bool {
@@ -784,6 +713,7 @@ pub struct SessionDiagnosticsState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CameraOnboardRecordingState, CameraPreviewState};
 
     #[test]
     fn bluetooth_service_uuid_normalizes_standard_and_custom_services() {
@@ -838,295 +768,24 @@ mod tests {
         assert_eq!(state.identity().model.as_deref(), Some("Begode Falcon"));
     }
 
-    fn cell_readback(
-        selector: u8,
-        first_observation_index: u16,
-        millivolts: i32,
-        observed_at_ms: u64,
-    ) -> BatteryReadback {
-        BatteryReadback::available(crate::BatteryPagePayload::cell_voltage(
-            BatteryPageMetadata::cell_voltage(
-                crate::ProtocolSelector::new(selector),
-                crate::VerificationStatus::HardwareVerified,
-            ),
-            crate::BatteryInfo::default(),
-            (0..15)
-                .map(|_| crate::Voltage::from_millivolts(millivolts))
-                .collect(),
-        ))
-        .with_first_observation_index(crate::BmsObservationIndex::new(first_observation_index))
-        .with_observed_at(MonotonicTimestamp::new(observed_at_ms))
-    }
-
     #[test]
-    fn bms_telemetry_retains_protocol_assigned_observation_indices() {
+    fn camera_observations_leave_the_ride_lifecycle_unchanged() {
         let mut state = CutoutSessionState::default();
-        for readback in [
-            cell_readback(5, 30, 3_850, 1),
-            cell_readback(1, 0, 3_810, 2),
-            cell_readback(6, 45, 3_860, 3),
-            cell_readback(2, 15, 3_820, 4),
-            cell_readback(2, 15, 3_825, 5),
-            BatteryReadback::available(crate::BatteryPagePayload::temperature(
-                BatteryPageMetadata::temperature(
-                    crate::ProtocolSelector::new(3),
-                    crate::VerificationStatus::HardwareVerified,
-                ),
-                crate::BatteryInfo::default(),
-            )),
-        ] {
-            state.observe_read_only_response(&ReadOnlyResponse::Battery(readback));
-        }
-
-        let mut observed = std::collections::BTreeMap::new();
-        for page in state
-            .telemetry
-            .bms
-            .pages
-            .iter()
-            .filter_map(|readback| crate::BatteryReadbackDto::from(readback.clone()).page)
-        {
-            let Some(first_observation_index) = page.first_observation_index else {
-                continue;
-            };
-            observed.extend(page.cell_voltages.into_iter().enumerate().map(
-                |(local_index, voltage)| {
-                    (
-                        usize::from(first_observation_index) + local_index,
-                        voltage.value,
-                    )
-                },
-            ));
-        }
-
-        assert_eq!(observed.len(), 60);
-        for (indices, millivolts) in [
-            (0..15, 3_810),
-            (15..30, 3_825),
-            (30..45, 3_850),
-            (45..60, 3_860),
-        ] {
-            for index in indices {
-                assert_eq!(observed[&index], millivolts);
-            }
-        }
-        assert!(matches!(
-            state.telemetry.bms.latest.page(),
-            Some(crate::BatteryPagePayload::Temperature(_))
-        ));
-        let summary = state.telemetry.bms.observation_summary();
-        assert_eq!(summary.observed_count, 60);
-        assert_eq!(
-            summary.lowest_index,
-            Some(crate::BmsObservationIndex::new(0))
-        );
-        assert_eq!(
-            summary.highest_index,
-            Some(crate::BmsObservationIndex::new(45))
-        );
-        assert_eq!(
-            summary
-                .voltage_spread
-                .map(crate::VoltageDelta::as_millivolts),
-            Some(50)
-        );
-
-        for observed_at_ms in 6..10 {
-            state.observe_read_only_response(&ReadOnlyResponse::Battery(cell_readback(
-                2,
-                15,
-                3_800,
-                observed_at_ms,
-            )));
-        }
-        let summary = state.telemetry.bms.observation_summary();
-        assert_eq!(summary.observed_count, 60);
-        assert_eq!(
-            summary.lowest_index,
-            Some(crate::BmsObservationIndex::new(15))
-        );
-        assert_eq!(
-            summary
-                .voltage_spread
-                .map(crate::VoltageDelta::as_millivolts),
-            Some(60)
-        );
+        let ride_session = state.ride_session.clone();
 
         state
-            .observe_read_only_response(&ReadOnlyResponse::Battery(BatteryReadback::unavailable()));
-        assert!(state.telemetry.bms.pages.is_empty());
-        assert_eq!(
-            state.telemetry.bms.observation_summary(),
-            crate::BmsObservationSummary::default()
-        );
-    }
+            .camera_mut()
+            .observe_onboard_recording(CameraOnboardRecordingState::Recording);
+        state
+            .camera_mut()
+            .observe_preview(CameraPreviewState::Interrupted);
 
-    #[test]
-    fn bms_observation_summary_handles_empty_zero_ties_overflow_and_large_collections() {
-        fn page(first: u16, values: &[i32]) -> BatteryReadback {
-            BatteryReadback::available(crate::BatteryPagePayload::cell_voltage(
-                BatteryPageMetadata::cell_voltage(
-                    crate::ProtocolSelector::new(1),
-                    crate::VerificationStatus::Unverified,
-                ),
-                crate::BatteryInfo::default(),
-                values
-                    .iter()
-                    .copied()
-                    .map(crate::Voltage::from_millivolts)
-                    .collect(),
-            ))
-            .with_first_observation_index(BmsObservationIndex::new(first))
-            .with_observed_at(MonotonicTimestamp::new(u64::from(first) + 1))
-        }
-        use crate::{BmsObservationIndex, BmsObservationSummary, VoltageDelta};
+        assert_eq!(state.ride_session, ride_session);
         assert_eq!(
-            BmsObservationSummary::from_readbacks(&[page(0, &[]), BatteryReadback::unsupported()]),
-            BmsObservationSummary::default()
+            state.camera().onboard_recording(),
+            CameraOnboardRecordingState::Recording
         );
-        let summary =
-            BmsObservationSummary::from_readbacks(&[page(45, &[0, 4_200]), page(0, &[0, 4_200])]);
-        assert_eq!(summary.observed_count, 4);
-        assert_eq!(summary.lowest_index, Some(BmsObservationIndex::new(0)));
-        assert_eq!(summary.highest_index, Some(BmsObservationIndex::new(1)));
-        assert_eq!(
-            summary.voltage_spread,
-            Some(VoltageDelta::from_millivolts(4_200))
-        );
-        let summary = BmsObservationSummary::from_readbacks(&[page(0, &[i32::MIN, i32::MAX])]);
-        assert_eq!(
-            summary.voltage_spread,
-            Some(VoltageDelta::from_millivolts(i32::MAX))
-        );
-        let summary = BmsObservationSummary::from_readbacks(&[page(0, &[0]), page(0, &[4_000])]);
-        assert_eq!(summary.observed_count, 1);
-        assert_eq!(
-            summary.voltage_spread,
-            Some(VoltageDelta::from_millivolts(0))
-        );
-        for count in [224_u16, 252] {
-            let pages: Vec<_> = (0..count)
-                .rev()
-                .map(|index| page(index, &[4_000 + i32::from(index)]))
-                .collect();
-            let summary = BmsObservationSummary::from_readbacks(&pages);
-            assert_eq!(summary.observed_count, u32::from(count));
-            assert_eq!(summary.lowest_index, Some(BmsObservationIndex::new(0)));
-            assert_eq!(
-                summary.highest_index,
-                Some(BmsObservationIndex::new(count - 1))
-            );
-        }
-    }
-
-    #[test]
-    fn bms_summary_retains_raw_history_and_ignores_three_sample_voltage_pulses() {
-        let mut state = CutoutSessionState::default();
-        state.observe_read_only_response(&ReadOnlyResponse::Battery(
-            cell_readback(1, 0, 4_177, 1)
-                .with_observation_pack(crate::BmsPackIndex::new(0), crate::BmsCellIndex::new(0)),
-        ));
-        state.observe_read_only_response(&ReadOnlyResponse::Battery(
-            cell_readback(2, 15, 4_193, 2)
-                .with_observation_pack(crate::BmsPackIndex::new(0), crate::BmsCellIndex::new(15)),
-        ));
-        for (observed_at_ms, voltage) in (3..6).zip([4_209, 4_209, 4_209]) {
-            state.observe_read_only_response(&ReadOnlyResponse::Battery(
-                cell_readback(2, 15, voltage, observed_at_ms).with_observation_pack(
-                    crate::BmsPackIndex::new(0),
-                    crate::BmsCellIndex::new(15),
-                ),
-            ));
-        }
-
-        let summary = state.telemetry.bms.observation_summary();
-        assert_eq!(
-            summary.voltage_spread,
-            Some(crate::VoltageDelta::from_millivolts(16))
-        );
-        assert_eq!(summary.observations.len(), 30);
-        let pulsing = &summary.observations[15];
-        assert_eq!(pulsing.voltage, crate::Voltage::from_millivolts(4_193));
-        assert_eq!(
-            pulsing.latest_voltage,
-            crate::Voltage::from_millivolts(4_209)
-        );
-        assert_eq!(pulsing.samples.len(), 4);
-        assert_eq!(pulsing.pack_index, Some(crate::BmsPackIndex::new(0)));
-        assert_eq!(
-            pulsing.pack_observation_index,
-            Some(crate::BmsCellIndex::new(15))
-        );
-
-        state.observe_read_only_response(&ReadOnlyResponse::Battery(
-            cell_readback(2, 15, 4_209, 6)
-                .with_observation_pack(crate::BmsPackIndex::new(0), crate::BmsCellIndex::new(15)),
-        ));
-        assert_eq!(
-            state.telemetry.bms.observation_summary().voltage_spread,
-            Some(crate::VoltageDelta::from_millivolts(32))
-        );
-    }
-
-    #[test]
-    fn bms_history_scales_with_the_observed_page_cycle_and_requires_timestamps() {
-        let mut state = CutoutSessionState::default();
-        state.observe_read_only_response(&ReadOnlyResponse::Battery(BatteryReadback::available(
-            crate::BatteryPagePayload::cell_voltage(
-                BatteryPageMetadata::cell_voltage(
-                    crate::ProtocolSelector::new(1),
-                    crate::VerificationStatus::HardwareVerified,
-                ),
-                crate::BatteryInfo::default(),
-                [crate::Voltage::from_millivolts(4_000)]
-                    .into_iter()
-                    .collect(),
-            ),
-        )));
-        assert!(state.telemetry.bms.observation_history.is_empty());
-
-        for cycle in 0_u64..8 {
-            for (selector, first) in [(1, 0), (2, 15), (5, 30), (6, 45)] {
-                state.observe_read_only_response(&ReadOnlyResponse::Battery(cell_readback(
-                    selector,
-                    first,
-                    4_000 + i32::try_from(cycle).unwrap(),
-                    cycle * 4 + u64::from(selector),
-                )));
-            }
-        }
-
-        assert_eq!(state.telemetry.bms.pages.len(), 4);
-        assert_eq!(state.telemetry.bms.observation_history.len(), 4 * 7);
-        let summary = state.telemetry.bms.observation_summary();
-        assert_eq!(summary.observed_count, 60);
-        assert!(
-            summary
-                .observations
-                .iter()
-                .all(|observation| observation.samples.len() == 7)
-        );
-        assert_eq!(
-            summary.observations[0].samples[0].observed_at,
-            MonotonicTimestamp::new(5)
-        );
-
-        for observed_at_ms in 100..120 {
-            state.observe_read_only_response(&ReadOnlyResponse::Battery(cell_readback(
-                2,
-                15,
-                4_010,
-                observed_at_ms,
-            )));
-        }
-        let summary = state.telemetry.bms.observation_summary();
-        assert_eq!(summary.observed_count, 60);
-        assert!(
-            summary
-                .observations
-                .iter()
-                .all(|observation| observation.samples.len() == 7)
-        );
+        assert_eq!(state.camera().preview(), CameraPreviewState::Interrupted);
     }
 
     #[test]
@@ -1140,42 +799,6 @@ mod tests {
             identity.next_probe_expiry(crate::Duration::from_milliseconds(2_000)),
             Some(MonotonicTimestamp::new(3_001))
         );
-    }
-
-    #[test]
-    fn only_reconnect_intent_retries_identification() {
-        let mut state = CutoutSessionState::default();
-        assert!(!state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::Reconnect;
-        assert!(state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::RecordOnly;
-        assert!(!state.should_retry_identification());
-        state.device_connection_intent = DeviceConnectionIntent::Use;
-        assert!(!state.should_retry_identification());
-    }
-
-    #[test]
-    fn link_probe_reset_preserves_confirmed_identity_and_discovery() {
-        let mut state = CutoutSessionState::default();
-        state.observe_discovery(discovery_observation(
-            "peripheral-a",
-            b"NF2557",
-            vec![BluetoothServiceUuid::EUC_SERIAL_FFE0],
-            -42,
-        ));
-        state.select_discovered_platform("peripheral-a".to_owned());
-        state.identity.protocol_family = Some(ProtocolFamily::VeteranLeaperkimNosfet);
-        state.identity.model = Some("Aero".to_owned());
-        let expected_identity = state.identity.clone();
-        state
-            .identity
-            .observe_probe_write(PendingProbe::BegodeName, MonotonicTimestamp::new(42));
-        state.identity.missing_probe_response = Some(PendingProbe::BegodeFirmware);
-        state.identity.malformed_probe_response = Some(PendingProbe::BegodeImu);
-
-        state.identity.reset_link_probes();
-
-        assert_eq!(state.identity, expected_identity);
     }
 
     #[test]
@@ -1317,7 +940,7 @@ mod tests {
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
-            DiscoveryCandidateSupport::Supported
+            DiscoveryCandidateSupport::ProvisionalRoute
         );
         assert_eq!(
             picker_candidates[1].connection_route,
