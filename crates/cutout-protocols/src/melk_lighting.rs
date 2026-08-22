@@ -76,9 +76,9 @@ impl MelkLightingProfile {
     pub fn identify(name: &str, evidence: MelkGattEvidence) -> Option<Self> {
         let name = name.trim();
         let bytes = name.as_bytes();
-        let prefix = bytes.get(..4)?;
-        if !prefix.eq_ignore_ascii_case(b"MELK")
-            || !matches!(bytes.get(4), None | Some(b'-' | b' ' | b'_'))
+        let model = bytes.get(..9)?;
+        if !model.eq_ignore_ascii_case(b"MELK-OC21")
+            || !matches!(bytes.get(9), None | Some(b' ' | b'\t'))
         {
             return None;
         }
@@ -225,6 +225,14 @@ mod tests {
                     ..evidence
                 }
             ),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_melk_models_even_with_matching_gatt() {
+        assert_eq!(
+            MelkLightingProfile::identify("MELK-OC99  6A", MelkGattEvidence::observed()),
             None
         );
     }
