@@ -93,6 +93,17 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHeadlightWriteRefusesWithoutVerifiedEucModel() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.setHeadlight(true))
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
+        XCTAssertEqual(driver.headlightStates, [])
+    }
+
+    @MainActor
     func testAeroHighBeamToggleReportsSentWithoutClaimingConfirmation() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero

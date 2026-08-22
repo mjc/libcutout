@@ -1280,6 +1280,10 @@ final class CutoutAppModel {
     @discardableResult
     func setHeadlight(_ enabled: Bool) -> Bool {
         let state = enabled ? LightState.on : .off
+        guard core.electricUnicycleModel != nil else {
+            headlightState = .failed(headlightState.lightState)
+            return false
+        }
         guard core.setLights(state) else {
             headlightState = .failed(headlightState.lightState)
             return false
