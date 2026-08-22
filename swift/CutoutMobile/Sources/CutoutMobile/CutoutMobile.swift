@@ -6165,6 +6165,15 @@ public enum CoreBluetoothSession: Sendable {
             try session.tick(at: monotonicMilliseconds)
         }
     }
+
+    fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
+        switch self {
+        case .electricUnicycle(let session):
+            try session.tick(at: monotonicMilliseconds)
+        case .vescOnewheel(let session):
+            try session.tick(at: monotonicMilliseconds)
+        }
+    }
 }
 
 public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {

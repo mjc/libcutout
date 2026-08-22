@@ -8,6 +8,7 @@ use crate::{
     FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
+    PedalMode,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
@@ -540,6 +541,39 @@ impl From<SpeedAlarmModeDto> for SpeedAlarmMode {
             SpeedAlarmModeDto::StageOneOnly => Self::StageOneOnly,
             SpeedAlarmModeDto::Off => Self::Off,
             SpeedAlarmModeDto::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+/// UniFFI-ready pedal stiffness mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PedalModeDto {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl From<PedalMode> for PedalModeDto {
+    fn from(mode: PedalMode) -> Self {
+        match mode {
+            PedalMode::Hard => Self::Hard,
+            PedalMode::Medium => Self::Medium,
+            PedalMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<PedalModeDto> for PedalMode {
+    fn from(mode: PedalModeDto) -> Self {
+        match mode {
+            PedalModeDto::Hard => Self::Hard,
+            PedalModeDto::Medium => Self::Medium,
+            PedalModeDto::Soft => Self::Soft,
         }
     }
 }

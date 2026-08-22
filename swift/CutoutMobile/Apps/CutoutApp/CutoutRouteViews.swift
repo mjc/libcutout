@@ -270,6 +270,33 @@ struct EucTuneRouteView: View {
                     }
                 }
 
+                if let settings = model.settingsReadback?.eucGarageSettings {
+                    Section {
+                        EucSettingReadbackRow(
+                            id: "beepMargin",
+                            title: localizedAppText("settings.beep_margin.title"),
+                            value: EucSettingReadbackPresentation.speed(settings.beepMargin)
+                        )
+                        EucSettingReadbackRow(
+                            id: "tiltback",
+                            title: localizedAppText("settings.tiltback.title"),
+                            value: EucSettingReadbackPresentation.speed(settings.tiltback)
+                        )
+                        EucSettingReadbackRow(
+                            id: "pedalMode",
+                            title: localizedAppText("settings.pedal_mode.title"),
+                            value: EucSettingReadbackPresentation.pedalMode(
+                                model.pedalModeState,
+                                fallback: settings.pedalMode
+                            )
+                        )
+                    } header: {
+                        Text(localizedAppText("settings.readback.title"))
+                    } footer: {
+                        Text(localizedAppText("settings.readback.footer"))
+                    }
+                }
+
                 if let capabilities = model.settingsCapabilities {
                     Section {
                         EucSettingCapabilityRow(

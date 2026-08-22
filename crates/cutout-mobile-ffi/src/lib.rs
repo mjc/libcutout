@@ -2550,6 +2550,39 @@ impl MobileAccelerationAssistSettingStateDto {
     }
 }
 
+/// Documented pedal stiffness mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePedalModeKindDto {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl From<CorePedalMode> for MobilePedalModeKindDto {
+    fn from(mode: CorePedalMode) -> Self {
+        match mode {
+            CorePedalMode::Hard => Self::Hard,
+            CorePedalMode::Medium => Self::Medium,
+            CorePedalMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<MobilePedalModeKindDto> for CorePedalMode {
+    fn from(mode: MobilePedalModeKindDto) -> Self {
+        match mode {
+            MobilePedalModeKindDto::Hard => Self::Hard,
+            MobilePedalModeKindDto::Medium => Self::Medium,
+            MobilePedalModeKindDto::Soft => Self::Soft,
+        }
+    }
+}
+
 /// Validation state for a setting write exposed to mobile consumers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingWriteSupportDto {
@@ -2582,7 +2615,7 @@ pub struct MobileEucSettingsCapabilitiesDto {
 impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            pedal_mode: MobileSettingWriteSupportDto::Unverified,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2591,7 +2624,7 @@ impl MobileEucSettingsCapabilitiesDto {
 
     const fn falcon() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            pedal_mode: MobileSettingWriteSupportDto::Unverified,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Unverified,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2633,6 +2666,45 @@ pub struct MobileLightSettingStateDto {
 }
 
 impl MobileLightSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed pedal-mode lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePedalModeSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current pedal mode, when known.
+    pub current: Option<MobilePedalModeKindDto>,
+
+    /// Requested pedal mode, when a write is pending or terminal.
+    pub requested: Option<MobilePedalModeKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobilePedalModeSettingStateDto {
     fn unknown() -> Self {
         Self {
             kind: MobileSettingStateKindDto::Unknown,
@@ -3324,6 +3396,62 @@ impl MobileEucSettingTrackers {
 
     fn taillight(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.taillight.state)
+    }
+}
+
+fn observe_setting_write<Value>(
+    state: &mut CoreSettingState<Value>,
+    requested: Value,
+    submitted_at: MonotonicTimestamp,
+    result: &MobileSessionStepResultDto,
+) where
+    Value: Copy + Eq,
+{
+    match result.error.as_ref() {
+        None => state.submit(requested, submitted_at),
+        Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+            state.submit(requested, submitted_at);
+            if let Some(reason) = error.reason {
+                state.refuse(reason.into());
+            } else {
+                state.fail();
+            }
+        }
+        Some(_) => state.fail(),
+    }
+}
+
+fn observe_setting_tick<Value>(
+    state: &mut CoreSettingState<Value>,
+    kind: MobileSessionInputKindDto,
+    now: MonotonicTimestamp,
+) where
+    Value: Copy + Eq,
+{
+    if kind == MobileSessionInputKindDto::Tick {
+        state.timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
+    }
+}
+
+fn observe_setting_write<Value>(
+    state: &mut CoreSettingState<Value>,
+    requested: Value,
+    submitted_at: MonotonicTimestamp,
+    result: &MobileSessionStepResultDto,
+) where
+    Value: Copy + Eq,
+{
+    match result.error.as_ref() {
+        None => state.submit(requested, submitted_at),
+        Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+            state.submit(requested, submitted_at);
+            if let Some(reason) = error.reason {
+                state.refuse(reason.into());
+            } else {
+                state.fail();
+            }
+        }
+        Some(_) => state.fail(),
     }
 }
 
@@ -12243,6 +12371,11 @@ impl AeroBenignControlSession {
     pub fn taillight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().taillight()
     }
+
+    /// Returns the Rust-owned pedal-mode setting lifecycle state.
+    pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
+        self.lock_pedal_mode_state().snapshot()
+    }
 }
 
 impl AeroBenignControlSession {
@@ -12252,6 +12385,12 @@ impl AeroBenignControlSession {
 
     fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
         self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
+        self.pedal_mode_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -13729,6 +13868,11 @@ impl FalconBenignControlSession {
     pub fn taillight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().taillight()
     }
+
+    /// Returns the Rust-owned pedal-mode setting lifecycle state.
+    pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
+        self.lock_pedal_mode_state().snapshot()
+    }
 }
 
 impl FalconBenignControlSession {
@@ -13738,6 +13882,12 @@ impl FalconBenignControlSession {
 
     fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
         self.settings.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
+        self.pedal_mode_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -17105,6 +17255,75 @@ mod tests {
     }
 
     #[test]
+    fn mobile_light_state_times_out_on_tick() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+        });
+        assert_eq!(
+            session.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(2_010),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+
+        let state = session.headlight_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+    }
+
+    #[test]
+    fn mobile_pedal_state_times_out_on_tick() {
+        let mut tracker = MobilePedalModeSettingTracker::default();
+        let accepted = MobileSessionStepResultDto {
+            outputs: Vec::new(),
+            error: None,
+        };
+
+        tracker.observe_step(
+            &MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(10),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+            },
+            &accepted,
+        );
+        assert_eq!(tracker.snapshot().kind, MobileSettingStateKindDto::Pending);
+
+        tracker.observe_step(
+            &MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Tick,
+                monotonic_ms: ms(2_010),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: None,
+            },
+            &accepted,
+        );
+
+        let state = tracker.snapshot();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
+    }
+
+    #[test]
     fn euc_settings_capabilities_preserve_validation_state() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
@@ -17123,7 +17342,11 @@ mod tests {
         );
         assert_eq!(
             aero.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Unsupported
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            falcon.settings_capabilities().pedal_mode,
+            MobileSettingWriteSupportDto::Unverified
         );
         assert_eq!(
             aero.settings_capabilities().acceleration_assist,

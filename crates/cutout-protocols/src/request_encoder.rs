@@ -600,6 +600,19 @@ mod tests {
     }
 
     #[test]
+    fn documented_pedal_mode_encoders_match_veteran_and_begode_bytes() {
+        let aero = AeroControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Hard))
+            .expect("documented Veteran pedal mode encoder");
+        assert_eq!(aero.command, CommandKind::SetPedalMode);
+        assert_eq!(aero.payload.as_slice(), b"SETh");
+
+        let falcon = FalconControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Soft))
+            .expect("documented Begode pedal mode encoder");
+        assert_eq!(falcon.command, CommandKind::SetPedalMode);
+        assert_eq!(falcon.payload.as_slice(), b"s");
+    }
+
+    #[test]
     fn falcon_encoder_uses_expected_request_bytes() {
         let identity = FalconRequestEncoder::encode(FalconProbe::Identity);
         let firmware = FalconRequestEncoder::encode(FalconProbe::FirmwareInfo);
