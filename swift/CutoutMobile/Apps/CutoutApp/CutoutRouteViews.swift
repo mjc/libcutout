@@ -227,7 +227,7 @@ enum EucSettingReadbackPresentation {
             return "\(percent)%"
         }
         if let rawMode = value.rawMode {
-            return "Mode \(rawMode)"
+            return "Raw \(rawMode)"
         }
         return availabilityText(.unavailable)
     }

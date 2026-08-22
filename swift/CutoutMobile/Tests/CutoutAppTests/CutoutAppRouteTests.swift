@@ -122,7 +122,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             EucSettingReadbackPresentation.pedalMode(.available(.rawMode(3))),
-            "Mode 3"
+            "Raw 3"
         )
         XCTAssertEqual(
             EucSettingReadbackPresentation.speed(.unavailable),
