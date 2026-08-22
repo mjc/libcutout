@@ -43,6 +43,33 @@ final class PevDashboardAccessibilityTests: XCTestCase {
         XCTAssertEqual(standard.minHeight, 106)
     }
 
+    func testDashboardGridUsesReadableMinimumForAccessibilitySizes() {
+        XCTAssertEqual(
+            PevDashboardGrid<EmptyView>.adaptiveMinimumColumnWidth(
+                for: .large,
+                default: 150,
+                accessibility: 240
+            ),
+            150
+        )
+        XCTAssertEqual(
+            PevDashboardGrid<EmptyView>.adaptiveMinimumColumnWidth(
+                for: .accessibility3,
+                default: 150,
+                accessibility: 240
+            ),
+            240
+        )
+        XCTAssertEqual(
+            PevDashboardGrid<EmptyView>.adaptiveMinimumColumnWidth(
+                for: .accessibility3,
+                default: 280,
+                accessibility: 240
+            ),
+            280
+        )
+    }
+
     func testTypedDashboardTileKeepsItsAccessibilityValue() {
         let tile = PevDashboardMetricTile(
             PevDashboardTile(
