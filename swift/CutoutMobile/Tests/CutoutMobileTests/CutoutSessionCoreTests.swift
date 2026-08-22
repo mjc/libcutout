@@ -1301,6 +1301,18 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
+    func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertEqual(session.headlightState.kind, .unknown)
+
+        _ = try session.perform(.setLights(.on), at: MonotonicMilliseconds(10))
+
+        XCTAssertEqual(session.headlightState.kind, .pending)
+        XCTAssertEqual(session.headlightState.requested, .on)
+        XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
+    }
+
     func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
