@@ -1233,6 +1233,64 @@ public enum LightState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum SettingStateKind: Equatable, Hashable, Sendable {
+    case unknown
+    case current
+    case pending
+    case confirmed
+    case refused
+    case timedOut
+    case failed
+
+    fileprivate init(_ dto: MobileSettingStateKindDto) {
+        switch dto {
+        case .unknown: self = .unknown
+        case .current: self = .current
+        case .pending: self = .pending
+        case .confirmed: self = .confirmed
+        case .refused: self = .refused
+        case .timedOut: self = .timedOut
+        case .failed: self = .failed
+        }
+    }
+}
+
+public enum SettingValueSource: Equatable, Hashable, Sendable {
+    case liveReadback
+    case captureReplay
+    case userRequest
+    case unknown
+
+    fileprivate init(_ dto: MobileSettingValueSourceDto) {
+        switch dto {
+        case .liveReadback: self = .liveReadback
+        case .captureReplay: self = .captureReplay
+        case .userRequest: self = .userRequest
+        case .unknown: self = .unknown
+        }
+    }
+}
+
+public struct LightSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: LightState?
+    public let requested: LightState?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileLightSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(LightState.init)
+        self.requested = dto.requested.map(LightState.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
 public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     case supported
     case unverified
@@ -4725,6 +4783,15 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var headlightState: LightSettingState {
+        switch inner {
+        case .aero(let session):
+            LightSettingState(session.headlightState())
+        case .falcon(let session):
+            LightSettingState(session.headlightState())
+        }
+    }
+
     public var currentSnapshot: TelemetrySnapshot {
         switch inner {
         case .aero(let session):
@@ -5181,6 +5248,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var headlightState: LightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.headlightState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5306,6 +5382,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var settingsCapabilities: EucSettingsCapabilities? {
         session.settingsCapabilities
+    }
+
+    public var headlightState: LightSettingState? {
+        session.headlightState
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
@@ -5503,6 +5583,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var settingsCapabilities: EucSettingsCapabilities? {
         runner.settingsCapabilities
+    }
+
+    public var headlightState: LightSettingState? {
+        runner.headlightState
     }
 
     /// Configures the Rust-owned charge estimate profile for this connection.
