@@ -26,6 +26,8 @@ mod ride_lifecycle;
 pub use ride_lifecycle::*;
 mod energy_estimate;
 pub use energy_estimate::*;
+mod settings;
+pub use settings::*;
 
 #[cfg(test)]
 mod gatt_channel_tests;
@@ -7689,9 +7691,10 @@ mod tests {
     use crate::round_div_i32;
     use crate::{
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
-        DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry, GattChannel,
+        ControlRefusalReason, DeviceEvent, Distance, Duration, DutyCycle, Energy,
+        FootpadTelemetry, GattChannel, LightState,
         LinkInfo, Measured, MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power,
-        ProtocolSession, SeriesCount, SessionInput, SessionOutput, SettingState,
+        ProtocolSession, SeriesCount, SessionInput, SessionOutput, SettingState, SettingValue,
         SettingValueSource, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
         TransportAction, UnsupportedReason, ValueQuality, ValueSource, VerificationStatus, Voltage,
         WriteMode, WritePayload,
@@ -7737,7 +7740,10 @@ mod tests {
         assert_eq!(
             state,
             SettingState::Pending {
-                current: Some(LightState::Off),
+                current: Some(SettingValue {
+                    value: LightState::Off,
+                    source: SettingValueSource::LiveReadback,
+                }),
                 requested: LightState::On,
                 submitted_at: ms(10),
             }
@@ -7747,8 +7753,10 @@ mod tests {
         assert_eq!(
             state,
             SettingState::Confirmed {
-                value: LightState::On,
-                source: SettingValueSource::LiveReadback,
+                value: SettingValue {
+                    value: LightState::On,
+                    source: SettingValueSource::LiveReadback,
+                },
                 confirmed_at: ms(12),
             }
         );
@@ -7758,7 +7766,10 @@ mod tests {
         assert_eq!(
             state,
             SettingState::TimedOut {
-                current: Some(LightState::On),
+                current: Some(SettingValue {
+                    value: LightState::On,
+                    source: SettingValueSource::LiveReadback,
+                }),
                 requested: LightState::Off,
             }
         );
@@ -7766,7 +7777,7 @@ mod tests {
 
     #[test]
     fn setting_state_preserves_refusal_without_a_transport_write() {
-        let mut state = SettingState::unknown::<LightState>();
+        let mut state = SettingState::<LightState>::unknown();
         state.submit(LightState::On, ms(30));
         state.refuse(ControlRefusalReason::UnsupportedCommand);
 
