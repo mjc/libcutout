@@ -164,6 +164,14 @@ impl RouteTelemetryState {
             other => Err(format!("invalid route telemetry state: {other}")),
         }
     }
+
+    fn from_age(age_milliseconds: u64) -> Self {
+        if age_milliseconds <= TELEMETRY_FRESHNESS_MILLISECONDS {
+            Self::AssociatedFresh
+        } else {
+            Self::AssociatedStale
+        }
+    }
 }
 
 /// Result of submitting a telemetry timestamp to an associated ride.
@@ -801,10 +809,8 @@ impl RideRecording {
             .saturating_sub(last_telemetry_at.as_milliseconds());
         if last_telemetry_at > at {
             RouteTelemetryState::AssociatedNoTelemetry
-        } else if age > TELEMETRY_FRESHNESS_MILLISECONDS {
-            RouteTelemetryState::AssociatedStale
         } else {
-            RouteTelemetryState::AssociatedFresh
+            RouteTelemetryState::from_age(age)
         }
     }
 
