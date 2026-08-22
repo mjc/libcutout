@@ -1300,9 +1300,13 @@ final class CutoutAppModel {
     }
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
         settingsReadback = readback
-        guard core.electricUnicycleModel == .falcon,
-              let reportedState = readback?.eucGarageSettings.lightState
-        else { return }
+        guard core.electricUnicycleModel == .falcon else { return }
+        guard let reportedState = readback?.eucGarageSettings.lightState else {
+            if case .waitingForConfirmation = headlightState {
+                headlightState = .failed(headlightState.lightState)
+            }
+            return
+        }
         if case let .waitingForConfirmation(requestedState, _) = headlightState,
            requestedState != reportedState
         {

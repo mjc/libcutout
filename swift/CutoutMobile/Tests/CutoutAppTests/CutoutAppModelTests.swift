@@ -167,6 +167,25 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testFalconHeadlightReadbackWithoutLightStateFailsPendingCommand() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+
+        driver.onSettingsReadbackChange?(
+            SettingsReadback(entries: [], availability: .unsupported)
+        )
+
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
+        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
+    }
+
+    @MainActor
     func testHeadlightStateDoesNotSurviveDisconnectOrNewPairing() {
         let row = DevicePickerRow(
             id: "aero-1234",
