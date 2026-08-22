@@ -2051,7 +2051,7 @@ pub struct MobileEucSettingsCapabilitiesDto {
 impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            pedal_mode: MobileSettingWriteSupportDto::Unverified,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2060,7 +2060,7 @@ impl MobileEucSettingsCapabilitiesDto {
 
     const fn falcon() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            pedal_mode: MobileSettingWriteSupportDto::Unverified,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Unverified,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -15225,7 +15225,11 @@ mod tests {
         );
         assert_eq!(
             aero.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Unsupported
+            MobileSettingWriteSupportDto::Unverified
+        );
+        assert_eq!(
+            falcon.settings_capabilities().pedal_mode,
+            MobileSettingWriteSupportDto::Unverified
         );
         assert_eq!(
             aero.settings_capabilities().acceleration_assist,
