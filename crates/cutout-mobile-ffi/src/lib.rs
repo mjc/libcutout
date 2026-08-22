@@ -13791,6 +13791,35 @@ mod tests {
     }
 
     #[test]
+    fn mobile_light_state_tracks_accepted_write_until_matching_readback() {
+        let session = AeroBenignControlSession::new();
+
+        assert_eq!(
+            session.headlight_state(),
+            MobileLightSettingStateDto::unknown()
+        );
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+        });
+        assert_eq!(result.error, None);
+        assert_eq!(
+            session.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        let state = session.headlight_state();
+        assert_eq!(state.current, None);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+        assert_eq!(state.submitted_at_ms, Some(10));
+    }
+
+    #[test]
     fn euc_settings_capabilities_preserve_validation_state() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
