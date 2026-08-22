@@ -935,6 +935,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
         model.disconnectTransport()
+        XCTAssertEqual(model.phase, .scanning)
         driver.onPhaseChange?(.scanning)
         driver.onPhaseChange?(.discoveringServices)
         driver.onReconnectScheduled?(

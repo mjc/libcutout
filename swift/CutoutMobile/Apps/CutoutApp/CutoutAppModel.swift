@@ -414,6 +414,7 @@ final class CutoutAppModel {
         captureLabel = nil
         recordOnlyDeviceKind = nil
         connectionState = .picker
+        phase = .scanning
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
