@@ -104,12 +104,10 @@ public struct PevLiveActivityHeader: View {
             }
             Spacer(minLength: 8)
             if snapshot.connectionState != .connected {
-                Text(snapshot.connectionState.accessibilityValue.localizedCapitalized)
-                    .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .semibold))
-                    .foregroundStyle(PevLiveActivityPalette.warning)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .accessibilityHidden(true)
+                ViewThatFits(in: .horizontal) {
+                    statusText(lineLimit: 1)
+                    statusText(lineLimit: 2)
+                }
             }
             Text(snapshot.identity.label)
                 .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .medium))
@@ -124,6 +122,14 @@ public struct PevLiveActivityHeader: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(LiveActivityRideSnapshot.activityAccessibilityLabel)
         .accessibilityValue(snapshot.identity.accessibilityValue(for: snapshot.connectionState))
+    }
+
+    private func statusText(lineLimit: Int) -> some View {
+        Text(snapshot.connectionState.accessibilityValue.localizedCapitalized)
+            .font(.system(size: compact ? compactIdentitySize : expandedIdentitySize, weight: .semibold))
+            .foregroundStyle(PevLiveActivityPalette.warning)
+            .lineLimit(lineLimit)
+            .accessibilityHidden(true)
     }
 }
 
