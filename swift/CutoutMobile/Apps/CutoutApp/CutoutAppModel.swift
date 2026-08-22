@@ -165,7 +165,7 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     var headlightOn: Bool {
-        effectiveHeadlightState?.lightState == .on
+        displayedHeadlightState == .on
     }
 
     var headlightCommandStatus: HeadlightCommandStatus {
@@ -1311,7 +1311,7 @@ final class CutoutAppModel {
         guard headlightWriteSupport == .supported else {
             fallbackHeadlightState = LightSettingState(
                 kind: .failed,
-                current: effectiveHeadlightState?.lightState
+                current: displayedHeadlightState
             )
             return .failed
         }
@@ -1329,7 +1329,7 @@ final class CutoutAppModel {
         case let .refused(reason):
             fallbackHeadlightState = LightSettingState(
                 kind: .refused,
-                current: effectiveHeadlightState?.lightState,
+                current: displayedHeadlightState,
                 requested: state,
                 source: .userRequest,
                 refusalReason: reason
@@ -1338,7 +1338,7 @@ final class CutoutAppModel {
         case .failed:
             fallbackHeadlightState = LightSettingState(
                 kind: .failed,
-                current: effectiveHeadlightState?.lightState,
+                current: displayedHeadlightState,
                 requested: state,
                 source: .userRequest
             )
@@ -1350,7 +1350,7 @@ final class CutoutAppModel {
         guard core.headlightState == nil else { return }
         fallbackHeadlightState = LightSettingState(
             kind: .pending,
-            current: fallbackHeadlightState?.lightState,
+            current: displayedHeadlightState,
             requested: state,
             source: .userRequest,
             submittedAt: sentAt
@@ -1358,6 +1358,14 @@ final class CutoutAppModel {
     }
     private var effectiveHeadlightState: LightSettingState? {
         core.headlightState ?? fallbackHeadlightState
+    }
+
+    private var displayedHeadlightState: LightState? {
+        guard let state = effectiveHeadlightState else { return nil }
+        if state.kind == .pending, core.electricUnicycleModel == .aero {
+            return state.requested
+        }
+        return state.lightState
     }
 
     private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
