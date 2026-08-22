@@ -114,6 +114,11 @@ final class CutoutAppModelTests: XCTestCase {
             "Command sent. This wheel does not report high-beam state."
         )
         XCTAssertEqual(driver.headlightStates, [.on])
+
+        driver.headlightWriteSucceeds = false
+        XCTAssertFalse(model.setHeadlight(false))
+        XCTAssertTrue(model.headlightOn)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
     }
 
     @MainActor

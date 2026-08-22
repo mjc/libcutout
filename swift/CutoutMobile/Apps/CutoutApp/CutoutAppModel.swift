@@ -23,6 +23,46 @@ enum HeadlightCommandStatus: Equatable {
     case sentWithoutConfirmation
 }
 
+private enum HeadlightSettingState: Equatable {
+    case idle
+    case failed(LightState?)
+    case waitingForConfirmation(requested: LightState, current: LightState?)
+    case confirmed(LightState)
+    case sentWithoutConfirmation(LightState)
+
+    var isOn: Bool {
+        lightState == .on
+    }
+
+    var lightState: LightState? {
+        switch self {
+        case .idle:
+            nil
+        case let .failed(state):
+            state
+        case let .waitingForConfirmation(_, state):
+            state
+        case let .confirmed(state), let .sentWithoutConfirmation(state):
+            state
+        }
+    }
+
+    var commandStatus: HeadlightCommandStatus {
+        switch self {
+        case .idle:
+            .idle
+        case .failed:
+            .failed
+        case .waitingForConfirmation:
+            .waitingForConfirmation
+        case .confirmed:
+            .confirmed
+        case .sentWithoutConfirmation:
+            .sentWithoutConfirmation
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class CutoutAppModel {
@@ -126,8 +166,13 @@ final class CutoutAppModel {
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
-    private(set) var headlightOn = false
-    private(set) var headlightCommandStatus = HeadlightCommandStatus.idle
+    var headlightOn: Bool {
+        headlightState.isOn
+    }
+
+    var headlightCommandStatus: HeadlightCommandStatus {
+        headlightState.commandStatus
+    }
 
     var selectedRideTitle: String? {
         connectionState.selection?.title
@@ -267,7 +312,7 @@ final class CutoutAppModel {
     private var captureFileName: String?
     private var captureNotificationCount = 0
     private var captureLabel: String?
-    private var pendingHeadlightState: LightState?
+    private var headlightState = HeadlightSettingState.idle
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -1236,7 +1281,7 @@ final class CutoutAppModel {
     func setHeadlight(_ enabled: Bool) -> Bool {
         let state = enabled ? LightState.on : .off
         guard core.setLights(state) else {
-            headlightCommandStatus = .failed
+            headlightState = .failed(headlightState.lightState)
             return false
         }
         recordHeadlightCommand(state)
@@ -1245,12 +1290,12 @@ final class CutoutAppModel {
 
     private func recordHeadlightCommand(_ state: LightState) {
         if core.electricUnicycleModel == .falcon {
-            pendingHeadlightState = state
-            headlightCommandStatus = .waitingForConfirmation
+            headlightState = .waitingForConfirmation(
+                requested: state,
+                current: headlightState.lightState
+            )
         } else {
-            headlightOn = state == .on
-            pendingHeadlightState = nil
-            headlightCommandStatus = .sentWithoutConfirmation
+            headlightState = .sentWithoutConfirmation(state)
         }
     }
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
@@ -1258,12 +1303,12 @@ final class CutoutAppModel {
         guard core.electricUnicycleModel == .falcon,
               let reportedState = readback?.eucGarageSettings.lightState
         else { return }
-        if let pendingHeadlightState {
-            guard pendingHeadlightState == reportedState else { return }
-            self.pendingHeadlightState = nil
+        if case let .waitingForConfirmation(requestedState, _) = headlightState,
+           requestedState != reportedState
+        {
+            return
         }
-        headlightOn = reportedState == .on
-        headlightCommandStatus = .confirmed
+        headlightState = .confirmed(reportedState)
     }
     func pair(platformIdentifier: String) -> Bool {
         switch connectionState {
@@ -1534,9 +1579,7 @@ final class CutoutAppModel {
     }
 
     private func resetHeadlightState() {
-        headlightOn = false
-        pendingHeadlightState = nil
-        headlightCommandStatus = .idle
+        headlightState = .idle
     }
 
     func forgetSavedDevice() {
