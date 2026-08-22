@@ -206,6 +206,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
+        liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
         phase = .discoveringServices

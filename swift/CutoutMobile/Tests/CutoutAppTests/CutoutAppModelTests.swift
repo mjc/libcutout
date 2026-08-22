@@ -1323,6 +1323,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         await manager.setError(nil)
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        XCTAssertFalse(model.pair(platformIdentifier: row.id))
 
         for _ in 0 ..< 20 {
             if await manager.startCount == 2 { break }
