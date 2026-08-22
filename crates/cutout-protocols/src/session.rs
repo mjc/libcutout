@@ -1548,6 +1548,14 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
 impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATION: bool>
     BenignControlSession<M, ACCEPT_ANY_NOTIFICATION>
 {
+    /// Creates a benign-control session with an explicitly configured notification decoder.
+    #[must_use]
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+        Self {
+            read_only: ReadOnlySession::with_decoder(decoder),
+        }
+    }
+
     /// Returns the read and benign-control commands this session can schedule.
     #[must_use]
     pub const fn capabilities() -> Capabilities {
@@ -1569,15 +1577,15 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
         }
 
         let kind = command.kind();
-        if M::CONTROL_CAPABILITIES.supports_command_kind(kind)
-            && let Some(encoded) = M::encode_benign_control(command)
-        {
-            output.push(SessionOutput::Transport(TransportAction::Write {
-                channel: M::WRITE_CHANNEL,
-                bytes: encoded.payload,
-                mode: encoded.mode,
-            }));
-            return;
+        if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+            if let Some(encoded) = M::encode_benign_control(command) {
+                output.push(SessionOutput::Transport(TransportAction::Write {
+                    channel: M::WRITE_CHANNEL,
+                    bytes: encoded.payload,
+                    mode: encoded.mode,
+                }));
+                return;
+            }
         }
 
         output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(

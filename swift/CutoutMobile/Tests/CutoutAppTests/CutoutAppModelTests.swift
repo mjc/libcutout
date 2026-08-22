@@ -147,6 +147,33 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHeadlightStateDoesNotSurviveDisconnectOrNewPairing() {
+        let row = DevicePickerRow(
+            id: "aero-1234",
+            title: "NF2557",
+            subtitle: "NOSFET Aero",
+            detail: "Device 1234",
+            state: DevicePickerRowState(action: .use),
+            symbolName: "scooter",
+            connectionRoute: .electricUnicycle,
+            electricUnicycleModel: .aero
+        )
+        let driver = SessionDriverSpy(rows: [row])
+        driver.electricUnicycleModel = .aero
+        driver.headlightWriteSucceeds = true
+        let model = CutoutAppModel(core: driver)
+        model.start()
+
+        XCTAssertTrue(model.setHeadlight(true))
+        model.disconnectTransport()
+        XCTAssertFalse(model.headlightOn)
+
+        XCTAssertTrue(model.setHeadlight(true))
+        XCTAssertTrue(model.pair(platformIdentifier: row.id))
+        XCTAssertFalse(model.headlightOn)
+    }
+
+    @MainActor
     func testAvailableBmsRouteDoesNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

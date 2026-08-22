@@ -6,8 +6,8 @@ use cutout_core::{
 };
 
 use crate::{
-    BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile, NosfetAeroModel,
-    ReadOnlySession,
+    BegodeFalconModel, BegodeNotificationDecoder, BegodePackVoltageProfile, BenignControlSession,
+    NosfetAeroModel,
 };
 
 mod begode_falcon;
@@ -113,15 +113,18 @@ impl SessionRegistration {
 
 include!(concat!(env!("OUT_DIR"), "/registry_models.rs"));
 
-/// Allocation-free read-only session sum type for statically registered models.
+/// Allocation-free registered session sum type.
+///
+/// These sessions preserve read-only telemetry behavior while admitting each model's
+/// explicitly allow-listed benign controls, currently headlight changes.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum RegisteredReadOnlySession {
-    /// NOSFET Aero read-only protocol session.
-    NosfetAero(ReadOnlySession<NosfetAeroModel, false>),
+    /// NOSFET Aero telemetry session with allow-listed benign controls.
+    NosfetAero(BenignControlSession<NosfetAeroModel, false>),
 
-    /// Begode Falcon read-only protocol session.
-    BegodeFalcon(ReadOnlySession<BegodeFalconModel, true>),
+    /// Begode Falcon telemetry session with allow-listed benign controls.
+    BegodeFalcon(BenignControlSession<BegodeFalconModel, true>),
 }
 
 impl ProtocolSession for RegisteredReadOnlySession {
@@ -134,11 +137,13 @@ impl ProtocolSession for RegisteredReadOnlySession {
 }
 
 pub(super) fn nosfet_aero_read_only_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::NosfetAero(ReadOnlySession::<NosfetAeroModel, false>::default())
+    RegisteredReadOnlySession::NosfetAero(BenignControlSession::<NosfetAeroModel, false>::default())
 }
 
 pub(super) fn begode_falcon_read_only_session() -> RegisteredReadOnlySession {
-    RegisteredReadOnlySession::BegodeFalcon(ReadOnlySession::<BegodeFalconModel, true>::default())
+    RegisteredReadOnlySession::BegodeFalcon(
+        BenignControlSession::<BegodeFalconModel, true>::default(),
+    )
 }
 
 /// Constructs a registered Begode Falcon read-only session with explicit pack-voltage evidence.
@@ -147,7 +152,7 @@ pub fn begode_falcon_read_only_session_with_voltage_profile(
     profile: BegodePackVoltageProfile,
 ) -> RegisteredReadOnlySession {
     RegisteredReadOnlySession::BegodeFalcon(
-        ReadOnlySession::<BegodeFalconModel, true>::with_decoder(
+        BenignControlSession::<BegodeFalconModel, true>::with_decoder(
             BegodeNotificationDecoder::with_pack_voltage_profile(profile),
         ),
     )
@@ -164,9 +169,10 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, CompleteModelAuthoring, GattFingerprint, GattRoles, ManufacturerKey,
-        ModelAuthoring, ModelCatalog, ModelCatalogEntry, ModelKey, ModelRegistryEntry,
-        ModelRuntimeRegistration, ParserKey, ProtocolFamily, RegistryValidationError, SessionKey,
+        CommandKind, CompleteModelAuthoring, DeviceCommand, GattFingerprint, GattRoles, LightState,
+        ManufacturerKey, ModelAuthoring, ModelCatalog, ModelCatalogEntry, ModelKey,
+        ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, ProtocolFamily, ProtocolSession,
+        RegistryValidationError, SessionInput, SessionKey, SessionOutput, TransportAction,
         VerificationStatus, Voltage,
     };
 
@@ -231,6 +237,34 @@ mod tests {
             RegisteredReadOnlySession::BegodeFalcon(_)
         ));
         assert!(find_session_registration(SessionKey::new("missing")).is_none());
+    }
+
+    #[test]
+    fn registered_aero_and_falcon_sessions_schedule_headlight_writes() {
+        for (key, state, expected) in [
+            (
+                NOSFET_AERO_SESSION_KEY,
+                LightState::On,
+                b"SetLightON".as_slice(),
+            ),
+            (BEGODE_FALCON_SESSION_KEY, LightState::Off, b"E".as_slice()),
+        ] {
+            let mut session = find_session_registration(key)
+                .expect("model session registration exists")
+                .construct();
+            let mut output = Vec::new();
+
+            session.handle(
+                SessionInput::Command(DeviceCommand::SetLights(state)),
+                &mut output,
+            );
+
+            assert!(output.iter().any(|item| matches!(
+                item,
+                SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                    if bytes.as_slice() == expected
+            )));
+        }
     }
 
     #[test]

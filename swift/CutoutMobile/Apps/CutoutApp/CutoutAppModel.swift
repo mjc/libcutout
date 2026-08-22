@@ -1279,6 +1279,7 @@ final class CutoutAppModel {
             title: selectedRow.title,
             route: route
         )
+        resetHeadlightState()
         liveActivityError = nil
         connectionState = .connecting(selection, phase: .discoveringServices)
         permitsStoredDeviceAutoPairing = true
@@ -1518,7 +1519,14 @@ final class CutoutAppModel {
         liveActivityIdentity = nil
         liveActivityGlyph = .electricUnicycle
         permitsStoredDeviceAutoPairing = false
+        resetHeadlightState()
         core.disconnectAndScan()
+    }
+
+    private func resetHeadlightState() {
+        headlightOn = false
+        pendingHeadlightState = nil
+        headlightCommandStatus = .idle
     }
 
     func forgetSavedDevice() {
