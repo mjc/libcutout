@@ -23,6 +23,14 @@ final class CutoutAppModel {
     private(set) var phoneLocationReadback = PhoneLocationReadback(
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
+    private(set) var rideMapSnapshot: MobileRideMapSnapshotDto?
+    private(set) var rideMapStorageError: String?
+    private(set) var rideMapPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
+    private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapHistoryPointsTruncated = false
+    private(set) var selectedRideMapHistoryID: String?
+    private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     private(set) var captureStatus: CaptureStatus?
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
@@ -128,6 +136,7 @@ final class CutoutAppModel {
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        rideMapStorageError = core.rideMapStorageError
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
             manager: liveActivityManager,
             sessionState: core.rideSessionStateHandle,
@@ -136,6 +145,7 @@ final class CutoutAppModel {
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
+        restoreRideMapState()
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
             self?.syncLiveActivity()
@@ -162,6 +172,12 @@ final class CutoutAppModel {
         self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot, receivedAt in
             self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
         }
+        self.core.onRideMapDecisionChange = { [weak self] snapshot, decision in
+            self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
+        }
+        self.core.onRideMapSnapshotChange = { [weak self] snapshot in
+            self?.rideMapSnapshot = snapshot
+        }
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
@@ -173,6 +189,22 @@ final class CutoutAppModel {
         }
     }
 
+    private func restoreRideMapState() {
+        rideMapSnapshot = core.rideMapStateHandle.currentSnapshot()
+        guard rideMapSnapshot != nil else { return }
+        var cursor: UInt64 = 0
+        repeat {
+            guard let batch = core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: 512) else {
+                break
+            }
+            rideMapPoints.append(contentsOf: batch.points)
+            cursor = batch.nextCursor
+            if rideMapPoints.count >= 4_096 || batch.hasMore == false {
+                break
+            }
+        } while true
+    }
+
     func start() {
         guard hasStarted == false else { return }
         hasStarted = true
@@ -180,6 +212,133 @@ final class CutoutAppModel {
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
+    }
+
+    @discardableResult
+    func startGpsOnlyRide() -> Bool {
+        do {
+            rideMapSnapshot = try core.rideMapStateHandle.startGpsOnly(
+                atMs: currentMonotonicTime.rawValue,
+                lastConnectedVehicle: selectedDeviceStore.platformIdentifier
+            )
+            rideMapPoints.removeAll(keepingCapacity: true)
+            rideMapLastDecision = nil
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func pauseRideMap() -> Bool {
+        do {
+            rideMapSnapshot = try core.rideMapStateHandle.pause()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func resumeRideMap() -> Bool {
+        do {
+            rideMapSnapshot = try core.rideMapStateHandle.resume()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func stopRideMap() -> Bool {
+        do {
+            rideMapSnapshot = try core.rideMapStateHandle.stop()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func saveRideMap() -> Bool {
+        do {
+            rideMapSnapshot = try core.rideMapStateHandle.save()
+            loadRideMapHistory()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    func discardRideMap() -> Bool {
+        do {
+            rideMapSnapshot = try core.rideMapStateHandle.discard()
+            rideMapHistoryPoints = []
+            rideMapHistoryPointsTruncated = false
+            loadRideMapHistory()
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func loadRideMapHistory() {
+        do {
+            rideMapHistory = try core.rideMapStateHandle.storedSummaries(limit: 50)
+            guard let first = rideMapHistory.first else {
+                selectedRideMapHistoryID = nil
+                rideMapHistoryPoints = []
+                rideMapHistoryPointsTruncated = false
+                return
+            }
+            selectRideMapHistory(first.rideId)
+        } catch {
+            rideMapHistory = []
+            selectedRideMapHistoryID = nil
+            rideMapHistoryPoints = []
+            rideMapHistoryPointsTruncated = false
+        }
+    }
+
+    func selectRideMapHistory(_ rideID: String) {
+        guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
+        selectedRideMapHistoryID = rideID
+        rideMapHistoryPointsTruncated = false
+        var points = [MobileRideMapPointDto]()
+        var cursor: UInt64 = 0
+        var truncated = false
+        repeat {
+            guard let batch = try? core.rideMapStateHandle.storedPointsAfter(
+                rideId: rideID,
+                afterCursor: cursor,
+                limit: 512
+            ) else {
+                rideMapHistoryPoints = []
+                rideMapHistoryPointsTruncated = false
+                return
+            }
+            points.append(contentsOf: batch.points)
+            cursor = batch.nextCursor
+            if points.count >= 4_096 {
+                truncated = batch.hasMore
+                break
+            }
+            if batch.hasMore == false { break }
+        } while true
+        rideMapHistoryPoints = points
+        rideMapHistoryPointsTruncated = truncated
+    }
+
+    private func applyRideMapDecision(
+        snapshot: MobileRideMapSnapshotDto,
+        decision: MobileRideMapDecisionDto
+    ) {
+        rideMapSnapshot = snapshot
+        rideMapLastDecision = decision
+        if case let .accepted(point, _) = decision {
+            rideMapPoints.append(point)
+        }
     }
 
     func pair(platformIdentifier: String) -> Bool {

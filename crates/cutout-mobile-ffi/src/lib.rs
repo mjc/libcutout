@@ -72,6 +72,14 @@ use cutout_protocols::{
     identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
+use cutout_ride_maps::{
+    LocationAdmissionPolicy as RideMapAdmissionPolicy,
+    LocationIgnoredReason as RideMapIgnoredReason, LocationRejection as RideMapRejection,
+    LocationSample as RideMapLocationSample, MonotonicMilliseconds as RideMapMonotonicMilliseconds,
+    RideMapDatabase, RideRecording as RideMapRecording, RideState as RideMapState,
+    RoutePointDecision as RideMapPointDecision, StoredRideSummary as RideMapStoredSummary,
+    VehicleIdentity as RideMapVehicleIdentity,
+};
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
@@ -2934,6 +2942,632 @@ impl MobilePhoneLocationState {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         phone_location_snapshot(sample)
+    }
+}
+
+/// Rust-owned ride-recording phase exposed to mobile clients.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapStateDto {
+    /// The ride is accepting validated location points.
+    Recording,
+    /// The ride remains open but location points are ignored.
+    Paused,
+    /// The ride is terminal.
+    Stopped,
+    /// The stopped ride was durably saved.
+    Saved,
+    /// The stopped ride was explicitly discarded.
+    Discarded,
+}
+
+/// Rust-owned reason for rejecting a location point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRejectionDto {
+    /// Horizontal accuracy exceeded the configured threshold.
+    AccuracyTooLow,
+    /// The observation was older than the last admitted point.
+    OutOfOrder,
+    /// The observation repeated the last point.
+    Duplicate,
+    /// The implied travel speed was not credible.
+    UnrealisticJump,
+}
+
+/// Rust-owned reason for ignoring a valid point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapIgnoredReasonDto {
+    /// The ride is paused.
+    Paused,
+    /// The ride is stopped.
+    Stopped,
+    /// The ride has been saved.
+    Saved,
+    /// The ride has been discarded.
+    Discarded,
+}
+
+/// One validated point returned by the Rust ride-map domain.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapPointDto {
+    /// Monotonic cursor sequence.
+    pub sequence: u64,
+    /// Rust-owned route segment identifier.
+    pub segment_id: u64,
+    /// Validated latitude in degrees.
+    pub latitude_degrees: f64,
+    /// Validated longitude in degrees.
+    pub longitude_degrees: f64,
+    /// Source wall-clock timestamp in Unix milliseconds.
+    pub wall_clock_unix_ms: u64,
+    /// Source monotonic timestamp in milliseconds.
+    pub monotonic_ms: u64,
+    /// Validated horizontal accuracy in meters.
+    pub horizontal_accuracy_meters: f64,
+}
+
+/// Cumulative Rust-owned ride summary.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapSummaryDto {
+    /// Number of admitted points.
+    pub point_count: u64,
+    /// Cumulative distance, excluding segment gaps, in meters.
+    pub distance_meters: f64,
+    /// Elapsed monotonic time between the first and last point.
+    pub duration_milliseconds: u64,
+}
+
+/// Current Rust-owned ride-map snapshot.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapSnapshotDto {
+    /// Stable UUID for this logical ride.
+    pub ride_id: String,
+    /// Current recording phase.
+    pub state: MobileRideMapStateDto,
+    /// Cumulative route summary.
+    pub summary: MobileRideMapSummaryDto,
+    /// Number of contiguous route segments.
+    pub segment_count: u64,
+    /// Stable PEV identity after automatic association, if confirmed.
+    pub associated_vehicle: Option<String>,
+}
+
+/// One bounded history summary returned by the Rust-owned store.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapHistorySummaryDto {
+    /// Stable UUID for the saved ride.
+    pub ride_id: String,
+    /// Persisted lifecycle state.
+    pub state: MobileRideMapStateDto,
+    /// Persisted route summary.
+    pub summary: MobileRideMapSummaryDto,
+    /// Confirmed PEV identity, if one was associated.
+    pub associated_vehicle: Option<String>,
+}
+
+/// Result of submitting one location to the Rust ride-map domain.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapDecisionDto {
+    /// The point was admitted by Rust.
+    Accepted {
+        /// The validated point returned for incremental rendering.
+        point: MobileRideMapPointDto,
+        /// Whether the point began a new Rust-owned route segment.
+        segment_started: bool,
+    },
+    /// The point was rejected without mutating the route.
+    Rejected {
+        /// Typed rejection reason.
+        reason: MobileRideMapRejectionDto,
+    },
+    /// The point was valid but the ride was not admitting points.
+    Ignored {
+        /// Typed ignored reason.
+        reason: MobileRideMapIgnoredReasonDto,
+    },
+}
+
+/// Bounded route-point batch returned by a Rust cursor query.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapPointBatchDto {
+    /// At most the requested bounded number of points.
+    pub points: Vec<MobileRideMapPointDto>,
+    /// Cursor for the next query.
+    pub next_cursor: u64,
+    /// Whether another batch is available.
+    pub has_more: bool,
+}
+
+/// Error returned by the mobile ride-map facade.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRideMapError {
+    /// A new ride cannot replace an active ride.
+    #[error("a ride map recording is already active")]
+    AlreadyRecording,
+    /// The stable PEV identity was invalid.
+    #[error("invalid vehicle identity")]
+    InvalidVehicleIdentity,
+    /// The location observation failed Rust validation.
+    #[error("invalid location sample: {0}")]
+    InvalidLocationSample(String),
+    /// No ride exists for the requested command.
+    #[error("no ride map recording exists")]
+    NoActiveRide,
+    /// The canonical local store rejected a persistence or query operation.
+    #[error("ride-map storage error: {0}")]
+    Storage(String),
+    /// The requested command is not legal in the current Rust-owned state.
+    #[error("ride-map command is invalid in the current state")]
+    InvalidTransition,
+}
+
+/// Rust-owned mobile facade for one live ride-map recording.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapState {
+    ride: Mutex<Option<RideMapRecording>>,
+    store: Mutex<Option<RideMapDatabase>>,
+}
+
+impl Default for MobileRideMapState {
+    fn default() -> Self {
+        Self {
+            ride: Mutex::new(None),
+            store: Mutex::new(None),
+        }
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapState {
+    /// Creates an empty ride-map facade.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Creates a ride-map facade backed by a Rust-owned `SQLite` database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::Storage`] when the database cannot be
+    /// opened or its schema cannot be applied.
+    #[uniffi::constructor]
+    pub fn new_with_database(path: String) -> Result<Arc<Self>, MobileRideMapError> {
+        let store = RideMapDatabase::open(path)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+        let recovered = store
+            .recover_open_recording()
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+        Ok(Arc::new(Self {
+            ride: Mutex::new(recovered),
+            store: Mutex::new(Some(store)),
+        }))
+    }
+
+    /// Starts an explicitly requested GPS-only ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError`] when another ride is active or the candidate identity is
+    /// invalid.
+    pub fn start_gps_only(
+        &self,
+        at_ms: u64,
+        last_connected_vehicle: Option<String>,
+    ) -> Result<MobileRideMapSnapshotDto, MobileRideMapError> {
+        let candidate = last_connected_vehicle
+            .map(RideMapVehicleIdentity::new)
+            .transpose()
+            .map_err(|_| MobileRideMapError::InvalidVehicleIdentity)?;
+        let mut ride = self.lock_ride();
+        if ride.as_ref().is_some_and(|current| {
+            matches!(
+                current.state(),
+                RideMapState::Recording | RideMapState::Paused
+            )
+        }) {
+            return Err(MobileRideMapError::AlreadyRecording);
+        }
+        let new_ride = RideMapRecording::start_gps_only(
+            RideMapMonotonicMilliseconds::new(at_ms),
+            candidate,
+            RideMapAdmissionPolicy::default(),
+        );
+        self.persist_metadata(&new_ride)?;
+        *ride = Some(new_ride);
+        Self::snapshot_locked(ride.as_ref().ok_or(MobileRideMapError::NoActiveRide)?)
+            .ok_or(MobileRideMapError::NoActiveRide)
+    }
+
+    /// Pauses the active ride without changing its identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::NoActiveRide`] when no ride has been started.
+    pub fn pause(&self) -> Result<MobileRideMapSnapshotDto, MobileRideMapError> {
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        if !current.pause() {
+            return Err(MobileRideMapError::InvalidTransition);
+        }
+        if let Err(error) = self.persist_metadata(current) {
+            *current = previous;
+            return Err(error);
+        }
+        Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
+    }
+
+    /// Resumes the active ride without changing its identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::NoActiveRide`] when no ride has been started.
+    pub fn resume(&self) -> Result<MobileRideMapSnapshotDto, MobileRideMapError> {
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        if !current.resume() {
+            return Err(MobileRideMapError::InvalidTransition);
+        }
+        if let Err(error) = self.persist_metadata(current) {
+            *current = previous;
+            return Err(error);
+        }
+        Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
+    }
+
+    /// Stops the active ride and leaves it available for bounded review.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::NoActiveRide`] when no ride has been started.
+    pub fn stop(&self) -> Result<MobileRideMapSnapshotDto, MobileRideMapError> {
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        if !current.stop() {
+            return Err(MobileRideMapError::InvalidTransition);
+        }
+        if let Err(error) = self.persist_metadata(current) {
+            *current = previous;
+            return Err(error);
+        }
+        Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
+    }
+
+    /// Saves a stopped ride through the canonical Rust store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::InvalidTransition`] unless the ride is
+    /// stopped, or [`MobileRideMapError::Storage`] when finalization fails.
+    pub fn save(&self) -> Result<MobileRideMapSnapshotDto, MobileRideMapError> {
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        if !current.save() {
+            return Err(MobileRideMapError::InvalidTransition);
+        }
+        if let Err(error) = self.persist_metadata(current) {
+            *current = previous;
+            return Err(error);
+        }
+        Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
+    }
+
+    /// Explicitly discards a stopped ride and removes its stored history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::InvalidTransition`] unless the ride is
+    /// stopped, or [`MobileRideMapError::Storage`] when deletion fails.
+    pub fn discard(&self) -> Result<MobileRideMapSnapshotDto, MobileRideMapError> {
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        if !current.discard() {
+            return Err(MobileRideMapError::InvalidTransition);
+        }
+        if let Err(error) = self.delete_recording(current.ride_id()) {
+            *current = previous;
+            return Err(error);
+        }
+        Self::snapshot_locked(current).ok_or(MobileRideMapError::NoActiveRide)
+    }
+
+    /// Submits one raw platform location to Rust validation and admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError`] when the location is invalid or no ride exists.
+    pub fn ingest_location(
+        &self,
+        monotonic_ms: u64,
+        wall_clock_unix_ms: u64,
+        latitude_degrees: f64,
+        longitude_degrees: f64,
+        horizontal_accuracy_meters: f64,
+    ) -> Result<MobileRideMapDecisionDto, MobileRideMapError> {
+        let sample = RideMapLocationSample::new(
+            RideMapMonotonicMilliseconds::new(monotonic_ms),
+            wall_clock_unix_ms,
+            latitude_degrees,
+            longitude_degrees,
+            horizontal_accuracy_meters,
+        )
+        .map_err(|error| MobileRideMapError::InvalidLocationSample(error.to_string()))?;
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let decision = current.append_location(sample);
+        if let RideMapPointDecision::Accepted { point, .. } = decision {
+            self.persist_point(current, point)?;
+        }
+        let decision = match decision {
+            RideMapPointDecision::Accepted {
+                point,
+                segment_started,
+            } => MobileRideMapDecisionDto::Accepted {
+                point: MobileRideMapPointDto::from(point),
+                segment_started,
+            },
+            RideMapPointDecision::Rejected(reason) => MobileRideMapDecisionDto::Rejected {
+                reason: reason.into(),
+            },
+            RideMapPointDecision::Ignored(reason) => MobileRideMapDecisionDto::Ignored {
+                reason: reason.into(),
+            },
+        };
+        Ok(decision)
+    }
+
+    /// Reports a confirmed PEV connection for automatic GPS-only association.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError`] when the identity is invalid or no ride exists.
+    pub fn observe_vehicle_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+    ) -> Result<bool, MobileRideMapError> {
+        let identity = RideMapVehicleIdentity::new(platform_identifier)
+            .map_err(|_| MobileRideMapError::InvalidVehicleIdentity)?;
+        let mut ride = self.lock_ride();
+        let current = ride.as_mut().ok_or(MobileRideMapError::NoActiveRide)?;
+        let previous = current.clone();
+        let associated =
+            current.observe_vehicle_connection(&identity, RideMapMonotonicMilliseconds::new(at_ms));
+        if associated {
+            if let Err(error) = self.persist_metadata(current) {
+                *current = previous;
+                return Err(error);
+            }
+        }
+        Ok(associated)
+    }
+
+    /// Returns the current snapshot, or `None` before the first ride starts.
+    #[must_use]
+    pub fn current_snapshot(&self) -> Option<MobileRideMapSnapshotDto> {
+        let ride = self.lock_ride();
+        ride.as_ref().and_then(Self::snapshot_locked)
+    }
+
+    /// Returns a bounded route batch after the supplied cursor.
+    #[must_use]
+    pub fn points_after(
+        &self,
+        after_cursor: u64,
+        limit: u32,
+    ) -> Option<MobileRideMapPointBatchDto> {
+        let ride = self.lock_ride();
+        let current = ride.as_ref()?;
+        let batch =
+            current.points_after(after_cursor, usize::try_from(limit).unwrap_or(usize::MAX));
+        Some(MobileRideMapPointBatchDto {
+            points: batch
+                .points()
+                .iter()
+                .copied()
+                .map(MobileRideMapPointDto::from)
+                .collect(),
+            next_cursor: batch.next_cursor(),
+            has_more: batch.has_more(),
+        })
+    }
+
+    /// Returns bounded newest-first summaries from the canonical local store.
+    ///
+    /// A facade created without a database returns an empty page, which keeps
+    /// tests and bring-up honest without inventing historical routes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MobileRideMapError::Storage` when the history query fails.
+    pub fn stored_summaries(
+        &self,
+        limit: u32,
+    ) -> Result<Vec<MobileRideMapHistorySummaryDto>, MobileRideMapError> {
+        let store = self.lock_store();
+        let Some(store) = store.as_ref() else {
+            return Ok(Vec::new());
+        };
+        store
+            .list_summaries(usize::try_from(limit).unwrap_or(usize::MAX))
+            .map(|summaries| summaries.into_iter().map(Into::into).collect())
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))
+    }
+
+    /// Returns a bounded stored route batch after a sequence cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MobileRideMapError::Storage` when the ride identity or query is invalid.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn stored_points_after(
+        &self,
+        ride_id: String,
+        after_cursor: u64,
+        limit: u32,
+    ) -> Result<MobileRideMapPointBatchDto, MobileRideMapError> {
+        let ride_id = Uuid::parse_str(&ride_id)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+        let store = self.lock_store();
+        let Some(store) = store.as_ref() else {
+            return Ok(MobileRideMapPointBatchDto {
+                points: Vec::new(),
+                next_cursor: after_cursor,
+                has_more: false,
+            });
+        };
+        let batch = store
+            .points_after(
+                ride_id,
+                after_cursor,
+                usize::try_from(limit).unwrap_or(usize::MAX),
+            )
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+        Ok(MobileRideMapPointBatchDto {
+            points: batch
+                .points()
+                .iter()
+                .copied()
+                .map(MobileRideMapPointDto::from)
+                .collect(),
+            next_cursor: batch.next_cursor(),
+            has_more: batch.has_more(),
+        })
+    }
+}
+
+impl MobileRideMapState {
+    fn lock_ride(&self) -> MutexGuard<'_, Option<RideMapRecording>> {
+        self.ride.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_store(&self) -> MutexGuard<'_, Option<RideMapDatabase>> {
+        self.store.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn persist_metadata(&self, recording: &RideMapRecording) -> Result<(), MobileRideMapError> {
+        let mut store = self.lock_store();
+        let Some(store) = store.as_mut() else {
+            return Ok(());
+        };
+        store
+            .save_metadata(recording)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))
+    }
+
+    fn persist_point(
+        &self,
+        recording: &RideMapRecording,
+        point: cutout_ride_maps::RoutePoint,
+    ) -> Result<(), MobileRideMapError> {
+        let store = self.lock_store();
+        let Some(store) = store.as_ref() else {
+            return Ok(());
+        };
+        store
+            .append_point(recording, point)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))
+    }
+
+    fn delete_recording(&self, ride_id: Uuid) -> Result<(), MobileRideMapError> {
+        let mut store = self.lock_store();
+        let Some(store) = store.as_mut() else {
+            return Ok(());
+        };
+        store
+            .delete_recording(ride_id)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))
+    }
+
+    fn snapshot_locked(ride: &RideMapRecording) -> Option<MobileRideMapSnapshotDto> {
+        Some(MobileRideMapSnapshotDto {
+            ride_id: ride.ride_id().to_string(),
+            state: ride.state().into(),
+            summary: ride.summary().into(),
+            segment_count: u64::try_from(ride.segments().len()).ok()?,
+            associated_vehicle: ride
+                .associated_vehicle()
+                .map(|identity| identity.as_str().to_owned()),
+        })
+    }
+}
+
+impl From<RideMapState> for MobileRideMapStateDto {
+    fn from(state: RideMapState) -> Self {
+        match state {
+            RideMapState::Recording => Self::Recording,
+            RideMapState::Paused => Self::Paused,
+            RideMapState::Stopped => Self::Stopped,
+            RideMapState::Saved => Self::Saved,
+            RideMapState::Discarded => Self::Discarded,
+        }
+    }
+}
+
+impl From<RideMapRejection> for MobileRideMapRejectionDto {
+    fn from(reason: RideMapRejection) -> Self {
+        match reason {
+            RideMapRejection::AccuracyTooLow => Self::AccuracyTooLow,
+            RideMapRejection::OutOfOrder => Self::OutOfOrder,
+            RideMapRejection::Duplicate => Self::Duplicate,
+            RideMapRejection::UnrealisticJump => Self::UnrealisticJump,
+        }
+    }
+}
+
+impl From<RideMapIgnoredReason> for MobileRideMapIgnoredReasonDto {
+    fn from(reason: RideMapIgnoredReason) -> Self {
+        match reason {
+            RideMapIgnoredReason::Paused => Self::Paused,
+            RideMapIgnoredReason::Stopped => Self::Stopped,
+            RideMapIgnoredReason::Saved => Self::Saved,
+            RideMapIgnoredReason::Discarded => Self::Discarded,
+        }
+    }
+}
+
+impl From<cutout_ride_maps::RoutePoint> for MobileRideMapPointDto {
+    fn from(point: cutout_ride_maps::RoutePoint) -> Self {
+        let sample = point.sample();
+        Self {
+            sequence: point.sequence(),
+            segment_id: point.segment_id(),
+            latitude_degrees: sample.latitude().as_degrees(),
+            longitude_degrees: sample.longitude().as_degrees(),
+            wall_clock_unix_ms: sample.wall_clock_unix_ms(),
+            monotonic_ms: sample.monotonic_at().as_milliseconds(),
+            horizontal_accuracy_meters: sample.horizontal_accuracy_meters(),
+        }
+    }
+}
+
+impl From<cutout_ride_maps::RideSummary> for MobileRideMapSummaryDto {
+    fn from(summary: cutout_ride_maps::RideSummary) -> Self {
+        Self {
+            point_count: summary.point_count(),
+            distance_meters: summary.distance_meters(),
+            duration_milliseconds: summary.duration_milliseconds(),
+        }
+    }
+}
+
+impl From<RideMapStoredSummary> for MobileRideMapHistorySummaryDto {
+    fn from(summary: RideMapStoredSummary) -> Self {
+        Self {
+            ride_id: summary.ride_id().to_string(),
+            state: summary.state().into(),
+            summary: MobileRideMapSummaryDto {
+                point_count: summary.point_count(),
+                distance_meters: summary.distance_meters(),
+                duration_milliseconds: summary.duration_milliseconds(),
+            },
+            associated_vehicle: summary.associated_vehicle().map(str::to_owned),
+        }
     }
 }
 
@@ -10609,5 +11243,161 @@ mod tests {
         let result = update(30_000);
         let estimate = result.estimate.expect("stable samples produce an estimate");
         assert_eq!(estimate.voltage_sag, None);
+    }
+}
+
+#[cfg(test)]
+mod ride_map_tests {
+    use super::{
+        MobileRideMapDecisionDto, MobileRideMapRejectionDto, MobileRideMapState,
+        MobileRideMapStateDto,
+    };
+
+    #[test]
+    fn mobile_ride_map_facade_keeps_validation_and_association_in_rust() {
+        let state = MobileRideMapState::new();
+        let started = state
+            .start_gps_only(100, Some("last-pev".to_owned()))
+            .expect("ride should start");
+        assert_eq!(started.state, MobileRideMapStateDto::Recording);
+        let ride_id = started.ride_id;
+
+        let decision = state
+            .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
+            .expect("location should be admitted");
+        assert!(matches!(
+            decision,
+            MobileRideMapDecisionDto::Accepted { .. }
+        ));
+        assert_eq!(
+            state.observe_vehicle_connection("last-pev".to_owned(), 200),
+            Ok(true)
+        );
+        assert_eq!(state.current_snapshot().expect("snapshot").ride_id, ride_id);
+        assert_eq!(
+            state
+                .current_snapshot()
+                .expect("snapshot")
+                .associated_vehicle
+                .as_deref(),
+            Some("last-pev")
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_facade_returns_typed_rejection_and_pause_state() {
+        let state = MobileRideMapState::new();
+        state.start_gps_only(100, None).expect("ride should start");
+        let invalid = state.ingest_location(100, 1_700_000_000_100, 91.0, 0.0, 5.0);
+        assert!(invalid.is_err());
+        let rejected = state
+            .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 500.0)
+            .expect("valid input has a typed admission decision");
+        assert!(matches!(
+            rejected,
+            MobileRideMapDecisionDto::Rejected {
+                reason: MobileRideMapRejectionDto::AccuracyTooLow
+            }
+        ));
+        state.pause().expect("ride should pause");
+        let ignored = state
+            .ingest_location(200, 1_700_000_000_200, 39.7392, -104.9903, 5.0)
+            .expect("paused location is a typed decision");
+        assert!(matches!(ignored, MobileRideMapDecisionDto::Ignored { .. }));
+    }
+
+    #[test]
+    fn mobile_ride_map_facade_persists_and_queries_history_in_rust() {
+        let state = MobileRideMapState::new_with_database(":memory:".to_owned())
+            .expect("database should open");
+        let started = state
+            .start_gps_only(100, Some("last-pev".to_owned()))
+            .expect("ride should start");
+        state
+            .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
+            .expect("location should be admitted");
+        state.stop().expect("ride should stop");
+
+        let summaries = state.stored_summaries(10).expect("history should query");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].ride_id, started.ride_id);
+        let points = state
+            .stored_points_after(started.ride_id, 0, 10)
+            .expect("stored points should query");
+        assert_eq!(points.points.len(), 1);
+        assert!(!points.has_more);
+    }
+
+    #[test]
+    fn mobile_ride_map_facade_recovers_an_interrupted_recording() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-ride-recovery-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let ride_id;
+        {
+            let state = MobileRideMapState::new_with_database(path.to_string_lossy().into_owned())
+                .expect("database should open");
+            ride_id = state
+                .start_gps_only(100, None)
+                .expect("ride should start")
+                .ride_id;
+            state
+                .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
+                .expect("location should be admitted");
+        }
+
+        let recovered = MobileRideMapState::new_with_database(path.to_string_lossy().into_owned())
+            .expect("database should reopen");
+        let snapshot = recovered
+            .current_snapshot()
+            .expect("interrupted ride should be restored");
+        assert_eq!(snapshot.ride_id, ride_id);
+        assert_eq!(snapshot.state, MobileRideMapStateDto::Recording);
+        assert_eq!(snapshot.summary.point_count, 1);
+        assert_eq!(
+            recovered
+                .points_after(0, 10)
+                .expect("route exists")
+                .points
+                .len(),
+            1
+        );
+        drop(recovered);
+        std::fs::remove_file(path).expect("fixture database is removable");
+    }
+
+    #[test]
+    fn mobile_ride_map_facade_requires_stop_before_save_and_discard() {
+        let state = MobileRideMapState::new_with_database(":memory:".to_owned())
+            .expect("database should open");
+        state.start_gps_only(100, None).expect("ride should start");
+        assert!(matches!(
+            state.save(),
+            Err(super::MobileRideMapError::InvalidTransition)
+        ));
+        state.stop().expect("ride should stop");
+        let saved = state.save().expect("stopped ride should save");
+        assert_eq!(saved.state, MobileRideMapStateDto::Saved);
+        assert!(matches!(
+            state.discard(),
+            Err(super::MobileRideMapError::InvalidTransition)
+        ));
+
+        state
+            .start_gps_only(200, None)
+            .expect("new ride should start");
+        let discarded_id = state.stop().expect("ride should stop").ride_id;
+        let discarded = state.discard().expect("stopped ride should discard");
+        assert_eq!(discarded.state, MobileRideMapStateDto::Discarded);
+        assert_eq!(
+            state
+                .stored_summaries(10)
+                .expect("history should query")
+                .iter()
+                .filter(|summary| summary.ride_id == discarded_id)
+                .count(),
+            0
+        );
     }
 }

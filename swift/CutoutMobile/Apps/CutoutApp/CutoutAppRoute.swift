@@ -49,6 +49,7 @@ enum CutoutAppRoute: Hashable {
     case vescRide
     case vescDebug
     case capture
+    case rideMap
 
     static func initialRoute() -> CutoutAppRoute {
         .devicePicker
@@ -86,6 +87,8 @@ enum CutoutAppRoute: Hashable {
             .eucPack(.root)
         case .vescRide:
             .vescRide
+        case .rideMap:
+            .rideMap
         }
     }
 
@@ -95,7 +98,7 @@ enum CutoutAppRoute: Hashable {
 
     var navigationTabs: [PevScreenTab] {
         switch self {
-        case .devicePicker, .capture:
+        case .devicePicker, .capture, .rideMap:
             []
         case .eucRide:
             PevRideTabs.eucRideTabs(selected: .eucRide)

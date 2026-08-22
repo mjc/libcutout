@@ -113,7 +113,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture {
+        if destination == .capture || destination == .rideMap {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -180,6 +180,8 @@ struct ContentView: View {
             VescDebugRouteView(model: model)
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
+        case .rideMap:
+            RideMapRouteView(model: model)
         case .devicePicker:
             EmptyView()
         }
@@ -195,6 +197,8 @@ struct ContentView: View {
             localizedAppText("navigation.section.debug")
         case .capture:
             localizedAppText("navigation.section.capture")
+        case .rideMap:
+            localizedAppText("navigation.section.map")
         case .devicePicker:
             localizedAppText("navigation.section.ride")
         }

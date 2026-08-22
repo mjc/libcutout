@@ -4,6 +4,8 @@ import CutoutMobileFFI
 @MainActor
 protocol CutoutSessionDriving: AnyObject {
     var rideSessionStateHandle: CutoutSessionStateHandle { get }
+    var rideMapStateHandle: MobileRideMapState { get }
+    var rideMapStorageError: String? { get }
     var onDisplayStateChange: ((RideDisplayState) -> Void)? { get set }
     var onPhaseChange: ((SessionConnectionPhase) -> Void)? { get set }
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)? { get set }
@@ -13,6 +15,8 @@ protocol CutoutSessionDriving: AnyObject {
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)? { get set }
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)? { get set }
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)? { get set }
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)? { get set }
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)? { get set }
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)? { get set }
     var onBluetoothRestorationResolved: ((String?) -> Void)? { get set }
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate? { get }
@@ -30,3 +34,7 @@ protocol CutoutSessionDriving: AnyObject {
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
+
+extension CutoutSessionDriving {
+    var rideMapStorageError: String? { nil }
+}
