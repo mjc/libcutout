@@ -1,0 +1,19 @@
+[package]
+name = "cutout-ride-maps"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust-owned ride recording, route admission, and bounded map queries"
+readme = "../../README.md"
+keywords = ["gps", "maps", "ride-recording"]
+categories = ["data-structures", "embedded", "science"]
+
+[lints]
+workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
