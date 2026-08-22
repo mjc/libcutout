@@ -1,6 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    CommandKind, PendingProbe, RequestKey, RequestTarget, VescControllerId, WriteMode, WritePayload,
+    CommandKind, DeviceCommand, LightState, PendingProbe, RequestKey, RequestTarget,
+    VescControllerId, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -35,6 +36,61 @@ pub struct EncodedIdentificationProbe {
 
     /// GATT write mode required by this request.
     pub mode: WriteMode,
+}
+
+/// Bounded encoded benign-control write.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedControl {
+    /// Generic command kind represented by this write.
+    pub command: CommandKind,
+
+    /// Bounded command bytes.
+    pub payload: WritePayload,
+
+    /// GATT write mode required by this command.
+    pub mode: WriteMode,
+}
+
+/// NOSFET Aero benign-control encoder.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct AeroControlEncoder;
+
+impl AeroControlEncoder {
+    /// Encodes a supported NOSFET Aero benign control.
+    #[must_use]
+    pub fn encode(command: DeviceCommand) -> Option<EncodedControl> {
+        let payload = match command {
+            DeviceCommand::SetLights(LightState::On) => b"SetLightON".as_slice(),
+            DeviceCommand::SetLights(LightState::Off) => b"SetLightOFF".as_slice(),
+            _ => return None,
+        };
+        Some(EncodedControl {
+            command: command.kind(),
+            payload: request_payload(payload),
+            mode: WriteMode::WithoutResponse,
+        })
+    }
+}
+
+/// Begode Falcon benign-control encoder.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct FalconControlEncoder;
+
+impl FalconControlEncoder {
+    /// Encodes a supported Begode Falcon benign control.
+    #[must_use]
+    pub fn encode(command: DeviceCommand) -> Option<EncodedControl> {
+        let payload = match command {
+            DeviceCommand::SetLights(LightState::On) => b"Q".as_slice(),
+            DeviceCommand::SetLights(LightState::Off) => b"E".as_slice(),
+            _ => return None,
+        };
+        Some(EncodedControl {
+            command: command.kind(),
+            payload: request_payload(payload),
+            mode: WriteMode::WithoutResponse,
+        })
+    }
 }
 
 /// Returns the complete ordered Begode identity query sequence.
@@ -262,6 +318,38 @@ mod tests {
     use super::*;
     use crate::{DeviceFamily, ProtocolProbe, load_request_fixtures};
     use core::mem::size_of;
+
+    #[test]
+    fn aero_control_encoder_uses_nosfet_ascii_light_commands() {
+        let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
+            .expect("NOSFET lights-on command encodes");
+        let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
+            .expect("NOSFET lights-off command encodes");
+
+        assert_eq!(on.command, CommandKind::SetLights);
+        assert_eq!(on.payload.as_slice(), b"SetLightON");
+        assert_eq!(on.mode, WriteMode::WithoutResponse);
+        assert_eq!(off.command, CommandKind::SetLights);
+        assert_eq!(off.payload.as_slice(), b"SetLightOFF");
+        assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn falcon_control_encoder_uses_explicit_begode_light_commands() {
+        let on = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
+            .expect("Begode lights-on command encodes");
+        let off = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
+            .expect("Begode lights-off command encodes");
+
+        assert_eq!(on.command, CommandKind::SetLights);
+        assert_eq!(on.payload.as_slice(), b"Q");
+        assert_eq!(on.mode, WriteMode::WithoutResponse);
+        assert_eq!(off.command, CommandKind::SetLights);
+        assert_eq!(off.payload.as_slice(), b"E");
+        assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
 
     #[test]
     fn falcon_encoder_uses_expected_request_bytes() {
