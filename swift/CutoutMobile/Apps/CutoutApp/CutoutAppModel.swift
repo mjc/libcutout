@@ -163,7 +163,7 @@ final class CutoutAppModel {
     private(set) var recordOnlyDeviceKind: String?
     private(set) var hasSavedDevice = false
     var headlightOn: Bool {
-        guard let state = core.headlightState else { return false }
+        guard let state = effectiveHeadlightState else { return false }
         return switch headlightCommandStatus {
         case .waitingForConfirmation, .sentWithoutConfirmation:
             (state.requested ?? state.current) == .on
@@ -182,6 +182,10 @@ final class CutoutAppModel {
 
     var settingsCapabilities: EucSettingsCapabilities? {
         core.settingsCapabilities
+    }
+
+    var pedalModeState: PedalModeSettingState? {
+        core.pedalModeState
     }
 
     var selectedRideTitle: String? {
@@ -342,6 +346,7 @@ final class CutoutAppModel {
     private var captureNotificationCount = 0
     private var captureLabel: String?
     private var lastHeadlightSubmissionStatus: LightCommandStatus?
+    private var fallbackHeadlightState: LightSettingState?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
@@ -2037,6 +2042,10 @@ final class CutoutAppModel {
         let state: LightState = enabled ? .on : .off
         guard headlightWriteSupport == .supported else {
             lastHeadlightSubmissionStatus = .failed
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState
+            )
             return .failed
         }
         let result = core.setLights(state)
@@ -2046,13 +2055,72 @@ final class CutoutAppModel {
             return .accepted
         case let .refused(reason):
             lastHeadlightSubmissionStatus = .refused
+            fallbackHeadlightState = LightSettingState(
+                kind: .refused,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest,
+                refusalReason: reason
+            )
             return .refused(reason)
         case .failed:
             lastHeadlightSubmissionStatus = .failed
+            fallbackHeadlightState = LightSettingState(
+                kind: .failed,
+                current: displayedHeadlightState,
+                requested: state,
+                source: .userRequest
+            )
             return .failed
         }
     }
 
+    private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
+        guard core.headlightState == nil else { return }
+        fallbackHeadlightState = LightSettingState(
+            kind: .pending,
+            current: displayedHeadlightState,
+            requested: state,
+            source: .userRequest,
+            submittedAt: sentAt
+        )
+    }
+    private var effectiveHeadlightState: LightSettingState? {
+        core.headlightState ?? fallbackHeadlightState
+    }
+
+    private var displayedHeadlightState: LightState? {
+        guard let state = effectiveHeadlightState else { return nil }
+        if state.kind == .pending, core.electricUnicycleModel == .aero {
+            return state.requested
+        }
+        return state.lightState
+    }
+
+    private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
+        guard core.headlightState == nil else { return }
+        guard let reportedState = readback?.eucGarageSettings.lightState else {
+            if fallbackHeadlightState?.kind == .pending {
+                fallbackHeadlightState = LightSettingState(
+                    kind: .failed,
+                    current: fallbackHeadlightState?.lightState
+                )
+            }
+            return
+        }
+        if let requestedState = fallbackHeadlightState?.requested,
+           fallbackHeadlightState?.kind == .pending,
+           requestedState != reportedState
+        {
+            return
+        }
+        fallbackHeadlightState = LightSettingState(
+            kind: .confirmed,
+            current: reportedState,
+            source: .liveReadback,
+            confirmedAt: core.now()
+        )
+    }
     private func handleSettingsReadback(_ readback: SettingsReadback?) {
         settingsReadback = readback
     }

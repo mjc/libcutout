@@ -266,22 +266,23 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
-                localName: "NOSFET Aero",
+                localName: "device-ffe0",
                 advertisedServiceUuids: [.bluetooth16(0xFFE0)]
             )
         )
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
-                localName: "Little FOCer",
+                localName: "device-fff0",
                 advertisedServiceUuids: [.bluetooth16(0xFFF0)]
             )
         )
 
         XCTAssertEqual(core.scanState.status, .scanning)
-        XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [.electricUnicycle, .vescOnewheel])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertEqual(core.scanState.rows.map(\.title), ["device-ffe0", "device-fff0"])
+        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [nil, .vescOnewheel])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["device-fff0"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
         XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
@@ -735,20 +736,20 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-                localName: "Begode Falcon",
+                localName: "device-ffe0",
                 advertisedServiceUuids: []
             )
         )
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-                localName: "Begode Falcon",
+                localName: "device-ffe0",
                 advertisedServiceUuids: [.bluetooth16(0xFFE0)]
             )
         )
 
         XCTAssertEqual(core.scanState.rows.map(\.id), ["ios-local-falcon"])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Begode Falcon"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {
@@ -1391,6 +1392,27 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(sink.writes, [Data("SetLightON".utf8)])
     }
 
+    func testEucLiveOwnerTimesOutPendingHeadlightOnTick() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .aero),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-timeout-test"),
+                localName: ElectricUnicycleModel.aero.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
+        XCTAssertEqual(owner.headlightState?.kind, .pending)
+
+        _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
+
+        XCTAssertEqual(owner.headlightState?.kind, .timedOut)
+    }
+
     func testUnverifiedFalconHeadlightCommandDoesNotReachOperationSink() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
@@ -1422,7 +1444,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .unverified)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
@@ -1436,6 +1458,18 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.headlightState.kind, .pending)
         XCTAssertEqual(session.headlightState.requested, .on)
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
+    }
+
+    func testElectricUnicycleSessionExposesRustOwnedPedalModeState() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertEqual(session.pedalModeState.kind, .unknown)
+        XCTAssertThrowsError(
+            try session.perform(.setPedalMode(.hard), at: MonotonicMilliseconds(10))
+        )
+        XCTAssertEqual(session.pedalModeState.kind, .refused)
+        XCTAssertEqual(session.pedalModeState.requested, .hard)
+        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
     }
 
     func testVescLiveOwnerSubscribesBeforeWritingRequests() throws {

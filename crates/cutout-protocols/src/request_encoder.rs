@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    CommandKind, DeviceCommand, LightState, PendingProbe, RequestKey, RequestTarget,
+    CommandKind, DeviceCommand, LightState, PendingProbe, PedalMode, RequestKey, RequestTarget,
     VescControllerId, WriteMode, WritePayload,
 };
 
@@ -62,6 +62,9 @@ impl AeroControlEncoder {
         let payload = match command {
             DeviceCommand::SetLights(LightState::On) => b"SetLightON".as_slice(),
             DeviceCommand::SetLights(LightState::Off) => b"SetLightOFF".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Hard) => b"SETh".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Medium) => b"SETm".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Soft) => b"SETs".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
@@ -83,6 +86,9 @@ impl FalconControlEncoder {
         let payload = match command {
             DeviceCommand::SetLights(LightState::On) => b"Q".as_slice(),
             DeviceCommand::SetLights(LightState::Off) => b"E".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Hard) => b"h".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Medium) => b"f".as_slice(),
+            DeviceCommand::SetPedalMode(PedalMode::Soft) => b"s".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
@@ -224,6 +230,7 @@ impl VescRequestEncoder {
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
@@ -288,6 +295,7 @@ impl VescCanTarget {
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
@@ -349,6 +357,19 @@ mod tests {
         assert_eq!(off.payload.as_slice(), b"E");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
         assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn documented_pedal_mode_encoders_match_veteran_and_begode_bytes() {
+        let aero = AeroControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Hard))
+            .expect("documented Veteran pedal mode encoder");
+        assert_eq!(aero.command, CommandKind::SetPedalMode);
+        assert_eq!(aero.payload.as_slice(), b"SETh");
+
+        let falcon = FalconControlEncoder::encode(DeviceCommand::SetPedalMode(PedalMode::Soft))
+            .expect("documented Begode pedal mode encoder");
+        assert_eq!(falcon.command, CommandKind::SetPedalMode);
+        assert_eq!(falcon.payload.as_slice(), b"s");
     }
 
     #[test]

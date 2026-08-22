@@ -127,6 +127,36 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testSettingReadbackPresentationKeepsKnownValuesAndUnknownStatesDistinct() {
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.available(Speed(value: 11_666))),
+            "26.1 mph"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.rawMode(3))),
+            "Raw 3"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.available(.documented(.medium))),
+            "Medium"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(
+                PedalModeSettingState(kind: .current, current: .hard),
+                fallback: .available(.documented(.soft))
+            ),
+            "Hard"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.speed(.unavailable),
+            "Unavailable"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(.unsupported),
+            "Not supported"
+        )
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))

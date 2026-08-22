@@ -37,6 +37,7 @@ impl AeroProbe {
             CommandKind::RequestSettings => Some(Self::Settings),
             CommandKind::RequestDiagnostics
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
         }
@@ -85,6 +86,7 @@ impl FalconProbe {
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::SetLights
+            | CommandKind::SetPedalMode
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
         }

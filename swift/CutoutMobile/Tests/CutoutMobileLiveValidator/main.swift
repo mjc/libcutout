@@ -19,7 +19,7 @@ private final class CutoutLiveValidator {
     private let core = CutoutSessionCore()
     private var records: [String] = []
     private var candidateRecordCount = 0
-    private var didRequestPairing = false
+    private var didRequestProbe = false
     private(set) var didValidate = false
 
     init(timeout: TimeInterval) {
@@ -31,7 +31,7 @@ private final class CutoutLiveValidator {
             self?.appendDiagnostic("phase=\(phase)")
         }
         core.onScanStateChange = { [weak self] state in
-            self?.pairFirstSupportedCandidate(from: state)
+            self?.probeFirstCandidate(from: state)
         }
     }
 
@@ -68,20 +68,20 @@ private final class CutoutLiveValidator {
         core.protocolIdentityCandidate?.support.electricUnicycleModel == .aero
     }
 
-    private func pairFirstSupportedCandidate(from state: DevicePickerScanState) {
-        guard !didRequestPairing else {
+    private func probeFirstCandidate(from state: DevicePickerScanState) {
+        guard !didRequestProbe else {
             return
         }
 
-        guard let row = state.rows.first(where: \.isAeroProbeCandidate) else {
+        guard let row = state.rows.first(where: {
+            $0.isProbeRecommended
+        }) else {
             return
         }
 
-        didRequestPairing = true
-        let didPair = row.isSupported
-            ? core.pair(platformIdentifier: row.id)
-            : core.pair(platformIdentifier: row.id, model: .aero)
-        appendDiagnostic("auto_pair_aero=\(didPair) id=\(row.id) title=\(row.title)")
+        didRequestProbe = true
+        let didProbe = core.probe(platformIdentifier: row.id)
+        appendDiagnostic("auto_probe=\(didProbe) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {
@@ -103,15 +103,5 @@ private final class CutoutLiveValidator {
     private func printRecords() {
         print("candidate_records_seen=\(candidateRecordCount)")
         records.forEach { print($0) }
-    }
-}
-
-private extension PevPickerRow {
-    var isAeroProbeCandidate: Bool {
-        let normalizedTitle = title.lowercased()
-        return subtitle.hasPrefix("Electric unicycle")
-            && (normalizedTitle.contains("aero")
-                || normalizedTitle.contains("nosfet")
-                || normalizedTitle.hasPrefix("nf"))
     }
 }

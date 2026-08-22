@@ -178,6 +178,33 @@ struct EucTuneRouteView: View {
                     Text(model.headlightStatusText)
                 }
 
+                if let settings = model.settingsReadback?.eucGarageSettings {
+                    Section {
+                        EucSettingReadbackRow(
+                            id: "beepMargin",
+                            title: localizedAppText("settings.beep_margin.title"),
+                            value: EucSettingReadbackPresentation.speed(settings.beepMargin)
+                        )
+                        EucSettingReadbackRow(
+                            id: "tiltback",
+                            title: localizedAppText("settings.tiltback.title"),
+                            value: EucSettingReadbackPresentation.speed(settings.tiltback)
+                        )
+                        EucSettingReadbackRow(
+                            id: "pedalMode",
+                            title: localizedAppText("settings.pedal_mode.title"),
+                            value: EucSettingReadbackPresentation.pedalMode(
+                                model.pedalModeState,
+                                fallback: settings.pedalMode
+                            )
+                        )
+                    } header: {
+                        Text(localizedAppText("settings.readback.title"))
+                    } footer: {
+                        Text(localizedAppText("settings.readback.footer"))
+                    }
+                }
+
                 if let capabilities = model.settingsCapabilities {
                     Section {
                         EucSettingCapabilityRow(
@@ -204,6 +231,70 @@ struct EucTuneRouteView: View {
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
+private struct EucSettingReadbackRow: View {
+    let id: String
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settings.readback.\(id)")
+    }
+}
+
+enum EucSettingReadbackPresentation {
+    static func speed(_ readback: ReadbackValue<Speed>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        let readout = SpeedReadout(millimetersPerSecond: value.value)
+        return "\(readout.displayValue) \(readout.displayUnit)"
+    }
+
+    static func pedalMode(
+        _ state: PedalModeSettingState?,
+        fallback readback: ReadbackValue<PedalMode>
+    ) -> String {
+        if let current = state?.current {
+            return current.displayName
+        }
+        return pedalMode(readback)
+    }
+
+    static func pedalMode(_ readback: ReadbackValue<PedalMode>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        if let kind = value.documentedKind {
+            return kind.displayName
+        }
+        if let percent = value.percent {
+            return "\(percent)%"
+        }
+        if let rawMode = value.rawMode {
+            return "Raw \(rawMode)"
+        }
+        return availabilityText(.unavailable)
+    }
+
+    private static func availabilityText(_ availability: ReadbackAvailability) -> String {
+        switch availability {
+        case .available:
+            localizedAppText("settings.readback.unavailable")
+        case .unavailable:
+            localizedAppText("settings.readback.unavailable")
+        case .unsupported:
+            localizedAppText("settings.readback.unsupported")
+        }
     }
 }
 

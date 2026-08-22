@@ -364,6 +364,9 @@ public final class CutoutSessionCore: NSObject {
         onBleQueue { musicCaptureContext.current }
     }
 #endif
+    public var pedalModeState: PedalModeSettingState? {
+        onBleQueue { liveOwner?.pedalModeState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -447,7 +450,9 @@ public final class CutoutSessionCore: NSObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.activityType = .fitness
+#if os(iOS)
         manager.allowsBackgroundLocationUpdates = true
+#endif
         return manager
     }()
 

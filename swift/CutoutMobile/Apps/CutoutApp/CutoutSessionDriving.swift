@@ -26,6 +26,7 @@ protocol CutoutSessionDriving: AnyObject {
     var settingsCapabilities: EucSettingsCapabilities? { get }
     var headlightState: LightSettingState? { get }
     var headlightCommandStatus: LightCommandStatus? { get }
+    var pedalModeState: PedalModeSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool

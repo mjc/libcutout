@@ -171,6 +171,43 @@ pub struct LinkInfo {
     pub max_write_len: Option<TransportWriteLimit>,
 }
 
+/// Documented pedal stiffness setting.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PedalMode {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl PedalMode {
+    /// Decodes the documented Veteran/NOSFET pedal-mode field.
+    #[must_use]
+    pub const fn from_veteran_raw(raw: u16) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Hard),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Soft),
+            _ => None,
+        }
+    }
+
+    /// Decodes the documented Begode Live-B pedal-mode bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 13) & 0x03 {
+            0 => Some(Self::Soft),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Hard),
+            _ => None,
+        }
+    }
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -198,6 +235,9 @@ pub enum DeviceCommand {
     /// Set the device lights.
     SetLights(LightState),
 
+    /// Set pedal stiffness; this command is stationary-only.
+    SetPedalMode(PedalMode),
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -221,6 +261,7 @@ impl DeviceCommand {
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
+            Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SoundHorn => CommandKind::SoundHorn,
             Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
         }
@@ -526,6 +567,9 @@ pub enum CommandKind {
     /// Set the device lights.
     SetLights,
 
+    /// Set pedal stiffness.
+    SetPedalMode,
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -546,6 +590,7 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
+            Self::SetPedalMode => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
@@ -685,6 +730,65 @@ impl DangerousActuationPolicy {
         }
 
         Ok(command.metadata())
+    }
+}
+
+/// Short-lived authorization for a settings write while the vehicle is stationary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationarySettingsArm {
+    model: &'static str,
+    expires_at_ms: MonotonicTimestamp,
+}
+
+impl StationarySettingsArm {
+    /// Returns the model this token was issued for.
+    #[must_use]
+    pub const fn model(self) -> &'static str {
+        self.model
+    }
+
+    /// Returns the monotonic expiry timestamp for this token.
+    #[must_use]
+    pub const fn expires_at_ms(self) -> MonotonicTimestamp {
+        self.expires_at_ms
+    }
+
+    /// Returns whether this token is still valid for the model and timestamp.
+    #[must_use]
+    pub const fn is_valid_for(self, model: &str, monotonic_ms: MonotonicTimestamp) -> bool {
+        str_eq(self.model, model) && monotonic_ms.get() <= self.expires_at_ms.get()
+    }
+}
+
+/// Policy for issuing a short-lived stationary settings authorization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationarySettingsPolicy {
+    /// Model this policy allows.
+    pub model: &'static str,
+
+    /// Duration of newly issued authorizations.
+    pub arm_duration: Duration,
+}
+
+impl StationarySettingsPolicy {
+    /// Issues an authorization only from an explicitly stationary ride state.
+    #[must_use]
+    pub const fn arm(
+        self,
+        state: RideOperatingState,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<StationarySettingsArm> {
+        match state {
+            RideOperatingState::Parked | RideOperatingState::Standing => {
+                Some(StationarySettingsArm {
+                    model: self.model,
+                    expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
+                })
+            }
+            RideOperatingState::Unknown
+            | RideOperatingState::Riding
+            | RideOperatingState::Charging => None,
+        }
     }
 }
 
@@ -7954,10 +8058,12 @@ mod tests {
     use super::crate_name;
     use crate::round_div_i32;
     use crate::{
-        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, Current, DeviceCommand,
-        DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry, GattChannel,
-        LinkInfo, Measured, MonotonicTimestamp, ParallelCount, PeakCurrent, PhaseCurrent, Power,
-        ProtocolSession, SeriesCount, SessionInput, SessionOutput, Speed, TelemetryDelta,
+        Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, ControlRefusalReason, Current,
+        DeviceCommand, DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry,
+        GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
+        PeakCurrent, PhaseCurrent, Power, ProtocolSession, SeriesCount, SessionInput,
+        SessionOutput, SettingState, SettingValue, SettingValueSource, Speed, TelemetryDelta,
+        SETTING_WRITE_CONFIRMATION_TIMEOUT,
         TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
         ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
@@ -8091,7 +8197,6 @@ mod tests {
             brightness,
         );
         let marker = crate::RgbLightingRestoreMarker::new(String::new(), requested);
-
         assert_eq!(
             marker.recover("", true),
             crate::RgbLightingRestoreDecision::DifferentAccessory
@@ -8100,6 +8205,32 @@ mod tests {
             crate::RgbLightingRestoreMarker::new("melk-1".to_owned(), requested).recover("", true),
             crate::RgbLightingRestoreDecision::DifferentAccessory
         );
+    }
+
+    #[test]
+    fn setting_state_timeout_waits_for_deadline() {
+        let mut state = SettingState::<LightState>::unknown();
+        state.submit(LightState::On, ms(10));
+        let timeout = SETTING_WRITE_CONFIRMATION_TIMEOUT;
+
+        assert!(!state.timeout_if_elapsed(ms(2_009), timeout));
+        assert!(matches!(state, SettingState::Pending { .. }));
+
+        assert!(state.timeout_if_elapsed(ms(2_010), timeout));
+        assert!(matches!(
+            state,
+            SettingState::TimedOut {
+                requested: LightState::On,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn setting_state_preserves_refusal_without_a_transport_write() {
+        let mut state = SettingState::<LightState>::unknown();
+        state.submit(LightState::On, ms(30));
+        state.refuse(ControlRefusalReason::UnsupportedCommand);
     }
 
     #[test]
@@ -8536,6 +8667,7 @@ mod tests {
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::SetLights(_)
+                    | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
@@ -10173,13 +10305,47 @@ mod tests {
 
     #[test]
     fn benign_controls_are_distinct_from_read_only_requests() {
-        let lights = DeviceCommand::SetLights(crate::LightState::On);
+        let lights = DeviceCommand::SetLights(LightState::On);
         let horn = DeviceCommand::SoundHorn;
 
         assert_eq!(lights.kind(), crate::CommandKind::SetLights);
         assert_eq!(horn.kind(), crate::CommandKind::SoundHorn);
         assert_eq!(lights.safety_class(), crate::SafetyClass::BenignControl);
         assert_eq!(horn.safety_class(), crate::SafetyClass::BenignControl);
+    }
+
+    #[test]
+    fn veteran_pedal_mode_raw_values_use_the_documented_mapping() {
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(0),
+            Some(crate::PedalMode::Hard)
+        );
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(1),
+            Some(crate::PedalMode::Medium)
+        );
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(2),
+            Some(crate::PedalMode::Soft)
+        );
+        assert_eq!(crate::PedalMode::from_veteran_raw(1920), None);
+    }
+
+    #[test]
+    fn begode_pedal_mode_settings_bits_use_documented_inverted_mapping() {
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x0000),
+            Some(crate::PedalMode::Soft)
+        );
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x2000),
+            Some(crate::PedalMode::Medium)
+        );
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x4000),
+            Some(crate::PedalMode::Hard)
+        );
+        assert_eq!(crate::PedalMode::from_begode_settings_bits(0x6000), None);
     }
 
     #[test]
@@ -10202,6 +10368,10 @@ mod tests {
                 &[crate::CommandKind::SetLights, crate::CommandKind::SoundHorn][..],
             ),
             (
+                crate::SafetyClass::StationaryOnly,
+                &[crate::CommandKind::SetPedalMode][..],
+            ),
+            (
                 crate::SafetyClass::Actuation,
                 &[crate::CommandKind::SetRawMotorCurrent][..],
             ),
@@ -10212,6 +10382,40 @@ mod tests {
                 assert_eq!(command.safety_class(), safety_class);
             }
         }
+    }
+
+    #[test]
+    fn stationary_settings_policy_only_arms_stationary_states() {
+        let policy = crate::StationarySettingsPolicy {
+            model: "NOSFET Aero",
+            arm_duration: Duration::from_milliseconds(100),
+        };
+
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Unknown, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Riding, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Charging, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Standing, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Parked, ms(10))
+                .is_some()
+        );
     }
 
     #[test]

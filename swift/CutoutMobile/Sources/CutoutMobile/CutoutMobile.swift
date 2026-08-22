@@ -1341,6 +1341,45 @@ public struct LightSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+public struct PedalModeSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: PedalMode.Kind?
+    public let requested: PedalMode.Kind?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: PedalMode.Kind? = nil,
+        requested: PedalMode.Kind? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobilePedalModeSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(PedalMode.Kind.init)
+        self.requested = dto.requested.map(PedalMode.Kind.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+
 public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     case supported
     case unverified
@@ -1405,6 +1444,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestFaultHistory
     case requestSettings
     case setLights(LightState)
+    case setPedalMode(PedalMode.Kind)
     case soundHorn
 
     fileprivate init(_ dto: MobileCommandDto) {
@@ -1425,6 +1465,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestSettings
         case .setLights(let state):
             self = .setLights(LightState(state))
+        case .setPedalMode(let mode):
+            self = .setPedalMode(PedalMode.Kind(mode))
         case .soundHorn:
             self = .soundHorn
         }
@@ -1448,6 +1490,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestSettings
         case .setLights(let state):
             .setLights(state.dto)
+        case .setPedalMode(let mode):
+            .setPedalMode(mode.dto)
         case .soundHorn:
             .soundHorn
         }
@@ -2603,8 +2647,26 @@ public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, 
 }
 
 public struct PedalMode: Equatable, Hashable, Sendable {
+    public enum Kind: Equatable, Hashable, Sendable {
+        case hard
+        case medium
+        case soft
+
+        public var displayName: String {
+            switch self {
+            case .hard:
+                "Hard"
+            case .medium:
+                "Medium"
+            case .soft:
+                "Soft"
+            }
+        }
+    }
+
     public enum Value: Equatable, Hashable, Sendable {
         case hardnessPercent(UInt8)
+        case documented(Kind)
         case rawMode(UInt16)
     }
 
@@ -2624,8 +2686,19 @@ public struct PedalMode: Equatable, Hashable, Sendable {
         return rawMode
     }
 
+    public var documentedKind: Kind? {
+        guard case let .documented(kind) = value else {
+            return nil
+        }
+        return kind
+    }
+
     public init(hardnessPercent: UInt8) {
         self.value = .hardnessPercent(hardnessPercent)
+    }
+
+    public static func documented(_ kind: Kind) -> Self {
+        Self(value: .documented(kind))
     }
 
     public static func rawMode(_ value: UInt16) -> Self {
@@ -2707,7 +2780,35 @@ private extension PedalMode {
         guard let rawMode = dto.rawMode else {
             return nil
         }
-        self = .rawMode(rawMode)
+        if let mode = dto.mode {
+            self = .documented(Kind(mode))
+        } else {
+            self = .rawMode(rawMode)
+        }
+    }
+}
+
+private extension PedalMode.Kind {
+    init(_ dto: MobilePedalModeKindDto) {
+        switch dto {
+        case .hard:
+            self = .hard
+        case .medium:
+            self = .medium
+        case .soft:
+            self = .soft
+        }
+    }
+
+    var dto: MobilePedalModeKindDto {
+        switch self {
+        case .hard:
+            .hard
+        case .medium:
+            .medium
+        case .soft:
+            .soft
+        }
     }
 }
 
@@ -4850,6 +4951,14 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var pedalModeState: PedalModeSettingState {
+        switch inner {
+        case .aero(let session):
+            PedalModeSettingState(session.pedalModeState())
+        case .falcon(let session):
+            PedalModeSettingState(session.pedalModeState())
+        }
+    }
     public var currentSnapshot: TelemetrySnapshot {
         switch inner {
         case .aero(let session):
@@ -4911,6 +5020,9 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         try step(.command, at: monotonicMilliseconds, command: command)
     }
 
+    fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
+        try step(.tick, at: monotonicMilliseconds)
+    }
     fileprivate func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
@@ -5036,6 +5148,9 @@ public final class VescOnewheelSession: @unchecked Sendable {
         try step(.command, at: monotonicMilliseconds, command: command)
     }
 
+    fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
+        try step(.tick, at: monotonicMilliseconds)
+    }
     fileprivate func step(
         _ kind: MobileSessionInputKindDto,
         at monotonicMilliseconds: MonotonicMilliseconds,
@@ -5207,7 +5322,7 @@ public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
     }
 
     public var modelHint: CutoutModelHint {
-        CutoutModelHint(deviceKind: localName)
+        .unknown
     }
 }
 
@@ -5333,6 +5448,14 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var pedalModeState: PedalModeSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.pedalModeState
+        case .vescOnewheel:
+            nil
+        }
+    }
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5413,6 +5536,15 @@ public enum CoreBluetoothSession: Sendable {
             try session.step(kind, at: monotonicMilliseconds)
         }
     }
+
+    fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
+        switch self {
+        case .electricUnicycle(let session):
+            try session.tick(at: monotonicMilliseconds)
+        case .vescOnewheel(let session):
+            try session.tick(at: monotonicMilliseconds)
+        }
+    }
 }
 
 public enum CoreBluetoothSessionEvent: Equatable, Hashable, Sendable {
@@ -5486,6 +5618,9 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.failHeadlightCommand()
     }
 
+    public var pedalModeState: PedalModeSettingState? {
+        session.pedalModeState
+    }
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
         switch event {
         case .linkUp(let monotonicMilliseconds):
@@ -5526,7 +5661,7 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
             )
 
         case .tick(let monotonicMilliseconds):
-            let actions = try session.lifecycle(.tick, at: monotonicMilliseconds)
+            let actions = try session.tick(at: monotonicMilliseconds)
             return CoreBluetoothSessionStep(
                 operations: actions.flatMap(planner.plan(action:)),
                 snapshot: session.currentSnapshot,
@@ -5621,6 +5756,7 @@ public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
 }
 
 public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
+    private static let settingTickInterval = DispatchTimeInterval.milliseconds(250)
     private let platformIdentifier: CoreBluetoothPeripheralIdentifier
     private let runner: CoreBluetoothSessionRunner
     private let retainedSink: CoreBluetoothOperationSink
@@ -5637,6 +5773,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     private var linkGeneration: UInt64 = 0
     private var retryGeneration: UInt64 = 0
     private var retryAttempts = 0
+    private var pendingTick: DispatchWorkItem?
     private var receivedRealtimeTelemetrySinceLinkUp = false
     private var pendingOperationsAfterSubscription: [CoreBluetoothPlannedOperation] = []
     private var waitingForSubscriptionChannel: BluetoothUuid?
@@ -5724,6 +5861,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         runner.failHeadlightCommand()
     }
 
+    public var pedalModeState: PedalModeSettingState? {
+        runner.pedalModeState
+    }
     /// Configures the Rust-owned charge estimate profile for this connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         runner.configureChargeEstimate(profile: profile)
@@ -5752,6 +5892,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
             if case .subscribe = operation { true } else { false }
         }
         executeAndRecord(subscriptions + writes)
+        scheduleRetryIfNeeded()
+        scheduleSettingTick()
+        
         return step
     }
 
@@ -5769,6 +5912,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
     ) throws -> CoreBluetoothSessionStep {
         record(.command(command, at: monotonicMilliseconds))
         let step = try runner.handle(.command(command, at: monotonicMilliseconds))
+        executeAndRecord(step.operations)
+        return step
+    }
+
+    /// Advances Rust-owned setting lifecycles without sending a device command.
+    @discardableResult
+    public func handleTick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
+        let step = try runner.handle(.tick(at: monotonicMilliseconds))
         executeAndRecord(step.operations)
         return step
     }
@@ -5804,6 +5955,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         cancelDeadlineTimer()
         cancelPendingRetry()
         retainedSink.clearPendingWithoutResponseWrites()
+        cancelSettingTick()
         pendingOperationsAfterSubscription.removeAll()
         waitingForSubscriptionChannel = nil
         let step = try runner.handle(.linkDown(at: monotonicMilliseconds))
@@ -5918,6 +6070,30 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         pendingRetry = retry
         (executionQueue ?? DispatchQueue.main)
             .asyncAfter(deadline: .now() + retryDelay, execute: retry)
+    }
+
+    private func scheduleSettingTick() {
+        guard pendingTick == nil else { return }
+        let tick = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingTick != nil else { return }
+            self.pendingTick = nil
+            do {
+                _ = try self.handleTick(at: self.monotonicClock.now())
+            } catch {
+                return
+            }
+            self.scheduleSettingTick()
+        }
+        pendingTick = tick
+        (executionQueue ?? DispatchQueue.main).asyncAfter(
+            deadline: .now() + Self.settingTickInterval,
+            execute: tick
+        )
+    }
+
+    private func cancelSettingTick() {
+        pendingTick?.cancel()
+        pendingTick = nil
     }
 
     private func runRetryCommandIfNeeded(
@@ -6039,7 +6215,7 @@ public struct CoreBluetoothCentralCoordinator: Equatable, Hashable, Sendable {
     }
 
     public func handleDiscovered(_ advertisement: CoreBluetoothAdvertisement) -> CoreBluetoothCentralAction? {
-        guard scanPolicy.matches(advertisement), advertisement.modelHint != .unknown else {
+        guard scanPolicy.matches(advertisement) else {
             return nil
         }
         return .connect(peripheralIdentifier: advertisement.peripheralIdentifier)
