@@ -1,11 +1,13 @@
-//! Candidate ELK-BLEDOM/MELK protocol support for `LotusLamp X` controllers.
+//! Candidate ELK-BLEDOM/MELK protocol support for the `MELK-OC21` controller.
 
 use cutout_core::{GattChannel, RgbLightingCommand, TransportAction, WriteMode, WritePayload};
 
 /// Candidate ELK-BLEDOM/MELK command encoder.
 ///
-/// The frame templates are derived from the public `elkbledom` Lotus Lamp X
-/// profile and still require physical validation against `MELK-OC21`.
+/// The frame templates are derived from the public `elkbledom` profile. The
+/// historical official app name `LotusLamp X` is provenance only, not an
+/// identity or compatibility signal, and the frames still require physical
+/// validation against `MELK-OC21`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MelkLightingProfile;
 
