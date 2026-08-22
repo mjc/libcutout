@@ -75,6 +75,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.lights.title"), "Lights")
         XCTAssertEqual(localizedAppText("settings.headlight.title"), "Headlight")
         XCTAssertEqual(localizedAppText("settings.high_beam.title"), "High beam")
+        XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
+        XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
+        XCTAssertEqual(localizedAppText("settings.acceleration_assist.title"), "Acceleration assist")
+        XCTAssertEqual(localizedAppText("settings.taillight.title"), "Taillight")
         XCTAssertEqual(
             localizedAppText("settings.headlight.help"),
             "Changes are sent immediately to the connected wheel."

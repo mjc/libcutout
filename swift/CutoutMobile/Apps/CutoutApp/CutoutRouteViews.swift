@@ -139,9 +139,61 @@ struct EucTuneRouteView: View {
                 } footer: {
                     Text(model.headlightStatusText)
                 }
+
+                if let capabilities = model.settingsCapabilities {
+                    Section {
+                        EucSettingCapabilityRow(
+                            id: "pedalMode",
+                            title: localizedAppText("settings.pedal_mode.title"),
+                            support: capabilities.pedalMode
+                        )
+                        EucSettingCapabilityRow(
+                            id: "accelerationAssist",
+                            title: localizedAppText("settings.acceleration_assist.title"),
+                            support: capabilities.accelerationAssist
+                        )
+                        EucSettingCapabilityRow(
+                            id: "taillight",
+                            title: localizedAppText("settings.taillight.title"),
+                            support: capabilities.taillight
+                        )
+                    } header: {
+                        Text(localizedAppText("settings.capabilities.title"))
+                    } footer: {
+                        Text(localizedAppText("settings.capabilities.footer"))
+                    }
+                }
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
+private struct EucSettingCapabilityRow: View {
+    let id: String
+    let title: String
+    let support: SettingWriteSupport
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(statusText)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("settings.capability.\(id)")
+    }
+
+    private var statusText: String {
+        switch support {
+        case .supported:
+            localizedAppText("settings.capabilities.supported")
+        case .unverified:
+            localizedAppText("settings.capabilities.unverified")
+        case .unsupported:
+            localizedAppText("settings.capabilities.unsupported")
+        }
     }
 }
 

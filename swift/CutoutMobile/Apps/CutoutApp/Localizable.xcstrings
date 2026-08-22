@@ -65,6 +65,38 @@
       "comment" : "Section title for EUC light settings.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }
     },
+    "settings.capabilities.title" : {
+      "comment" : "Section title for settings that are not currently editable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other settings" } } }
+    },
+    "settings.capabilities.footer" : {
+      "comment" : "Explains why only validated settings can be changed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Only settings with validated wheel commands can be changed." } } }
+    },
+    "settings.capabilities.supported" : {
+      "comment" : "Status for a setting with a validated write command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Supported" } } }
+    },
+    "settings.capabilities.unverified" : {
+      "comment" : "Status for a setting whose command still needs wheel validation.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Needs validation" } } }
+    },
+    "settings.capabilities.unsupported" : {
+      "comment" : "Status for a setting without a validated command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported" } } }
+    },
+    "settings.pedal_mode.title" : {
+      "comment" : "Label for the EUC pedal mode setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } }
+    },
+    "settings.acceleration_assist.title" : {
+      "comment" : "Label for the EUC acceleration assist setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Acceleration assist" } } }
+    },
+    "settings.taillight.title" : {
+      "comment" : "Label for the EUC taillight setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Taillight" } } }
+    },
     "accessibility.bms_alert.critical" : {
       "comment" : "VoiceOver announcement for a critical BMS alert.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Critical battery warning. Check BMS details." } } }
