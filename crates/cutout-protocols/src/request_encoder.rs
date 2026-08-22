@@ -568,6 +568,38 @@ mod tests {
     }
 
     #[test]
+    fn aero_control_encoder_uses_nosfet_ascii_light_commands() {
+        let on = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
+            .expect("NOSFET lights-on command encodes");
+        let off = AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
+            .expect("NOSFET lights-off command encodes");
+
+        assert_eq!(on.command, CommandKind::SetLights);
+        assert_eq!(on.payload.as_slice(), b"SetLightON");
+        assert_eq!(on.mode, WriteMode::WithoutResponse);
+        assert_eq!(off.command, CommandKind::SetLights);
+        assert_eq!(off.payload.as_slice(), b"SetLightOFF");
+        assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn falcon_control_encoder_uses_explicit_begode_light_commands() {
+        let on = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::On))
+            .expect("Begode lights-on command encodes");
+        let off = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Off))
+            .expect("Begode lights-off command encodes");
+
+        assert_eq!(on.command, CommandKind::SetLights);
+        assert_eq!(on.payload.as_slice(), b"Q");
+        assert_eq!(on.mode, WriteMode::WithoutResponse);
+        assert_eq!(off.command, CommandKind::SetLights);
+        assert_eq!(off.payload.as_slice(), b"E");
+        assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
     fn falcon_encoder_uses_expected_request_bytes() {
         let identity = FalconRequestEncoder::encode(FalconProbe::Identity);
         let firmware = FalconRequestEncoder::encode(FalconProbe::FirmwareInfo);
