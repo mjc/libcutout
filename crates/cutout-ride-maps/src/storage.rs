@@ -497,9 +497,7 @@ impl RideMapStore {
         let ride_id = Uuid::parse_str(&ride_id)
             .map_err(|error| RideMapStoreError::InvalidRideId(error.to_string()))?;
         let state = parse_state(&state)?;
-        let started_at = u64::try_from(started_at_monotonic_ms)
-            .map_err(|_| RideMapStoreError::InvalidPoint("negative ride start time".to_owned()))
-            .map(MonotonicMilliseconds::new)?;
+        let started_at = decode_monotonic(started_at_monotonic_ms, "negative ride start time")?;
         let candidate_vehicle = candidate_vehicle
             .map(VehicleIdentity::new)
             .transpose()
@@ -519,10 +517,8 @@ impl RideMapStore {
             .query_map(params![ride_id.to_string()], decode_point)?
             .collect::<Result<Vec<_>, _>>()?;
         let associated_at = associated_at_monotonic_ms
-            .map(u64::try_from)
-            .transpose()
-            .map_err(|_| RideMapStoreError::InvalidPoint("negative association time".to_owned()))?
-            .map(MonotonicMilliseconds::new);
+            .map(|value| decode_monotonic(value, "negative association time"))
+            .transpose()?;
         let recovered = RideRecording::from_persisted(
             ride_id,
             state,
@@ -870,6 +866,15 @@ fn decode_summary(row: &rusqlite::Row<'_>) -> Result<StoredRideSummary, rusqlite
         })?,
         associated_vehicle,
     })
+}
+
+fn decode_monotonic(
+    value: i64,
+    invalid_message: &str,
+) -> Result<MonotonicMilliseconds, RideMapStoreError> {
+    u64::try_from(value)
+        .map(MonotonicMilliseconds::new)
+        .map_err(|_| RideMapStoreError::InvalidPoint(invalid_message.to_owned()))
 }
 
 fn decode_point(row: &rusqlite::Row<'_>) -> Result<RoutePoint, rusqlite::Error> {
