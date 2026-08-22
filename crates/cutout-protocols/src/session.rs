@@ -1279,8 +1279,9 @@ impl SupportsReadRequests for BegodeFalconModel {
 }
 
 impl SupportsBenignControls for BegodeFalconModel {
-    const CONTROL_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SetLights]);
+    // The Q/E bytes remain capture fixtures, but Falcon hardware validation is
+    // incomplete; keep the encoder unreachable until that evidence is landed.
+    const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
 
     fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
         FalconControlEncoder::encode(command)

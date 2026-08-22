@@ -422,18 +422,26 @@ mod tests {
     }
 
     #[test]
-    fn concrete_falcon_session_maps_set_lights_to_control_write() {
+    fn concrete_falcon_session_refuses_unverified_set_lights() {
         let mut session = new_begode_falcon_benign_control_session();
 
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::Off),
         ));
 
-        assert_eq!(result.error, None);
-        assert!(result.outputs.iter().any(|output| matches!(
+        assert_eq!(
+            result.error,
+            Some(ConcreteSessionErrorDto::CommandRefused {
+                refusal: ControlRefusalDto {
+                    command: CommandKindDto::SetLights,
+                    safety_class: SafetyClassDto::BenignControl,
+                    reason: ControlRefusalReasonDto::UnsupportedCommand,
+                }
+            })
+        );
+        assert!(result.outputs.iter().all(|output| !matches!(
             output,
-            SessionOutputDto::Transport(TransportActionDto::Write { channel, bytes, .. })
-                if *channel == BEGODE_DATA_CHANNEL.as_bytes() && bytes == b"E"
+            SessionOutputDto::Transport(TransportActionDto::Write { .. })
         )));
     }
 

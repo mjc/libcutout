@@ -13695,7 +13695,7 @@ mod tests {
     }
 
     #[test]
-    fn euc_wrappers_expose_typed_headlight_writes() {
+    fn aero_wrapper_writes_while_falcon_wrapper_refuses_unverified_lights() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
 
@@ -13715,10 +13715,20 @@ mod tests {
         assert!(aero_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
         }));
-        assert_eq!(falcon_result.error, None);
-        assert!(falcon_result.outputs.iter().any(|output| {
-            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
-        }));
+        assert!(matches!(
+            falcon_result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                ..
+            })
+        ));
+        assert!(
+            falcon_result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
     }
 
     #[test]

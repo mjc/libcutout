@@ -169,11 +169,11 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, CompleteModelAuthoring, DeviceCommand, GattFingerprint, GattRoles, LightState,
-        ManufacturerKey, ModelAuthoring, ModelCatalog, ModelCatalogEntry, ModelKey,
-        ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, ProtocolFamily, ProtocolSession,
-        RegistryValidationError, SessionInput, SessionKey, SessionOutput, TransportAction,
-        VerificationStatus, Voltage,
+        CommandKind, CompleteModelAuthoring, ControlRefusalReason, DeviceCommand, DeviceEvent,
+        GattFingerprint, GattRoles, LightState, ManufacturerKey, ModelAuthoring, ModelCatalog,
+        ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
+        ProtocolFamily, ProtocolSession, RegistryValidationError, SessionInput, SessionKey,
+        SessionOutput, TransportAction, VerificationStatus, Voltage,
     };
 
     use crate::{
@@ -240,31 +240,39 @@ mod tests {
     }
 
     #[test]
-    fn registered_aero_and_falcon_sessions_schedule_headlight_writes() {
-        for (key, state, expected) in [
-            (
-                NOSFET_AERO_SESSION_KEY,
-                LightState::On,
-                b"SetLightON".as_slice(),
-            ),
-            (BEGODE_FALCON_SESSION_KEY, LightState::Off, b"E".as_slice()),
-        ] {
-            let mut session = find_session_registration(key)
-                .expect("model session registration exists")
-                .construct();
-            let mut output = Vec::new();
+    fn registered_sessions_only_schedule_validated_headlight_writes() {
+        let mut aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
+            .expect("Aero model session registration exists")
+            .construct();
+        let mut aero_output = Vec::new();
+        aero.handle(
+            SessionInput::Command(DeviceCommand::SetLights(LightState::On)),
+            &mut aero_output,
+        );
+        assert!(aero_output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SetLightON"
+        )));
 
-            session.handle(
-                SessionInput::Command(DeviceCommand::SetLights(state)),
-                &mut output,
-            );
-
-            assert!(output.iter().any(|item| matches!(
-                item,
-                SessionOutput::Transport(TransportAction::Write { bytes, .. })
-                    if bytes.as_slice() == expected
-            )));
-        }
+        let mut falcon = find_session_registration(BEGODE_FALCON_SESSION_KEY)
+            .expect("Falcon model session registration exists")
+            .construct();
+        let mut falcon_output = Vec::new();
+        falcon.handle(
+            SessionInput::Command(DeviceCommand::SetLights(LightState::Off)),
+            &mut falcon_output,
+        );
+        assert!(falcon_output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        assert!(falcon_output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))
+                if refusal.command == CommandKind::SetLights
+                    && refusal.reason == ControlRefusalReason::UnsupportedCommand
+        )));
     }
 
     #[test]
@@ -492,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_registry_entry_exposes_reads_and_headlight_control() {
+    fn begode_falcon_registry_entry_exposes_reads_without_unverified_control() {
         let capabilities = BEGODE_FALCON_REGISTRY_ENTRY.capabilities;
 
         assert!(capabilities.supports_command_kind(CommandKind::RequestIdentity));
@@ -501,7 +509,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
-        assert!(capabilities.supports_command_kind(CommandKind::SetLights));
+        assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
     }
 
     #[test]
