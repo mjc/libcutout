@@ -219,6 +219,21 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHeadlightRefusalIsVisibleWithoutChangingState() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        driver.headlightWriteSucceeds = true
+        driver.headlightCommandResult = .refused
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.setHeadlight(true))
+        XCTAssertEqual(model.headlightCommandStatus, .refused)
+        XCTAssertEqual(model.headlightStatusText, "Wheel refused the headlight command.")
+        XCTAssertFalse(model.headlightOn)
+        XCTAssertEqual(driver.headlightStates, [])
+    }
+
+    @MainActor
     func testHeadlightStateDoesNotSurviveDisconnectOrNewPairing() {
         let row = DevicePickerRow(
             id: "aero-1234",
@@ -2746,6 +2761,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
     var headlightWriteSucceeds = false
+    var headlightCommandResult: LightCommandResult = .accepted
     var nowValue: UInt64 = 0
 
     init(
@@ -2813,10 +2829,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func setLights(_ state: LightState) -> Bool {
-        guard headlightWriteSucceeds else { return false }
+    func setLights(_ state: LightState) -> LightCommandResult {
+        guard headlightWriteSucceeds else { return .failed }
+        guard headlightCommandResult == .accepted else { return headlightCommandResult }
         headlightStates.append(state)
-        return true
+        return .accepted
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)

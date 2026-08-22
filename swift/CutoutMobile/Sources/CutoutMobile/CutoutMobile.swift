@@ -1233,6 +1233,18 @@ public enum LightState: Equatable, Hashable, Sendable {
     }
 }
 
+/// Result of submitting a benign light-setting command to the live session.
+public enum LightCommandResult: Equatable, Hashable, Sendable {
+    /// The command was accepted and scheduled for transport.
+    case accepted
+
+    /// The session refused the command before producing a transport write.
+    case refused
+
+    /// The command could not be submitted because the session or transport failed.
+    case failed
+}
+
 public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestIdentity
     case requestTelemetry

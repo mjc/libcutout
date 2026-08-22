@@ -18,6 +18,7 @@ private enum RideSessionRestorationState {
 enum HeadlightCommandStatus: Equatable {
     case idle
     case failed
+    case refused
     case waitingForConfirmation
     case timedOut
     case confirmed
@@ -27,6 +28,7 @@ enum HeadlightCommandStatus: Equatable {
 private enum HeadlightSettingState: Equatable {
     case idle
     case failed(LightState?)
+    case refused(LightState?)
     case waitingForConfirmation(
         requested: LightState,
         current: LightState?,
@@ -44,6 +46,8 @@ private enum HeadlightSettingState: Equatable {
         case .idle:
             nil
         case let .failed(state):
+            state
+        case let .refused(state):
             state
         case let .waitingForConfirmation(_, state, _):
             state
@@ -75,6 +79,8 @@ private enum HeadlightSettingState: Equatable {
             .idle
         case .failed:
             .failed
+        case .refused:
+            .refused
         case let .waitingForConfirmation(_, _, sentAt):
             now.elapsed(since: sentAt).rawValue >= timeout.rawValue
                 ? .timedOut
@@ -325,6 +331,8 @@ final class CutoutAppModel {
             localizedAppText("settings.headlight.help")
         case .failed:
             localizedAppText("settings.headlight.failed")
+        case .refused:
+            localizedAppText("settings.headlight.refused")
         case .waitingForConfirmation:
             localizedAppText("settings.headlight.waiting")
         case .timedOut:
@@ -1321,7 +1329,13 @@ final class CutoutAppModel {
             headlightState = .failed(headlightState.lightState)
             return false
         }
-        guard core.setLights(state) else {
+        switch core.setLights(state) {
+        case .accepted:
+            break
+        case .refused:
+            headlightState = .refused(headlightState.lightState)
+            return false
+        case .failed:
             headlightState = .failed(headlightState.lightState)
             return false
         }
