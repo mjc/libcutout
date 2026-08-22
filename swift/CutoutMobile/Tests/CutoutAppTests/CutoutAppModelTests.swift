@@ -155,6 +155,23 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSettingsCapabilitiesAreExposedToTuneSurface() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(
+            model.settingsCapabilities,
+            EucSettingsCapabilities(
+                pedalMode: .unsupported,
+                accelerationAssist: .unsupported,
+                headlight: .unverified,
+                taillight: .unsupported
+            )
+        )
+    }
+
+    @MainActor
     func testFalconHeadlightToggleWaitsForMatchingWheelTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
