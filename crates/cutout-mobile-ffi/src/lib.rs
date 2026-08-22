@@ -34,15 +34,15 @@ use cutout_core::{
     FaultHistoryAvailabilityDto, FaultHistoryEntry, FaultHistoryEntryDto, FaultHistoryReadback,
     FaultHistoryReadbackDto, FootpadContactStateDto, FootpadTelemetryDto, GattChannel,
     GattFingerprint, GattRoles, IgnoredNotificationEvidenceDto, IgnoredNotificationReasonDto,
-    Measured, MonotonicMillisDto, MonotonicTimestamp, NotificationByteLenDto,
-    NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
-    ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
-    ParserGapEvidenceDto, PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation, PevcapRecord,
-    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    LightingBrightness, LightingPowerState, Measured, MonotonicMillisDto, MonotonicTimestamp,
+    NotificationByteLenDto, NotificationEvidenceDto, NotificationIngestOutcomeDto,
+    ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
+    ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PevcapHeader, PevcapPhoneLocation,
+    PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
     RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
-    RideSessionAppPresence as CoreRideSessionAppPresence,
+    ReservedPayloadEvidenceDto, RgbColor, RgbLightingCommand, RideOperatingModeDto,
+    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -52,24 +52,24 @@ use cutout_core::{
     SessionOutputDto, SettingsEntry, SettingsEntryDto, SettingsReadback,
     SettingsReadbackAvailability, SettingsReadbackAvailabilityDto, SettingsReadbackDto,
     Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto,
-    TemperatureReadingDto, TransportActionDto, TransportWriteLimit, TransportWriteLimitDto,
-    UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto,
-    ValueSource, ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus,
-    VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto,
-    VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
+    TemperatureReadingDto, TransportAction, TransportActionDto, TransportWriteLimit,
+    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
+    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
+    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
+    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
     WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroReadOnlySession,
     ConcreteFalconProfileDto, ConcreteFalconReadOnlySession, ConcreteSessionErrorDto,
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
-    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
-    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
-    VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
-    identify_known_model, new_nosfet_aero_read_only_session,
+    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, MelkGattEvidence,
+    MelkLightingProfile, PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState,
+    ProtocolModelIdentityEvidence, StagedIdentityInput, StagedIdentityOutcome,
+    VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    begode_identification_probes, identify_known_model, new_nosfet_aero_read_only_session,
     try_new_begode_falcon_read_only_session,
 };
 use uuid::Uuid;
@@ -1097,6 +1097,182 @@ impl MobileIdentificationProbeWriteDto {
             payload: payload.to_vec(),
             mode: MobileIdentificationProbeWriteModeDto::WithoutResponse,
         }
+    }
+}
+
+/// GATT write mode for a standalone MELK lighting command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMelkLightingWriteModeDto {
+    /// Write without waiting for a transport acknowledgement.
+    WithoutResponse,
+}
+
+/// One bounded MELK lighting write plus its independent confirmation policy.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingWriteDto {
+    /// Characteristic receiving the command frame.
+    pub characteristic: Vec<u8>,
+
+    /// Candidate protocol frame emitted by Rust.
+    pub payload: Vec<u8>,
+
+    /// Required transport write mode.
+    pub mode: MobileMelkLightingWriteModeDto,
+
+    /// Characteristic whose notifications may confirm the command.
+    pub confirmation_characteristic: Vec<u8>,
+
+    /// Capture-backed minimum command interval, when known.
+    pub minimum_interval_ms: Option<u16>,
+}
+
+/// Invalid input presented to the MELK lighting boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileMelkLightingError {
+    /// A GATT UUID did not contain exactly 16 bytes.
+    #[error("invalid MELK GATT channel")]
+    InvalidGattChannel,
+
+    /// Name and observed GATT evidence did not identify the candidate profile.
+    #[error("invalid MELK GATT evidence")]
+    InvalidGattEvidence,
+
+    /// Brightness was outside the protocol's 0..=100 range.
+    #[error("invalid MELK brightness percentage")]
+    InvalidBrightness,
+}
+
+/// Rust-owned candidate profile for an observed `MELK-OC21` controller.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileMelkLightingProfile;
+
+#[uniffi::export]
+impl MobileMelkLightingProfile {
+    /// Selects the profile only when the family name and all observed channels agree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileMelkLightingError::InvalidGattChannel`] for malformed channel bytes or
+    /// [`MobileMelkLightingError::InvalidGattEvidence`] when the identity evidence does not
+    /// match the candidate profile.
+    #[uniffi::constructor]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn new(
+        name: String,
+        service: Vec<u8>,
+        write: Vec<u8>,
+        notify: Vec<u8>,
+    ) -> Result<Arc<Self>, MobileMelkLightingError> {
+        let evidence = MelkGattEvidence {
+            service: Some(mobile_melk_gatt_channel(&service)?),
+            write: Some(mobile_melk_gatt_channel(&write)?),
+            notify: Some(mobile_melk_gatt_channel(&notify)?),
+        };
+        MelkLightingProfile::identify(&name, evidence)
+            .map(|_| Arc::new(Self))
+            .ok_or(MobileMelkLightingError::InvalidGattEvidence)
+    }
+
+    /// Creates an on/off command write.
+    #[must_use]
+    pub fn set_power(&self, on: bool) -> MobileMelkLightingWriteDto {
+        mobile_melk_write(RgbLightingCommand::SetPower(if on {
+            LightingPowerState::On
+        } else {
+            LightingPowerState::Off
+        }))
+    }
+
+    /// Creates a solid RGB command write.
+    #[must_use]
+    pub fn set_solid_color(&self, red: u8, green: u8, blue: u8) -> MobileMelkLightingWriteDto {
+        mobile_melk_write(RgbLightingCommand::SetSolidColor(RgbColor::new(
+            red, green, blue,
+        )))
+    }
+
+    /// Creates a brightness command write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileMelkLightingError::InvalidBrightness`] when `percentage` is greater than
+    /// 100.
+    pub fn set_brightness(
+        &self,
+        percentage: u8,
+    ) -> Result<MobileMelkLightingWriteDto, MobileMelkLightingError> {
+        let brightness = LightingBrightness::try_from_percent(percentage)
+            .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
+        Ok(mobile_melk_write(RgbLightingCommand::SetBrightness(
+            brightness,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod melk_lighting_tests {
+    use super::{
+        MobileMelkLightingError, MobileMelkLightingProfile, MobileMelkLightingWriteModeDto,
+    };
+    use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_SERVICE_CHANNEL, MELK_WRITE_CHANNEL};
+
+    fn observed_profile() -> std::sync::Arc<MobileMelkLightingProfile> {
+        MobileMelkLightingProfile::new(
+            "MELK-OC21  6A".to_owned(),
+            MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+            MELK_WRITE_CHANNEL.as_bytes().to_vec(),
+            MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
+        )
+        .expect("observed MELK evidence should select the profile")
+    }
+
+    #[test]
+    fn profile_requires_name_and_complete_gatt_evidence() {
+        let result = MobileMelkLightingProfile::new(
+            "MELK-OC21  6A".to_owned(),
+            MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+            MELK_WRITE_CHANNEL.as_bytes().to_vec(),
+            vec![],
+        );
+        assert!(matches!(
+            result,
+            Err(MobileMelkLightingError::InvalidGattChannel)
+        ));
+
+        let result = MobileMelkLightingProfile::new(
+            "Govee_H607C_D635".to_owned(),
+            MELK_SERVICE_CHANNEL.as_bytes().to_vec(),
+            MELK_WRITE_CHANNEL.as_bytes().to_vec(),
+            MELK_NOTIFY_CHANNEL.as_bytes().to_vec(),
+        );
+        assert!(matches!(
+            result,
+            Err(MobileMelkLightingError::InvalidGattEvidence)
+        ));
+    }
+
+    #[test]
+    fn writes_include_transport_and_confirmation_policy() {
+        let profile = observed_profile();
+        let write = profile.set_power(true);
+
+        assert_eq!(write.characteristic, MELK_WRITE_CHANNEL.as_bytes());
+        assert_eq!(
+            write.confirmation_characteristic,
+            MELK_NOTIFY_CHANNEL.as_bytes()
+        );
+        assert_eq!(write.mode, MobileMelkLightingWriteModeDto::WithoutResponse);
+        assert_eq!(write.minimum_interval_ms, None);
+        assert_eq!(write.payload, [0x7e, 0x00, 0x04, 0x01, 0, 0, 0, 0, 0xef]);
+    }
+
+    #[test]
+    fn brightness_rejects_values_outside_the_protocol_range() {
+        let profile = observed_profile();
+        assert_eq!(
+            profile.set_brightness(101),
+            Err(MobileMelkLightingError::InvalidBrightness)
+        );
     }
 }
 
@@ -5469,6 +5645,39 @@ impl From<MobileResolvedIdentityDto> for PevcapResolvedIdentity {
 
 fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
     GattChannel::from_bytes(mobile_channel_bytes(channel))
+}
+
+fn mobile_melk_gatt_channel(channel: &[u8]) -> Result<GattChannel, MobileMelkLightingError> {
+    let bytes: [u8; 16] = channel
+        .try_into()
+        .map_err(|_| MobileMelkLightingError::InvalidGattChannel)?;
+    Ok(GattChannel::from_bytes(bytes))
+}
+
+fn mobile_melk_write(command: RgbLightingCommand) -> MobileMelkLightingWriteDto {
+    let TransportAction::Write {
+        channel,
+        bytes,
+        mode,
+    } = MelkLightingProfile::write_action(command)
+    else {
+        unreachable!("MELK lighting commands always produce writes")
+    };
+    let policy = MelkLightingProfile::write_policy();
+    MobileMelkLightingWriteDto {
+        characteristic: channel.as_bytes().to_vec(),
+        payload: bytes.as_slice().to_vec(),
+        mode: mobile_melk_write_mode(mode),
+        confirmation_characteristic: policy.confirmation_channel.as_bytes().to_vec(),
+        minimum_interval_ms: policy.minimum_interval_ms,
+    }
+}
+
+fn mobile_melk_write_mode(mode: WriteMode) -> MobileMelkLightingWriteModeDto {
+    match mode {
+        WriteMode::WithoutResponse => MobileMelkLightingWriteModeDto::WithoutResponse,
+        WriteMode::WithResponse => unreachable!("MELK policy is write without response"),
+    }
 }
 
 /// Mobile-facing wrapper for a NOSFET Aero read-only session.
