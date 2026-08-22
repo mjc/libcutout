@@ -1233,6 +1233,49 @@ public enum LightState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum SettingWriteSupport: Equatable, Hashable, Sendable {
+    case supported
+    case unverified
+    case unsupported
+
+    fileprivate init(_ dto: MobileSettingWriteSupportDto) {
+        switch dto {
+        case .supported:
+            self = .supported
+        case .unverified:
+            self = .unverified
+        case .unsupported:
+            self = .unsupported
+        }
+    }
+}
+
+public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
+    public let pedalMode: SettingWriteSupport
+    public let accelerationAssist: SettingWriteSupport
+    public let headlight: SettingWriteSupport
+    public let taillight: SettingWriteSupport
+
+    public init(
+        pedalMode: SettingWriteSupport,
+        accelerationAssist: SettingWriteSupport,
+        headlight: SettingWriteSupport,
+        taillight: SettingWriteSupport
+    ) {
+        self.pedalMode = pedalMode
+        self.accelerationAssist = accelerationAssist
+        self.headlight = headlight
+        self.taillight = taillight
+    }
+
+    fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
+        self.pedalMode = SettingWriteSupport(dto.pedalMode)
+        self.accelerationAssist = SettingWriteSupport(dto.accelerationAssist)
+        self.headlight = SettingWriteSupport(dto.headlight)
+        self.taillight = SettingWriteSupport(dto.taillight)
+    }
+}
+
 /// Result of submitting a benign light-setting command to the live session.
 public enum LightCommandResult: Equatable, Hashable, Sendable {
     /// The command was accepted and scheduled for transport.
@@ -4475,6 +4518,25 @@ public extension ElectricUnicycleModel {
         }
     }
 
+    var settingsCapabilities: EucSettingsCapabilities {
+        switch self {
+        case .aero:
+            EucSettingsCapabilities(
+                pedalMode: .unsupported,
+                accelerationAssist: .unsupported,
+                headlight: .supported,
+                taillight: .unsupported
+            )
+        case .falcon:
+            EucSettingsCapabilities(
+                pedalMode: .unsupported,
+                accelerationAssist: .unsupported,
+                headlight: .unverified,
+                taillight: .unsupported
+            )
+        }
+    }
+
     var dto: DiscoveryElectricUnicycleModel {
         switch self {
         case .aero:
@@ -4651,6 +4713,15 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             ParserDiagnostics(session.diagnostics())
         case .falcon(let session):
             ParserDiagnostics(session.diagnostics())
+        }
+    }
+
+    public var settingsCapabilities: EucSettingsCapabilities {
+        switch inner {
+        case .aero(let session):
+            EucSettingsCapabilities(session.settingsCapabilities())
+        case .falcon(let session):
+            EucSettingsCapabilities(session.settingsCapabilities())
         }
     }
 
@@ -5101,6 +5172,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.settingsCapabilities
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5222,6 +5302,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
     /// Removes the charge estimate profile and clears its bounded history.
     public func clearChargeEstimateProfile() {
         session.clearChargeEstimateProfile()
+    }
+
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        session.settingsCapabilities
     }
 
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
@@ -5415,6 +5499,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var records: [CoreBluetoothLiveRecord] {
         recorded
+    }
+
+    public var settingsCapabilities: EucSettingsCapabilities? {
+        runner.settingsCapabilities
     }
 
     /// Configures the Rust-owned charge estimate profile for this connection.

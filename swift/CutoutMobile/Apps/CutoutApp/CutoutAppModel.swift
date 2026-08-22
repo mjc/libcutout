@@ -208,7 +208,7 @@ final class CutoutAppModel {
     }
 
     var headlightControlAvailable: Bool {
-        core.electricUnicycleModel != nil
+        core.settingsCapabilities?.headlight == .supported
     }
 
     var selectedRideTitle: String? {
@@ -324,6 +324,9 @@ final class CutoutAppModel {
 
     var headlightStatusText: String {
         if !headlightControlAvailable, headlightCommandStatus == .idle {
+            if core.settingsCapabilities?.headlight == .unverified {
+                return localizedAppText("settings.headlight.unverified")
+            }
             return localizedAppText("settings.headlight.unavailable")
         }
         return switch headlightCommandStatus {
@@ -1325,7 +1328,7 @@ final class CutoutAppModel {
     @discardableResult
     func setHeadlight(_ enabled: Bool) -> LightCommandResult {
         let state = enabled ? LightState.on : .off
-        guard core.electricUnicycleModel != nil else {
+        guard core.settingsCapabilities?.headlight == .supported else {
             headlightState = .failed(headlightState.lightState)
             return .failed
         }

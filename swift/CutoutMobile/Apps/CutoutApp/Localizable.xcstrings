@@ -25,6 +25,10 @@
       "comment" : "Explains why the headlight control is disabled without a supported wheel.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight is unavailable until a supported wheel is connected." } } }
     },
+    "settings.headlight.unverified" : {
+      "comment" : "Explains why a recognized wheel model remains disabled until its light command is validated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Headlight control is unavailable until this wheel model is validated." } } }
+    },
     "settings.headlight.help" : {
       "comment" : "Explains when the headlight command is sent.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Changes are sent immediately to the connected wheel." } } }

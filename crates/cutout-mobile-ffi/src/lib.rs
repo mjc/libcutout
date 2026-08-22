@@ -2018,6 +2018,55 @@ pub enum MobileLightStateDto {
     On,
 }
 
+/// Validation state for a setting write exposed to mobile consumers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSettingWriteSupportDto {
+    /// Capture-backed and hardware-validated for the model.
+    Supported,
+
+    /// An encoder exists, but validation evidence is incomplete.
+    Unverified,
+
+    /// No safe write is available for the model.
+    Unsupported,
+}
+
+/// Product-shaped write capabilities for an electric-unicycle session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileEucSettingsCapabilitiesDto {
+    /// Pedal-mode/settings write support.
+    pub pedal_mode: MobileSettingWriteSupportDto,
+
+    /// Acceleration-assist/behavior write support.
+    pub acceleration_assist: MobileSettingWriteSupportDto,
+
+    /// Headlight or validated high-beam write support.
+    pub headlight: MobileSettingWriteSupportDto,
+
+    /// Separate taillight write support.
+    pub taillight: MobileSettingWriteSupportDto,
+}
+
+impl MobileEucSettingsCapabilitiesDto {
+    const fn aero() -> Self {
+        Self {
+            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
+            headlight: MobileSettingWriteSupportDto::Supported,
+            taillight: MobileSettingWriteSupportDto::Unsupported,
+        }
+    }
+
+    const fn falcon() -> Self {
+        Self {
+            pedal_mode: MobileSettingWriteSupportDto::Unsupported,
+            acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
+            headlight: MobileSettingWriteSupportDto::Unverified,
+            taillight: MobileSettingWriteSupportDto::Unsupported,
+        }
+    }
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
@@ -9475,6 +9524,11 @@ impl AeroBenignControlSession {
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
     }
+
+    /// Returns the capture-backed EUC setting write capabilities.
+    pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
+        MobileEucSettingsCapabilitiesDto::aero()
+    }
 }
 
 impl AeroBenignControlSession {
@@ -10803,6 +10857,11 @@ impl FalconBenignControlSession {
     /// Returns accumulated parser diagnostics as an owned DTO.
     pub fn diagnostics(&self) -> MobileParserDiagnosticsDto {
         self.lock_inner().diagnostics().into()
+    }
+
+    /// Returns the EUC setting write capabilities and their validation state.
+    pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
+        MobileEucSettingsCapabilitiesDto::falcon()
     }
 }
 

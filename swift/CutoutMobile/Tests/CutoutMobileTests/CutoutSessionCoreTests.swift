@@ -1249,28 +1249,56 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
     }
 
     func testEucLiveOwnerWritesTypedHeadlightCommands() throws {
-        let cases: [(ElectricUnicycleModel, LightState, Data)] = [
-            (.aero, .on, Data("SetLightON".utf8)),
-            (.falcon, .off, Data("E".utf8)),
-        ]
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .aero),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
+                localName: ElectricUnicycleModel.aero.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
 
-        for (model, state, expectedBytes) in cases {
-            let sink = RecordingOperationSink()
-            let owner = CoreBluetoothLiveSessionOwner(
-                session: try .electricUnicycle(model: model),
-                advertisement: CoreBluetoothAdvertisement(
-                    peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-test"),
-                    localName: model.displayName,
-                    advertisedServiceUuids: []
-                ),
-                writeLimit: TransportWriteLimitBytes(20),
-                operationSink: sink
+        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
+
+        XCTAssertEqual(sink.writes, [Data("SetLightON".utf8)])
+    }
+
+    func testUnverifiedFalconHeadlightCommandDoesNotReachOperationSink() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .falcon),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("unverified-falcon"),
+                localName: ElectricUnicycleModel.falcon.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        XCTAssertThrowsError(
+            try owner.handleCommand(.setLights(.off), at: MonotonicMilliseconds(1))
+        ) { error in
+            XCTAssertEqual(
+                error as? CutoutSessionError,
+                .commandRefused(nil, .unsupportedCommand)
             )
-
-            _ = try owner.handleCommand(.setLights(state), at: MonotonicMilliseconds(1))
-
-            XCTAssertEqual(sink.writes, [expectedBytes])
         }
+        XCTAssertTrue(sink.writes.isEmpty)
+    }
+
+    func testElectricUnicycleSessionExposesValidationAwareSettingCapabilities() throws {
+        let aero = try ElectricUnicycleSession(model: .aero)
+        let falcon = try ElectricUnicycleSession(model: .falcon)
+
+        XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.headlight, .unverified)
+        XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
     func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {

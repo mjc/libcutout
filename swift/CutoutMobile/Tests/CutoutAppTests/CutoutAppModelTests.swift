@@ -138,9 +138,32 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testUnverifiedFalconHeadlightToggleStaysUnavailable() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.headlightControlAvailable)
+        XCTAssertEqual(
+            model.headlightStatusText,
+            "Headlight control is unavailable until this wheel model is validated."
+        )
+        XCTAssertEqual(model.setHeadlight(true), .failed)
+        XCTAssertEqual(model.headlightCommandStatus, .failed)
+        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
+        XCTAssertTrue(driver.headlightStates.isEmpty)
+    }
+
+    @MainActor
     func testFalconHeadlightToggleWaitsForMatchingWheelTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
@@ -186,6 +209,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testFalconHeadlightReadbackWithoutLightStateFailsPendingCommand() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
@@ -205,6 +234,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testFalconHeadlightConfirmationTimesOutWithoutReadback() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
@@ -222,6 +257,12 @@ final class CutoutAppModelTests: XCTestCase {
     func testHeadlightRefusalIsVisibleWithoutChangingState() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
+            pedalMode: .unsupported,
+            accelerationAssist: .unsupported,
+            headlight: .supported,
+            taillight: .unsupported
+        )
         driver.headlightWriteSucceeds = true
         driver.headlightCommandResult = .refused(.unsupportedCommand)
         let model = CutoutAppModel(core: driver)
@@ -2746,6 +2787,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var electricUnicycleModel: ElectricUnicycleModel?
+    var settingsCapabilitiesOverride: EucSettingsCapabilities?
+    var settingsCapabilities: EucSettingsCapabilities? {
+        settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities
+    }
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
     private let flushSucceeds: Bool
