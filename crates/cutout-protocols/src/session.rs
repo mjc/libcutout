@@ -3839,7 +3839,7 @@ mod tests {
     }
 
     #[test]
-    fn falcon_benign_control_session_writes_typed_light_state() {
+    fn falcon_benign_control_session_refuses_unverified_light_state() {
         let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
@@ -3848,14 +3848,16 @@ mod tests {
             &mut output,
         );
 
-        assert_eq!(
-            output,
-            vec![SessionOutput::Transport(TransportAction::Write {
-                channel: BEGODE_DATA_CHANNEL,
-                bytes: WritePayload::try_from_slice(b"E").expect("fixture payload fits"),
-                mode: WriteMode::WithoutResponse,
-            })]
-        );
+        assert!(output.iter().all(|item| !matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { .. })
+        )));
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))
+                if refusal.command == CommandKind::SetLights
+                    && refusal.reason == ControlRefusalReason::UnsupportedCommand
+        )));
     }
 
     #[test]
