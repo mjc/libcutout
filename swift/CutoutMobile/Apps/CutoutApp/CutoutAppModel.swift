@@ -13,6 +13,9 @@ private enum RideSessionRestorationState {
 @MainActor
 @Observable
 final class CutoutAppModel {
+    private static let rideMapPointBatchLimit: UInt32 = 512
+    private static let rideMapPreviewPointLimit = 4_096
+
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
@@ -192,17 +195,10 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         rideMapSnapshot = core.rideMapStateHandle.currentSnapshot()
         guard rideMapSnapshot != nil else { return }
-        var cursor: UInt64 = 0
-        repeat {
-            guard let batch = core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: 512) else {
-                break
-            }
-            rideMapPoints.append(contentsOf: batch.points)
-            cursor = batch.nextCursor
-            if rideMapPoints.count >= 4_096 || batch.hasMore == false {
-                break
-            }
-        } while true
+        guard let (points, _) = collectRideMapPoints({ cursor, limit in
+            core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: limit)
+        }) else { return }
+        rideMapPoints = points
     }
 
     func start() {
@@ -305,29 +301,39 @@ final class CutoutAppModel {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
         selectedRideMapHistoryID = rideID
         rideMapHistoryPointsTruncated = false
-        var points = [MobileRideMapPointDto]()
-        var cursor: UInt64 = 0
-        var truncated = false
-        repeat {
-            guard let batch = try? core.rideMapStateHandle.storedPointsAfter(
+        guard let (points, truncated) = try? collectRideMapPoints({ cursor, limit in
+            try core.rideMapStateHandle.storedPointsAfter(
                 rideId: rideID,
                 afterCursor: cursor,
-                limit: 512
-            ) else {
-                rideMapHistoryPoints = []
-                rideMapHistoryPointsTruncated = false
-                return
+                limit: limit
+            )
+        }) else {
+            rideMapHistoryPoints = []
+            rideMapHistoryPointsTruncated = false
+            return
+        }
+        rideMapHistoryPoints = points
+        rideMapHistoryPointsTruncated = truncated
+    }
+
+    private func collectRideMapPoints(
+        _ fetch: (UInt64, UInt32) throws -> MobileRideMapPointBatchDto?
+    ) rethrows -> ([MobileRideMapPointDto], Bool)? {
+        var points = [MobileRideMapPointDto]()
+        var cursor: UInt64 = 0
+        repeat {
+            guard let batch = try fetch(cursor, Self.rideMapPointBatchLimit) else {
+                return nil
             }
             points.append(contentsOf: batch.points)
             cursor = batch.nextCursor
-            if points.count >= 4_096 {
-                truncated = batch.hasMore
-                break
+            if points.count >= Self.rideMapPreviewPointLimit {
+                return (points, batch.hasMore)
             }
-            if batch.hasMore == false { break }
+            if batch.hasMore == false {
+                return (points, false)
+            }
         } while true
-        rideMapHistoryPoints = points
-        rideMapHistoryPointsTruncated = truncated
     }
 
     private func applyRideMapDecision(
