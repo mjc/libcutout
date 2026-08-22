@@ -5491,15 +5491,25 @@ public struct CoreBluetoothCaptureContext: Equatable, Hashable, Sendable {
 
 public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
     public let serviceUuids: [BluetoothUuid]
+    public let requiresKnownRideModel: Bool
 
-    public init(serviceUuids: [BluetoothUuid]) {
+    public init(serviceUuids: [BluetoothUuid], requiresKnownRideModel: Bool = true) {
         self.serviceUuids = serviceUuids
+        self.requiresKnownRideModel = requiresKnownRideModel
     }
 
     public static let aeroFalcon = CoreBluetoothScanPolicy(serviceUuids: [
         .bluetooth16(0xffe0),
         .bluetooth16(0xfff0),
     ])
+
+    /// Scan policy for standalone MELK lighting controllers.
+    ///
+    /// MELK is not an EUC model, so discovery must not require an EUC model hint before connecting.
+    public static let melk = CoreBluetoothScanPolicy(
+        serviceUuids: [.bluetooth16(0xfff0)],
+        requiresKnownRideModel: false
+    )
 }
 
 public enum CoreBluetoothCharacteristicProperty: Equatable, Hashable, Sendable {
@@ -5562,7 +5572,10 @@ public struct CoreBluetoothCentralCoordinator: Equatable, Hashable, Sendable {
     }
 
     public func handleDiscovered(_ advertisement: CoreBluetoothAdvertisement) -> CoreBluetoothCentralAction? {
-        guard scanPolicy.matches(advertisement), advertisement.modelHint != .unknown else {
+        guard scanPolicy.matches(advertisement) else {
+            return nil
+        }
+        guard !scanPolicy.requiresKnownRideModel || advertisement.modelHint != .unknown else {
             return nil
         }
         return .connect(peripheralIdentifier: advertisement.peripheralIdentifier)

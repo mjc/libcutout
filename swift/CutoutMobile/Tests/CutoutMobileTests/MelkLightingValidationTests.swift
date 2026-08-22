@@ -7,6 +7,24 @@ final class MelkLightingValidationTests: XCTestCase {
     private let write = BluetoothUuid.bluetooth16(0xfff3)
     private let notify = BluetoothUuid.bluetooth16(0xfff4)
 
+    func testMELKScanPolicyRoutesStandaloneAccessoryWithoutAnEUCModelHint() {
+        let advertisement = CoreBluetoothAdvertisement(
+            peripheralIdentifier: CoreBluetoothPeripheralIdentifier("melk-1"),
+            localName: "MELK-OC21  6A",
+            advertisedServiceUuids: [service]
+        )
+        let coordinator = CoreBluetoothCentralCoordinator(
+            scanPolicy: .melk,
+            writeLimit: TransportWriteLimitBytes(23)
+        )
+
+        XCTAssertEqual(coordinator.scanPolicy.serviceUuids, [service])
+        XCTAssertEqual(
+            coordinator.handleDiscovered(advertisement),
+            .connect(peripheralIdentifier: CoreBluetoothPeripheralIdentifier("melk-1"))
+        )
+    }
+
     func testObservedMELKInventoryPlansTypedWriteAndNotificationSubscription() throws {
         let harness = try MelkLightingValidationHarness(
             name: "MELK-OC21  6A",
