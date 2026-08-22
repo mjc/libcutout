@@ -25,6 +25,19 @@ final class MelkLightingValidationTests: XCTestCase {
         )
     }
 
+    func testMELKCommandEvidenceNeverTreatsAWriteAsConfirmedByDefault() {
+        var evidence = MelkLightingCommandEvidence()
+        XCTAssertEqual(evidence.status, .idle)
+
+        evidence.requested()
+        XCTAssertEqual(evidence.status, .requested)
+        evidence.unconfirmed()
+        XCTAssertEqual(evidence.status, .unconfirmed)
+        evidence.requested()
+        evidence.confirmed()
+        XCTAssertEqual(evidence.status, .confirmed)
+    }
+
     func testObservedMELKInventoryPlansTypedWriteAndNotificationSubscription() throws {
         let harness = try MelkLightingValidationHarness(
             name: "MELK-OC21  6A",

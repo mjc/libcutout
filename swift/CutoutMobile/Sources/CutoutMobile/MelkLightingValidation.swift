@@ -9,6 +9,35 @@ public enum MelkLightingValidationError: Error, Equatable, Sendable {
     case profileRejected
 }
 
+/// Explicit result state for a lighting command.
+public enum MelkLightingCommandStatus: Equatable, Sendable {
+    case idle
+    case requested
+    case confirmed
+    case unconfirmed
+}
+
+/// Small state tracker used by the live validator; a write never self-confirms.
+public struct MelkLightingCommandEvidence: Equatable, Sendable {
+    public private(set) var status: MelkLightingCommandStatus = .idle
+
+    public init() {}
+
+    public mutating func requested() {
+        status = .requested
+    }
+
+    public mutating func confirmed() {
+        guard status == .requested else { return }
+        status = .confirmed
+    }
+
+    public mutating func unconfirmed() {
+        guard status == .requested else { return }
+        status = .unconfirmed
+    }
+}
+
 /// One Rust-owned MELK write ready for the existing CoreBluetooth operation sink.
 public struct MelkLightingWritePlan: Equatable, Sendable {
     public let operation: CoreBluetoothPlannedOperation
@@ -96,3 +125,335 @@ public struct MelkLightingValidationHarness: Sendable {
         )
     }
 }
+
+#if canImport(CoreBluetooth)
+import CoreBluetooth
+
+/// Connection state for the independent standalone MELK validator.
+public enum MelkLightingPeripheralState: Equatable, Sendable {
+    case idle
+    case scanning
+    case connecting
+    case discovering
+    case ready
+    case disconnected
+    case failed(String)
+}
+
+/// A secondary CoreBluetooth connection for validating MELK without replacing a ride session.
+///
+/// The validator owns its own central manager, so it can remain connected while the primary
+/// EUC/VESC central connection continues to receive telemetry. A command starts as `requested`
+/// and is never marked successful by a write callback; the caller must explicitly record
+/// confirmation or lack of confirmation.
+public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
+    private let queue: DispatchQueue
+    private let queueKey = DispatchSpecificKey<Void>()
+    private var central: CBCentralManager?
+    private var peripheral: CBPeripheral?
+    private var advertisedName: String?
+    private var harness: MelkLightingValidationHarness?
+    private var sink: CoreBluetoothPeripheralOperationSink?
+    private var reconnectEnabled = true
+
+    public private(set) var connectionState: MelkLightingPeripheralState = .idle
+    public private(set) var commandEvidence = MelkLightingCommandEvidence()
+    public private(set) var lastWritePlan: MelkLightingWritePlan?
+
+    /// Called on the validator's CoreBluetooth queue.
+    public var onStateChange: ((MelkLightingPeripheralState) -> Void)?
+
+    /// Called on the validator's CoreBluetooth queue for raw FFF4 notification bytes.
+    public var onNotification: ((Data) -> Void)?
+
+    /// Called on the validator's CoreBluetooth queue for bounded diagnostic records.
+    public var onRecord: ((String) -> Void)?
+
+    public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
+        self.queue = queue
+        super.init()
+        queue.setSpecific(key: queueKey, value: ())
+    }
+
+    public func start() {
+        onQueue {
+            guard central == nil else { return }
+            reconnectEnabled = true
+#if os(iOS)
+            central = CBCentralManager(
+                delegate: self,
+                queue: queue,
+                options: [CBCentralManagerOptionRestoreIdentifierKey: "io.cutout.melk-lighting"]
+            )
+#else
+            central = CBCentralManager(delegate: self, queue: queue)
+#endif
+        }
+    }
+
+    public func stop() {
+        onQueue {
+            reconnectEnabled = false
+            if commandEvidence.status == .requested {
+                commandEvidence.unconfirmed()
+            }
+            if let peripheral {
+                central?.cancelPeripheralConnection(peripheral)
+            }
+            central?.stopScan()
+            central = nil
+            peripheral = nil
+            advertisedName = nil
+            harness = nil
+            sink = nil
+            transition(to: .disconnected)
+        }
+    }
+
+    @discardableResult
+    public func setPower(_ on: Bool) -> Bool {
+        onQueue {
+            guard let harness else { return false }
+            return submit(harness.setPower(on))
+        }
+    }
+
+    @discardableResult
+    public func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+        onQueue {
+            guard let harness else { return false }
+            return submit(harness.setSolidColor(red: red, green: green, blue: blue))
+        }
+    }
+
+    /// Returns `InvalidBrightness` without issuing a write when the percentage is out of range.
+    @discardableResult
+    public func setBrightness(_ percentage: UInt8) throws -> Bool {
+        try onQueue {
+            guard let harness else { return false }
+            return submit(try harness.setBrightness(percentage))
+        }
+    }
+
+    /// Marks the most recent requested command confirmed by an external protocol/physical check.
+    public func markLastCommandConfirmed() {
+        onQueue { commandEvidence.confirmed() }
+    }
+
+    /// Marks the most recent requested command unconfirmed.
+    public func markLastCommandUnconfirmed() {
+        onQueue { commandEvidence.unconfirmed() }
+    }
+
+    public func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        onQueue {
+            guard central.state == .poweredOn else {
+                transition(to: .failed("Bluetooth unavailable: \(central.state.rawValue)"))
+                return
+            }
+            if let peripheral, peripheral.state == .connected {
+                transition(to: .discovering)
+                peripheral.delegate = self
+                peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+                return
+            }
+            central.scanForPeripherals(
+                withServices: CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids
+            )
+            transition(to: .scanning)
+            record("scan=melk services=FFF0")
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi: NSNumber
+    ) {
+        onQueue {
+            let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
+            guard name?.trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased().hasPrefix("melk") == true else {
+                return
+            }
+            self.peripheral = peripheral
+            advertisedName = name
+            peripheral.delegate = self
+            central.stopScan()
+            transition(to: .connecting)
+            record("candidate=\(name ?? "") rssi=\(rssi)")
+            central.connect(peripheral)
+        }
+    }
+
+    public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        onQueue {
+            transition(to: .discovering)
+            peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didFailToConnect peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        onQueue {
+            if reconnectEnabled {
+                transition(to: .connecting)
+                central.connect(peripheral)
+                return
+            }
+            transition(to: .failed(error.map(String.init(describing:)) ?? "connect failed"))
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: Error?
+    ) {
+        onQueue {
+            guard self.peripheral?.identifier == peripheral.identifier else { return }
+            if commandEvidence.status == .requested {
+                commandEvidence.unconfirmed()
+            }
+            harness = nil
+            sink = nil
+            record("disconnected error=\(String(describing: error))")
+            if reconnectEnabled, central.state == .poweredOn {
+                transition(to: .connecting)
+                central.connect(peripheral)
+            } else {
+                self.peripheral = nil
+                advertisedName = nil
+                transition(to: .disconnected)
+            }
+        }
+    }
+
+    public func centralManager(
+        _ central: CBCentralManager,
+        willRestoreState dict: [String: Any]
+    ) {
+        onQueue {
+            guard let restored = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral],
+                  let restoredPeripheral = restored.first else {
+                return
+            }
+            peripheral = restoredPeripheral
+            advertisedName = restoredPeripheral.name
+            restoredPeripheral.delegate = self
+            if restoredPeripheral.state == .connected {
+                transition(to: .discovering)
+                restoredPeripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+            } else {
+                transition(to: .connecting)
+                central.connect(restoredPeripheral)
+            }
+            record("restore=melk")
+        }
+    }
+
+    public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        onQueue {
+            guard error == nil else {
+                transition(to: .failed(error.map(String.init(describing:)) ?? "service discovery failed"))
+                return
+            }
+            peripheral.services?.forEach { peripheral.discoverCharacteristics(nil, for: $0) }
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: Error?
+    ) {
+        onQueue {
+            guard error == nil else {
+                transition(to: .failed(error.map(String.init(describing:)) ?? "characteristic discovery failed"))
+                return
+            }
+            guard let name = advertisedName ?? peripheral.name else {
+                transition(to: .failed("missing MELK name"))
+                return
+            }
+            do {
+                let candidate = try MelkLightingValidationHarness(
+                    name: name,
+                    inventory: CoreBluetoothGattInventory(services: peripheral.services ?? [])
+                )
+                harness = candidate
+                sink = CoreBluetoothPeripheralOperationSink(peripheral: peripheral)
+                if case let .subscribe(channel) = candidate.subscription {
+                    sink?.subscribe(channel: channel)
+                }
+                record("gatt=FFF0 write=FFF3 notify=FFF4")
+            } catch {
+                transition(to: .failed(String(describing: error)))
+            }
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        onQueue {
+            guard characteristic.uuid == MelkLightingValidationHarness.notify.coreBluetoothUuid else {
+                return
+            }
+            guard error == nil, characteristic.isNotifying else {
+                transition(to: .failed(error.map(String.init(describing:)) ?? "FFF4 notify unavailable"))
+                return
+            }
+            transition(to: .ready)
+            record("notify_state=true")
+        }
+    }
+
+    public func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        onQueue {
+            guard error == nil, characteristic.uuid == MelkLightingValidationHarness.notify.coreBluetoothUuid,
+                  let value = characteristic.value else { return }
+            onNotification?(value)
+            record("notification=\(value.count) bytes")
+        }
+    }
+
+    private func submit(_ plan: MelkLightingWritePlan) -> Bool {
+        guard connectionState == .ready, let sink,
+              case let .writeWithoutResponse(channel, bytes) = plan.operation else {
+            return false
+        }
+        sink.writeWithoutResponse(channel: channel, bytes: bytes)
+        lastWritePlan = plan
+        commandEvidence.requested()
+        record("requested=\(bytes.map { String(format: "%02x", $0) }.joined())")
+        return true
+    }
+
+    private func transition(to state: MelkLightingPeripheralState) {
+        connectionState = state
+        onStateChange?(state)
+    }
+
+    private func record(_ message: String) {
+        onRecord?(message)
+    }
+
+    private func onQueue<T>(_ work: () throws -> T) rethrows -> T {
+        if DispatchQueue.getSpecific(key: queueKey) != nil {
+            return try work()
+        }
+        return try queue.sync(execute: work)
+    }
+}
+#endif
