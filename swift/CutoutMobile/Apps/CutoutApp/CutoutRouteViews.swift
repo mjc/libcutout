@@ -449,7 +449,7 @@ struct LightingRouteView: View {
                     }
                 }
 
-                HStack {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     colorButton("Red", color: .red, identifier: "lighting.color.red") {
                         model.setSolidColor(red: 255, green: 0, blue: 0)
                     }
