@@ -6191,14 +6191,8 @@ impl MobilePevcapCaptureBuilder {
                 course_accuracy_degrees: location.course_accuracy_degrees,
             });
         }
-        let music = match music {
-            Some(music) => {
-                let Ok(music) = PevcapMusicEvent::try_from(music) else {
-                    return false;
-                };
-                Some(music)
-            }
-            None => self.take_music_context(),
+        let Ok(music) = self.resolve_music_context(music) else {
+            return false;
         };
         if let Some(music) = music {
             record = record.with_music(music);
@@ -6213,6 +6207,16 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
+    }
+
+    fn resolve_music_context(
+        &self,
+        music: Option<MobilePevcapMusicEventDto>,
+    ) -> Result<Option<PevcapMusicEvent>, ()> {
+        match music {
+            Some(music) => PevcapMusicEvent::try_from(music).map(Some).map_err(|_| ()),
+            None => Ok(self.take_music_context()),
+        }
     }
 
     fn metadata(&self) -> CaptureMetadata {
