@@ -160,6 +160,7 @@ final class CutoutAppModelTests: XCTestCase {
             model.settingsCapabilities,
             EucSettingsCapabilities(
                 pedalMode: .supported,
+                rollAngle: .supported,
                 accelerationAssist: .unsupported,
                 headlight: .supported,
                 taillight: .unsupported
@@ -176,6 +177,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pedalModeControlAvailable)
         XCTAssertEqual(model.setPedalMode(.soft), .accepted)
         XCTAssertEqual(driver.pedalModes, [.soft])
+    }
+
+    @MainActor
+    func testRollAngleWriteUsesTheSupportedCapability() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.rollAngleControlAvailable)
+        XCTAssertEqual(model.setRollAngle(.high), .accepted)
+        XCTAssertEqual(driver.rollAngles, [.high])
     }
 
     @MainActor
@@ -2913,6 +2925,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
     var pedalModeState: PedalModeSettingState?
+    var rollAngleState: RollAngleSettingState?
     var accelerationAssistState: AccelerationAssistSettingState?
     var taillightState: LightSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
@@ -2934,6 +2947,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
+    private(set) var rollAngles = [RollAngle.Kind]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: SettingCommandResult = .accepted
     var pedalModeCommandResult: SettingCommandResult = .accepted
@@ -3013,6 +3027,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
         pedalModes.append(mode)
+        return .accepted
+    }
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        rollAngles.append(angle)
         return .accepted
     }
     func now() -> MonotonicMilliseconds {

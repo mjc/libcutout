@@ -191,8 +191,16 @@ final class CutoutAppModel {
         core.pedalModeState
     }
 
+    var rollAngleState: RollAngleSettingState? {
+        core.rollAngleState
+    }
+
     var pedalModeControlAvailable: Bool {
         core.settingsCapabilities?.pedalMode == .supported
+    }
+
+    var rollAngleControlAvailable: Bool {
+        core.settingsCapabilities?.rollAngle == .supported
     }
 
     var accelerationAssistState: AccelerationAssistSettingState? {
@@ -1345,6 +1353,12 @@ final class CutoutAppModel {
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         guard pedalModeControlAvailable else { return .failed }
         return core.setPedalMode(mode)
+    }
+
+    @discardableResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        guard rollAngleControlAvailable else { return .failed }
+        return core.setRollAngle(angle)
     }
 
     private func applyHeadlightSubmission(

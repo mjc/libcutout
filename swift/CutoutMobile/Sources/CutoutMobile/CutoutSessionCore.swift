@@ -331,6 +331,9 @@ public final class CutoutSessionCore: NSObject {
     public var pedalModeState: PedalModeSettingState? {
         onBleQueue { liveOwner?.pedalModeState }
     }
+    public var rollAngleState: RollAngleSettingState? {
+        onBleQueue { liveOwner?.rollAngleState }
+    }
     public var accelerationAssistState: AccelerationAssistSettingState? {
         onBleQueue { liveOwner?.accelerationAssistState }
     }
@@ -704,6 +707,29 @@ public final class CutoutSessionCore: NSObject {
                 return .failed
             } catch {
                 record("set_pedal_mode_error=\(error)")
+                return .failed
+            }
+        }
+    }
+
+    @discardableResult
+    public func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return .failed }
+            guard liveOwner.armSettingsWrites(at: clock.now()) else {
+                return .refused(.missingArm)
+            }
+            do {
+                try liveOwner.handleCommand(.setRollAngle(angle), at: clock.now())
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("set_roll_angle_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
+            } catch {
+                record("set_roll_angle_error=\(error)")
                 return .failed
             }
         }

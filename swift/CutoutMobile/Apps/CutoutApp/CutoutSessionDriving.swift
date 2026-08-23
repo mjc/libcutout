@@ -22,6 +22,7 @@ protocol CutoutSessionDriving: AnyObject {
     var settingsCapabilities: EucSettingsCapabilities? { get }
     var headlightState: LightSettingState? { get }
     var pedalModeState: PedalModeSettingState? { get }
+    var rollAngleState: RollAngleSettingState? { get }
     var accelerationAssistState: AccelerationAssistSettingState? { get }
     var taillightState: LightSettingState? { get }
 
@@ -36,6 +37,7 @@ protocol CutoutSessionDriving: AnyObject {
     func disconnectAndScan()
     func setLights(_ state: LightState) -> SettingCommandResult
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

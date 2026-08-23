@@ -137,6 +137,9 @@ struct EucTuneRouteView: View {
                     if model.pedalModeControlAvailable {
                         EucPedalModeControl(model: model)
                     }
+                    if model.rollAngleControlAvailable {
+                        EucRollAngleControl(model: model)
+                    }
                 } header: {
                     Text(localizedAppText("settings.lights.title"))
                 } footer: {
@@ -144,6 +147,9 @@ struct EucTuneRouteView: View {
                         Text(model.headlightStatusText)
                         if model.pedalModeControlAvailable {
                             Text(localizedAppText("settings.pedal_mode.footer"))
+                        }
+                        if model.rollAngleControlAvailable {
+                            Text(localizedAppText("settings.roll_angle.footer"))
                         }
                     }
                 }
@@ -166,6 +172,14 @@ struct EucTuneRouteView: View {
                             value: EucSettingReadbackPresentation.pedalMode(
                                 model.pedalModeState,
                                 fallback: settings.pedalMode
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "rollAngle",
+                            title: localizedAppText("settings.roll_angle.title"),
+                            value: EucSettingReadbackPresentation.rollAngle(
+                                model.rollAngleState,
+                                fallback: settings.rollAngle
                             )
                         )
                         EucSettingReadbackRow(
@@ -193,6 +207,14 @@ struct EucTuneRouteView: View {
                             support: capabilities.pedalMode,
                             state: model.pedalModeState?.kind,
                             confirmedAt: model.pedalModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "rollAngle",
+                            title: localizedAppText("settings.roll_angle.title"),
+                            support: capabilities.rollAngle,
+                            state: model.rollAngleState?.kind,
+                            confirmedAt: model.rollAngleState?.confirmedAt,
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
@@ -256,12 +278,55 @@ private struct EucPedalModeControl: View {
     }
 }
 
+private struct EucRollAngleControl: View {
+    let model: CutoutAppModel
+    @State private var selectedAngle: RollAngle.Kind = .medium
+
+    private static let angles: [RollAngle.Kind] = [.low, .medium, .high]
+
+    var body: some View {
+        Picker(
+            localizedAppText("settings.roll_angle.title"),
+            selection: Binding(
+                get: { model.rollAngleState?.current ?? readbackAngle ?? selectedAngle },
+                set: {
+                    selectedAngle = $0
+                    _ = model.setRollAngle($0)
+                }
+            )
+        ) {
+            ForEach(Self.angles, id: \.self) { angle in
+                Text(localizedAppText("settings.roll_angle.\(angle.localizationKey)"))
+                    .tag(angle)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityHint(localizedAppText("settings.roll_angle.footer"))
+        .accessibilityIdentifier("settings.control.rollAngle")
+    }
+
+    private var readbackAngle: RollAngle.Kind? {
+        model.settingsReadback?.eucGarageSettings.rollAngle.value?.documentedKind
+    }
+}
+
 private extension PedalMode.Kind {
     var localizationKey: String {
         switch self {
         case .hard: "hard"
         case .medium: "medium"
         case .soft: "soft"
+        }
+    }
+}
+
+private extension RollAngle.Kind {
+    var localizationKey: String {
+        switch self {
+        case .low: "low"
+        case .medium: "medium"
+        case .high: "high"
         }
     }
 }
@@ -316,6 +381,21 @@ enum EucSettingReadbackPresentation {
             return "Raw \(rawMode)"
         }
         return availabilityText(.unavailable)
+    }
+
+    static func rollAngle(
+        _ state: RollAngleSettingState?,
+        fallback readback: ReadbackValue<RollAngle>
+    ) -> String {
+        if let state, let value = state.current ?? state.requested {
+            return value.displayName
+        }
+        guard let value = readback.value else {
+            return readback.availability == .unsupported
+                ? localizedAppText("settings.readback.unsupported")
+                : localizedAppText("settings.readback.unavailable")
+        }
+        return value.documentedKind?.displayName ?? value.rawAngle.map(String.init) ?? "—"
     }
 
     static func seconds(_ readback: ReadbackValue<UInt64>) -> String {

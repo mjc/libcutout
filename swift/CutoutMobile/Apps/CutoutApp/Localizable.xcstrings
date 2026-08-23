@@ -177,6 +177,26 @@
       "comment" : "Soft pedal mode picker value.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } }
     },
+    "settings.roll_angle.title" : {
+      "comment" : "Label for the Falcon roll-angle sensitivity setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Roll angle" } } }
+    },
+    "settings.roll_angle.footer" : {
+      "comment" : "Safety guidance for the Falcon roll-angle write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked." } } }
+    },
+    "settings.roll_angle.low" : {
+      "comment" : "Low roll-angle sensitivity picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Low" } } }
+    },
+    "settings.roll_angle.medium" : {
+      "comment" : "Medium roll-angle sensitivity picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
+    },
+    "settings.roll_angle.high" : {
+      "comment" : "High roll-angle sensitivity picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High" } } }
+    },
     "settings.acceleration_assist.title" : {
       "comment" : "Label for the EUC acceleration assist setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Acceleration assist" } } }

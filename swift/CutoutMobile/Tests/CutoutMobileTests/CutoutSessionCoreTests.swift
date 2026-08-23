@@ -1314,6 +1314,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
         XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
@@ -1365,6 +1367,23 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.pedalModeState.kind, .refused)
         XCTAssertEqual(session.pedalModeState.requested, .hard)
         XCTAssertEqual(session.pedalModeState.refusalReason, .missingArm)
+    }
+
+    func testFalconRollAngleWriteIsGuardedUntilArmed() throws {
+        let session = try ElectricUnicycleSession(model: .falcon)
+
+        XCTAssertThrowsError(
+            try session.perform(.setRollAngle(.high), at: MonotonicMilliseconds(10))
+        ) { error in
+            XCTAssertEqual(
+                error as? CutoutSessionError,
+                .commandRefused(.setRollAngle(.high), .missingArm)
+            )
+        }
+
+        XCTAssertEqual(session.rollAngleState.kind, .refused)
+        XCTAssertEqual(session.rollAngleState.requested, .high)
+        XCTAssertEqual(session.rollAngleState.refusalReason, .missingArm)
     }
 
     func testElectricUnicycleSessionExposesRustOwnedUnverifiedSettingStates() throws {
