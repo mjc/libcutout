@@ -73,15 +73,17 @@ private final class CutoutLiveValidator {
             return
         }
 
-        guard let row = state.rows.first(where: \.isAeroProbeCandidate) else {
+        guard let row = state.rows.first(where: {
+            $0.isSupported
+                && $0.connectionRoute == .electricUnicycle
+                && $0.electricUnicycleModel != nil
+        }) else {
             return
         }
 
         didRequestPairing = true
-        let didPair = row.isSupported
-            ? core.pair(platformIdentifier: row.id)
-            : core.pair(platformIdentifier: row.id, model: .aero)
-        appendDiagnostic("auto_pair_aero=\(didPair) id=\(row.id) title=\(row.title)")
+        let didPair = core.pair(platformIdentifier: row.id)
+        appendDiagnostic("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {
@@ -103,15 +105,5 @@ private final class CutoutLiveValidator {
     private func printRecords() {
         print("candidate_records_seen=\(candidateRecordCount)")
         records.forEach { print($0) }
-    }
-}
-
-private extension PevPickerRow {
-    var isAeroProbeCandidate: Bool {
-        let normalizedTitle = title.lowercased()
-        return subtitle.hasPrefix("Electric unicycle")
-            && (normalizedTitle.contains("aero")
-                || normalizedTitle.contains("nosfet")
-                || normalizedTitle.hasPrefix("nf"))
     }
 }
