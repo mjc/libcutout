@@ -46,6 +46,27 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public var title: String { item?.title ?? pevLocalizedText("music.not_playing") }
     public var artist: String { item?.artist ?? providerName }
 
+    public var statusText: String? {
+        switch state {
+        case .playing, .paused:
+            nil
+        case .buffering:
+            pevLocalizedText("music.state.buffering")
+        case .interrupted:
+            pevLocalizedText("music.state.interrupted")
+        case .stopped:
+            pevLocalizedText("music.state.stopped")
+        case .unauthorized:
+            pevLocalizedText("music.state.authorization_required")
+        case .unavailable:
+            pevLocalizedText("music.state.unavailable")
+        case .disconnected:
+            pevLocalizedText("music.state.disconnected")
+        case .stale:
+            pevLocalizedText("music.state.stale")
+        }
+    }
+
     public var playPauseCommand: MobileMusicCommandDto? {
         switch state {
         case .playing where capabilities.pause: .pause
@@ -165,7 +186,7 @@ public struct MusicCompactPlayer: View {
                 Text(nowPlaying.title)
                     .lineLimit(1)
                     .font(.subheadline.weight(.semibold))
-                Text(nowPlaying.artist)
+                Text(nowPlaying.statusText ?? nowPlaying.artist)
                     .lineLimit(1)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -184,6 +205,12 @@ public struct MusicCompactPlayer: View {
                 Image(systemName: "forward.fill")
             }
             .disabled(!nowPlaying.capabilities.next)
+            if nowPlaying.capabilities.openProvider {
+                Button { onCommand(.openProvider) } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                }
+                .accessibilityLabel(pevLocalizedText("music.open_provider"))
+            }
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
             }

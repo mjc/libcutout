@@ -17,6 +17,38 @@
       "comment" : "Spotify provider name shown by the compact player.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Spotify" } } }
     },
+    "music.open_provider" : {
+      "comment" : "Accessibility label for opening the active music provider.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open music provider" } } }
+    },
+    "music.state.authorization_required" : {
+      "comment" : "Compact player state when music authorization is required.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Authorization required" } } }
+    },
+    "music.state.buffering" : {
+      "comment" : "Compact player state while the provider buffers.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Buffering" } } }
+    },
+    "music.state.disconnected" : {
+      "comment" : "Compact player state when the provider connection is disconnected.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Disconnected" } } }
+    },
+    "music.state.interrupted" : {
+      "comment" : "Compact player state after a playback interruption.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Interrupted" } } }
+    },
+    "music.state.stale" : {
+      "comment" : "Compact player state when the provider observation is stale.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stale" } } }
+    },
+    "music.state.stopped" : {
+      "comment" : "Compact player state when playback is stopped.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped" } } }
+    },
+    "music.state.unavailable" : {
+      "comment" : "Compact player state when the provider is unavailable.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Unavailable" } } }
+    },
     "bms.accessibility.balancing" : {
       "comment" : "VoiceOver BMS cell-group state when that group is actively balancing.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "balancing" } } }

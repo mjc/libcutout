@@ -86,6 +86,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(snapshot.item)
     }
 
+    func testNowPlayingKeepsUnavailableStateVisibleToTheCompactPlayer() {
+        let nowPlaying = MusicNowPlaying(snapshot: SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 42))
+
+        XCTAssertEqual(nowPlaying.title, "Not playing")
+        XCTAssertEqual(nowPlaying.statusText, "Unavailable")
+        XCTAssertTrue(nowPlaying.capabilities.openProvider)
+    }
+
     private func snapshot(
         state: MobileMusicPlaybackStateDto = .playing,
         observedAtMs: UInt64 = 10
