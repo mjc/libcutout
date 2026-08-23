@@ -12,7 +12,7 @@ struct AppMusicCompactPlayerModifier: ViewModifier {
             selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
-            onCommand: model.handleMusicCommand,
+            onCommand: { _ = model.handleMusicCommand($0) },
             onDismiss: model.dismissMusicPlayer,
             onRestore: model.restoreMusicPlayer,
             onSelectProvider: model.selectMusicProvider,

@@ -239,17 +239,22 @@ final class CutoutAppModel {
         }
     }
 
-    func handleMusicCommand(_ command: MobileMusicCommandDto) {
+    @discardableResult
+    func handleMusicCommand(_ command: MobileMusicCommandDto) -> MusicCommandOutcome {
+        guard let nowPlaying = musicNowPlaying else { return .unavailable }
+        guard nowPlaying.supports(command) else { return .refused }
 #if canImport(MediaPlayer) && os(iOS)
-        guard let nowPlaying = musicNowPlaying, nowPlaying.supports(command) else { return }
+        let didDispatch: Bool
         if nowPlaying.provider == .spotify {
-            spotifyMusicProvider.perform(command)
+            didDispatch = spotifyMusicProvider.perform(command)
         } else {
-            appleMusicProvider.perform(command)
+            didDispatch = appleMusicProvider.perform(command)
         }
+        guard didDispatch else { return .unavailable }
         refreshMusicSnapshot()
+        return .accepted
 #else
-        _ = command
+        return .unavailable
 #endif
     }
 

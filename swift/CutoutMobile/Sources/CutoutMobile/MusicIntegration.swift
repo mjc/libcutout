@@ -24,6 +24,17 @@ public struct MusicArtwork: Equatable, Sendable {
     }
 }
 
+/// Result of dispatching one provider transport command.
+public enum MusicCommandOutcome: Equatable, Sendable {
+    /// The provider adapter accepted the command for dispatch.
+    case accepted
+    /// The current provider capabilities refused the command.
+    case refused
+    /// No usable provider adapter or current player is available.
+    case unavailable
+}
+
+
 public extension MobileMusicProviderDto {
     static var allCases: [Self] { [.appleMusic, .spotify] }
 
@@ -830,7 +841,7 @@ public final class AppleMusicProviderAdapter {
     }
 
     @MainActor
-    public func perform(_ command: MobileMusicCommandDto) {
+    public func perform(_ command: MobileMusicCommandDto) -> Bool {
         switch command {
         case .previous:
 #if canImport(MusicKit) && os(iOS)
@@ -861,6 +872,7 @@ public final class AppleMusicProviderAdapter {
             UIApplication.shared.open(Self.providerURL)
 #endif
         }
+        return true
     }
 
     public func snapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
@@ -937,10 +949,13 @@ public struct SpotifyProviderAdapter: Sendable {
     /// Playback control and metadata remain unavailable until App Remote is
     /// integrated and proven on a physical device.
     @MainActor
-    public func perform(_ command: MobileMusicCommandDto) {
-        guard case .openProvider = command else { return }
+    public func perform(_ command: MobileMusicCommandDto) -> Bool {
+        guard case .openProvider = command else { return false }
 #if canImport(UIKit) && os(iOS)
         UIApplication.shared.open(Self.providerURL)
+        return true
+#else
+        return false
 #endif
     }
 

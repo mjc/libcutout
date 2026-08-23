@@ -584,6 +584,37 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicCommandOutcomeDistinguishesUnavailableAndRefused() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.handleMusicCommand(.play), .unavailable)
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session-1",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            positionMilliseconds: 0,
+            durationMilliseconds: 60_000,
+            observedAtMs: 10,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: false,
+                openProvider: false
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: snapshot),
+            wallClockAtMs: 20,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertEqual(model.handleMusicCommand(.play), .refused)
+    }
+
+    @MainActor
     func testMusicProviderSelectionIsExplicitAndDoesNotChangeRideLifecycle() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
