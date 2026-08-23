@@ -2014,6 +2014,9 @@ pub enum MobileCommandDto {
     /// Set the device lights.
     SetLights(MobileLightStateDto),
 
+    /// Set the documented pedal response; unverified models refuse this before transport.
+    SetPedalMode(MobilePedalModeKindDto),
+
     /// Sound a horn or alert.
     SoundHorn,
 }
@@ -2047,6 +2050,16 @@ impl From<CorePedalMode> for MobilePedalModeKindDto {
             CorePedalMode::Hard => Self::Hard,
             CorePedalMode::Medium => Self::Medium,
             CorePedalMode::Soft => Self::Soft,
+        }
+    }
+}
+
+impl From<MobilePedalModeKindDto> for CorePedalMode {
+    fn from(mode: MobilePedalModeKindDto) -> Self {
+        match mode {
+            MobilePedalModeKindDto::Hard => Self::Hard,
+            MobilePedalModeKindDto::Medium => Self::Medium,
+            MobilePedalModeKindDto::Soft => Self::Soft,
         }
     }
 }
@@ -11008,6 +11021,9 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             MobileCommandDto::RequestSettings => Self::RequestSettings,
             MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
+            MobileCommandDto::SetPedalMode(mode) => {
+                Self::SetPedalMode(CorePedalMode::from(mode).into())
+            }
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -15238,6 +15254,33 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn aero_wrapper_refuses_unverified_pedal_mode_without_a_write() {
+        let session = AeroBenignControlSession::new();
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+        });
+
+        assert!(matches!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                ..
+            })
+        ));
+        assert!(result
+            .outputs
+            .iter()
+            .all(|output| output.kind != MobileSessionOutputKindDto::Write));
     }
 
     #[test]
