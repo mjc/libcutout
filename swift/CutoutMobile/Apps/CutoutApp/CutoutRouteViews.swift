@@ -12,6 +12,11 @@ func lightingPresetSaveEligibility(
     return commandStatus == .confirmed
 }
 
+func shouldAutoStartLightingSession(platformIdentifier: String?) -> Bool {
+    guard let platformIdentifier else { return false }
+    return !platformIdentifier.isEmpty
+}
+
 struct DevicePickerRouteView: View {
     let model: CutoutAppModel
     let pair: (DevicePickerRow) -> Void
@@ -242,6 +247,13 @@ final class LightingRouteModel {
         guard !isRunning else { return }
         isRunning = true
         session.start(preferredPlatformIdentifier: persistence.platformIdentifier)
+    }
+
+    func startIfRemembered() {
+        guard shouldAutoStartLightingSession(platformIdentifier: persistence.platformIdentifier) else {
+            return
+        }
+        start()
     }
 
     func stop() {

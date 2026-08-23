@@ -117,6 +117,12 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testLightingAutoStartRequiresRememberedIdentity() {
+        XCTAssertTrue(shouldAutoStartLightingSession(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: nil))
+        XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: ""))
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))
