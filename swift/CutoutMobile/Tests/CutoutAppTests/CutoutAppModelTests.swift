@@ -94,7 +94,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() throws {
+    func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() async throws {
         let driver = SessionDriverSpy(rows: [])
         _ = try driver.rideMapStateHandle.startGpsOnly(
             atMs: 100,
@@ -119,6 +119,9 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
         XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
+        for _ in 0 ..< 20 where model.rideMapPoints.isEmpty {
+            await Task.yield()
+        }
         XCTAssertEqual(model.rideMapPoints.count, 1)
     }
 
