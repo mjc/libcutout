@@ -199,8 +199,16 @@ public final class MobileRideMapState {
             source: .live
         )
         if let database {
-            do { _ = try database.appendLocation(id: id, location: location) }
-            catch { throw map(error) }
+            do {
+                switch try database.appendLocation(id: id, location: location) {
+                case .accepted:
+                    break
+                case .duplicate:
+                    return .ignored(reason: "duplicate location")
+                case .outOfOrder:
+                    return .rejected(reason: "timestamp out of order")
+                }
+            } catch { throw map(error) }
         }
         let point = MobileRideMapPointDto(
             sequence: UInt64(activePoints.count), segmentId: 0,
@@ -268,11 +276,13 @@ public final class MobileRideMapState {
     }
 
     private func summary() -> MobileRideMapSummaryDto {
-        let distance = zip(activePoints, activePoints.dropFirst()).reduce(0.0) { partial, pair in
-            partial + haversineMeters(pair.0.latitudeDegrees, pair.0.longitudeDegrees, pair.1.latitudeDegrees, pair.1.longitudeDegrees)
+        let persisted = activeRideID.flatMap { id in
+            database.flatMap { database in try? database.summary(id: id) }
         }
+        let pointCount = persisted?.pointCount ?? UInt64(activePoints.count)
+        let distance = persisted.map { Double($0.distanceMillimetres) / 1_000 } ?? 0
         return MobileRideMapSummaryDto(
-            pointCount: UInt64(activePoints.count), distanceMeters: distance,
+            pointCount: pointCount, distanceMeters: distance,
             durationMilliseconds: lastMonotonic >= activeCreatedAt ? lastMonotonic - activeCreatedAt : 0
         )
     }
@@ -314,12 +324,4 @@ public final class MobileRideMapState {
         }
         return .Storage(String(describing: error))
     }
-}
-
-private func haversineMeters(_ lat1: Double, _ lon1: Double, _ lat2: Double, _ lon2: Double) -> Double {
-    let radius = 6_371_000.0
-    let dLat = (lat2 - lat1) * .pi / 180
-    let dLon = (lon2 - lon1) * .pi / 180
-    let a = sin(dLat / 2) * sin(dLat / 2) + cos(lat1 * .pi / 180) * cos(lat2 * .pi / 180) * sin(dLon / 2) * sin(dLon / 2)
-    return radius * 2 * atan2(sqrt(a), sqrt(max(0, 1 - a)))
 }
