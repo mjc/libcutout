@@ -12443,6 +12443,26 @@ mod tests {
     }
 
     #[test]
+    fn mobile_ride_map_core_associates_a_pev_found_after_gps_only_start() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, None)
+            .expect("GPS-only recording starts");
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-found-later".to_owned(), 1_001)
+                .expect("late PEV connection is observed"),
+            MobileRideMapCoreAssociationDto::Associated
+        );
+        assert_eq!(
+            state
+                .current_snapshot()
+                .and_then(|snapshot| snapshot.associated_vehicle),
+            Some("pev-found-later".to_owned())
+        );
+    }
+
+    #[test]
     fn mobile_ride_map_core_persists_route_and_pages_zero_sequence() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
