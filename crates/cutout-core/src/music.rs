@@ -602,6 +602,37 @@ mod tests {
     }
 
     #[test]
+    fn music_contract_enforces_bounds_and_capabilities() {
+        assert_eq!(
+            MusicIdentifier::new("   ").expect_err("blank identifier must fail"),
+            MusicValidationError::Blank("identifier")
+        );
+        assert_eq!(
+            MusicIdentifier::new("x".repeat(MAX_MUSIC_IDENTIFIER_BYTES + 1))
+                .expect_err("oversized identifier must fail"),
+            MusicValidationError::TooLong("identifier")
+        );
+        assert_eq!(
+            MusicItem::new("track-1", Some(" ".to_owned()), None)
+                .expect_err("blank title must fail"),
+            MusicValidationError::Blank("title")
+        );
+        assert_eq!(
+            MusicItem::new(
+                "track-1",
+                Some("x".repeat(MAX_MUSIC_DISPLAY_TEXT_BYTES + 1)),
+                None,
+            )
+            .expect_err("oversized title must fail"),
+            MusicValidationError::TooLong("title")
+        );
+
+        let capabilities = MusicCapabilities::new().with(MusicCommand::Pause);
+        assert!(capabilities.supports(MusicCommand::Pause));
+        assert!(!capabilities.supports(MusicCommand::Play));
+    }
+
+    #[test]
     fn history_policy_redacts_display_metadata() {
         let item = MusicItem::new(
             "track-1",
