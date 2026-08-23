@@ -2611,7 +2611,22 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        let sample = MobilePhoneLocationSampleDto(
+        let sample = MobilePhoneLocationSampleDto(location: location)
+        let monotonicMs = clock.now().rawValue
+        phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
+        do {
+            let decision = try rideMapState.ingestLocation(monotonicMs: monotonicMs, sample: sample)
+            publishRideMapDecision(decision)
+        } catch {
+            publishRideMapError(error)
+        }
+        publishPhoneLocationSnapshot()
+    }
+}
+
+private extension MobilePhoneLocationSampleDto {
+    init(location: CLLocation) {
+        self.init(
             wallClockUnixMs: UInt64(max(0, location.timestamp.timeIntervalSince1970 * 1_000)),
             latitudeDegrees: location.coordinate.latitude,
             longitudeDegrees: location.coordinate.longitude,
@@ -2623,20 +2638,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             courseDegrees: location.course,
             courseAccuracyDegrees: location.courseAccuracy
         )
-        phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
-        do {
-            let decision = try rideMapState.ingestLocation(
-                monotonicMs: clock.now().rawValue,
-                wallClockUnixMs: sample.wallClockUnixMs,
-                latitudeDegrees: sample.latitudeDegrees,
-                longitudeDegrees: sample.longitudeDegrees,
-                horizontalAccuracyMeters: sample.horizontalAccuracyMeters
-            )
-            publishRideMapDecision(decision)
-        } catch {
-            publishRideMapError(error)
-        }
-        publishPhoneLocationSnapshot()
     }
 }
 

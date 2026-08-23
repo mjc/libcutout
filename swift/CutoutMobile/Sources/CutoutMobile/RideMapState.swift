@@ -180,6 +180,20 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Ingests the same validated phone sample used by the capture writer.
+    public func ingestLocation(
+        monotonicMs: UInt64,
+        sample: MobilePhoneLocationSampleDto
+    ) throws -> MobileRideMapDecisionDto {
+        try ingestLocation(
+            monotonicMs: monotonicMs,
+            wallClockUnixMs: sample.wallClockUnixMs,
+            latitudeDegrees: sample.latitudeDegrees,
+            longitudeDegrees: sample.longitudeDegrees,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters
+        )
+    }
+
     public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
         do {
             return map(try core.pointsAfter(afterCursor: afterCursor, limit: limit))
