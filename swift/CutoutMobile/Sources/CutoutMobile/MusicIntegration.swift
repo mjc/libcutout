@@ -411,8 +411,33 @@ import MediaPlayer
 @MainActor
 public final class AppleMusicProviderAdapter {
     private let player = MPMusicPlayerController.systemMusicPlayer
+    private var notificationTokens = [NSObjectProtocol]()
 
     public init() {}
+
+    /// Starts the system-player callbacks used to refresh bounded metadata.
+    /// Polling remains the fallback for position and lifecycle reconciliation.
+    public func startMonitoring(onChange: @escaping @MainActor () -> Void) {
+        stopMonitoring()
+        player.beginGeneratingPlaybackNotifications()
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            .MPMusicPlayerControllerPlaybackStateDidChange,
+            .MPMusicPlayerControllerNowPlayingItemDidChange,
+        ]
+        notificationTokens = names.map { name in
+            center.addObserver(forName: name, object: player, queue: .main) { _ in
+                Task { @MainActor in onChange() }
+            }
+        }
+    }
+
+    public func stopMonitoring() {
+        let center = NotificationCenter.default
+        notificationTokens.forEach(center.removeObserver)
+        notificationTokens.removeAll(keepingCapacity: true)
+        player.endGeneratingPlaybackNotifications()
+    }
 
     public func requestAuthorization() async -> Bool {
         await withCheckedContinuation { continuation in

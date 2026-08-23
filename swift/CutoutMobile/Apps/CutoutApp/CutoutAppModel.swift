@@ -292,6 +292,10 @@ final class CutoutAppModel {
             musicNowPlaying = musicCoordinator.nowPlaying
             return
         }
+        appleMusicProvider.startMonitoring { [weak self] in
+            self?.refreshMusicSnapshot()
+        }
+        defer { appleMusicProvider.stopMonitoring() }
         while !Task.isCancelled {
             refreshMusicSnapshot()
             do {
