@@ -4024,6 +4024,43 @@ mod tests {
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
                 if bytes.as_slice() == b"SETh"
         )));
+
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: MonotonicTimestamp::new(111),
+            },
+            &mut output,
+        );
+        session.handle(SessionInput::Command(command), &mut output);
+        assert!(matches!(
+            output.last(),
+            Some(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    reason: ControlRefusalReason::ExpiredArm,
+                    ..
+                }
+            )))
+        ));
+
+        session.arm(
+            StationarySettingsPolicy {
+                model: TestModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, MonotonicTimestamp::new(120))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(SessionInput::LinkDown, &mut output);
+        session.handle(SessionInput::Command(command), &mut output);
+        assert!(matches!(
+            output.last(),
+            Some(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    reason: ControlRefusalReason::MissingArm,
+                    ..
+                }
+            )))
+        ));
     }
 
     #[test]
