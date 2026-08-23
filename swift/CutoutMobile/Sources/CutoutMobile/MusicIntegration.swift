@@ -199,8 +199,22 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
+        try ingest(
+            snapshot: snapshot,
+            artwork: nil,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
+    }
+
+    private func ingest(
+        snapshot: MobileMusicSnapshotDto,
+        artwork: MusicArtwork?,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto? {
         let previous = nowPlaying
-        update(snapshot: snapshot)
+        update(snapshot: snapshot, artwork: artwork)
         guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
             return nil
         }
@@ -221,15 +235,9 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
-        let previous = nowPlaying
-        update(snapshot: observation.snapshot, artwork: observation.artwork)
-        guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
-            return nil
-        }
-        return try rideMapState.recordMusicEvent(
+        try ingest(
             snapshot: observation.snapshot,
-            kind: kind,
-            monotonicAtMs: observation.snapshot.observedAtMs,
+            artwork: observation.artwork,
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
