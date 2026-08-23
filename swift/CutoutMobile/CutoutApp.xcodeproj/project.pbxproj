@@ -46,6 +46,11 @@
 		30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */; };
 		30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */; };
 		300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */; };
+		300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */; };
+		300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */; };
+		300000000000000000000028 /* Apps/CutoutApp/RideMapHistoryListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000028 /* Apps/CutoutApp/RideMapHistoryListView.swift */; };
+		300000000000000000000029 /* Apps/CutoutApp/RideMapRouteTruthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000029 /* Apps/CutoutApp/RideMapRouteTruthView.swift */; };
+		30000000000000000000002A /* Apps/CutoutApp/RideMapSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000002A /* Apps/CutoutApp/RideMapSummaryView.swift */; };
 		30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */; };
 		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
@@ -122,6 +127,11 @@
 		40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppState.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutRouteViews.swift; sourceTree = SOURCE_ROOT; };
 		400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapRouteView.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapCanvasView.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapControlsView.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000028 /* Apps/CutoutApp/RideMapHistoryListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapHistoryListView.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000029 /* Apps/CutoutApp/RideMapRouteTruthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapRouteTruthView.swift; sourceTree = SOURCE_ROOT; };
+		40000000000000000000002A /* Apps/CutoutApp/RideMapSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapSummaryView.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureQuickLabel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
@@ -181,6 +191,11 @@
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
 				400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */,
+				400000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift */,
+				400000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift */,
+				400000000000000000000028 /* Apps/CutoutApp/RideMapHistoryListView.swift */,
+				400000000000000000000029 /* Apps/CutoutApp/RideMapRouteTruthView.swift */,
+				40000000000000000000002A /* Apps/CutoutApp/RideMapSummaryView.swift */,
 				40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */,
 				40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */,
 				40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */,
@@ -407,6 +422,11 @@
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
 				300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */,
+				300000000000000000000026 /* Apps/CutoutApp/RideMapCanvasView.swift in Sources */,
+				300000000000000000000027 /* Apps/CutoutApp/RideMapControlsView.swift in Sources */,
+				300000000000000000000028 /* Apps/CutoutApp/RideMapHistoryListView.swift in Sources */,
+				300000000000000000000029 /* Apps/CutoutApp/RideMapRouteTruthView.swift in Sources */,
+				30000000000000000000002A /* Apps/CutoutApp/RideMapSummaryView.swift in Sources */,
 				30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */,
 				30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */,
 				30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */,
