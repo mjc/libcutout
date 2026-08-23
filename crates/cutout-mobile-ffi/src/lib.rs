@@ -2796,151 +2796,108 @@ pub struct MobileSessionStepResultDto {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct MobileLightSettingTracker {
-    state: CoreSettingState<CoreLightState>,
+struct MobileSettingTracker<Value> {
+    state: CoreSettingState<Value>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct MobilePedalModeSettingTracker {
-    state: CoreSettingState<CorePedalMode>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct MobileAccelerationAssistSettingTracker {
-    state: CoreSettingState<CoreAccelerationAssistState>,
-}
-
-impl Default for MobileAccelerationAssistSettingTracker {
-    fn default() -> Self {
-        Self {
-            state: CoreSettingState::unknown(),
-        }
-    }
-}
-
-impl MobileAccelerationAssistSettingTracker {
-    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
-        if input.kind == MobileSessionInputKindDto::LinkDown {
-            self.state = CoreSettingState::unknown();
-        }
-
-        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
-
-        if let Some(MobileCommandDto::SetAccelerationAssist(requested)) = input.command {
-            observe_setting_write(
-                &mut self.state,
-                requested.into(),
-                input.monotonic_ms.into_core(),
-                result,
-            );
-        }
-    }
-
-    fn snapshot(&self) -> MobileAccelerationAssistSettingStateDto {
-        mobile_acceleration_assist_setting_state(self.state)
-    }
-}
-
-impl Default for MobilePedalModeSettingTracker {
-    fn default() -> Self {
-        Self {
-            state: CoreSettingState::unknown(),
-        }
-    }
-}
-
-impl MobilePedalModeSettingTracker {
-    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
-        if input.kind == MobileSessionInputKindDto::LinkDown {
-            self.state = CoreSettingState::unknown();
-        }
-
-        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
-
-        if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
-            observe_setting_write(
-                &mut self.state,
-                requested.into(),
-                input.monotonic_ms.into_core(),
-                result,
-            );
-        }
-
-        for output in &result.outputs {
-            if let Some(pedal_mode) = output
-                .settings_readback
-                .as_ref()
-                .and_then(|readback| readback.euc_garage.pedal_mode.as_ref())
-                .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
-            {
-                let _ = self.state.observe(
-                    pedal_mode,
-                    CoreSettingValueSource::LiveReadback,
-                    input.monotonic_ms.into_core(),
-                );
-            }
-        }
-    }
-
-    fn snapshot(&self) -> MobilePedalModeSettingStateDto {
-        mobile_pedal_mode_setting_state(self.state)
-    }
-}
-
-impl Default for MobileLightSettingTracker {
-    fn default() -> Self {
-        Self {
-            state: CoreSettingState::unknown(),
-        }
-    }
-}
-
-impl MobileLightSettingTracker {
-    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
-        if input.kind == MobileSessionInputKindDto::LinkDown {
-            self.state = CoreSettingState::unknown();
-        }
-
-        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
-
-        if let Some(MobileCommandDto::SetLights(requested)) = input.command {
-            observe_setting_write(
-                &mut self.state,
-                requested.into(),
-                input.monotonic_ms.into_core(),
-                result,
-            );
-        }
-
-        for output in &result.outputs {
-            if let Some(light_state) = output
-                .settings_readback
-                .as_ref()
-                .and_then(|readback| readback.euc_garage.light_state)
-            {
-                let _ = self.state.observe(
-                    light_state.into(),
-                    CoreSettingValueSource::LiveReadback,
-                    input.monotonic_ms.into_core(),
-                );
-            }
-        }
-    }
-
-    fn snapshot(&self) -> MobileLightSettingStateDto {
-        mobile_light_setting_state(self.state)
-    }
-}
-
-fn observe_setting_tick<Value>(
-    state: &mut CoreSettingState<Value>,
-    kind: MobileSessionInputKindDto,
-    now: MonotonicTimestamp,
-) where
+impl<Value> Default for MobileSettingTracker<Value>
+where
     Value: Copy + Eq,
 {
-    if kind == MobileSessionInputKindDto::Tick {
-        state.timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
+    fn default() -> Self {
+        Self {
+            state: CoreSettingState::unknown(),
+        }
+    }
+}
+
+impl<Value> MobileSettingTracker<Value>
+where
+    Value: Copy + Eq,
+{
+    fn observe_step(&mut self, kind: MobileSessionInputKindDto, now: MonotonicTimestamp) {
+        if kind == MobileSessionInputKindDto::LinkDown {
+            self.state = CoreSettingState::unknown();
+        }
+
+        if kind == MobileSessionInputKindDto::Tick {
+            self.state
+                .timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
+        }
+    }
+
+    fn observe_write(
+        &mut self,
+        requested: Value,
+        submitted_at: MonotonicTimestamp,
+        result: &MobileSessionStepResultDto,
+    ) {
+        observe_setting_write(&mut self.state, requested, submitted_at, result);
+    }
+
+    fn observe_readback(&mut self, value: Value, observed_at: MonotonicTimestamp) {
+        let _ = self
+            .state
+            .observe(value, CoreSettingValueSource::LiveReadback, observed_at);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MobileEucSettingTrackers {
+    headlight: MobileSettingTracker<CoreLightState>,
+    pedal_mode: MobileSettingTracker<CorePedalMode>,
+    acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
+}
+
+impl MobileEucSettingTrackers {
+    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+        let now = input.monotonic_ms.into_core();
+        self.headlight.observe_step(input.kind, now);
+        self.pedal_mode.observe_step(input.kind, now);
+        self.acceleration_assist.observe_step(input.kind, now);
+
+        match input.command {
+            Some(MobileCommandDto::SetLights(requested)) => {
+                self.headlight.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetPedalMode(requested)) => {
+                self.pedal_mode.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAccelerationAssist(requested)) => {
+                self.acceleration_assist
+                    .observe_write(requested.into(), now, result);
+            }
+            _ => {}
+        }
+
+        for output in &result.outputs {
+            let Some(readback) = output.settings_readback.as_ref() else {
+                continue;
+            };
+            if let Some(light_state) = readback.euc_garage.light_state {
+                self.headlight.observe_readback(light_state.into(), now);
+            }
+            if let Some(pedal_mode) = readback
+                .euc_garage
+                .pedal_mode
+                .as_ref()
+                .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
+            {
+                self.pedal_mode.observe_readback(pedal_mode, now);
+            }
+        }
+    }
+
+    fn headlight(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.headlight.state)
+    }
+
+    fn pedal_mode(&self) -> MobilePedalModeSettingStateDto {
+        mobile_pedal_mode_setting_state(self.pedal_mode.state)
+    }
+
+    fn acceleration_assist(&self) -> MobileAccelerationAssistSettingStateDto {
+        mobile_acceleration_assist_setting_state(self.acceleration_assist.state)
     }
 }
 
@@ -10183,9 +10140,7 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
 #[derive(Debug, uniffi::Object)]
 pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
-    light_state: Mutex<MobileLightSettingTracker>,
-    pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
-    acceleration_assist_state: Mutex<MobileAccelerationAssistSettingTracker>,
+    settings: Mutex<MobileEucSettingTrackers>,
 }
 
 #[uniffi::export]
@@ -10196,9 +10151,7 @@ impl AeroBenignControlSession {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
-            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
-            acceleration_assist_state: Mutex::new(MobileAccelerationAssistSettingTracker::default()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         })
     }
 
@@ -10210,12 +10163,7 @@ impl AeroBenignControlSession {
             mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input)),
             tracked_input.command,
         );
-        self.lock_light_state()
-            .observe_step(&tracked_input, &result);
-        self.lock_pedal_mode_state()
-            .observe_step(&tracked_input, &result);
-        self.lock_acceleration_assist_state()
-            .observe_step(&tracked_input, &result);
+        self.lock_settings().observe_step(&tracked_input, &result);
         result
     }
 
@@ -10245,17 +10193,17 @@ impl AeroBenignControlSession {
 
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
-        self.lock_light_state().snapshot()
+        self.lock_settings().headlight()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
-        self.lock_pedal_mode_state().snapshot()
+        self.lock_settings().pedal_mode()
     }
 
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
     pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
-        self.lock_acceleration_assist_state().snapshot()
+        self.lock_settings().acceleration_assist()
     }
 }
 
@@ -10264,24 +10212,8 @@ impl AeroBenignControlSession {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
-        self.light_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
-        self.pedal_mode_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn lock_acceleration_assist_state(
-        &self,
-    ) -> MutexGuard<'_, MobileAccelerationAssistSettingTracker> {
-        self.acceleration_assist_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -10289,9 +10221,7 @@ impl Default for AeroBenignControlSession {
     fn default() -> Self {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
-            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
-            acceleration_assist_state: Mutex::new(MobileAccelerationAssistSettingTracker::default()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         }
     }
 }
@@ -11579,9 +11509,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
 #[derive(Debug, uniffi::Object)]
 pub struct FalconBenignControlSession {
     inner: Mutex<ConcreteFalconBenignControlSession>,
-    light_state: Mutex<MobileLightSettingTracker>,
-    pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
-    acceleration_assist_state: Mutex<MobileAccelerationAssistSettingTracker>,
+    settings: Mutex<MobileEucSettingTrackers>,
 }
 
 #[uniffi::export]
@@ -11611,9 +11539,7 @@ impl FalconBenignControlSession {
             inner: Mutex::new(try_new_begode_falcon_benign_control_session(
                 profile.into(),
             )?),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
-            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
-            acceleration_assist_state: Mutex::new(MobileAccelerationAssistSettingTracker::default()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         }))
     }
 
@@ -11625,12 +11551,7 @@ impl FalconBenignControlSession {
             MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input)),
             tracked_input.command,
         );
-        self.lock_light_state()
-            .observe_step(&tracked_input, &result);
-        self.lock_pedal_mode_state()
-            .observe_step(&tracked_input, &result);
-        self.lock_acceleration_assist_state()
-            .observe_step(&tracked_input, &result);
+        self.lock_settings().observe_step(&tracked_input, &result);
         result
     }
 
@@ -11660,17 +11581,17 @@ impl FalconBenignControlSession {
 
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
-        self.lock_light_state().snapshot()
+        self.lock_settings().headlight()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
-        self.lock_pedal_mode_state().snapshot()
+        self.lock_settings().pedal_mode()
     }
 
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
     pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
-        self.lock_acceleration_assist_state().snapshot()
+        self.lock_settings().acceleration_assist()
     }
 }
 
@@ -11679,24 +11600,8 @@ impl FalconBenignControlSession {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
-        self.light_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
-        self.pedal_mode_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn lock_acceleration_assist_state(
-        &self,
-    ) -> MutexGuard<'_, MobileAccelerationAssistSettingTracker> {
-        self.acceleration_assist_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -14856,13 +14761,13 @@ mod tests {
 
     #[test]
     fn mobile_pedal_state_times_out_on_tick() {
-        let mut tracker = MobilePedalModeSettingTracker::default();
+        let mut trackers = MobileEucSettingTrackers::default();
         let accepted = MobileSessionStepResultDto {
             outputs: Vec::new(),
             error: None,
         };
 
-        tracker.observe_step(
+        trackers.observe_step(
             &MobileSessionInputDto {
                 kind: MobileSessionInputKindDto::Command,
                 monotonic_ms: ms(10),
@@ -14873,9 +14778,12 @@ mod tests {
             },
             &accepted,
         );
-        assert_eq!(tracker.snapshot().kind, MobileSettingStateKindDto::Pending);
+        assert_eq!(
+            trackers.pedal_mode().kind,
+            MobileSettingStateKindDto::Pending
+        );
 
-        tracker.observe_step(
+        trackers.observe_step(
             &MobileSessionInputDto {
                 kind: MobileSessionInputKindDto::Tick,
                 monotonic_ms: ms(2_010),
@@ -14887,7 +14795,7 @@ mod tests {
             &accepted,
         );
 
-        let state = tracker.snapshot();
+        let state = trackers.pedal_mode();
         assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
         assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
     }
