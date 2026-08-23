@@ -214,6 +214,40 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRejectedPreStartMusicObservationDoesNotSeedPevcapContext() throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        _ = try driver.rideMapStateHandle.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session-1",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            positionMilliseconds: 0,
+            durationMilliseconds: 60_000,
+            observedAtMs: 50,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: true,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: false
+            )
+        )
+
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: snapshot),
+            wallClockAtMs: 60,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertEqual(model.musicNowPlaying?.item?.identifier, "track-1")
+        XCTAssertTrue(model.musicTimelineEvents.isEmpty)
+        XCTAssertNil(driver.lastMusicCaptureObservation)
+    }
+
+    @MainActor
     func testProviderObservationReachesTheAppPlayerAndRideHistory() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
