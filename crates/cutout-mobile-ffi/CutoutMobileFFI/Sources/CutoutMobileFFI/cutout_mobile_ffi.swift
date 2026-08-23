@@ -1983,6 +1983,11 @@ public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
     func recordWriteWithoutResponse(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, bytes: Data)  -> Bool
 
     /**
+     * Sets the optional current music observation used for subsequent notifications.
+     */
+    func setMusicContext(music: MobilePevcapMusicEventDto?)  -> Bool
+
+    /**
      * Sets the resolved model/firmware identity for the capture.
      */
     func setResolvedIdentity(identity: MobileResolvedIdentityDto)  -> Bool
@@ -2210,6 +2215,18 @@ open func recordWriteWithoutResponse(monotonicMs: MobileMonotonicMillisDto, char
         FfiConverterTypeMobileMonotonicMillisDto_lower(monotonicMs),
         FfiConverterData.lower(characteristic),
         FfiConverterData.lower(bytes),$0
+    )
+})
+}
+
+    /**
+     * Sets the optional current music observation used for subsequent notifications.
+     */
+open func setMusicContext(music: MobilePevcapMusicEventDto?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilepevcapcapturebuilder_set_music_context(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeMobilePevcapMusicEventDto.lower(music),$0
     )
 })
 }
@@ -21617,6 +21634,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_write_without_response() != 15916) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_set_music_context() != 34092) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_set_resolved_identity() != 23561) {

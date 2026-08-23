@@ -5931,6 +5931,7 @@ pub struct MobilePevcapCaptureBuilder {
     annotations: Mutex<Vec<String>>,
     writer: Mutex<Option<CaptureWriter>>,
     writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
+    music_context: Mutex<Option<PevcapMusicEvent>>,
 }
 
 #[uniffi::export]
@@ -5953,6 +5954,7 @@ impl MobilePevcapCaptureBuilder {
             annotations: Mutex::new(Vec::new()),
             writer: Mutex::new(None),
             writer_state: Mutex::new(None),
+            music_context: Mutex::new(None),
         })
     }
 
@@ -6031,6 +6033,18 @@ impl MobilePevcapCaptureBuilder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&writer.state));
         *self.writer.lock().unwrap_or_else(PoisonError::into_inner) = Some(writer);
+        true
+    }
+
+    /// Sets the optional current music observation used for subsequent notifications.
+    pub fn set_music_context(&self, music: Option<MobilePevcapMusicEventDto>) -> bool {
+        let Ok(music) = music.map(PevcapMusicEvent::try_from).transpose() else {
+            return false;
+        };
+        *self
+            .music_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = music;
         true
     }
 
@@ -6177,10 +6191,16 @@ impl MobilePevcapCaptureBuilder {
                 course_accuracy_degrees: location.course_accuracy_degrees,
             });
         }
+        let music = match music {
+            Some(music) => {
+                let Ok(music) = PevcapMusicEvent::try_from(music) else {
+                    return false;
+                };
+                Some(music)
+            }
+            None => self.music_context(),
+        };
         if let Some(music) = music {
-            let Ok(music) = PevcapMusicEvent::try_from(music) else {
-                return false;
-            };
             record = record.with_music(music);
         }
         self.send_record(record)
@@ -6188,6 +6208,13 @@ impl MobilePevcapCaptureBuilder {
 }
 
 impl MobilePevcapCaptureBuilder {
+    fn music_context(&self) -> Option<PevcapMusicEvent> {
+        self.music_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     fn metadata(&self) -> CaptureMetadata {
         CaptureMetadata {
             advertised_services: self
@@ -11374,6 +11401,56 @@ mod tests {
         );
         assert_eq!(music.clock_uncertainty_milliseconds, 75);
         assert_eq!(music.ride_sequence, Some(9));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_capture_builder_applies_and_clears_music_context() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-writer-music-context-{}-{}.jsonl",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+
+        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
+            provider: MobileMusicProviderDto::Spotify,
+            track_id: "spotify:track:context".into(),
+            track_position_ms: 2_500,
+            wall_clock_unix_ms: 1_700_000_000_100,
+            clock_uncertainty_ms: 120,
+            ride_sequence: None,
+        })));
+        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
+        assert!(builder.record_notification_with_context(
+            ms(42),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xaa],
+            None,
+            None,
+        ));
+        assert!(builder.set_music_context(None));
+        assert!(builder.record_notification_with_context(
+            ms(43),
+            vec![0; 16],
+            vec![1; 16],
+            vec![0xbb],
+            None,
+            None,
+        ));
+        assert!(builder.finish_writer());
+
+        let bytes = fs::read(&path).expect("stream writer output exists");
+        let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
+            .expect("stream writer output is PEVCAP");
+        assert!(capture.records[0].music.is_some());
+        assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
     }
 
