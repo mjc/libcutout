@@ -27,6 +27,10 @@ protocol CutoutSessionDriving: AnyObject {
     var headlightState: LightSettingState? { get }
     var headlightCommandStatus: LightCommandStatus? { get }
     var pedalModeState: PedalModeSettingState? { get }
+    var rollAngleState: RollAngleSettingState? { get }
+    var speedAlarmModeState: SpeedAlarmModeSettingState? { get }
+    var accelerationAssistState: AccelerationAssistSettingState? { get }
+    var taillightState: LightSettingState? { get }
 
     func start()
     func pair(platformIdentifier: String) -> Bool
@@ -39,7 +43,13 @@ protocol CutoutSessionDriving: AnyObject {
     func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
     func flushCapture() async -> Bool
     func disconnectAndScan()
-    func setLights(_ state: LightState) -> LightCommandResult
+    func setLights(_ state: LightState) -> SettingCommandResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

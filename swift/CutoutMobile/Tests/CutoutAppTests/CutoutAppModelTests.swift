@@ -381,7 +381,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testUnverifiedFalconHeadlightToggleStaysUnavailable() {
+    func testFalconHeadlightToggleIsAvailableThroughTheGuardedSession() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
         driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
@@ -390,21 +390,17 @@ final class CutoutAppModelTests: XCTestCase {
             headlight: .unverified,
             taillight: .unsupported
         )
+        driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.headlightControlAvailable)
-        XCTAssertEqual(
-            model.headlightStatusText,
-            "Headlight control is unavailable until this wheel model is validated."
-        )
-        XCTAssertEqual(model.setHeadlight(true), .failed)
-        XCTAssertEqual(model.headlightCommandStatus, .failed)
-        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
-        XCTAssertTrue(driver.headlightStates.isEmpty)
+        XCTAssertTrue(model.headlightControlAvailable)
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+        XCTAssertEqual(driver.headlightStates, [.on])
     }
 
     @MainActor
-    func testSettingsCapabilitiesAreExposedToTuneSurface() {
+    func testSettingsCapabilitiesExposeGuardedWriteSupportToTuneSurface() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
         driver.settingsCapabilitiesOverride = EucSettingsCapabilities(
@@ -418,12 +414,71 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(
             model.settingsCapabilities,
             EucSettingsCapabilities(
-                pedalMode: .unsupported,
+                pedalMode: .supported,
+                rollAngle: .supported,
+                speedAlarmMode: .supported,
                 accelerationAssist: .unsupported,
-                headlight: .unverified,
-                taillight: .unsupported
+                headlight: .supported,
+                taillight: .unsupported,
+                begodeMaxSpeed: .supported,
+                begodeBeeperVolume: .supported,
+                begodeLedMode: .supported
             )
         )
+    }
+
+    @MainActor
+    func testPedalModeWriteUsesTheSupportedCapability() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.pedalModeControlAvailable)
+        XCTAssertEqual(model.setPedalMode(.soft), .accepted)
+        XCTAssertEqual(driver.pedalModes, [.soft])
+    }
+
+    @MainActor
+    func testRollAngleWriteUsesTheSupportedCapability() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.rollAngleControlAvailable)
+        XCTAssertEqual(model.setRollAngle(.high), .accepted)
+        XCTAssertEqual(driver.rollAngles, [.high])
+    }
+
+    @MainActor
+    func testSpeedAlarmModeWriteUsesTheSupportedCapability() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.speedAlarmModeControlAvailable)
+        XCTAssertEqual(model.setSpeedAlarmMode(.stageOneOnly), .accepted)
+        XCTAssertEqual(driver.speedAlarmModes, [.stageOneOnly])
+    }
+
+    @MainActor
+    func testBegodeWSettingWritesUseTheSupportedCapabilities() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        let speed = BegodeMaxSpeed(kilometresPerHour: 30)!
+        let volume = BegodeBeeperVolume(level: 7)!
+        let ledMode = BegodeLedMode(mode: 4)!
+
+        XCTAssertTrue(model.begodeMaxSpeedControlAvailable)
+        XCTAssertTrue(model.begodeBeeperVolumeControlAvailable)
+        XCTAssertTrue(model.begodeLedModeControlAvailable)
+        XCTAssertEqual(model.setBegodeMaxSpeed(speed), .accepted)
+        XCTAssertEqual(model.setBegodeBeeperVolume(volume), .accepted)
+        XCTAssertEqual(model.setBegodeLedMode(ledMode), .accepted)
+        XCTAssertEqual(driver.begodeMaxSpeeds, [speed])
+        XCTAssertEqual(driver.begodeBeeperVolumes, [volume])
+        XCTAssertEqual(driver.begodeLedModes, [ledMode])
     }
 
     @MainActor
@@ -440,6 +495,25 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRemainingSettingStatesAreExposedThroughTheSettingsDriver() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.accelerationAssistState = AccelerationAssistSettingState(
+            kind: .refused,
+            requested: .enabled,
+            refusalReason: .unsupportedCommand
+        )
+        driver.taillightState = LightSettingState(
+            kind: .refused,
+            requested: .on,
+            refusalReason: .unsupportedCommand
+        )
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.accelerationAssistState, driver.accelerationAssistState)
+        XCTAssertEqual(model.taillightState, driver.taillightState)
+    }
+
+    @MainActor
     func testTuneUsesRustOwnedConfirmedLightState() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
@@ -449,11 +523,12 @@ final class CutoutAppModelTests: XCTestCase {
             source: .liveReadback,
             confirmedAt: MonotonicMilliseconds(7)
         )
+        driver.nowValue = 2_006
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .confirmed)
-        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry 1s ago.")
     }
 
     @MainActor
@@ -491,7 +566,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
         XCTAssertEqual(model.headlightCommandStatus, .confirmed)
         XCTAssertTrue(model.headlightOn)
-        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry 0s ago.")
 
         XCTAssertEqual(model.setHeadlight(false), .accepted)
         XCTAssertFalse(model.headlightOn)
@@ -2572,19 +2647,36 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testBluetoothUnavailableUsesTheTypedRustTerminalReason() async {
+    func testBluetoothUnavailableUsesTheTypedRustTerminalReason() async throws {
+        let suiteName = "CutoutAppModelTests.bluetoothUnavailable.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let fixture = CutoutUITestSessionFixture.vesc
         let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
         let manager = FailingLiveActivityManager(error: nil)
-        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        let model = CutoutAppModel(
+            core: driver,
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults),
+            liveActivityManager: manager
+        )
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onDisplayStateChange?(
+            RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(100),
+                    speed: Speed(value: 8_000),
+                    operatingState: .riding
+                )
+            )
+        )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
         for _ in 0 ..< 200 {
@@ -2920,6 +3012,39 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testOrphanRecoveryReplaysAnAlreadyDiscoveredSavedDevice() async throws {
+        let suiteName = "CutoutAppModelTests.orphanReplay.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let fixture = CutoutUITestSessionFixture.vesc
+        let platformIdentifier = fixture.candidate.platformIdentifier
+        selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+        let source = CutoutSessionStateHandle()
+        _ = try source.reduceRideSession(input: .start(platformIdentifier: platformIdentifier))
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let driver = SessionDriverSpy(
+            rows: [fixture.candidate.pickerRow],
+            restoredPlatformIdentifier: nil
+        )
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: markerStore,
+            liveActivityManager: FailingLiveActivityManager(error: nil)
+        )
+
+        model.start()
+        for _ in 0 ..< 200 {
+            if driver.pairedPlatformIdentifiers.isEmpty == false { break }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+    }
+
+    @MainActor
     func testScanningLaunchClearsAnOrphanedLiveActivity() async {
         let driver = SessionDriverSpy(rows: [])
         let manager = FailingLiveActivityManager(error: nil)
@@ -3227,6 +3352,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     private var headlightCommandStatusOverride: LightCommandStatus?
     var pedalModeState: PedalModeSettingState?
+    var rollAngleState: RollAngleSettingState?
+    var speedAlarmModeState: SpeedAlarmModeSettingState?
+    var accelerationAssistState: AccelerationAssistSettingState?
+    var taillightState: LightSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
     var settingsCapabilities: EucSettingsCapabilities? {
         settingsCapabilitiesOverride
@@ -3245,8 +3374,15 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
+    private(set) var pedalModes = [PedalMode.Kind]()
+    private(set) var rollAngles = [RollAngle.Kind]()
+    private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
+    private(set) var begodeMaxSpeeds = [BegodeMaxSpeed]()
+    private(set) var begodeBeeperVolumes = [BegodeBeeperVolume]()
+    private(set) var begodeLedModes = [BegodeLedMode]()
     var headlightWriteSucceeds = false
-    var headlightCommandResult: LightCommandResult = .accepted
+    var headlightCommandResult: SettingCommandResult = .accepted
+    var pedalModeCommandResult: SettingCommandResult = .accepted
     var nowValue: UInt64 = 0
 
     init(
@@ -3320,7 +3456,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func setLights(_ state: LightState) -> LightCommandResult {
+    func setLights(_ state: LightState) -> SettingCommandResult {
         guard headlightWriteSucceeds else {
             headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
             headlightCommandStatus = .failed
@@ -3334,6 +3470,12 @@ private final class SessionDriverSpy: CutoutSessionDriving {
             }
             return headlightCommandResult
         }
+        guard headlightWriteSucceeds else {
+            headlightState = LightSettingState(kind: .failed, requested: state, source: .userRequest)
+            headlightCommandStatusOverride = .failed
+            return .failed
+        }
+        guard headlightCommandResult == .accepted else { return headlightCommandResult }
         headlightStates.append(state)
         headlightState = LightSettingState(
             kind: .pending,
@@ -3344,7 +3486,6 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         headlightCommandStatusOverride = nil
         return .accepted
     }
-
     func emitSettingsReadback(_ readback: SettingsReadback) {
         if let reportedState = readback.eucGarageSettings.lightState {
             if headlightState?.kind == .pending,
@@ -3365,6 +3506,33 @@ private final class SessionDriverSpy: CutoutSessionDriving {
             headlightCommandStatus = .failed
         }
         onSettingsReadbackChange?(readback)
+    }
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
+        pedalModes.append(mode)
+        return .accepted
+    }
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        rollAngles.append(angle)
+        return .accepted
+    }
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        speedAlarmModes.append(mode)
+        return .accepted
+    }
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        begodeMaxSpeeds.append(speed)
+        return .accepted
+    }
+
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        begodeBeeperVolumes.append(volume)
+        return .accepted
+    }
+
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        begodeLedModes.append(mode)
+        return .accepted
     }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)

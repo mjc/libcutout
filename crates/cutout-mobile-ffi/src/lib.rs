@@ -1,8 +1,5 @@
 //! Concrete `UniFFI` mobile binding surface for Cutout.
 
-mod rgb;
-pub use rgb::*;
-
 use std::{
     collections::VecDeque,
     convert::TryFrom,
@@ -20,15 +17,18 @@ use std::{
 };
 
 use cutout_core::{
+    AccelerationAssistState as CoreAccelerationAssistState, AccelerationAssistStateDto,
     ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
-    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, Capacity,
-    ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
-    ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
-    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
-    ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto, CutoutSessionState,
-    DeviceCommandDto, DiscoveryCandidateSnapshot,
+    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
+    BegodeBeeperVolume as CoreBegodeBeeperVolume, BegodeLedModeSetting as CoreBegodeLedModeSetting,
+    BegodeMaxSpeed as CoreBegodeMaxSpeed, BluetoothServiceUuid as CoreBluetoothServiceUuid,
+    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
+    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
+    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
+    CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
+    CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
     DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
@@ -42,7 +42,8 @@ use cutout_core::{
     MusicProvider as CorePevcapMusicProvider, NotificationByteLenDto, NotificationEvidenceDto,
     NotificationIngestOutcomeDto, ParserDiagnosticCountDto, ParserDiagnosticsDto,
     ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto, ParserGapEvidenceDto,
-    PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapLocationSample,
+    PayloadBodyLenDto, PedalMode as CorePedalMode, PevcapEncoding as CorePevcapEncoding,
+    PevcapHeader, PevcapLocationSample,
     PevcapMusicEvent, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
     PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
     RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
@@ -54,22 +55,23 @@ use cutout_core::{
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
-    RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionEventDto,
-    SessionInputDto, SessionOutputDto, SettingCommandStatus as CoreSettingCommandStatus,
-    SettingState as CoreSettingState, SettingValueSource as CoreSettingValueSource, SettingsEntry,
-    SettingsEntryDto, SettingsReadback, SettingsReadbackAvailability,
-    SettingsReadbackAvailabilityDto, SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto,
-    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
-    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
-    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
-    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
-    SETTING_WRITE_CONFIRMATION_TIMEOUT,
-    PedalMode as CorePedalMode,
+    RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
+    SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionInputDto,
+    SessionOutputDto, SettingState as CoreSettingState,
+    SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
+    SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode,
+    SpeedReadingDto, TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto,
+    TransportActionDto, TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity,
+    ValueQuality, ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource,
+    ValueSource as CoreValueSource, ValueSourceDto, VerificationStatus, VerificationStatusDto,
+    VerifiedValue, Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate,
+    VoltageSagEstimator, VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_music::{
     MusicCapabilities as CoreMusicCapabilities, MusicCommand as CoreMusicCommand,
-    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicHistoryState as CoreMusicHistoryState,
-    MusicItem as CoreMusicItem, MusicPlaybackPosition as CoreMusicPlaybackPosition,
+    MusicHistoryPolicy as CoreMusicHistoryPolicy, MusicItem as CoreMusicItem,
+    MusicPlaybackPosition as CoreMusicPlaybackPosition,
     MusicPlaybackState as CoreMusicPlaybackState, MusicProvider as CoreMusicProvider,
     MusicRideEvent as CoreMusicRideEvent, MusicRideEventKind as CoreMusicRideEventKind,
     MusicSnapshot as CoreMusicSnapshot, MusicTimelineOutcome as CoreMusicTimelineOutcome,
@@ -81,11 +83,11 @@ use cutout_protocols::{
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
     DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
     ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
-    VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
-    identify_known_model, new_nosfet_aero_benign_control_session,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    begode_identification_probes, identify_known_model, new_nosfet_aero_benign_control_session,
     try_new_begode_falcon_benign_control_session,
 };
 use cutout_ride_maps as ride_maps;
@@ -93,15 +95,6 @@ use libcutout_persistence as persistence;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
-
-mod music_callback_epoch;
-mod music_connection;
-mod music_monitor;
-mod music_player_request;
-pub use music_callback_epoch::*;
-pub use music_connection::*;
-pub use music_monitor::*;
-pub use music_player_request::*;
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -303,6 +296,13 @@ pub struct DiscoveryManufacturerDataSummary {
     pub payload_len: u64,
 }
 
+/// Normalized 128-bit Bluetooth service UUID supplied by the mobile BLE stack.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryServiceUuid {
+    /// UUID bytes in network order.
+    pub bytes: Vec<u8>,
+}
+
 /// Mobile discovery observation to feed into Rust-owned session state.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct DiscoveryObservation {
@@ -312,8 +312,8 @@ pub struct DiscoveryObservation {
     /// Raw advertised-name bytes from the mobile BLE stack.
     pub advertised_name: Option<Vec<u8>>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 
     /// Manufacturer data summaries without opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -334,8 +334,8 @@ pub struct DiscoveryObservationSnapshot {
     /// UTF-8 advertised-name view, when valid.
     pub advertised_name_text: Option<String>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 
     /// Manufacturer data summaries without opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -763,7 +763,11 @@ impl DiscoveryObservation {
         CoreDiscoveryObservation {
             platform_identifier: self.platform_identifier,
             advertised_name: self.advertised_name,
-            advertised_service_uuids: self.advertised_service_uuids,
+            advertised_service_uuids: self
+                .advertised_service_uuids
+                .into_iter()
+                .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+                .collect(),
             manufacturer_data: self
                 .manufacturer_data
                 .into_iter()
@@ -798,7 +802,13 @@ impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
             platform_identifier: observation.platform_identifier.clone(),
             advertised_name: observation.advertised_name.clone(),
             advertised_name_text: observation.advertised_name_text().map(str::to_owned),
-            advertised_service_uuids: observation.advertised_service_uuids.clone(),
+            advertised_service_uuids: observation
+                .advertised_service_uuids
+                .iter()
+                .map(|uuid| DiscoveryServiceUuid {
+                    bytes: uuid.as_bytes().to_vec(),
+                })
+                .collect(),
             manufacturer_data: observation
                 .manufacturer_data
                 .iter()
@@ -1368,10 +1378,14 @@ impl CutoutSessionStateHandle {
 pub fn mobile_discovery_candidate_from_advertisement(
     platform_identifier: String,
     local_name: Option<String>,
-    advertised_service_uuids: Vec<u16>,
+    advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 ) -> DiscoveryCandidate {
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
-    if advertised_service_uuids.contains(&0xffe0) {
+    let advertised_service_uuids = advertised_service_uuids
+        .into_iter()
+        .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+        .collect::<Vec<_>>();
+    if advertised_service_uuids.contains(&CoreBluetoothServiceUuid::EUC_SERIAL_FFE0) {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
@@ -1388,7 +1402,10 @@ pub fn mobile_discovery_candidate_from_advertisement(
         };
     }
 
-    if advertised_service_uuids.contains(&0xfff0) {
+    if advertised_service_uuids.iter().any(|uuid| {
+        *uuid == CoreBluetoothServiceUuid::VESC_SERIAL_FFF0
+            || *uuid == CoreBluetoothServiceUuid::VESC_NORDIC_UART
+    }) {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
@@ -2007,6 +2024,27 @@ pub enum MobileCommandDto {
     /// Set the documented pedal response; unverified models refuse this before transport.
     SetPedalMode(MobilePedalModeKindDto),
 
+    /// Set the documented Falcon roll-angle sensitivity; stationary-only.
+    SetRollAngle(MobileRollAngleKindDto),
+
+    /// Set the documented Begode speed-alarm mode; stationary-only.
+    SetSpeedAlarmMode(MobileSpeedAlarmModeKindDto),
+
+    /// Set Begode max speed through the timed `W` submenu.
+    SetBegodeMaxSpeed(MobileBegodeMaxSpeedDto),
+
+    /// Set Begode beeper volume through the timed `W` submenu.
+    SetBegodeBeeperVolume(MobileBegodeBeeperVolumeDto),
+
+    /// Set Begode LED mode through the timed `W` submenu.
+    SetBegodeLedMode(MobileBegodeLedModeDto),
+
+    /// Enable or disable acceleration assist; unsupported models refuse this before transport.
+    SetAccelerationAssist(MobileAccelerationAssistStateDto),
+
+    /// Set the taillight independently; unsupported models refuse this before transport.
+    SetTaillight(MobileLightStateDto),
+
     /// Sound a horn or alert.
     SoundHorn,
 }
@@ -2019,6 +2057,46 @@ pub enum MobileLightStateDto {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
+}
+
+/// Mobile DTO acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAccelerationAssistStateDto {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
+}
+
+impl From<MobileAccelerationAssistStateDto> for AccelerationAssistStateDto {
+    fn from(state: MobileAccelerationAssistStateDto) -> Self {
+        match state {
+            MobileAccelerationAssistStateDto::Disabled => Self::Disabled,
+            MobileAccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<MobileAccelerationAssistStateDto> for CoreAccelerationAssistState {
+    fn from(state: MobileAccelerationAssistStateDto) -> Self {
+        match state {
+            MobileAccelerationAssistStateDto::Disabled => Self::Disabled,
+            MobileAccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<CoreAccelerationAssistState> for MobileAccelerationAssistStateDto {
+    fn from(state: CoreAccelerationAssistState) -> Self {
+        match state {
+            CoreAccelerationAssistState::Disabled => Self::Disabled,
+            CoreAccelerationAssistState::Enabled => Self::Enabled,
+        }
+    }
 }
 
 /// Documented pedal stiffness mode.
@@ -2054,10 +2132,102 @@ impl From<MobilePedalModeKindDto> for CorePedalMode {
     }
 }
 
+/// Documented Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRollAngleKindDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<CoreRollAngle> for MobileRollAngleKindDto {
+    fn from(angle: CoreRollAngle) -> Self {
+        match angle {
+            CoreRollAngle::Low => Self::Low,
+            CoreRollAngle::Medium => Self::Medium,
+            CoreRollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<MobileRollAngleKindDto> for CoreRollAngle {
+    fn from(angle: MobileRollAngleKindDto) -> Self {
+        match angle {
+            MobileRollAngleKindDto::Low => Self::Low,
+            MobileRollAngleKindDto::Medium => Self::Medium,
+            MobileRollAngleKindDto::High => Self::High,
+        }
+    }
+}
+
+/// Documented Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSpeedAlarmModeKindDto {
+    /// Both speed alarms are enabled.
+    Both,
+
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+
+    /// Speed alarms are disabled.
+    Off,
+
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+/// Begode max-speed input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeMaxSpeedDto {
+    /// Whole kilometres per hour, limited by the two-digit protocol field.
+    pub kilometres_per_hour: u8,
+}
+
+/// Begode beeper-volume input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeBeeperVolumeDto {
+    /// Protocol volume level, 1 through 9.
+    pub level: u8,
+}
+
+/// Begode LED-mode input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeLedModeDto {
+    /// Protocol LED mode, 0 through 9.
+    pub mode: u8,
+}
+
+impl From<CoreSpeedAlarmMode> for MobileSpeedAlarmModeKindDto {
+    fn from(mode: CoreSpeedAlarmMode) -> Self {
+        match mode {
+            CoreSpeedAlarmMode::Both => Self::Both,
+            CoreSpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            CoreSpeedAlarmMode::Off => Self::Off,
+            CoreSpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<MobileSpeedAlarmModeKindDto> for CoreSpeedAlarmMode {
+    fn from(mode: MobileSpeedAlarmModeKindDto) -> Self {
+        match mode {
+            MobileSpeedAlarmModeKindDto::Both => Self::Both,
+            MobileSpeedAlarmModeKindDto::StageOneOnly => Self::StageOneOnly,
+            MobileSpeedAlarmModeKindDto::Off => Self::Off,
+            MobileSpeedAlarmModeKindDto::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
 /// Validation state for a setting write exposed to mobile consumers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingWriteSupportDto {
-    /// Capture-backed and hardware-validated for the model.
+    /// Available for an explicit user-initiated write through the guarded session.
     Supported,
 
     /// An encoder exists, but validation evidence is incomplete.
@@ -2073,6 +2243,21 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// Pedal-mode/settings write support.
     pub pedal_mode: MobileSettingWriteSupportDto,
 
+    /// Falcon roll-angle sensitivity write support.
+    pub roll_angle: MobileSettingWriteSupportDto,
+
+    /// Begode speed-alarm mode write support.
+    pub speed_alarm_mode: MobileSettingWriteSupportDto,
+
+    /// Begode max-speed write support.
+    pub begode_max_speed: MobileSettingWriteSupportDto,
+
+    /// Begode beeper-volume write support.
+    pub begode_beeper_volume: MobileSettingWriteSupportDto,
+
+    /// Begode LED-mode write support.
+    pub begode_led_mode: MobileSettingWriteSupportDto,
+
     /// Acceleration-assist/behavior write support.
     pub acceleration_assist: MobileSettingWriteSupportDto,
 
@@ -2086,7 +2271,12 @@ pub struct MobileEucSettingsCapabilitiesDto {
 impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unverified,
+            pedal_mode: MobileSettingWriteSupportDto::Supported,
+            roll_angle: MobileSettingWriteSupportDto::Unsupported,
+            speed_alarm_mode: MobileSettingWriteSupportDto::Unsupported,
+            begode_max_speed: MobileSettingWriteSupportDto::Unsupported,
+            begode_beeper_volume: MobileSettingWriteSupportDto::Unsupported,
+            begode_led_mode: MobileSettingWriteSupportDto::Unsupported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2095,11 +2285,28 @@ impl MobileEucSettingsCapabilitiesDto {
 
     const fn falcon() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unverified,
+            pedal_mode: MobileSettingWriteSupportDto::Supported,
+            roll_angle: MobileSettingWriteSupportDto::Supported,
+            speed_alarm_mode: MobileSettingWriteSupportDto::Supported,
+            begode_max_speed: MobileSettingWriteSupportDto::Supported,
+            begode_beeper_volume: MobileSettingWriteSupportDto::Supported,
+            begode_led_mode: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
-            headlight: MobileSettingWriteSupportDto::Unverified,
+            headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
         }
+    }
+}
+
+/// Returns Rust-owned setting capabilities for a detected EUC model.
+#[uniffi::export]
+#[must_use]
+pub const fn mobile_euc_settings_capabilities(
+    model: DiscoveryElectricUnicycleModel,
+) -> MobileEucSettingsCapabilitiesDto {
+    match model {
+        DiscoveryElectricUnicycleModel::Aero => MobileEucSettingsCapabilitiesDto::aero(),
+        DiscoveryElectricUnicycleModel::Falcon => MobileEucSettingsCapabilitiesDto::falcon(),
     }
 }
 
@@ -2112,31 +2319,6 @@ pub enum MobileSettingStateKindDto {
     Confirmed,
     Refused,
     TimedOut,
-    Failed,
-}
-
-/// Host-facing status of a mobile setting command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileLightCommandStatusDto {
-    /// No setting value or command is known.
-    Idle,
-
-    /// A write is waiting for matching readback.
-    WaitingForConfirmation,
-
-    /// A write was accepted for a protocol without readable confirmation.
-    SentWithoutConfirmation,
-
-    /// No matching readback arrived before the confirmation timeout.
-    TimedOut,
-
-    /// Matching readback confirmed the requested value.
-    Confirmed,
-
-    /// The command was refused before transport.
-    Refused,
-
-    /// Transport or session failure prevented completion.
     Failed,
 }
 
@@ -2214,11 +2396,129 @@ impl MobilePedalModeSettingStateDto {
     }
 }
 
+/// Typed Falcon roll-angle lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRollAngleSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current roll-angle sensitivity, when known.
+    pub current: Option<MobileRollAngleKindDto>,
+
+    /// Requested roll-angle sensitivity, when a write is pending or terminal.
+    pub requested: Option<MobileRollAngleKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileRollAngleSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed Begode speed-alarm lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSpeedAlarmModeSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current speed-alarm mode, when known.
+    pub current: Option<MobileSpeedAlarmModeKindDto>,
+
+    /// Requested speed-alarm mode, when a write is pending or terminal.
+    pub requested: Option<MobileSpeedAlarmModeKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileSpeedAlarmModeSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed acceleration-assist lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAccelerationAssistSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current assist state, when known.
+    pub current: Option<MobileAccelerationAssistStateDto>,
+
+    /// Requested assist state, when a write is pending or terminal.
+    pub requested: Option<MobileAccelerationAssistStateDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAccelerationAssistSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
             MobileLightStateDto::Off => Self::Off,
             MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
         }
     }
 }
@@ -2447,13 +2747,6 @@ pub struct MobileSessionOutputDto {
     /// Full protocol-native raw telemetry.
     pub raw_telemetry: Option<MobileRawTelemetryReadbackDto>,
 
-    /// A fresh Refloat realtime telemetry event was emitted for this output.
-    ///
-    /// This is event-scoped rather than inferred from the retained snapshot, so
-    /// reconnect retry logic cannot mistake stale Refloat fields for a new
-    /// realtime sample.
-    pub vesc_realtime_telemetry: bool,
-
     /// Veteran/NOSFET protocol model id when an Aero-family session decoded it.
     pub veteran_protocol_model_id: Option<u16>,
 }
@@ -2675,6 +2968,9 @@ pub enum MobileControlRefusalReasonDto {
 
     /// The command is unsupported by this model or session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 /// Mobile session step error DTO.
@@ -2700,34 +2996,15 @@ pub struct MobileSessionStepResultDto {
     pub error: Option<MobileSessionStepErrorDto>,
 }
 
-impl From<CoreSettingCommandStatus> for MobileLightCommandStatusDto {
-    fn from(status: CoreSettingCommandStatus) -> Self {
-        match status {
-            CoreSettingCommandStatus::Idle => Self::Idle,
-            CoreSettingCommandStatus::WaitingForConfirmation => Self::WaitingForConfirmation,
-            CoreSettingCommandStatus::SentWithoutConfirmation => Self::SentWithoutConfirmation,
-            CoreSettingCommandStatus::TimedOut => Self::TimedOut,
-            CoreSettingCommandStatus::Confirmed => Self::Confirmed,
-            CoreSettingCommandStatus::Refused => Self::Refused,
-            CoreSettingCommandStatus::Failed => Self::Failed,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
-struct MobileLightSettingTracker {
-    state: CoreSettingState<CoreLightState>,
-    confirmation_supported: bool,
+struct MobileSettingTracker<Value> {
+    state: CoreSettingState<Value>,
 }
 
-impl MobileLightSettingTracker {
-    const fn new(confirmation_supported: bool) -> Self {
-#[derive(Clone, Copy, Debug)]
-struct MobilePedalModeSettingTracker {
-    state: CoreSettingState<CorePedalMode>,
-}
-
-impl Default for MobilePedalModeSettingTracker {
+impl<Value> Default for MobileSettingTracker<Value>
+where
+    Value: Copy + Eq,
+{
     fn default() -> Self {
         Self {
             state: CoreSettingState::unknown(),
@@ -2735,107 +3012,153 @@ impl Default for MobilePedalModeSettingTracker {
     }
 }
 
-impl MobilePedalModeSettingTracker {
-    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
-        if input.kind == MobileSessionInputKindDto::LinkDown {
+impl<Value> MobileSettingTracker<Value>
+where
+    Value: Copy + Eq,
+{
+    fn observe_step(&mut self, kind: MobileSessionInputKindDto, now: MonotonicTimestamp) {
+        if kind == MobileSessionInputKindDto::LinkDown {
             self.state = CoreSettingState::unknown();
         }
 
-        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
+        if kind == MobileSessionInputKindDto::Tick {
+            self.state
+                .timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
+        }
+    }
 
-        if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
-            observe_setting_write(
-                &mut self.state,
-                requested.into(),
-                input.monotonic_ms.into_core(),
-                result,
-            );
+    fn observe_write(
+        &mut self,
+        requested: Value,
+        submitted_at: MonotonicTimestamp,
+        result: &MobileSessionStepResultDto,
+    ) {
+        observe_setting_write(&mut self.state, requested, submitted_at, result);
+    }
+
+    fn observe_readback(&mut self, value: Value, observed_at: MonotonicTimestamp) {
+        let _ = self
+            .state
+            .observe(value, CoreSettingValueSource::LiveReadback, observed_at);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct MobileEucSettingTrackers {
+    headlight: MobileSettingTracker<CoreLightState>,
+    pedal_mode: MobileSettingTracker<CorePedalMode>,
+    roll_angle: MobileSettingTracker<CoreRollAngle>,
+    speed_alarm_mode: MobileSettingTracker<CoreSpeedAlarmMode>,
+    acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
+    taillight: MobileSettingTracker<CoreLightState>,
+}
+
+impl MobileEucSettingTrackers {
+    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+        let now = input.monotonic_ms.into_core();
+        self.headlight.observe_step(input.kind, now);
+        self.pedal_mode.observe_step(input.kind, now);
+        self.roll_angle.observe_step(input.kind, now);
+        self.speed_alarm_mode.observe_step(input.kind, now);
+        self.acceleration_assist.observe_step(input.kind, now);
+        self.taillight.observe_step(input.kind, now);
+
+        match input.command {
+            Some(MobileCommandDto::SetLights(requested)) => {
+                self.headlight.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetPedalMode(requested)) => {
+                self.pedal_mode.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetRollAngle(requested)) => {
+                self.roll_angle.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetSpeedAlarmMode(requested)) => {
+                self.speed_alarm_mode
+                    .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAccelerationAssist(requested)) => {
+                self.acceleration_assist
+                    .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetTaillight(requested)) => {
+                self.taillight.observe_write(requested.into(), now, result);
+            }
+            _ => {}
         }
 
         for output in &result.outputs {
-            if let Some(pedal_mode) = output
-                .settings_readback
+            let Some(readback) = output.settings_readback.as_ref() else {
+                continue;
+            };
+            if let Some(light_state) = readback.euc_garage.light_state {
+                self.headlight.observe_readback(light_state.into(), now);
+            }
+            if let Some(pedal_mode) = readback
+                .euc_garage
+                .pedal_mode
                 .as_ref()
-                .and_then(|readback| readback.euc_garage.pedal_mode.as_ref())
                 .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
             {
-                let _ = self.state.observe(
-                    pedal_mode,
-                    CoreSettingValueSource::LiveReadback,
-                    input.monotonic_ms.into_core(),
-                );
+                self.pedal_mode.observe_readback(pedal_mode, now);
             }
-        }
-    }
-
-    fn snapshot(&self) -> MobilePedalModeSettingStateDto {
-        mobile_pedal_mode_setting_state(self.state)
-    }
-}
-
-impl Default for MobileLightSettingTracker {
-    fn default() -> Self {
-        Self {
-            state: CoreSettingState::unknown(),
-            confirmation_supported,
-        }
-    }
-
-    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
-        if input.kind == MobileSessionInputKindDto::LinkDown {
-            self.state = CoreSettingState::unknown();
-        }
-
-        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
-
-        if let Some(MobileCommandDto::SetLights(requested)) = input.command {
-            observe_setting_write(
-                &mut self.state,
-                requested.into(),
-                input.monotonic_ms.into_core(),
-                result,
-            );
-        }
-
-        for output in &result.outputs {
-            if let Some(light_state) = output
-                .settings_readback
+            if let Some(roll_angle) = readback
+                .euc_garage
+                .roll_angle
                 .as_ref()
-                .and_then(|readback| readback.euc_garage.light_state)
+                .and_then(|roll_angle| roll_angle.angle.map(CoreRollAngle::from))
             {
-                let _ = self.state.observe(
-                    light_state.into(),
-                    CoreSettingValueSource::LiveReadback,
-                    input.monotonic_ms.into_core(),
-                );
+                self.roll_angle.observe_readback(roll_angle, now);
+            }
+            if let Some(speed_alarm_mode) = readback
+                .euc_garage
+                .speed_alarm_mode
+                .as_ref()
+                .and_then(|mode| mode.mode.map(CoreSpeedAlarmMode::from))
+            {
+                self.speed_alarm_mode
+                    .observe_readback(speed_alarm_mode, now);
             }
         }
     }
 
-    fn snapshot(&self) -> MobileLightSettingStateDto {
-        mobile_light_setting_state(self.state)
+    fn headlight(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.headlight.state)
     }
 
-    fn command_status(&self, now: MobileMonotonicMillisDto) -> MobileLightCommandStatusDto {
-        self.state
-            .command_status(now.into_core(), self.confirmation_supported)
+    fn headlight_command_status(
+        &self,
+        now: MobileMonotonicMillisDto,
+        confirmation_supported: bool,
+    ) -> MobileLightCommandStatusDto {
+        self.headlight
+            .state
+            .command_status(now.into_core(), confirmation_supported)
             .into()
     }
 
-    fn fail(&mut self) {
-        self.state.fail();
+    fn fail_headlight(&mut self) {
+        self.headlight.state.fail();
     }
-}
 
-fn observe_setting_tick<Value>(
-    state: &mut CoreSettingState<Value>,
-    kind: MobileSessionInputKindDto,
-    now: MonotonicTimestamp,
-) where
-    Value: Copy + Eq,
-{
-    if kind == MobileSessionInputKindDto::Tick {
-        state.timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
+    fn pedal_mode(&self) -> MobilePedalModeSettingStateDto {
+        mobile_pedal_mode_setting_state(self.pedal_mode.state)
+    }
+
+    fn roll_angle(&self) -> MobileRollAngleSettingStateDto {
+        mobile_roll_angle_setting_state(self.roll_angle.state)
+    }
+
+    fn speed_alarm_mode(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        mobile_speed_alarm_mode_setting_state(self.speed_alarm_mode.state)
+    }
+
+    fn acceleration_assist(&self) -> MobileAccelerationAssistSettingStateDto {
+        mobile_acceleration_assist_setting_state(self.acceleration_assist.state)
+    }
+
+    fn taillight(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.taillight.state)
     }
 }
 
@@ -2993,6 +3316,204 @@ fn mobile_pedal_mode_setting_state(
     snapshot
 }
 
+fn mobile_roll_angle_setting_state(
+    state: CoreSettingState<CoreRollAngle>,
+) -> MobileRollAngleSettingStateDto {
+    let mut snapshot = MobileRollAngleSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_speed_alarm_mode_setting_state(
+    state: CoreSettingState<CoreSpeedAlarmMode>,
+) -> MobileSpeedAlarmModeSettingStateDto {
+    let mut snapshot = MobileSpeedAlarmModeSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_acceleration_assist_setting_state(
+    state: CoreSettingState<CoreAccelerationAssistState>,
+) -> MobileAccelerationAssistSettingStateDto {
+    let mut snapshot = MobileAccelerationAssistSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
 impl From<CoreSettingValueSource> for MobileSettingValueSourceDto {
     fn from(source: CoreSettingValueSource) -> Self {
         match source {
@@ -3009,6 +3530,7 @@ impl From<MobileLightStateDto> for CoreLightState {
         match state {
             MobileLightStateDto::Off => Self::Off,
             MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
         }
     }
 }
@@ -3018,6 +3540,7 @@ impl From<CoreLightState> for MobileLightStateDto {
         match state {
             CoreLightState::Off => Self::Off,
             CoreLightState::On => Self::On,
+            CoreLightState::Strobe => Self::Strobe,
         }
     }
 }
@@ -3031,6 +3554,7 @@ impl From<MobileControlRefusalReasonDto> for CoreControlRefusalReason {
             MobileControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
             MobileControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             MobileControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+            MobileControlRefusalReasonDto::Busy => Self::Busy,
         }
     }
 }
@@ -3044,6 +3568,7 @@ impl From<CoreControlRefusalReason> for MobileControlRefusalReasonDto {
             CoreControlRefusalReason::ExpiredArm => Self::ExpiredArm,
             CoreControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             CoreControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            CoreControlRefusalReason::Busy => Self::Busy,
         }
     }
 }
@@ -3676,33 +4201,6 @@ pub enum MobileMusicHistoryPolicyDto {
     HumanReadable,
 }
 
-/// Durable state of a ride's music-history record.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileMusicHistoryStateDto {
-    /// The ride has no music-history record yet.
-    Missing,
-    /// Music history was explicitly disabled.
-    Disabled,
-    /// Display metadata was redacted while opaque identifiers remain.
-    Redacted,
-    /// Bounded human-readable metadata is retained.
-    HumanReadable,
-    /// Music history was explicitly deleted while the ride was preserved.
-    Deleted,
-}
-
-impl From<CoreMusicHistoryState> for MobileMusicHistoryStateDto {
-    fn from(state: CoreMusicHistoryState) -> Self {
-        match state {
-            CoreMusicHistoryState::Missing => Self::Missing,
-            CoreMusicHistoryState::Disabled => Self::Disabled,
-            CoreMusicHistoryState::Redacted => Self::Redacted,
-            CoreMusicHistoryState::HumanReadable => Self::HumanReadable,
-            CoreMusicHistoryState::Deleted => Self::Deleted,
-        }
-    }
-}
-
 /// Low-rate transition retained with an opted-in ride.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMusicRideEventKindDto {
@@ -3783,7 +4281,7 @@ impl From<persistence::MusicHistory> for MobileMusicHistoryDto {
                 }
                 persistence::MusicHistoryStatus::Deleted => MobileMusicHistoryStatusDto::Deleted,
             },
-            events: mobile_music_event_dtos(history.events),
+            events: history.events.iter().map(Into::into).collect(),
         }
     }
 }
@@ -3791,8 +4289,6 @@ impl From<persistence::MusicHistory> for MobileMusicHistoryDto {
 /// One retained ride music transition.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMusicRideEventDto {
-    /// Zero-based ride-local event sequence.
-    pub sequence: u64,
     /// Provider identity.
     pub provider: MobileMusicProviderDto,
     /// Opaque provider item identifier, if retained.
@@ -3994,45 +4490,31 @@ impl TryFrom<MobileMusicSnapshotDto> for CoreMusicSnapshot {
     }
 }
 
-fn mobile_music_ride_event_dto(
-    event: &CoreMusicRideEvent,
-    sequence: u64,
-) -> MobileMusicRideEventDto {
-    MobileMusicRideEventDto {
-        sequence,
-        provider: event.provider().into(),
-        item_identifier: event
-            .item_identifier()
-            .map(|identifier| identifier.as_str().to_owned()),
-        title: event.title().map(str::to_owned),
-        artist: event.artist().map(str::to_owned),
-        kind: match event.kind() {
-            CoreMusicRideEventKind::Play => MobileMusicRideEventKindDto::Play,
-            CoreMusicRideEventKind::Pause => MobileMusicRideEventKindDto::Pause,
-            CoreMusicRideEventKind::Skip => MobileMusicRideEventKindDto::Skip,
-            CoreMusicRideEventKind::ItemChanged => MobileMusicRideEventKindDto::ItemChanged,
-            CoreMusicRideEventKind::Stopped => MobileMusicRideEventKindDto::Stopped,
-            CoreMusicRideEventKind::ProviderDisconnected => {
-                MobileMusicRideEventKindDto::ProviderDisconnected
-            }
-        },
-        observed_at_ms: event.observed_at().map(MonotonicTimestamp::as_milliseconds),
-        monotonic_at_ms: event.monotonic_at().as_milliseconds(),
-        wall_clock_at_ms: event.wall_clock_at().as_milliseconds(),
-        clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
+impl From<&CoreMusicRideEvent> for MobileMusicRideEventDto {
+    fn from(event: &CoreMusicRideEvent) -> Self {
+        Self {
+            provider: event.provider().into(),
+            item_identifier: event
+                .item_identifier()
+                .map(|identifier| identifier.as_str().to_owned()),
+            title: event.title().map(str::to_owned),
+            artist: event.artist().map(str::to_owned),
+            kind: match event.kind() {
+                CoreMusicRideEventKind::Play => MobileMusicRideEventKindDto::Play,
+                CoreMusicRideEventKind::Pause => MobileMusicRideEventKindDto::Pause,
+                CoreMusicRideEventKind::Skip => MobileMusicRideEventKindDto::Skip,
+                CoreMusicRideEventKind::ItemChanged => MobileMusicRideEventKindDto::ItemChanged,
+                CoreMusicRideEventKind::Stopped => MobileMusicRideEventKindDto::Stopped,
+                CoreMusicRideEventKind::ProviderDisconnected => {
+                    MobileMusicRideEventKindDto::ProviderDisconnected
+                }
+            },
+            observed_at_ms: event.observed_at().map(MonotonicTimestamp::as_milliseconds),
+            monotonic_at_ms: event.monotonic_at().as_milliseconds(),
+            wall_clock_at_ms: event.wall_clock_at().as_milliseconds(),
+            clock_uncertainty_ms: event.clock_uncertainty_milliseconds(),
+        }
     }
-}
-
-fn mobile_music_event_dtos(
-    events: impl IntoIterator<Item = CoreMusicRideEvent>,
-) -> Vec<MobileMusicRideEventDto> {
-    events
-        .into_iter()
-        .enumerate()
-        .map(|(sequence, event)| {
-            mobile_music_ride_event_dto(&event, u64::try_from(sequence).unwrap_or(u64::MAX))
-        })
-        .collect()
 }
 
 /// Rust-owned phone location state. Swift only gathers and forwards Core Location values.
@@ -4483,15 +4965,6 @@ pub struct MobileRideMapLimitsDto {
     pub history_context_total_point_budget: u32,
     /// Duration covered by the recent-history filter.
     pub history_recent_window_milliseconds: u64,
-}
-
-/// Rust-owned byte bounds for provider music metadata.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
-pub struct MobileMusicLimitsDto {
-    /// Maximum provider/session/item identifier bytes.
-    pub identifier_max_bytes: u32,
-    /// Maximum title or artist bytes.
-    pub display_text_max_bytes: u32,
 }
 
 /// Inputs for a bounded history overview context projection.
@@ -5578,150 +6051,6 @@ pub fn mobile_ride_map_limits() -> MobileRideMapLimitsDto {
     }
 }
 
-/// Returns the Rust-owned byte bounds used by mobile music validation.
-#[uniffi::export]
-#[must_use]
-pub fn mobile_music_limits() -> MobileMusicLimitsDto {
-    MobileMusicLimitsDto {
-        identifier_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_IDENTIFIER_BYTES)
-            .unwrap_or(u32::MAX),
-        display_text_max_bytes: u32::try_from(cutout_music::MAX_MUSIC_DISPLAY_TEXT_BYTES)
-            .unwrap_or(u32::MAX),
-    }
-}
-
-/// Validates one provider observation using the portable Rust music contract.
-///
-/// Platform adapters may use this before updating presentation state so malformed
-/// metadata never enters the UI or capture path.
-#[uniffi::export]
-pub fn validate_music_snapshot(
-    snapshot: MobileMusicSnapshotDto,
-) -> Result<(), MobileRideMapCoreErrorDto> {
-    CoreMusicSnapshot::try_from(snapshot)
-        .map(|_| ())
-        .map_err(MobileRideMapCoreErrorDto::InvalidMusicInput)
-}
-
-/// Normalizes optional display fields and validates one provider observation.
-#[uniffi::export]
-pub fn normalize_music_snapshot(
-    mut snapshot: MobileMusicSnapshotDto,
-) -> Result<MobileMusicSnapshotDto, MobileRideMapCoreErrorDto> {
-    if let Some(item) = snapshot.item.as_mut() {
-        if item
-            .title
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            item.title = None;
-        }
-        if item
-            .artist
-            .as_deref()
-            .is_some_and(|value| value.trim().is_empty())
-        {
-            item.artist = None;
-        }
-    }
-    validate_music_snapshot(snapshot.clone())?;
-    Ok(snapshot)
-}
-
-/// Applies the Rust-owned monotonic observation watermark used by provider
-/// adapters before they update presentation or submit a ride transition.
-#[uniffi::export]
-pub fn accept_music_snapshot(
-    previous_observed_at_ms: Option<u64>,
-    current_observed_at_ms: u64,
-) -> bool {
-    previous_observed_at_ms.is_none_or(|previous| current_observed_at_ms > previous)
-}
-
-/// Applies the Rust-owned PEVCAP music retention filter to one provider item.
-#[uniffi::export]
-pub fn pevcap_music_track_identifier(
-    policy: MobileMusicHistoryPolicyDto,
-    provider: MobileMusicProviderDto,
-    identifier: String,
-) -> Option<String> {
-    if policy == MobileMusicHistoryPolicyDto::OpaqueItem
-        && provider == MobileMusicProviderDto::Spotify
-        && identifier.starts_with("spotify:local:")
-    {
-        None
-    } else {
-        Some(identifier)
-    }
-}
-
-/// Classifies a validated provider observation against the last committed one.
-///
-/// The decision is portable domain logic; Swift only supplies observations and
-/// the fact that a skip command is awaiting provider confirmation.
-#[uniffi::export]
-pub fn music_transition_kind(
-    previous: Option<MobileMusicSnapshotDto>,
-    current: MobileMusicSnapshotDto,
-    skip_hint: bool,
-) -> Result<Option<MobileMusicRideEventKindDto>, MobileRideMapCoreErrorDto> {
-    validate_music_snapshot(current.clone())?;
-    let Some(previous) = previous else {
-        return Ok(current
-            .item
-            .as_ref()
-            .map(|_| MobileMusicRideEventKindDto::ItemChanged));
-    };
-    validate_music_snapshot(previous.clone())?;
-    if current.state == MobileMusicPlaybackStateDto::Disconnected {
-        return Ok(
-            (previous.state != MobileMusicPlaybackStateDto::Disconnected)
-                .then_some(MobileMusicRideEventKindDto::ProviderDisconnected),
-        );
-    }
-    if matches!(
-        current.state,
-        MobileMusicPlaybackStateDto::Unauthorized
-            | MobileMusicPlaybackStateDto::Unavailable
-            | MobileMusicPlaybackStateDto::Disconnected
-            | MobileMusicPlaybackStateDto::Stale
-    ) {
-        return Ok(None);
-    }
-    if previous.provider != current.provider {
-        return Ok(Some(MobileMusicRideEventKindDto::ItemChanged));
-    }
-    if current.state == MobileMusicPlaybackStateDto::Stopped
-        && previous.state != MobileMusicPlaybackStateDto::Stopped
-    {
-        return Ok(Some(MobileMusicRideEventKindDto::Stopped));
-    }
-    if previous.item.as_ref().map(|item| &item.identifier)
-        != current.item.as_ref().map(|item| &item.identifier)
-    {
-        return Ok(Some(
-            if skip_hint && previous.item.is_some() && current.item.is_some() {
-                MobileMusicRideEventKindDto::Skip
-            } else {
-                MobileMusicRideEventKindDto::ItemChanged
-            },
-        ));
-    }
-    Ok(match (previous.state, current.state) {
-        (_, MobileMusicPlaybackStateDto::Playing)
-            if previous.state != MobileMusicPlaybackStateDto::Playing =>
-        {
-            Some(MobileMusicRideEventKindDto::Play)
-        }
-        (_, MobileMusicPlaybackStateDto::Paused)
-            if previous.state != MobileMusicPlaybackStateDto::Paused =>
-        {
-            Some(MobileMusicRideEventKindDto::Pause)
-        }
-        _ => None,
-    })
-}
-
 /// Acquires the process-wide Rust-owned ride database service for `path`.
 ///
 /// # Errors
@@ -5941,30 +6270,7 @@ impl RideDatabaseHandle {
         let ride_id = parse_mobile_ride_id(&ride_id)?;
         self.inner
             .music_history(ride_id)
-            .map(|history| mobile_music_event_dtos(history.events))
-            .map_err(map_ride_database_error)
-    }
-
-    /// Loads the durable state of one ride's music-history record.
-    ///
-    /// The state distinguishes an unassociated ride, an explicit disabled choice,
-    /// redacted metadata, human-readable metadata, and explicit deletion.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the ride identifier, worker, or stored state is invalid.
-    #[allow(
-        clippy::needless_pass_by_value,
-        reason = "UniFFI owns boundary identifiers"
-    )]
-    pub fn music_history_state(
-        &self,
-        ride_id: MobileRideIdDto,
-    ) -> Result<MobileMusicHistoryStateDto, MobileRideDatabaseError> {
-        let ride_id = parse_mobile_ride_id(&ride_id)?;
-        self.inner
-            .music_history_state(ride_id)
-            .map(Into::into)
+            .map(|history| history.events.iter().map(Into::into).collect())
             .map_err(map_ride_database_error)
     }
 
@@ -7391,13 +7697,6 @@ fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::Ri
     }
 }
 
-fn music_history_is_recordable(state: Option<ride_maps::RideLifecycleState>) -> bool {
-    matches!(
-        state,
-        Some(ride_maps::RideLifecycleState::Active | ride_maps::RideLifecycleState::Paused)
-    )
-}
-
 fn map_ride_telemetry_state(
     state: MobileRideMapCoreTelemetryStateDto,
 ) -> Result<ride_maps::RouteTelemetryState, &'static str> {
@@ -7708,7 +8007,7 @@ impl MobileRideMapCore {
         state.music_history_policy.into()
     }
 
-    /// Sets the bounded music-history policy for the active or paused ride.
+    /// Sets the bounded music-history policy for the active ride.
     ///
     /// Disabling the policy clears the authoritative durable music timeline.
     ///
@@ -7725,7 +8024,7 @@ impl MobileRideMapCore {
         let Some(ride_id) = state.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
-        if !music_history_is_recordable(state.recorder.state()) {
+        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
             return Err(MobileRideMapCoreErrorDto::InvalidTransition);
         }
         let policy = CoreMusicHistoryPolicy::from(policy);
@@ -7769,11 +8068,6 @@ impl MobileRideMapCore {
 
     /// Records one transition and returns the authoritative sequence assigned
     /// by Rust when a new event is appended.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed ride-map error when the event is invalid, no ride is active,
-    /// or durable storage is unavailable.
     #[allow(clippy::needless_pass_by_value)]
     pub fn record_music_event_with_sequence(
         &self,
@@ -7889,7 +8183,7 @@ impl MobileRideMapCore {
         database
             .inner
             .music_history(ride_id)
-            .map(|history| mobile_music_event_dtos(history.events))
+            .map(|history| history.events.iter().map(Into::into).collect())
             .map_err(map_storage_core_error)
     }
 
@@ -7943,32 +8237,6 @@ impl MobileRideMapCore {
             .inner
             .save_music_history_policy(ride_id, CoreMusicHistoryPolicy::OpaqueItem)
             .map_err(map_storage_core_error)
-    }
-
-    /// Deletes music metadata for the current ride, including its in-memory timeline.
-    ///
-    /// This is available for terminal rides that remain selected until the user saves or
-    /// discards them; active and paused rides normally use the policy setter so their capture
-    /// context is updated by the app coordinator.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when no current ride exists, storage is unavailable, or the ride
-    /// identifier cannot be parsed.
-    pub fn delete_current_music_history(&self) -> Result<(), MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let Some(ride_id) = state.active_ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let Some(database) = state.database.clone() else {
-            return Err(MobileRideMapCoreErrorDto::storage_unavailable());
-        };
-        database
-            .inner
-            .delete_music_history(parse_mobile_ride_id(&ride_id).map_err(map_core_error)?)
-            .map_err(map_storage_core_error)?;
-        state.reset_music_history_policy();
-        Ok(())
     }
 
     /// Associates a connected vehicle with the active recording.
@@ -8126,16 +8394,6 @@ impl MobileRideMapCore {
             }
         }
         Ok(decisions)
-    }
-
-    /// Returns whether a location write is waiting for its SQLite completion.
-    pub fn has_pending_location_writes(&self) -> bool {
-        !self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pending_location_writes
-            .is_empty()
     }
 
     ///
@@ -8562,8 +8820,6 @@ pub enum MobileVescRideWarningDto {
 
     /// The controller is applying duty-based pushback.
     DutyPushback,
-    /// The controller is applying speed-based pushback.
-    SpeedPushback,
     /// The controller is applying temperature-based pushback.
     TemperaturePushback,
     /// The controller reports active wheel slip.
@@ -8574,10 +8830,6 @@ pub enum MobileVescRideWarningDto {
     LowBattery,
     /// The package reports an error warning.
     Error,
-    /// The package cannot communicate with its battery-management system.
-    BmsConnection,
-    /// The controller reported a warning code this version does not know.
-    Unknown,
 }
 
 /// Reason a VESC float controller stopped balancing.
@@ -8623,14 +8875,11 @@ impl From<RideWarningDto> for MobileVescRideWarningDto {
             RideWarningDto::MotorTemperature => Self::MotorTemperature,
             RideWarningDto::Current => Self::Current,
             RideWarningDto::DutyPushback => Self::DutyPushback,
-            RideWarningDto::SpeedPushback => Self::SpeedPushback,
             RideWarningDto::TemperaturePushback => Self::TemperaturePushback,
             RideWarningDto::Wheelslip => Self::Wheelslip,
             RideWarningDto::Sensors => Self::Sensors,
             RideWarningDto::LowBattery => Self::LowBattery,
             RideWarningDto::Error => Self::Error,
-            RideWarningDto::BmsConnection => Self::BmsConnection,
-            RideWarningDto::Unknown => Self::Unknown,
         }
     }
 }
@@ -9528,8 +9777,20 @@ pub struct MobileEucGarageSettingsDto {
     /// Pedal mode setting, when understood.
     pub pedal_mode: Option<MobilePedalModeDto>,
 
+    /// Falcon roll-angle sensitivity, when understood.
+    pub roll_angle: Option<MobileRollAngleDto>,
+
+    /// Begode speed-alarm mode, when understood.
+    pub speed_alarm_mode: Option<MobileSpeedAlarmModeDto>,
+
     /// Light state reported by wheel telemetry, when the protocol provides it.
     pub light_state: Option<MobileLightStateDto>,
+
+    /// Auto-shutdown time remaining, in reported seconds.
+    pub auto_shutdown_seconds: Option<u64>,
+
+    /// Charge mode reported by wheel telemetry.
+    pub charge_mode: Option<MobileChargeModeReadingDto>,
 }
 
 /// Read-only pedal mode projection for mobile UI.
@@ -9540,6 +9801,26 @@ pub struct MobilePedalModeDto {
 
     /// Documented mode when the protocol-native value has a known mapping.
     pub mode: Option<MobilePedalModeKindDto>,
+}
+
+/// Read-only Falcon roll-angle projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRollAngleDto {
+    /// Protocol-native raw roll-angle value.
+    pub raw_angle: Option<u16>,
+
+    /// Documented roll-angle sensitivity when the value has a known mapping.
+    pub angle: Option<MobileRollAngleKindDto>,
+}
+
+/// Read-only Begode speed-alarm projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSpeedAlarmModeDto {
+    /// Protocol-native raw speed-alarm mode value.
+    pub raw_mode: Option<u16>,
+
+    /// Documented speed-alarm mode when the value has a known mapping.
+    pub mode: Option<MobileSpeedAlarmModeKindDto>,
 }
 
 /// Bounded read-only settings response for mobile UI.
@@ -10293,7 +10574,6 @@ pub struct MobilePevcapCaptureBuilder {
     writer: Mutex<Option<CaptureWriter>>,
     writer_state: Mutex<Option<Arc<CaptureWriterState>>>,
     music_history_policy: Mutex<CoreMusicHistoryPolicy>,
-    music_capture_start_monotonic_ms: Mutex<Option<u64>>,
     music_context: Mutex<VecDeque<PendingPevcapMusicContext>>,
 }
 
@@ -10307,14 +10587,13 @@ fn pevcap_music_event_for_policy(
     if policy == CoreMusicHistoryPolicy::Disabled {
         return Ok(None);
     }
-    let event = PevcapMusicEvent::try_from(music.clone())?;
     if policy == CoreMusicHistoryPolicy::OpaqueItem
         && music.provider == MobileMusicProviderDto::Spotify
         && music.track_id.starts_with("spotify:local:")
     {
         return Ok(None);
     }
-    Ok(Some(event))
+    PevcapMusicEvent::try_from(music).map(Some)
 }
 
 #[derive(Clone, Debug)]
@@ -10344,7 +10623,6 @@ impl MobilePevcapCaptureBuilder {
             writer: Mutex::new(None),
             writer_state: Mutex::new(None),
             music_history_policy: Mutex::new(CoreMusicHistoryPolicy::Disabled),
-            music_capture_start_monotonic_ms: Mutex::new(None),
             music_context: Mutex::new(VecDeque::with_capacity(PEVCAP_MUSIC_CONTEXT_CAPACITY)),
         })
     }
@@ -10445,7 +10723,7 @@ impl MobilePevcapCaptureBuilder {
 
     /// Sets the ride music-history policy used for future PEVCAP metadata.
     ///
-    /// Disabled drops all music observations. `OpaqueItem` drops provider identifiers that embed
+    /// Disabled drops all music observations. OpaqueItem drops provider identifiers that embed
     /// display metadata. Changing policy clears queued context so an earlier, more permissive
     /// choice cannot leak into a later frame. Existing PEVCAP files remain separate private
     /// capture artifacts and are not rewritten by ride-history deletion.
@@ -10459,37 +10737,6 @@ impl MobilePevcapCaptureBuilder {
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
         true
-    }
-
-    /// Sets the monotonic origin used for capture-relative music timestamps.
-    pub fn set_music_capture_start_monotonic_ms(&self, monotonic_ms: u64) -> bool {
-        *self
-            .music_capture_start_monotonic_ms
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(monotonic_ms);
-        true
-    }
-
-    fn relative_music_event(
-        &self,
-        mut music: MobilePevcapMusicEventDto,
-    ) -> Option<MobilePevcapMusicEventDto> {
-        let start = *self
-            .music_capture_start_monotonic_ms
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let Some(start) = start else {
-            return Some(music);
-        };
-        if music.monotonic_at_ms >= start {
-            music.monotonic_at_ms -= start;
-            Some(music)
-        } else if start - music.monotonic_at_ms <= PEVCAP_MUSIC_CONTEXT_FRESHNESS_MS {
-            music.monotonic_at_ms = 0;
-            Some(music)
-        } else {
-            None
-        }
     }
 
     /// Queues a bounded music observation for correlation with the next notifications.
@@ -10506,9 +10753,6 @@ impl MobilePevcapCaptureBuilder {
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let Some(music) = self.relative_music_event(music) else {
-            return false;
-        };
         let event = match pevcap_music_event_for_policy(music.clone(), policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
@@ -10531,9 +10775,6 @@ impl MobilePevcapCaptureBuilder {
             .music_history_policy
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let Some(music) = self.relative_music_event(music) else {
-            return false;
-        };
         let event = match pevcap_music_event_for_policy(music, policy) {
             Ok(Some(event)) => event,
             Ok(None) => return true,
@@ -10639,11 +10880,6 @@ impl MobilePevcapCaptureBuilder {
     }
 
     /// Records an inbound notification with optional music correlation metadata.
-    ///
-    /// # Panics
-    ///
-    /// Panics only if the internal record builder rejects music metadata for an inbound record;
-    /// the builder's invariant guarantees that this cannot occur.
     #[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
     pub fn record_notification_with_context_and_music(
         &self,
@@ -10667,13 +10903,10 @@ impl MobilePevcapCaptureBuilder {
         if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
             record = record.with_phone_location(location.pevcap_location());
         }
-        match self.resolve_music_context(music, monotonic_ms.milliseconds) {
-            Ok(Some(music)) => {
-                record = record
-                    .with_music(music)
-                    .expect("inbound records accept music metadata");
-            }
-            Ok(None) | Err(()) => {}
+        if let Ok(Some(music)) = self.resolve_music_context(music, monotonic_ms.milliseconds) {
+            record = record
+                .with_music(music)
+                .expect("inbound records accept music metadata");
         }
         self.send_record(record)
     }
@@ -10713,16 +10946,15 @@ impl MobilePevcapCaptureBuilder {
     ) -> Result<Option<PevcapMusicEvent>, ()> {
         match music {
             Some(music) => {
-                let policy = *self
-                    .music_history_policy
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                let event = pevcap_music_event_for_policy(music, policy).map_err(|_| ())?;
                 self.music_context
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
                     .clear();
-                Ok(event)
+                let policy = *self
+                    .music_history_policy
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                pevcap_music_event_for_policy(music, policy).map_err(|_| ())
             }
             None => {
                 let mut pending = self
@@ -10989,7 +11221,11 @@ impl MobileEucGarageSettingsDto {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             };
         }
 
@@ -11016,6 +11252,12 @@ impl MobileEucGarageSettingsDto {
                         .and_then(|entry| u16::try_from(entry.field.value).ok())
                         .map(begode_pedal_mode)
                 }),
+            roll_angle: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(begode_roll_angle),
+            speed_alarm_mode: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(begode_speed_alarm_mode),
             light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
                 .and_then(|value| match value & 0x03 {
@@ -11023,6 +11265,23 @@ impl MobileEucGarageSettingsDto {
                     1 => Some(MobileLightStateDto::On),
                     _ => None,
                 }),
+            auto_shutdown_seconds: settings_entry(
+                entries,
+                VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+            )
+            .and_then(|entry| u64::try_from(entry.field.value).ok()),
+            charge_mode: settings_entry(entries, VETERAN_FIELD_CHARGE_MODE).map(|entry| {
+                MobileChargeModeReadingDto {
+                    value: if entry.field.value == 0 {
+                        MobileChargeModeDto::NotCharging
+                    } else {
+                        MobileChargeModeDto::Charging
+                    },
+                    source: entry.source,
+                    quality: entry.quality,
+                    verification: entry.verification,
+                }
+            }),
         }
     }
 }
@@ -11043,6 +11302,24 @@ fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
         raw_mode,
         CorePedalMode::from_begode_settings_bits(settings_bits),
     )
+}
+
+fn begode_roll_angle(settings_bits: u16) -> MobileRollAngleDto {
+    let raw_angle = (settings_bits >> 7) & 0x03;
+    MobileRollAngleDto {
+        raw_angle: Some(raw_angle),
+        angle: CoreRollAngle::from_begode_settings_bits(settings_bits)
+            .map(MobileRollAngleKindDto::from),
+    }
+}
+
+fn begode_speed_alarm_mode(settings_bits: u16) -> MobileSpeedAlarmModeDto {
+    let raw_mode = (settings_bits >> 10) & 0x03;
+    MobileSpeedAlarmModeDto {
+        raw_mode: Some(raw_mode),
+        mode: CoreSpeedAlarmMode::from_begode_settings_bits(settings_bits)
+            .map(MobileSpeedAlarmModeKindDto::from),
+    }
 }
 
 fn mobile_pedal_mode(raw_mode: u16, mode: Option<CorePedalMode>) -> MobilePedalModeDto {
@@ -11360,8 +11637,7 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
 #[derive(Debug, uniffi::Object)]
 pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
-    light_state: Mutex<MobileLightSettingTracker>,
-    pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
+    settings: Mutex<MobileEucSettingTrackers>,
 }
 
 #[uniffi::export]
@@ -11372,8 +11648,7 @@ impl AeroBenignControlSession {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
-            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         })
     }
 
@@ -11381,11 +11656,11 @@ impl AeroBenignControlSession {
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        let result = mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input));
-        self.lock_light_state()
-            .observe_step(&tracked_input, &result);
-        self.lock_pedal_mode_state()
-            .observe_step(&tracked_input, &result);
+        let result = preserve_refused_command(
+            mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input)),
+            tracked_input.command,
+        );
+        self.lock_settings().observe_step(&tracked_input, &result);
         result
     }
 
@@ -11413,26 +11688,67 @@ impl AeroBenignControlSession {
         MobileEucSettingsCapabilitiesDto::aero()
     }
 
+    /// Arms settings writes only when the latest Rust-owned ride state is stationary.
+    pub fn arm_settings_writes(
+        &self,
+        state: RideOperatingState,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> bool {
+        let speed_mm_per_second = self
+            .lock_inner()
+            .current_snapshot()
+            .speed
+            .map(|speed| speed.value);
+        self.lock_inner().arm_settings_writes(
+            mobile_ride_operating_state_dto(state),
+            speed_mm_per_second,
+            monotonic_ms.milliseconds,
+        )
+    }
+
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
-        self.lock_light_state().snapshot()
+        self.lock_settings().headlight()
     }
+
     /// Returns the Rust-owned status of the latest headlight command.
     pub fn headlight_command_status(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> MobileLightCommandStatusDto {
-        self.lock_light_state().command_status(monotonic_ms)
+        self.lock_settings()
+            .headlight_command_status(monotonic_ms, false)
     }
 
     /// Records a transport failure for the latest headlight command.
     pub fn fail_headlight_command(&self) {
-        self.lock_light_state().fail();
+        let mut settings = self.lock_settings();
+        settings.fail_headlight();
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
-        self.lock_pedal_mode_state().snapshot()
+        self.lock_settings().pedal_mode()
+    }
+
+    /// Returns the Rust-owned roll-angle setting lifecycle state.
+    pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
+        self.lock_settings().roll_angle()
+    }
+
+    /// Returns the Rust-owned speed-alarm setting lifecycle state.
+    pub fn speed_alarm_mode_state(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        self.lock_settings().speed_alarm_mode()
+    }
+
+    /// Returns the Rust-owned acceleration-assist setting lifecycle state.
+    pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
+        self.lock_settings().acceleration_assist()
+    }
+
+    /// Returns the Rust-owned taillight setting lifecycle state.
+    pub fn taillight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().taillight()
     }
 }
 
@@ -11441,16 +11757,8 @@ impl AeroBenignControlSession {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
-        self.light_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
-        self.pedal_mode_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -11458,8 +11766,7 @@ impl Default for AeroBenignControlSession {
     fn default() -> Self {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
-            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         }
     }
 }
@@ -11513,6 +11820,33 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::SetPedalMode(mode) => {
                 Self::SetPedalMode(CorePedalMode::from(mode).into())
             }
+            MobileCommandDto::SetRollAngle(angle) => {
+                Self::SetRollAngle(CoreRollAngle::from(angle).into())
+            }
+            MobileCommandDto::SetSpeedAlarmMode(mode) => {
+                Self::SetSpeedAlarmMode(CoreSpeedAlarmMode::from(mode).into())
+            }
+            MobileCommandDto::SetBegodeMaxSpeed(speed) => {
+                CoreBegodeMaxSpeed::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeMaxSpeed,
+                )
+            }
+            MobileCommandDto::SetBegodeBeeperVolume(volume) => {
+                CoreBegodeBeeperVolume::new(volume.level).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeBeeperVolume,
+                )
+            }
+            MobileCommandDto::SetBegodeLedMode(mode) => CoreBegodeLedModeSetting::new(mode.mode)
+                .map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeLedMode,
+                ),
+            MobileCommandDto::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            MobileCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -11528,8 +11862,15 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
-        CommandKindDto::SetLights
+        CommandKindDto::SetAccelerationAssist
+        | CommandKindDto::SetLights
         | CommandKindDto::SetPedalMode
+        | CommandKindDto::SetRollAngle
+        | CommandKindDto::SetSpeedAlarmMode
+        | CommandKindDto::SetBegodeMaxSpeed
+        | CommandKindDto::SetBegodeBeeperVolume
+        | CommandKindDto::SetBegodeLedMode
+        | CommandKindDto::SetTaillight
         | CommandKindDto::SetRawMotorCurrent => None,
     }
 }
@@ -11545,7 +11886,6 @@ impl MobileSessionOutputDto {
             fault_history_readback: None,
             bms_snapshot: None,
             raw_telemetry: None,
-            vesc_realtime_telemetry: false,
             veteran_protocol_model_id: None,
         }
     }
@@ -11598,13 +11938,6 @@ impl From<SessionOutputDto> for MobileSessionOutputDto {
                 Self::empty(MobileSessionOutputKindDto::Disconnect)
             }
             SessionOutputDto::ReadOnly(response) => Self::read_only(response.payload),
-            SessionOutputDto::Event(SessionEventDto::Telemetry(delta)) => {
-                let mut output = Self::empty(MobileSessionOutputKindDto::Event);
-                output.vesc_realtime_telemetry = delta.operating_state.is_some()
-                    && delta.operating_mode.is_some()
-                    && delta.footpad.is_some();
-                output
-            }
             SessionOutputDto::Event(_) => Self::empty(MobileSessionOutputKindDto::Event),
             SessionOutputDto::NotificationIngest(outcome) => {
                 let mut output = Self::empty(MobileSessionOutputKindDto::NotificationIngest);
@@ -11779,6 +12112,16 @@ fn ride_operating_state(
     }
 }
 
+fn mobile_ride_operating_state_dto(state: RideOperatingState) -> RideOperatingStateDto {
+    match state {
+        RideOperatingState::Unknown => RideOperatingStateDto::Unknown,
+        RideOperatingState::Parked => RideOperatingStateDto::Parked,
+        RideOperatingState::Standing => RideOperatingStateDto::Standing,
+        RideOperatingState::Riding => RideOperatingStateDto::Riding,
+        RideOperatingState::Charging => RideOperatingStateDto::Charging,
+    }
+}
+
 impl From<NotificationEvidenceDto> for MobileNotificationEvidenceDto {
     fn from(evidence: NotificationEvidenceDto) -> Self {
         Self {
@@ -11904,6 +12247,21 @@ impl From<ConcreteSessionStepResultDto> for MobileSessionStepResultDto {
     }
 }
 
+fn preserve_refused_command(
+    mut result: MobileSessionStepResultDto,
+    command: Option<MobileCommandDto>,
+) -> MobileSessionStepResultDto {
+    if let Some(MobileSessionStepErrorDto {
+        kind: MobileSessionStepErrorKindDto::CommandRefused,
+        command: error_command @ None,
+        ..
+    }) = &mut result.error
+    {
+        *error_command = command;
+    }
+    result
+}
+
 fn mobile_aero_session_step_result(
     result: ConcreteSessionStepResultDto,
 ) -> MobileSessionStepResultDto {
@@ -11960,6 +12318,7 @@ impl From<ControlRefusalReasonDto> for MobileControlRefusalReasonDto {
             ControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
             ControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             ControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReasonDto::Busy => Self::Busy,
         }
     }
 }
@@ -12734,8 +13093,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
 #[derive(Debug, uniffi::Object)]
 pub struct FalconBenignControlSession {
     inner: Mutex<ConcreteFalconBenignControlSession>,
-    light_state: Mutex<MobileLightSettingTracker>,
-    pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
+    settings: Mutex<MobileEucSettingTrackers>,
 }
 
 #[uniffi::export]
@@ -12765,8 +13123,7 @@ impl FalconBenignControlSession {
             inner: Mutex::new(try_new_begode_falcon_benign_control_session(
                 profile.into(),
             )?),
-            light_state: Mutex::new(MobileLightSettingTracker::default()),
-            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
+            settings: Mutex::new(MobileEucSettingTrackers::default()),
         }))
     }
 
@@ -12774,11 +13131,11 @@ impl FalconBenignControlSession {
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        let result = MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input));
-        self.lock_light_state()
-            .observe_step(&tracked_input, &result);
-        self.lock_pedal_mode_state()
-            .observe_step(&tracked_input, &result);
+        let result = preserve_refused_command(
+            MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input)),
+            tracked_input.command,
+        );
+        self.lock_settings().observe_step(&tracked_input, &result);
         result
     }
 
@@ -12806,26 +13163,67 @@ impl FalconBenignControlSession {
         MobileEucSettingsCapabilitiesDto::falcon()
     }
 
+    /// Arms settings writes only when the latest Rust-owned ride state is stationary.
+    pub fn arm_settings_writes(
+        &self,
+        state: RideOperatingState,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> bool {
+        let speed_mm_per_second = self
+            .lock_inner()
+            .current_snapshot()
+            .speed
+            .map(|speed| speed.value);
+        self.lock_inner().arm_settings_writes(
+            mobile_ride_operating_state_dto(state),
+            speed_mm_per_second,
+            monotonic_ms.milliseconds,
+        )
+    }
+
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
-        self.lock_light_state().snapshot()
+        self.lock_settings().headlight()
     }
+
     /// Returns the Rust-owned status of the latest headlight command.
     pub fn headlight_command_status(
         &self,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> MobileLightCommandStatusDto {
-        self.lock_light_state().command_status(monotonic_ms)
+        self.lock_settings()
+            .headlight_command_status(monotonic_ms, true)
     }
 
     /// Records a transport failure for the latest headlight command.
     pub fn fail_headlight_command(&self) {
-        self.lock_light_state().fail();
+        let mut settings = self.lock_settings();
+        settings.fail_headlight();
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
-        self.lock_pedal_mode_state().snapshot()
+        self.lock_settings().pedal_mode()
+    }
+
+    /// Returns the Rust-owned roll-angle setting lifecycle state.
+    pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
+        self.lock_settings().roll_angle()
+    }
+
+    /// Returns the Rust-owned speed-alarm setting lifecycle state.
+    pub fn speed_alarm_mode_state(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        self.lock_settings().speed_alarm_mode()
+    }
+
+    /// Returns the Rust-owned acceleration-assist setting lifecycle state.
+    pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
+        self.lock_settings().acceleration_assist()
+    }
+
+    /// Returns the Rust-owned taillight setting lifecycle state.
+    pub fn taillight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().taillight()
     }
 }
 
@@ -12834,16 +13232,8 @@ impl FalconBenignControlSession {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
-        self.light_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
-        self.pedal_mode_state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn lock_settings(&self) -> MutexGuard<'_, MobileEucSettingTrackers> {
+        self.settings.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -13023,6 +13413,11 @@ mod tests {
         }
     }
 
+    fn discovery_service(uuid: CoreBluetoothServiceUuid) -> DiscoveryServiceUuid {
+        DiscoveryServiceUuid {
+            bytes: uuid.as_bytes().to_vec(),
+        }
+    }
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -13321,7 +13716,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NOSFET Aero".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert_eq!(candidate.platform_identifier, "ios-local-aero");
@@ -13538,7 +13933,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -13572,7 +13967,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NF2557".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -13607,7 +14002,9 @@ mod tests {
         let snapshot = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-falcon".to_owned(),
             advertised_name: Some(b"Begode Falcon".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![DiscoveryManufacturerDataSummary {
                 company_identifier: 0x004c,
                 payload_len: 6,
@@ -13679,7 +14076,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-aero".to_owned(),
             advertised_name: Some(b"NF2557".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -13697,7 +14096,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-unknown-euc".to_owned(),
             advertised_name: Some(b"Unknown EUC".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -13715,7 +14116,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-vesc".to_owned(),
             advertised_name: Some(b"Little FOCer".to_vec()),
-            advertised_service_uuids: vec![0xfff0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::VESC_NORDIC_UART,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -14290,7 +14693,11 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -14385,8 +14792,40 @@ mod tests {
                     raw_mode: Some(1_920),
                     mode: None,
                 }),
+                roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_veteran_auto_shutdown_and_charge_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, 900),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_CHARGE_MODE, 1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(mobile.euc_garage.auto_shutdown_seconds, Some(900));
+        assert_eq!(
+            mobile.euc_garage.charge_mode.map(|reading| reading.value),
+            Some(MobileChargeModeDto::Charging)
         );
     }
 
@@ -14443,7 +14882,11 @@ mod tests {
                     verification: MobileVerificationStatusDto::SourceVerified,
                 }),
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -14469,6 +14912,58 @@ mod tests {
             Some(MobilePedalModeDto {
                 raw_mode: Some(2),
                 mode: Some(MobilePedalModeKindDto::Hard),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_roll_angle() {
+        let settings_bits = 2_i64 << 7;
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, settings_bits),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.roll_angle,
+            Some(MobileRollAngleDto {
+                raw_angle: Some(2),
+                angle: Some(MobileRollAngleKindDto::High),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_speed_alarm_mode() {
+        let settings_bits = 1_i64 << 10;
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, settings_bits),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.speed_alarm_mode,
+            Some(MobileSpeedAlarmModeDto {
+                raw_mode: Some(1),
+                mode: Some(MobileSpeedAlarmModeKindDto::StageOneOnly),
             })
         );
     }
@@ -14544,7 +15039,11 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
         assert_eq!(mobile.entries.len(), 3);
@@ -14563,7 +15062,11 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    roll_angle: None,
+                    speed_alarm_mode: None,
                     light_state: None,
+                    auto_shutdown_seconds: None,
+                    charge_mode: None,
                 },
                 entries: Vec::new(),
             }
@@ -14597,7 +15100,11 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -14761,7 +15268,11 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    roll_angle: None,
+                    speed_alarm_mode: None,
                     light_state: None,
+                    auto_shutdown_seconds: None,
+                    charge_mode: None,
                 },
                 entries: vec![MobileSettingsEntryDto {
                     field: MobileRawFieldValueDto {
@@ -15114,7 +15625,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown-euc".to_owned(),
             Some("EUC-unknown".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -15143,7 +15654,9 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
-            vec![0xfff0],
+            vec![discovery_service(
+                CoreBluetoothServiceUuid::VESC_NORDIC_UART,
+            )],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -15769,8 +16282,9 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_refuses_unverified_pedal_mode_without_a_write() {
+    fn aero_wrapper_writes_documented_pedal_mode_after_stationary_arm() {
         let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -15781,6 +16295,113 @@ mod tests {
             command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
         });
 
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
+        }));
+    }
+
+    #[test]
+    fn falcon_wrapper_writes_documented_roll_angle_after_stationary_arm() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetRollAngle(MobileRollAngleKindDto::High)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"<"
+        }));
+        assert_eq!(
+            session.roll_angle_state().requested,
+            Some(MobileRollAngleKindDto::High)
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_writes_documented_speed_alarm_mode_after_stationary_arm() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetSpeedAlarmMode(
+                MobileSpeedAlarmModeKindDto::StageOneOnly,
+            )),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"u"
+        }));
+        assert_eq!(
+            session.speed_alarm_mode_state().requested,
+            Some(MobileSpeedAlarmModeKindDto::StageOneOnly)
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_schedules_typed_w_setting_sequence() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetBegodeMaxSpeed(
+                MobileBegodeMaxSpeedDto {
+                    kilometres_per_hour: 30,
+                },
+            )),
+        });
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"W"
+        }));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(100),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"Y"
+        }));
+    }
+
+    #[test]
+    fn falcon_wrapper_refuses_ambiguous_speed_alarm_off_command() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetSpeedAlarmMode(
+                MobileSpeedAlarmModeKindDto::Off,
+            )),
+        });
+
         assert!(matches!(
             result.error,
             Some(MobileSessionStepErrorDto {
@@ -15789,14 +16410,100 @@ mod tests {
                 ..
             })
         ));
-        assert!(result
-            .outputs
-            .iter()
-            .all(|output| output.kind != MobileSessionOutputKindDto::Write));
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
     }
 
     #[test]
-    fn aero_wrapper_reports_typed_pedal_mode_refusal_state() {
+    fn mobile_wrapper_refuses_unverified_acceleration_assist_and_taillight_without_writes() {
+        let session = AeroBenignControlSession::new();
+        let commands = [
+            MobileCommandDto::SetAccelerationAssist(MobileAccelerationAssistStateDto::Enabled),
+            MobileCommandDto::SetTaillight(MobileLightStateDto::On),
+        ];
+
+        for command in commands {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(0),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(command),
+            });
+
+            assert_eq!(
+                result.error,
+                Some(MobileSessionStepErrorDto {
+                    kind: MobileSessionStepErrorKindDto::CommandRefused,
+                    command: Some(command),
+                    reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                })
+            );
+            assert!(
+                result
+                    .outputs
+                    .iter()
+                    .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+            );
+        }
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_acceleration_assist_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAccelerationAssist(
+                MobileAccelerationAssistStateDto::Enabled,
+            )),
+        });
+
+        let state = session.acceleration_assist_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(
+            state.requested,
+            Some(MobileAccelerationAssistStateDto::Enabled)
+        );
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_taillight_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetTaillight(MobileLightStateDto::On)),
+        });
+
+        let state = session.taillight_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_reports_missing_arm_for_pedal_mode() {
         let session = AeroBenignControlSession::new();
 
         let _ = session.ingest_checked(MobileSessionInputDto {
@@ -15813,14 +16520,16 @@ mod tests {
         assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
         assert_eq!(
             state.refusal_reason,
-            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+            Some(MobileControlRefusalReasonDto::MissingArm)
         );
     }
 
     #[test]
-    fn aero_wrapper_writes_while_falcon_wrapper_refuses_unverified_lights() {
+    fn aero_and_falcon_wrappers_write_lights_after_stationary_arm() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(aero.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(falcon.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
         let command_input = |state| MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -15835,34 +16544,13 @@ mod tests {
         let falcon_result = falcon.ingest_checked(command_input(MobileLightStateDto::Off));
 
         assert_eq!(aero_result.error, None);
-        assert_eq!(
-            aero.headlight_state().kind,
-            MobileSettingStateKindDto::Pending
-        );
-        assert_eq!(
-            aero.headlight_state().requested,
-            Some(MobileLightStateDto::On)
-        );
         assert!(aero_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
         }));
-        assert!(
-            matches!(
-                falcon_result.error,
-                Some(MobileSessionStepErrorDto {
-                    kind: MobileSessionStepErrorKindDto::CommandRefused,
-                    reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
-                    ..
-                })
-            ),
-            "{falcon_result:?}"
-        );
-        assert!(
-            falcon_result
-                .outputs
-                .iter()
-                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
-        );
+        assert_eq!(falcon_result.error, None);
+        assert!(falcon_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
+        }));
     }
 
     #[test]
@@ -15927,13 +16615,13 @@ mod tests {
 
     #[test]
     fn mobile_pedal_state_times_out_on_tick() {
-        let mut tracker = MobilePedalModeSettingTracker::default();
+        let mut trackers = MobileEucSettingTrackers::default();
         let accepted = MobileSessionStepResultDto {
             outputs: Vec::new(),
             error: None,
         };
 
-        tracker.observe_step(
+        trackers.observe_step(
             &MobileSessionInputDto {
                 kind: MobileSessionInputKindDto::Command,
                 monotonic_ms: ms(10),
@@ -15944,9 +16632,12 @@ mod tests {
             },
             &accepted,
         );
-        assert_eq!(tracker.snapshot().kind, MobileSettingStateKindDto::Pending);
+        assert_eq!(
+            trackers.pedal_mode().kind,
+            MobileSettingStateKindDto::Pending
+        );
 
-        tracker.observe_step(
+        trackers.observe_step(
             &MobileSessionInputDto {
                 kind: MobileSessionInputKindDto::Tick,
                 monotonic_ms: ms(2_010),
@@ -15958,13 +16649,13 @@ mod tests {
             &accepted,
         );
 
-        let state = tracker.snapshot();
+        let state = trackers.pedal_mode();
         assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
         assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
     }
 
     #[test]
-    fn euc_settings_capabilities_preserve_validation_state() {
+    fn euc_settings_capabilities_expose_guarded_write_support() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
 
@@ -15974,7 +16665,7 @@ mod tests {
         );
         assert_eq!(
             falcon.settings_capabilities().headlight,
-            MobileSettingWriteSupportDto::Unverified
+            MobileSettingWriteSupportDto::Supported
         );
         assert_eq!(
             aero.settings_capabilities().taillight,
@@ -15982,15 +16673,23 @@ mod tests {
         );
         assert_eq!(
             aero.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Unverified
+            MobileSettingWriteSupportDto::Supported
         );
         assert_eq!(
             falcon.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Unverified
+            MobileSettingWriteSupportDto::Supported
         );
         assert_eq!(
             aero.settings_capabilities().acceleration_assist,
             MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            mobile_euc_settings_capabilities(DiscoveryElectricUnicycleModel::Aero),
+            aero.settings_capabilities()
+        );
+        assert_eq!(
+            mobile_euc_settings_capabilities(DiscoveryElectricUnicycleModel::Falcon),
+            falcon.settings_capabilities()
         );
     }
 
@@ -16691,89 +17390,6 @@ mod tests {
         );
         assert!(capture.records[1].music.is_none());
         let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn invalid_explicit_music_context_does_not_consume_pending_context() {
-        let path = std::env::temp_dir().join(format!(
-            "cutout-mobile-writer-music-invalid-{}-{}.jsonl",
-            std::process::id(),
-            thread::current().name().unwrap_or("test")
-        ));
-        let _ = fs::remove_file(&path);
-        let builder = MobilePevcapCaptureBuilder::new(
-            wc(1_700_000_000_000),
-            "ios-corebluetooth".into(),
-            None,
-        );
-        assert!(builder.set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable));
-        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
-            provider: MobileMusicProviderDto::AppleMusic,
-            track_id: "pending-song".into(),
-            monotonic_at_ms: 17,
-            wall_clock_unix_ms: 1_700_000_000_017,
-            clock_uncertainty_ms: 75,
-            ride_sequence: Some(1),
-        })));
-        assert!(builder.start_writer(path.to_string_lossy().into_owned()));
-        assert!(builder.record_notification_with_context_and_music(
-            ms(42),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xde, 0xad],
-            None,
-            None,
-            Some(MobilePevcapMusicEventDto {
-                provider: MobileMusicProviderDto::AppleMusic,
-                track_id: String::new(),
-                monotonic_at_ms: 18,
-                wall_clock_unix_ms: 1_700_000_000_018,
-                clock_uncertainty_ms: 75,
-                ride_sequence: Some(2),
-            }),
-        ));
-        assert!(builder.record_notification_with_context(
-            ms(43),
-            vec![0; 16],
-            vec![1; 16],
-            vec![0xbe, 0xef],
-            None,
-            None,
-        ));
-        assert!(builder.finish_writer());
-
-        let bytes = fs::read(&path).expect("music capture exists");
-        let capture =
-            PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl).expect("music capture decodes");
-        assert_eq!(capture.records.len(), 2);
-        assert_eq!(
-            capture.records[1]
-                .music
-                .as_ref()
-                .expect("pending context survives rejected explicit context")
-                .track_id
-                .as_str(),
-            "pending-song"
-        );
-        assert!(capture.records[0].music.is_none());
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn disabled_music_policy_drops_invalid_capture_context() {
-        let builder = MobilePevcapCaptureBuilder::new(
-            wc(1_700_000_000_000),
-            "ios-corebluetooth".into(),
-            None,
-        );
-        assert!(builder.set_music_context(Some(MobilePevcapMusicEventDto {
-            provider: MobileMusicProviderDto::AppleMusic,
-            track_id: String::new(),
-            monotonic_at_ms: 18,
-            wall_clock_unix_ms: 1_700_000_000_018,
-            clock_uncertainty_ms: 75,
-            ride_sequence: Some(2),
-        })));
     }
 
     #[test]
@@ -18646,18 +19262,6 @@ mod tests {
     }
 
     #[test]
-    fn music_observation_watermark_accepts_only_newer_samples() {
-        assert!(accept_music_snapshot(None, 1));
-        assert!(accept_music_snapshot(Some(1), 2));
-        assert!(!accept_music_snapshot(Some(2), 2));
-        assert!(!accept_music_snapshot(Some(2), 1));
-    }
-
-    #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "the opt-in test exercises the complete ride and music transition contract"
-    )]
     fn music_transition_is_recorded_only_after_opt_in() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -18686,10 +19290,6 @@ mod tests {
             .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
             .expect("policy can be enabled while recording");
         assert_eq!(
-            state.current_music_history_policy(),
-            MobileMusicHistoryPolicyDto::HumanReadable
-        );
-        assert_eq!(
             state
                 .record_music_event(
                     snapshot.clone(),
@@ -18703,7 +19303,6 @@ mod tests {
         );
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].sequence, 0);
         assert_eq!(events[0].title.as_deref(), Some("Song"));
         let mut stale_snapshot = snapshot.clone();
         stale_snapshot.observed_at_ms = 1_000;
@@ -18760,10 +19359,6 @@ mod tests {
         state
             .start_gps_only(4_000, None)
             .expect("next ride starts with a fresh timeline");
-        assert_eq!(
-            state.current_music_history_policy(),
-            MobileMusicHistoryPolicyDto::Disabled
-        );
         assert!(
             state
                 .current_music_events()
@@ -18808,7 +19403,6 @@ mod tests {
     #[test]
     fn invalid_music_event_input_is_typed() {
         let error = core_music_event(MobileMusicRideEventDto {
-            sequence: 0,
             provider: MobileMusicProviderDto::Spotify,
             item_identifier: Some(" ".to_owned()),
             title: None,
@@ -18843,79 +19437,6 @@ mod tests {
             Err(MobileRideMapCoreErrorDto::Storage(message))
                 if message == "Rust ride database is unavailable"
         ));
-    }
-
-    #[test]
-    fn stored_music_events_report_unavailable_storage() {
-        let state = MobileRideMapCore::new();
-
-        let error = state
-            .stored_music_events(MobileRideIdDto {
-                value: Uuid::new_v4().to_string(),
-            })
-            .expect_err("music history must not look empty when storage is unavailable");
-
-        assert_eq!(
-            error,
-            MobileRideMapCoreErrorDto::Storage("Rust ride database is unavailable".to_owned())
-        );
-    }
-
-    #[test]
-    fn music_transition_is_rejected_after_ride_stops() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-mobile-music-stopped-{}-{}.sqlite3",
-            std::process::id(),
-            Uuid::new_v4()
-        ));
-        let _ = fs::remove_file(&path);
-        let database =
-            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        state.start_gps_only(1_000, None).expect("ride starts");
-        state
-            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
-            .expect("policy can be enabled while recording");
-        state.stop_at(2_000).expect("ride stops");
-
-        let result = state.record_music_event(
-            MobileMusicSnapshotDto {
-                provider: MobileMusicProviderDto::AppleMusic,
-                session_id: "session".to_owned(),
-                state: MobileMusicPlaybackStateDto::Playing,
-                item: Some(MobileMusicItemDto {
-                    identifier: "track-1".to_owned(),
-                    title: Some("Song".to_owned()),
-                    artist: Some("Artist".to_owned()),
-                }),
-                position_milliseconds: None,
-                duration_milliseconds: None,
-                observed_at_ms: 3_000,
-                capabilities: MobileMusicCapabilitiesDto {
-                    previous: false,
-                    play: false,
-                    pause: true,
-                    next: true,
-                    open_provider: true,
-                },
-            },
-            MobileMusicRideEventKindDto::Play,
-            3_000,
-            1_700_000_000_000,
-            5,
-        );
-
-        assert_eq!(result, Ok(MobileMusicTimelineOutcomeDto::RideNotOpen));
-        assert!(
-            state
-                .current_music_events()
-                .is_some_and(|events| events.is_empty())
-        );
-        database.shutdown().expect("database shuts down");
-        let _ = fs::remove_file(path);
     }
 
     #[test]
@@ -18972,81 +19493,9 @@ mod tests {
 
         let events = state.current_music_events().expect("active timeline");
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].sequence, 0);
         assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
-        database.shutdown().expect("database shuts down");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn music_event_dtos_expose_ordered_sequences() {
-        let _guard = RIDE_DATABASE_TEST_LOCK
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let path = std::env::temp_dir().join(format!(
-            "cutout-mobile-music-sequence-{}-{}.sqlite3",
-            std::process::id(),
-            Uuid::new_v4()
-        ));
-        let _ = fs::remove_file(&path);
-        let database =
-            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
-        let state = MobileRideMapCore::with_database(database.clone());
-        state.start_gps_only(1_000, None).expect("ride starts");
-        state
-            .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
-            .expect("policy can be enabled while recording");
-        for (state_value, kind, timestamp) in [
-            (
-                MobileMusicPlaybackStateDto::Playing,
-                MobileMusicRideEventKindDto::Play,
-                2_000,
-            ),
-            (
-                MobileMusicPlaybackStateDto::Paused,
-                MobileMusicRideEventKindDto::Pause,
-                2_001,
-            ),
-        ] {
-            state
-                .record_music_event(
-                    MobileMusicSnapshotDto {
-                        provider: MobileMusicProviderDto::AppleMusic,
-                        session_id: "session".to_owned(),
-                        state: state_value,
-                        item: Some(MobileMusicItemDto {
-                            identifier: "track-1".to_owned(),
-                            title: Some("Song".to_owned()),
-                            artist: Some("Artist".to_owned()),
-                        }),
-                        position_milliseconds: None,
-                        duration_milliseconds: None,
-                        observed_at_ms: timestamp,
-                        capabilities: MobileMusicCapabilitiesDto {
-                            previous: false,
-                            play: state_value == MobileMusicPlaybackStateDto::Paused,
-                            pause: state_value == MobileMusicPlaybackStateDto::Playing,
-                            next: true,
-                            open_provider: true,
-                        },
-                    },
-                    kind,
-                    timestamp,
-                    1_700_000_000_000 + timestamp,
-                    5,
-                )
-                .expect("music event is recorded");
-        }
-        let events = state.current_music_events().expect("active timeline");
-        assert_eq!(
-            events
-                .iter()
-                .map(|event| event.sequence)
-                .collect::<Vec<_>>(),
-            [0, 1]
-        );
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }

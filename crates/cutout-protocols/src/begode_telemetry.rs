@@ -2,10 +2,10 @@ use core::ops::RangeInclusive;
 
 use cutout_core::{
     BatteryCurrent, BatteryLevel, Capacity, DiagnosticDetail, DiagnosticReadback,
-    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, Measured, MonotonicTimestamp,
-    ParallelCount, PhaseCurrent, Power, ProtocolTag, RawFieldValue, ReadOnlyResponse, SeriesCount,
-    SettingsEntry, SettingsReadback, Speed, TelemetryDelta, Temperature, ValueQuality, ValueSource,
-    VerificationStatus, Voltage, WireVoltage,
+    DiagnosticSeverity, Distance, Duration, DutyCycle, Energy, LightState, Measured,
+    MonotonicTimestamp, ParallelCount, PhaseCurrent, Power, ProtocolTag, RawFieldValue,
+    ReadOnlyResponse, SeriesCount, SettingsEntry, SettingsReadback, Speed, TelemetryDelta,
+    Temperature, ValueQuality, ValueSource, VerificationStatus, Voltage, WireVoltage,
 };
 use thiserror::Error;
 
@@ -105,6 +105,17 @@ impl BegodeLightMode {
     #[must_use]
     pub const fn get(self) -> u8 {
         self.0
+    }
+
+    /// Maps the documented light-mode values to the shared typed state.
+    #[must_use]
+    pub const fn light_state(self) -> Option<LightState> {
+        match self.0 {
+            0 => Some(LightState::Off),
+            1 => Some(LightState::On),
+            2 => Some(LightState::Strobe),
+            _ => None,
+        }
     }
 }
 
@@ -1280,7 +1291,7 @@ mod tests {
         BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
         estimate_begode_battery_level, validate_begode_pack_evidence,
     };
-    use cutout_core::{Capacity, Duration, Energy};
+    use cutout_core::{Capacity, Duration, Energy, LightState};
     use cutout_core::{
         DiagnosticSeverity, Measured, ParallelCount, ProtocolTag, RawFieldValue, ReadOnlyResponse,
         SeriesCount, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus, Voltage,
@@ -1324,6 +1335,17 @@ mod tests {
         assert_eq!(telemetry.led_mode, BegodeLedMode::new(3));
         assert_eq!(telemetry.alert_flags, BegodeAlertFlags::new(5));
         assert_eq!(telemetry.light_mode, BegodeLightMode::new(2));
+    }
+
+    #[test]
+    fn light_mode_maps_documented_begode_states() {
+        assert_eq!(BegodeLightMode::new(0).light_state(), Some(LightState::Off));
+        assert_eq!(BegodeLightMode::new(1).light_state(), Some(LightState::On));
+        assert_eq!(
+            BegodeLightMode::new(2).light_state(),
+            Some(LightState::Strobe)
+        );
+        assert_eq!(BegodeLightMode::new(3).light_state(), None);
     }
 
     #[test]

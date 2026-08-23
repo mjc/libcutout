@@ -2147,7 +2147,9 @@ fn selected_session_resolution_for_target(
 }
 
 fn auto_session_resolution() -> Result<SessionResolution> {
-    bail!("auto session resolution requires protocol identity evidence; advertised BLE names are display-only")
+    bail!(
+        "auto session resolution requires protocol identity evidence; advertised BLE names are display-only"
+    )
 }
 
 #[cfg(test)]
@@ -3245,8 +3247,15 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestDiagnostics => "request_diagnostics",
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
+        CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
         CommandKind::SetPedalMode => "set_pedal_mode",
+        CommandKind::SetRollAngle => "set_roll_angle",
+        CommandKind::SetSpeedAlarmMode => "set_speed_alarm_mode",
+        CommandKind::SetBegodeMaxSpeed => "set_begode_max_speed",
+        CommandKind::SetBegodeBeeperVolume => "set_begode_beeper_volume",
+        CommandKind::SetBegodeLedMode => "set_begode_led_mode",
+        CommandKind::SetTaillight => "set_taillight",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }
@@ -5956,11 +5965,7 @@ mod tests {
 
         let error = dashboard_session_profile_from_summary(&summary)
             .expect_err("unsupported device should not silently fall back");
-        assert!(
-            error
-                .to_string()
-                .contains("dashboard cannot resolve a session profile")
-        );
+        assert!(error.to_string().contains("protocol identity"));
     }
 
     #[test]

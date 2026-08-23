@@ -262,6 +262,7 @@ public actor LiveActivityRideLifecycleCoordinator {
 
     public func appDidEnterBackground(
         requestID: UInt64,
+        atMs: UInt64,
         snapshot: LiveActivityRideSnapshot,
         captureFlush: @escaping @Sendable () async -> Bool
     ) async {
@@ -269,6 +270,13 @@ public actor LiveActivityRideLifecycleCoordinator {
         await beginOperation()
         defer { finishOperation() }
         guard requestID == latestRequestID else { return }
+        if lastSnapshot != snapshot {
+            await apply(
+                input: .telemetryObserved(atMs: atMs),
+                snapshot: snapshot,
+                endReason: .sessionEnded
+            )
+        }
         await apply(
             input: .appBackgrounded,
             snapshot: snapshot,

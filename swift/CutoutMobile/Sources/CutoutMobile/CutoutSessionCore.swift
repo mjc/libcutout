@@ -367,6 +367,18 @@ public final class CutoutSessionCore: NSObject {
     public var pedalModeState: PedalModeSettingState? {
         onBleQueue { liveOwner?.pedalModeState }
     }
+    public var rollAngleState: RollAngleSettingState? {
+        onBleQueue { liveOwner?.rollAngleState }
+    }
+    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        onBleQueue { liveOwner?.speedAlarmModeState }
+    }
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        onBleQueue { liveOwner?.accelerationAssistState }
+    }
+    public var taillightState: LightSettingState? {
+        onBleQueue { liveOwner?.taillightState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -720,7 +732,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setLights(_ state: LightState) -> LightCommandResult {
+    public func setLights(_ state: LightState) -> SettingCommandResult {
         onBleQueue {
             guard phase == .live, let liveOwner else { return .failed }
             do {
@@ -738,6 +750,61 @@ public final class CutoutSessionCore: NSObject {
                 return .failed
             } catch {
                 record("set_lights_error=\(error)")
+                return .failed
+            }
+        }
+    }
+
+    @discardableResult
+    public func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        setStationarySetting("set_pedal_mode", command: .setPedalMode(mode))
+    }
+
+    @discardableResult
+    public func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        setStationarySetting("set_roll_angle", command: .setRollAngle(angle))
+    }
+
+    @discardableResult
+    public func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        setStationarySetting("set_speed_alarm_mode", command: .setSpeedAlarmMode(mode))
+    }
+
+    @discardableResult
+    public func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        setStationarySetting("set_begode_max_speed", command: .setBegodeMaxSpeed(speed))
+    }
+
+    @discardableResult
+    public func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        setStationarySetting("set_begode_beeper_volume", command: .setBegodeBeeperVolume(volume))
+    }
+
+    @discardableResult
+    public func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        setStationarySetting("set_begode_led_mode", command: .setBegodeLedMode(mode))
+    }
+
+    private func setStationarySetting(
+        _ name: String,
+        command: DeviceCommand
+    ) -> SettingCommandResult {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return .failed }
+            guard liveOwner.armSettingsWrites(at: clock.now()) else {
+                return .refused(.missingArm)
+            }
+            do {
+                try liveOwner.handleCommand(command, at: clock.now())
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("\(name)_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
+            } catch {
+                record("\(name)_error=\(error)")
                 return .failed
             }
         }
@@ -1067,7 +1134,11 @@ public final class CutoutSessionCore: NSObject {
     private func applySessionAction(_ action: SessionAction) {
         switch action.kind {
         case .settingsReadback:
-            settingsReadback = action.settingsReadback
+            if let update = action.settingsReadback {
+                settingsReadback = settingsReadback?.merging(update) ?? update
+            } else {
+                settingsReadback = nil
+            }
             publishSettingsReadback()
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback

@@ -1115,13 +1115,39 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
         )
     }
 
+    func merging(_ update: SettingsReadback) -> SettingsReadback {
+        guard update.availability == .available else {
+            return availability == .available ? self : update
+        }
+        guard availability == .available else {
+            return update
+        }
+
+        var mergedEntries = entries
+        for entry in update.entries {
+            if let index = mergedEntries.firstIndex(where: { $0.field.id == entry.field.id }) {
+                mergedEntries[index] = entry
+            } else {
+                mergedEntries.append(entry)
+            }
+        }
+
+        return SettingsReadback(
+            entries: mergedEntries,
+            availability: .available,
+            eucGarageSettings: eucGarageSettings.merging(update.eucGarageSettings)
+        )
+    }
+
     private static func missingGarageSettings(
         for availability: ReadbackAvailability
     ) -> EucGarageSettingsSnapshot {
         EucGarageSettingsSnapshot(
             beepMargin: Self.missingReadback(for: availability),
             tiltback: Self.missingReadback(for: availability),
-            pedalMode: Self.missingReadback(for: availability)
+            pedalMode: Self.missingReadback(for: availability),
+            autoShutdownSeconds: Self.missingReadback(for: availability),
+            chargeMode: Self.missingReadback(for: availability)
         )
     }
 
@@ -1240,6 +1266,19 @@ public enum LightState: Equatable, Hashable, Sendable {
 
     fileprivate var dto: MobileLightStateDto {
         self == .on ? .on : .off
+    }
+}
+
+public enum AccelerationAssistState: Equatable, Hashable, Sendable {
+    case disabled
+    case enabled
+
+    fileprivate init(_ dto: MobileAccelerationAssistStateDto) {
+        self = dto == .enabled ? .enabled : .disabled
+    }
+
+    fileprivate var dto: MobileAccelerationAssistStateDto {
+        self == .enabled ? .enabled : .disabled
     }
 }
 
@@ -1379,6 +1418,120 @@ public struct PedalModeSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+public struct RollAngleSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: RollAngle.Kind?
+    public let requested: RollAngle.Kind?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: RollAngle.Kind? = nil,
+        requested: RollAngle.Kind? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobileRollAngleSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(RollAngle.Kind.init)
+        self.requested = dto.requested.map(RollAngle.Kind.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct SpeedAlarmModeSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: SpeedAlarmMode.Kind?
+    public let requested: SpeedAlarmMode.Kind?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: SpeedAlarmMode.Kind? = nil,
+        requested: SpeedAlarmMode.Kind? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobileSpeedAlarmModeSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(SpeedAlarmMode.Kind.init)
+        self.requested = dto.requested.map(SpeedAlarmMode.Kind.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AccelerationAssistSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AccelerationAssistState?
+    public let requested: AccelerationAssistState?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: AccelerationAssistState? = nil,
+        requested: AccelerationAssistState? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobileAccelerationAssistSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AccelerationAssistState.init)
+        self.requested = dto.requested.map(AccelerationAssistState.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
 
 public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     case supported
@@ -1397,34 +1550,108 @@ public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     }
 }
 
+/// Begode max speed accepted by the documented two-digit `W` submenu.
+public struct BegodeMaxSpeed: Equatable, Hashable, Sendable {
+    public let kilometresPerHour: UInt8
+
+    public init?(kilometresPerHour: UInt8) {
+        guard kilometresPerHour <= 99 else { return nil }
+        self.kilometresPerHour = kilometresPerHour
+    }
+
+    fileprivate init(_ dto: MobileBegodeMaxSpeedDto) {
+        self.kilometresPerHour = dto.kilometresPerHour
+    }
+
+    fileprivate var dto: MobileBegodeMaxSpeedDto {
+        MobileBegodeMaxSpeedDto(kilometresPerHour: kilometresPerHour)
+    }
+}
+
+/// Begode beeper volume accepted by the documented `W` submenu.
+public struct BegodeBeeperVolume: Equatable, Hashable, Sendable {
+    public let level: UInt8
+
+    public init?(level: UInt8) {
+        guard (1...9).contains(level) else { return nil }
+        self.level = level
+    }
+
+    fileprivate init(_ dto: MobileBegodeBeeperVolumeDto) {
+        self.level = dto.level
+    }
+
+    fileprivate var dto: MobileBegodeBeeperVolumeDto {
+        MobileBegodeBeeperVolumeDto(level: level)
+    }
+}
+
+/// Begode LED mode accepted by the documented `W` submenu.
+public struct BegodeLedMode: Equatable, Hashable, Sendable {
+    public let mode: UInt8
+
+    public init?(mode: UInt8) {
+        guard mode <= 9 else { return nil }
+        self.mode = mode
+    }
+
+    fileprivate init(_ dto: MobileBegodeLedModeDto) {
+        self.mode = dto.mode
+    }
+
+    fileprivate var dto: MobileBegodeLedModeDto {
+        MobileBegodeLedModeDto(mode: mode)
+    }
+}
+
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let pedalMode: SettingWriteSupport
+    public let rollAngle: SettingWriteSupport
+    public let speedAlarmMode: SettingWriteSupport
     public let accelerationAssist: SettingWriteSupport
     public let headlight: SettingWriteSupport
     public let taillight: SettingWriteSupport
+    public let begodeMaxSpeed: SettingWriteSupport
+    public let begodeBeeperVolume: SettingWriteSupport
+    public let begodeLedMode: SettingWriteSupport
 
     public init(
         pedalMode: SettingWriteSupport,
+        rollAngle: SettingWriteSupport = .unsupported,
+        speedAlarmMode: SettingWriteSupport = .unsupported,
         accelerationAssist: SettingWriteSupport,
         headlight: SettingWriteSupport,
-        taillight: SettingWriteSupport
+        taillight: SettingWriteSupport,
+        begodeMaxSpeed: SettingWriteSupport = .unsupported,
+        begodeBeeperVolume: SettingWriteSupport = .unsupported,
+        begodeLedMode: SettingWriteSupport = .unsupported
     ) {
         self.pedalMode = pedalMode
+        self.rollAngle = rollAngle
+        self.speedAlarmMode = speedAlarmMode
         self.accelerationAssist = accelerationAssist
         self.headlight = headlight
         self.taillight = taillight
+        self.begodeMaxSpeed = begodeMaxSpeed
+        self.begodeBeeperVolume = begodeBeeperVolume
+        self.begodeLedMode = begodeLedMode
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
         self.pedalMode = SettingWriteSupport(dto.pedalMode)
+        self.rollAngle = SettingWriteSupport(dto.rollAngle)
+        self.speedAlarmMode = SettingWriteSupport(dto.speedAlarmMode)
         self.accelerationAssist = SettingWriteSupport(dto.accelerationAssist)
         self.headlight = SettingWriteSupport(dto.headlight)
         self.taillight = SettingWriteSupport(dto.taillight)
+        self.begodeMaxSpeed = SettingWriteSupport(dto.begodeMaxSpeed)
+        self.begodeBeeperVolume = SettingWriteSupport(dto.begodeBeeperVolume)
+        self.begodeLedMode = SettingWriteSupport(dto.begodeLedMode)
     }
 }
 
-/// Result of submitting a benign light-setting command to the live session.
-public enum LightCommandResult: Equatable, Hashable, Sendable {
+/// Result of submitting a guarded setting command to the live session.
+public enum SettingCommandResult: Equatable, Hashable, Sendable {
     /// The command was accepted and scheduled for transport.
     case accepted
 
@@ -1445,6 +1672,13 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestSettings
     case setLights(LightState)
     case setPedalMode(PedalMode.Kind)
+    case setRollAngle(RollAngle.Kind)
+    case setSpeedAlarmMode(SpeedAlarmMode.Kind)
+    case setBegodeMaxSpeed(BegodeMaxSpeed)
+    case setBegodeBeeperVolume(BegodeBeeperVolume)
+    case setBegodeLedMode(BegodeLedMode)
+    case setAccelerationAssist(AccelerationAssistState)
+    case setTaillight(LightState)
     case soundHorn
 
     fileprivate init(_ dto: MobileCommandDto) {
@@ -1467,6 +1701,20 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .setLights(LightState(state))
         case .setPedalMode(let mode):
             self = .setPedalMode(PedalMode.Kind(mode))
+        case .setRollAngle(let angle):
+            self = .setRollAngle(RollAngle.Kind(angle))
+        case .setSpeedAlarmMode(let mode):
+            self = .setSpeedAlarmMode(SpeedAlarmMode.Kind(mode))
+        case .setBegodeMaxSpeed(let speed):
+            self = .setBegodeMaxSpeed(BegodeMaxSpeed(speed))
+        case .setBegodeBeeperVolume(let volume):
+            self = .setBegodeBeeperVolume(BegodeBeeperVolume(volume))
+        case .setBegodeLedMode(let mode):
+            self = .setBegodeLedMode(BegodeLedMode(mode))
+        case .setAccelerationAssist(let state):
+            self = .setAccelerationAssist(AccelerationAssistState(state))
+        case .setTaillight(let state):
+            self = .setTaillight(LightState(state))
         case .soundHorn:
             self = .soundHorn
         }
@@ -1492,6 +1740,20 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .setLights(state.dto)
         case .setPedalMode(let mode):
             .setPedalMode(mode.dto)
+        case .setRollAngle(let angle):
+            .setRollAngle(angle.dto)
+        case .setSpeedAlarmMode(let mode):
+            .setSpeedAlarmMode(mode.dto)
+        case .setBegodeMaxSpeed(let speed):
+            .setBegodeMaxSpeed(speed.dto)
+        case .setBegodeBeeperVolume(let volume):
+            .setBegodeBeeperVolume(volume.dto)
+        case .setBegodeLedMode(let mode):
+            .setBegodeLedMode(mode.dto)
+        case .setAccelerationAssist(let state):
+            .setAccelerationAssist(state.dto)
+        case .setTaillight(let state):
+            .setTaillight(state.dto)
         case .soundHorn:
             .soundHorn
         }
@@ -2710,6 +2972,109 @@ public struct PedalMode: Equatable, Hashable, Sendable {
     }
 }
 
+public struct RollAngle: Equatable, Hashable, Sendable {
+    public enum Kind: Equatable, Hashable, Sendable {
+        case low
+        case medium
+        case high
+
+        public var displayName: String {
+            switch self {
+            case .low:
+                "Low"
+            case .medium:
+                "Medium"
+            case .high:
+                "High"
+            }
+        }
+    }
+
+    public enum Value: Equatable, Hashable, Sendable {
+        case documented(Kind)
+        case rawAngle(UInt16)
+    }
+
+    public let value: Value
+
+    public var rawAngle: UInt16? {
+        guard case let .rawAngle(rawAngle) = value else {
+            return nil
+        }
+        return rawAngle
+    }
+
+    public var documentedKind: Kind? {
+        guard case let .documented(kind) = value else {
+            return nil
+        }
+        return kind
+    }
+
+    public static func documented(_ kind: Kind) -> Self {
+        Self(value: .documented(kind))
+    }
+
+    public static func rawAngle(_ value: UInt16) -> Self {
+        Self(value: .rawAngle(value))
+    }
+
+    private init(value: Value) {
+        self.value = value
+    }
+}
+
+public struct SpeedAlarmMode: Equatable, Hashable, Sendable {
+    public enum Kind: Equatable, Hashable, Sendable {
+        case both
+        case stageOneOnly
+        case off
+        case pwmTiltback
+
+        public var displayName: String {
+            switch self {
+            case .both:
+                "Both alarms"
+            case .stageOneOnly:
+                "Stage 1 only"
+            case .off:
+                "Off"
+            case .pwmTiltback:
+                "PWM tiltback"
+            }
+        }
+    }
+
+    public enum Value: Equatable, Hashable, Sendable {
+        case documented(Kind)
+        case rawMode(UInt16)
+    }
+
+    public let value: Value
+
+    public var rawMode: UInt16? {
+        guard case let .rawMode(rawMode) = value else { return nil }
+        return rawMode
+    }
+
+    public var documentedKind: Kind? {
+        guard case let .documented(kind) = value else { return nil }
+        return kind
+    }
+
+    public static func documented(_ kind: Kind) -> Self {
+        Self(value: .documented(kind))
+    }
+
+    public static func rawMode(_ value: UInt16) -> Self {
+        Self(value: .rawMode(value))
+    }
+
+    private init(value: Value) {
+        self.value = value
+    }
+}
+
 public struct EucPackHealthSnapshot: Equatable, Hashable, Sendable {
     public let energyPercent: BatteryLevel?
     public let voltage: Voltage?
@@ -2736,18 +3101,30 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
     public let beepMargin: ReadbackValue<Speed>
     public let tiltback: ReadbackValue<Speed>
     public let pedalMode: ReadbackValue<PedalMode>
+    public let rollAngle: ReadbackValue<RollAngle>
+    public let speedAlarmMode: ReadbackValue<SpeedAlarmMode>
     public let lightState: LightState?
+    public let autoShutdownSeconds: ReadbackValue<UInt64>
+    public let chargeMode: ReadbackValue<ChargeMode>
 
     public init(
         beepMargin: ReadbackValue<Speed> = .unavailable,
         tiltback: ReadbackValue<Speed> = .unavailable,
         pedalMode: ReadbackValue<PedalMode> = .unavailable,
-        lightState: LightState? = nil
+        rollAngle: ReadbackValue<RollAngle> = .unavailable,
+        speedAlarmMode: ReadbackValue<SpeedAlarmMode> = .unavailable,
+        lightState: LightState? = nil,
+        autoShutdownSeconds: ReadbackValue<UInt64> = .unavailable,
+        chargeMode: ReadbackValue<ChargeMode> = .unavailable
     ) {
         self.beepMargin = beepMargin
         self.tiltback = tiltback
         self.pedalMode = pedalMode
+        self.rollAngle = rollAngle
+        self.speedAlarmMode = speedAlarmMode
         self.lightState = lightState
+        self.autoShutdownSeconds = autoShutdownSeconds
+        self.chargeMode = chargeMode
     }
 
     fileprivate init(_ dto: MobileEucGarageSettingsDto) {
@@ -2759,8 +3136,50 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
                 dto.pedalMode.flatMap(PedalMode.init),
                 availability: availability
             ),
-            lightState: dto.lightState.map(LightState.init)
+            rollAngle: Self.readback(
+                dto.rollAngle.flatMap(RollAngle.init),
+                availability: availability
+            ),
+            speedAlarmMode: Self.readback(
+                dto.speedAlarmMode.flatMap(SpeedAlarmMode.init),
+                availability: availability
+            ),
+            lightState: dto.lightState.map(LightState.init),
+            autoShutdownSeconds: Self.readback(
+                dto.autoShutdownSeconds,
+                availability: availability
+            ),
+            chargeMode: Self.readback(
+                dto.chargeMode.map { ChargeMode($0.value) },
+                availability: availability
+            )
         )
+    }
+
+    func merging(_ update: EucGarageSettingsSnapshot) -> EucGarageSettingsSnapshot {
+        EucGarageSettingsSnapshot(
+            beepMargin: Self.merged(beepMargin, update.beepMargin),
+            tiltback: Self.merged(tiltback, update.tiltback),
+            pedalMode: Self.merged(pedalMode, update.pedalMode),
+            rollAngle: Self.merged(rollAngle, update.rollAngle),
+            speedAlarmMode: Self.merged(speedAlarmMode, update.speedAlarmMode),
+            lightState: update.lightState ?? lightState,
+            autoShutdownSeconds: Self.merged(autoShutdownSeconds, update.autoShutdownSeconds),
+            chargeMode: Self.merged(chargeMode, update.chargeMode)
+        )
+    }
+
+    private static func merged<Value>(
+        _ current: ReadbackValue<Value>,
+        _ update: ReadbackValue<Value>
+    ) -> ReadbackValue<Value> where Value: Equatable & Hashable & Sendable {
+        if update.value != nil {
+            return update
+        }
+        if current.value != nil {
+            return current
+        }
+        return update
     }
 
     private static func readback<Value>(
@@ -2808,6 +3227,82 @@ private extension PedalMode.Kind {
             .medium
         case .soft:
             .soft
+        }
+    }
+}
+
+private extension RollAngle {
+    init?(_ dto: MobileRollAngleDto) {
+        guard let rawAngle = dto.rawAngle else {
+            return nil
+        }
+        if let angle = dto.angle {
+            self = .documented(Kind(angle))
+        } else {
+            self = .rawAngle(rawAngle)
+        }
+    }
+}
+
+private extension RollAngle.Kind {
+    init(_ dto: MobileRollAngleKindDto) {
+        switch dto {
+        case .low:
+            self = .low
+        case .medium:
+            self = .medium
+        case .high:
+            self = .high
+        }
+    }
+
+    var dto: MobileRollAngleKindDto {
+        switch self {
+        case .low:
+            .low
+        case .medium:
+            .medium
+        case .high:
+            .high
+        }
+    }
+}
+
+private extension SpeedAlarmMode {
+    init?(_ dto: MobileSpeedAlarmModeDto) {
+        guard let rawMode = dto.rawMode else { return nil }
+        if let mode = dto.mode {
+            self = .documented(Kind(mode))
+        } else {
+            self = .rawMode(rawMode)
+        }
+    }
+}
+
+private extension SpeedAlarmMode.Kind {
+    init(_ dto: MobileSpeedAlarmModeKindDto) {
+        switch dto {
+        case .both:
+            self = .both
+        case .stageOneOnly:
+            self = .stageOneOnly
+        case .off:
+            self = .off
+        case .pwmTiltback:
+            self = .pwmTiltback
+        }
+    }
+
+    var dto: MobileSpeedAlarmModeKindDto {
+        switch self {
+        case .both:
+            .both
+        case .stageOneOnly:
+            .stageOneOnly
+        case .off:
+            .off
+        case .pwmTiltback:
+            .pwmTiltback
         }
     }
 }
@@ -4675,6 +5170,7 @@ public enum CommandRefusalReason: Equatable, Hashable, Sendable {
     case expiredArm
     case currentLimitExceeded
     case unsupportedCommand
+    case busy
 
     fileprivate init(_ dto: MobileControlRefusalReasonDto) {
         switch dto {
@@ -4690,6 +5186,8 @@ public enum CommandRefusalReason: Equatable, Hashable, Sendable {
             self = .currentLimitExceeded
         case .unsupportedCommand:
             self = .unsupportedCommand
+        case .busy:
+            self = .busy
         }
     }
 }
@@ -4736,6 +5234,9 @@ public extension ElectricUnicycleModel {
         }
     }
 
+    var settingsCapabilities: EucSettingsCapabilities {
+        EucSettingsCapabilities(mobileEucSettingsCapabilities(model: dto))
+    }
     var dto: DiscoveryElectricUnicycleModel {
         switch self {
         case .aero:
@@ -4959,6 +5460,60 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             PedalModeSettingState(session.pedalModeState())
         }
     }
+
+    public var rollAngleState: RollAngleSettingState {
+        switch inner {
+        case .aero(let session):
+            RollAngleSettingState(session.rollAngleState())
+        case .falcon(let session):
+            RollAngleSettingState(session.rollAngleState())
+        }
+    }
+
+    public var speedAlarmModeState: SpeedAlarmModeSettingState {
+        switch inner {
+        case .aero(let session):
+            SpeedAlarmModeSettingState(session.speedAlarmModeState())
+        case .falcon(let session):
+            SpeedAlarmModeSettingState(session.speedAlarmModeState())
+        }
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState {
+        switch inner {
+        case .aero(let session):
+            AccelerationAssistSettingState(session.accelerationAssistState())
+        case .falcon(let session):
+            AccelerationAssistSettingState(session.accelerationAssistState())
+        }
+    }
+
+    public var taillightState: LightSettingState {
+        switch inner {
+        case .aero(let session):
+            LightSettingState(session.taillightState())
+        case .falcon(let session):
+            LightSettingState(session.taillightState())
+        }
+    }
+
+    /// Arms the Rust-owned stationary settings gate from the latest telemetry state.
+    @discardableResult
+    public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        switch inner {
+        case .aero(let session):
+            session.armSettingsWrites(
+                state: currentSnapshot.operatingState,
+                monotonicMs: monotonicMilliseconds.dto
+            )
+        case .falcon(let session):
+            session.armSettingsWrites(
+                state: currentSnapshot.operatingState,
+                monotonicMs: monotonicMilliseconds.dto
+            )
+        }
+    }
+
     public var currentSnapshot: TelemetrySnapshot {
         switch inner {
         case .aero(let session):
@@ -5227,6 +5782,10 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
         self.bytes = bytes
     }
 
+    public static let eucSerialFfe0 = bluetooth16(0xffe0)
+
+    public static let vescSerialFff0 = bluetooth16(0xfff0)
+
     public static let vescNordicUartNotify = BluetoothUuid(Data([
         0x6e, 0x40, 0x00, 0x03,
         0xb5, 0xa3,
@@ -5263,6 +5822,15 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
             0x5f, 0x9b, 0x34, 0xfb,
         ]))!
     }
+}
+
+public extension DiscoveryServiceUuid {
+    init(_ uuid: BluetoothUuid) {
+        self.init(bytes: uuid.bytes)
+    }
+
+    static let eucSerialFfe0 = Self(.eucSerialFfe0)
+    static let vescNordicUart = Self(.vescNordicUartService)
 }
 
 public struct CoreBluetoothPeripheralIdentifier: Equatable, Hashable, Sendable {
@@ -5456,6 +6024,42 @@ public enum CoreBluetoothSession: Sendable {
             nil
         }
     }
+
+    public var rollAngleState: RollAngleSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.rollAngleState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.speedAlarmModeState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.accelerationAssistState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var taillightState: LightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.taillightState
+        case .vescOnewheel:
+            nil
+        }
+    }
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5537,6 +6141,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    fileprivate func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        switch self {
+        case .electricUnicycle(let session):
+            session.armSettingsWrites(at: monotonicMilliseconds)
+        case .vescOnewheel:
+            false
+        }
+    }
+
     fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
         switch self {
         case .electricUnicycle(let session):
@@ -5606,6 +6219,11 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.settingsCapabilities
     }
 
+    @discardableResult
+    public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        session.armSettingsWrites(at: monotonicMilliseconds)
+    }
+
     public var headlightState: LightSettingState? {
         session.headlightState
     }
@@ -5620,6 +6238,22 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var pedalModeState: PedalModeSettingState? {
         session.pedalModeState
+    }
+
+    public var rollAngleState: RollAngleSettingState? {
+        session.rollAngleState
+    }
+
+    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        session.speedAlarmModeState
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        session.accelerationAssistState
+    }
+
+    public var taillightState: LightSettingState? {
+        session.taillightState
     }
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
         switch event {
@@ -5849,6 +6483,11 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         runner.settingsCapabilities
     }
 
+    @discardableResult
+    public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        runner.armSettingsWrites(at: monotonicMilliseconds)
+    }
+
     public var headlightState: LightSettingState? {
         runner.headlightState
     }
@@ -5863,6 +6502,22 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var pedalModeState: PedalModeSettingState? {
         runner.pedalModeState
+    }
+
+    public var rollAngleState: RollAngleSettingState? {
+        runner.rollAngleState
+    }
+
+    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        runner.speedAlarmModeState
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        runner.accelerationAssistState
+    }
+
+    public var taillightState: LightSettingState? {
+        runner.taillightState
     }
     /// Configures the Rust-owned charge estimate profile for this connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
@@ -6150,8 +6805,8 @@ public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
     }
 
     public static let aeroFalcon = CoreBluetoothScanPolicy(serviceUuids: [
-        .bluetooth16(0xffe0),
-        .bluetooth16(0xfff0),
+        .eucSerialFfe0,
+        .vescSerialFff0,
     ])
 }
 
@@ -6322,7 +6977,9 @@ public extension CoreBluetoothAdvertisement {
         self.init(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier(observation.platformIdentifier),
             localName: observation.advertisedNameText,
-            advertisedServiceUuids: observation.advertisedServiceUuids.map(BluetoothUuid.bluetooth16),
+            advertisedServiceUuids: observation.advertisedServiceUuids.compactMap {
+                BluetoothUuid($0.bytes)
+            },
             manufacturerData: observation.manufacturerData.map(CoreBluetoothManufacturerDataSummary.init),
             rssiDbm: observation.rssiDbm
         )
@@ -6334,7 +6991,7 @@ public extension DiscoveryObservation {
         self.init(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             advertisedName: advertisement.localName.map { Data($0.utf8) },
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value),
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init),
             manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummary.init),
             rssiDbm: advertisement.rssiDbm
         )
