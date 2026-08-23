@@ -2422,6 +2422,11 @@ public func FfiConverterTypeMobilePhoneLocationState_lower(_ value: MobilePhoneL
 public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
 
     /**
+     * Returns the current bounded music timeline for the active ride.
+     */
+    func currentMusicEvents()  -> [MobileMusicRideEventDto]?
+
+    /**
      * Returns the current snapshot, or `None` before the first ride starts.
      */
     func currentSnapshot()  -> MobileRideMapSnapshotDto?
@@ -2483,6 +2488,21 @@ public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
     func pointsAfter(afterCursor: UInt64, limit: UInt32)  -> MobileRideMapPointBatchDto?
 
     /**
+     * Records one provider transition in the Rust-owned ride timeline.
+     *
+     * The provider observation is validated before any ride mutation. Raw
+     * audio, artwork bytes, SDK objects, and high-rate progress never cross
+     * this boundary.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::InvalidMusicSnapshot`] for invalid input,
+     * [`MobileRideMapError::NoActiveRide`] when no ride exists, or a storage
+     * error when the accepted event cannot be checkpointed.
+     */
+    func recordMusicEvent(snapshot: MobileMusicSnapshotDto, kind: MobileMusicRideEventKindDto, monotonicAtMs: UInt64, wallClockAtMs: UInt64, clockUncertaintyMs: UInt64) throws  -> MobileMusicTimelineOutcomeDto
+
+    /**
      * Resumes the active ride without changing its identity.
      *
      * # Errors
@@ -2500,6 +2520,20 @@ public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
      * stopped, or [`MobileRideMapError::Storage`] when finalization fails.
      */
     func save() throws  -> MobileRideMapSnapshotDto
+
+    /**
+     * Enables or disables bounded music metadata association for the active ride.
+     *
+     * Disabling history clears both the in-memory timeline and persisted music
+     * metadata without changing the ride or its route.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::NoActiveRide`] when no ride exists,
+     * [`MobileRideMapError::InvalidTransition`] for a terminal ride, or a
+     * storage error when the policy checkpoint fails.
+     */
+    func setMusicHistoryPolicy(policy: MobileMusicHistoryPolicyDto) throws
 
     /**
      * Starts an explicitly requested GPS-only ride.
@@ -2625,6 +2659,17 @@ public static func newWithDatabase(path: String)throws  -> MobileRideMapState  {
 
 
     /**
+     * Returns the current bounded music timeline for the active ride.
+     */
+open func currentMusicEvents() -> [MobileMusicRideEventDto]?  {
+    return try!  FfiConverterOptionSequenceTypeMobileMusicRideEventDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_current_music_events(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
      * Returns the current snapshot, or `None` before the first ride starts.
      */
 open func currentSnapshot() -> MobileRideMapSnapshotDto?  {
@@ -2738,6 +2783,32 @@ open func pointsAfter(afterCursor: UInt64, limit: UInt32) -> MobileRideMapPointB
 }
 
     /**
+     * Records one provider transition in the Rust-owned ride timeline.
+     *
+     * The provider observation is validated before any ride mutation. Raw
+     * audio, artwork bytes, SDK objects, and high-rate progress never cross
+     * this boundary.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::InvalidMusicSnapshot`] for invalid input,
+     * [`MobileRideMapError::NoActiveRide`] when no ride exists, or a storage
+     * error when the accepted event cannot be checkpointed.
+     */
+open func recordMusicEvent(snapshot: MobileMusicSnapshotDto, kind: MobileMusicRideEventKindDto, monotonicAtMs: UInt64, wallClockAtMs: UInt64, clockUncertaintyMs: UInt64)throws  -> MobileMusicTimelineOutcomeDto  {
+    return try  FfiConverterTypeMobileMusicTimelineOutcomeDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_record_music_event(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMusicSnapshotDto_lower(snapshot),
+        FfiConverterTypeMobileMusicRideEventKindDto_lower(kind),
+        FfiConverterUInt64.lower(monotonicAtMs),
+        FfiConverterUInt64.lower(wallClockAtMs),
+        FfiConverterUInt64.lower(clockUncertaintyMs),$0
+    )
+})
+}
+
+    /**
      * Resumes the active ride without changing its identity.
      *
      * # Errors
@@ -2766,6 +2837,26 @@ open func save()throws  -> MobileRideMapSnapshotDto  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+    /**
+     * Enables or disables bounded music metadata association for the active ride.
+     *
+     * Disabling history clears both the in-memory timeline and persisted music
+     * metadata without changing the ride or its route.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::NoActiveRide`] when no ride exists,
+     * [`MobileRideMapError::InvalidTransition`] for a terminal ride, or a
+     * storage error when the policy checkpoint fails.
+     */
+open func setMusicHistoryPolicy(policy: MobileMusicHistoryPolicyDto)throws   {try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_set_music_history_policy(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMusicHistoryPolicyDto_lower(policy),$0
+    )
+}
 }
 
     /**
@@ -6714,6 +6805,442 @@ public func FfiConverterTypeMobileMonotonicMillisDto_lift(_ buf: RustBuffer) thr
 #endif
 public func FfiConverterTypeMobileMonotonicMillisDto_lower(_ value: MobileMonotonicMillisDto) -> RustBuffer {
     return FfiConverterTypeMobileMonotonicMillisDto.lower(value)
+}
+
+
+/**
+ * Provider-reported command capabilities.
+ */
+public struct MobileMusicCapabilitiesDto: Equatable, Hashable {
+    /**
+     * Whether previous is available.
+     */
+    public var previous: Bool
+    /**
+     * Whether play is available.
+     */
+    public var play: Bool
+    /**
+     * Whether pause is available.
+     */
+    public var pause: Bool
+    /**
+     * Whether next is available.
+     */
+    public var next: Bool
+    /**
+     * Whether provider handoff is available.
+     */
+    public var openProvider: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Whether previous is available.
+         */previous: Bool,
+        /**
+         * Whether play is available.
+         */play: Bool,
+        /**
+         * Whether pause is available.
+         */pause: Bool,
+        /**
+         * Whether next is available.
+         */next: Bool,
+        /**
+         * Whether provider handoff is available.
+         */openProvider: Bool) {
+        self.previous = previous
+        self.play = play
+        self.pause = pause
+        self.next = next
+        self.openProvider = openProvider
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicCapabilitiesDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicCapabilitiesDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicCapabilitiesDto {
+        return
+            try MobileMusicCapabilitiesDto(
+                previous: FfiConverterBool.read(from: &buf),
+                play: FfiConverterBool.read(from: &buf),
+                pause: FfiConverterBool.read(from: &buf),
+                next: FfiConverterBool.read(from: &buf),
+                openProvider: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMusicCapabilitiesDto, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.previous, into: &buf)
+        FfiConverterBool.write(value.play, into: &buf)
+        FfiConverterBool.write(value.pause, into: &buf)
+        FfiConverterBool.write(value.next, into: &buf)
+        FfiConverterBool.write(value.openProvider, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicCapabilitiesDto_lift(_ buf: RustBuffer) throws -> MobileMusicCapabilitiesDto {
+    return try FfiConverterTypeMobileMusicCapabilitiesDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicCapabilitiesDto_lower(_ value: MobileMusicCapabilitiesDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicCapabilitiesDto.lower(value)
+}
+
+
+/**
+ * Current provider item metadata. Artwork bytes never cross this boundary.
+ */
+public struct MobileMusicItemDto: Equatable, Hashable {
+    /**
+     * Opaque provider item identifier.
+     */
+    public var identifier: String
+    /**
+     * Optional bounded title.
+     */
+    public var title: String?
+    /**
+     * Optional bounded artist.
+     */
+    public var artist: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Opaque provider item identifier.
+         */identifier: String,
+        /**
+         * Optional bounded title.
+         */title: String?,
+        /**
+         * Optional bounded artist.
+         */artist: String?) {
+        self.identifier = identifier
+        self.title = title
+        self.artist = artist
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicItemDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicItemDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicItemDto {
+        return
+            try MobileMusicItemDto(
+                identifier: FfiConverterString.read(from: &buf),
+                title: FfiConverterOptionString.read(from: &buf),
+                artist: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMusicItemDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.identifier, into: &buf)
+        FfiConverterOptionString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.artist, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicItemDto_lift(_ buf: RustBuffer) throws -> MobileMusicItemDto {
+    return try FfiConverterTypeMobileMusicItemDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicItemDto_lower(_ value: MobileMusicItemDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicItemDto.lower(value)
+}
+
+
+/**
+ * One retained ride music transition.
+ */
+public struct MobileMusicRideEventDto: Equatable, Hashable {
+    /**
+     * Provider identity.
+     */
+    public var provider: MobileMusicProviderDto
+    /**
+     * Opaque provider item identifier, if retained.
+     */
+    public var itemIdentifier: String?
+    /**
+     * Human-readable title, if the policy permits it.
+     */
+    public var title: String?
+    /**
+     * Human-readable artist, if the policy permits it.
+     */
+    public var artist: String?
+    /**
+     * Transition kind.
+     */
+    public var kind: MobileMusicRideEventKindDto
+    /**
+     * Monotonic event time.
+     */
+    public var monotonicAtMs: UInt64
+    /**
+     * Wall-clock event time.
+     */
+    public var wallClockAtMs: UInt64
+    /**
+     * Host clock uncertainty.
+     */
+    public var clockUncertaintyMs: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Provider identity.
+         */provider: MobileMusicProviderDto,
+        /**
+         * Opaque provider item identifier, if retained.
+         */itemIdentifier: String?,
+        /**
+         * Human-readable title, if the policy permits it.
+         */title: String?,
+        /**
+         * Human-readable artist, if the policy permits it.
+         */artist: String?,
+        /**
+         * Transition kind.
+         */kind: MobileMusicRideEventKindDto,
+        /**
+         * Monotonic event time.
+         */monotonicAtMs: UInt64,
+        /**
+         * Wall-clock event time.
+         */wallClockAtMs: UInt64,
+        /**
+         * Host clock uncertainty.
+         */clockUncertaintyMs: UInt64) {
+        self.provider = provider
+        self.itemIdentifier = itemIdentifier
+        self.title = title
+        self.artist = artist
+        self.kind = kind
+        self.monotonicAtMs = monotonicAtMs
+        self.wallClockAtMs = wallClockAtMs
+        self.clockUncertaintyMs = clockUncertaintyMs
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicRideEventDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicRideEventDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicRideEventDto {
+        return
+            try MobileMusicRideEventDto(
+                provider: FfiConverterTypeMobileMusicProviderDto.read(from: &buf),
+                itemIdentifier: FfiConverterOptionString.read(from: &buf),
+                title: FfiConverterOptionString.read(from: &buf),
+                artist: FfiConverterOptionString.read(from: &buf),
+                kind: FfiConverterTypeMobileMusicRideEventKindDto.read(from: &buf),
+                monotonicAtMs: FfiConverterUInt64.read(from: &buf),
+                wallClockAtMs: FfiConverterUInt64.read(from: &buf),
+                clockUncertaintyMs: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMusicRideEventDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileMusicProviderDto.write(value.provider, into: &buf)
+        FfiConverterOptionString.write(value.itemIdentifier, into: &buf)
+        FfiConverterOptionString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.artist, into: &buf)
+        FfiConverterTypeMobileMusicRideEventKindDto.write(value.kind, into: &buf)
+        FfiConverterUInt64.write(value.monotonicAtMs, into: &buf)
+        FfiConverterUInt64.write(value.wallClockAtMs, into: &buf)
+        FfiConverterUInt64.write(value.clockUncertaintyMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicRideEventDto_lift(_ buf: RustBuffer) throws -> MobileMusicRideEventDto {
+    return try FfiConverterTypeMobileMusicRideEventDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicRideEventDto_lower(_ value: MobileMusicRideEventDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicRideEventDto.lower(value)
+}
+
+
+/**
+ * Validated provider observation sent from Swift into Rust-owned policy.
+ */
+public struct MobileMusicSnapshotDto: Equatable, Hashable {
+    /**
+     * Provider identity.
+     */
+    public var provider: MobileMusicProviderDto
+    /**
+     * Provider session identity.
+     */
+    public var sessionId: String
+    /**
+     * Current playback state.
+     */
+    public var state: MobileMusicPlaybackStateDto
+    /**
+     * Current item metadata, when available.
+     */
+    public var item: MobileMusicItemDto?
+    /**
+     * Current provider position in milliseconds.
+     */
+    public var positionMilliseconds: UInt64?
+    /**
+     * Current item duration in milliseconds.
+     */
+    public var durationMilliseconds: UInt64?
+    /**
+     * Host monotonic time at which the observation was received.
+     */
+    public var observedAtMs: UInt64
+    /**
+     * Commands the provider currently exposes.
+     */
+    public var capabilities: MobileMusicCapabilitiesDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Provider identity.
+         */provider: MobileMusicProviderDto,
+        /**
+         * Provider session identity.
+         */sessionId: String,
+        /**
+         * Current playback state.
+         */state: MobileMusicPlaybackStateDto,
+        /**
+         * Current item metadata, when available.
+         */item: MobileMusicItemDto?,
+        /**
+         * Current provider position in milliseconds.
+         */positionMilliseconds: UInt64?,
+        /**
+         * Current item duration in milliseconds.
+         */durationMilliseconds: UInt64?,
+        /**
+         * Host monotonic time at which the observation was received.
+         */observedAtMs: UInt64,
+        /**
+         * Commands the provider currently exposes.
+         */capabilities: MobileMusicCapabilitiesDto) {
+        self.provider = provider
+        self.sessionId = sessionId
+        self.state = state
+        self.item = item
+        self.positionMilliseconds = positionMilliseconds
+        self.durationMilliseconds = durationMilliseconds
+        self.observedAtMs = observedAtMs
+        self.capabilities = capabilities
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicSnapshotDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicSnapshotDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicSnapshotDto {
+        return
+            try MobileMusicSnapshotDto(
+                provider: FfiConverterTypeMobileMusicProviderDto.read(from: &buf),
+                sessionId: FfiConverterString.read(from: &buf),
+                state: FfiConverterTypeMobileMusicPlaybackStateDto.read(from: &buf),
+                item: FfiConverterOptionTypeMobileMusicItemDto.read(from: &buf),
+                positionMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                durationMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                observedAtMs: FfiConverterUInt64.read(from: &buf),
+                capabilities: FfiConverterTypeMobileMusicCapabilitiesDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMusicSnapshotDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileMusicProviderDto.write(value.provider, into: &buf)
+        FfiConverterString.write(value.sessionId, into: &buf)
+        FfiConverterTypeMobileMusicPlaybackStateDto.write(value.state, into: &buf)
+        FfiConverterOptionTypeMobileMusicItemDto.write(value.item, into: &buf)
+        FfiConverterOptionUInt64.write(value.positionMilliseconds, into: &buf)
+        FfiConverterOptionUInt64.write(value.durationMilliseconds, into: &buf)
+        FfiConverterUInt64.write(value.observedAtMs, into: &buf)
+        FfiConverterTypeMobileMusicCapabilitiesDto.write(value.capabilities, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicSnapshotDto_lift(_ buf: RustBuffer) throws -> MobileMusicSnapshotDto {
+    return try FfiConverterTypeMobileMusicSnapshotDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicSnapshotDto_lower(_ value: MobileMusicSnapshotDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicSnapshotDto.lower(value)
 }
 
 
@@ -13845,6 +14372,642 @@ public func FfiConverterTypeMobileIgnoredNotificationReasonDto_lower(_ value: Mo
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Transport command a provider may expose.
+ */
+
+public enum MobileMusicCommandDto: Equatable, Hashable {
+
+    /**
+     * Skip to the previous item.
+     */
+    case previous
+    /**
+     * Start playback.
+     */
+    case play
+    /**
+     * Pause playback.
+     */
+    case pause
+    /**
+     * Skip to the next item.
+     */
+    case next
+    /**
+     * Open the provider application.
+     */
+    case openProvider
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicCommandDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicCommandDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicCommandDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicCommandDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .previous
+
+        case 2: return .play
+
+        case 3: return .pause
+
+        case 4: return .next
+
+        case 5: return .openProvider
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMusicCommandDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .previous:
+            writeInt(&buf, Int32(1))
+
+
+        case .play:
+            writeInt(&buf, Int32(2))
+
+
+        case .pause:
+            writeInt(&buf, Int32(3))
+
+
+        case .next:
+            writeInt(&buf, Int32(4))
+
+
+        case .openProvider:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicCommandDto_lift(_ buf: RustBuffer) throws -> MobileMusicCommandDto {
+    return try FfiConverterTypeMobileMusicCommandDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicCommandDto_lower(_ value: MobileMusicCommandDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicCommandDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * User choice for ride music-history retention.
+ */
+
+public enum MobileMusicHistoryPolicyDto: Equatable, Hashable {
+
+    /**
+     * Store no music history.
+     */
+    case disabled
+    /**
+     * Store provider and opaque item identifiers.
+     */
+    case opaqueItem
+    /**
+     * Store bounded title and artist text as well.
+     */
+    case humanReadable
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicHistoryPolicyDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicHistoryPolicyDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicHistoryPolicyDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicHistoryPolicyDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .disabled
+
+        case 2: return .opaqueItem
+
+        case 3: return .humanReadable
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMusicHistoryPolicyDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .disabled:
+            writeInt(&buf, Int32(1))
+
+
+        case .opaqueItem:
+            writeInt(&buf, Int32(2))
+
+
+        case .humanReadable:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicHistoryPolicyDto_lift(_ buf: RustBuffer) throws -> MobileMusicHistoryPolicyDto {
+    return try FfiConverterTypeMobileMusicHistoryPolicyDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicHistoryPolicyDto_lower(_ value: MobileMusicHistoryPolicyDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicHistoryPolicyDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Playback state projected by a music adapter.
+ */
+
+public enum MobileMusicPlaybackStateDto: Equatable, Hashable {
+
+    /**
+     * A track is actively playing.
+     */
+    case playing
+    /**
+     * Playback is paused.
+     */
+    case paused
+    /**
+     * Playback has stopped.
+     */
+    case stopped
+    /**
+     * The provider is loading or buffering.
+     */
+    case buffering
+    /**
+     * Platform interruption is active.
+     */
+    case interrupted
+    /**
+     * Authorization is required.
+     */
+    case unauthorized
+    /**
+     * Provider/account state is unavailable.
+     */
+    case unavailable
+    /**
+     * The provider connection is disconnected.
+     */
+    case disconnected
+    /**
+     * The observation is stale.
+     */
+    case stale
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicPlaybackStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicPlaybackStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicPlaybackStateDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicPlaybackStateDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .playing
+
+        case 2: return .paused
+
+        case 3: return .stopped
+
+        case 4: return .buffering
+
+        case 5: return .interrupted
+
+        case 6: return .unauthorized
+
+        case 7: return .unavailable
+
+        case 8: return .disconnected
+
+        case 9: return .stale
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMusicPlaybackStateDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .playing:
+            writeInt(&buf, Int32(1))
+
+
+        case .paused:
+            writeInt(&buf, Int32(2))
+
+
+        case .stopped:
+            writeInt(&buf, Int32(3))
+
+
+        case .buffering:
+            writeInt(&buf, Int32(4))
+
+
+        case .interrupted:
+            writeInt(&buf, Int32(5))
+
+
+        case .unauthorized:
+            writeInt(&buf, Int32(6))
+
+
+        case .unavailable:
+            writeInt(&buf, Int32(7))
+
+
+        case .disconnected:
+            writeInt(&buf, Int32(8))
+
+
+        case .stale:
+            writeInt(&buf, Int32(9))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicPlaybackStateDto_lift(_ buf: RustBuffer) throws -> MobileMusicPlaybackStateDto {
+    return try FfiConverterTypeMobileMusicPlaybackStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicPlaybackStateDto_lower(_ value: MobileMusicPlaybackStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicPlaybackStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Provider exposed by a music adapter.
+ */
+
+public enum MobileMusicProviderDto: Equatable, Hashable {
+
+    /**
+     * Apple Music system-player integration.
+     */
+    case appleMusic
+    /**
+     * Spotify App Remote integration.
+     */
+    case spotify
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicProviderDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicProviderDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicProviderDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicProviderDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .appleMusic
+
+        case 2: return .spotify
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMusicProviderDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .appleMusic:
+            writeInt(&buf, Int32(1))
+
+
+        case .spotify:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicProviderDto_lift(_ buf: RustBuffer) throws -> MobileMusicProviderDto {
+    return try FfiConverterTypeMobileMusicProviderDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicProviderDto_lower(_ value: MobileMusicProviderDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicProviderDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Low-rate transition retained with an opted-in ride.
+ */
+
+public enum MobileMusicRideEventKindDto: Equatable, Hashable {
+
+    /**
+     * Playback began or resumed.
+     */
+    case play
+    /**
+     * Playback paused.
+     */
+    case pause
+    /**
+     * The current item was skipped.
+     */
+    case skip
+    /**
+     * The current item changed.
+     */
+    case itemChanged
+    /**
+     * The provider disconnected.
+     */
+    case providerDisconnected
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicRideEventKindDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicRideEventKindDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicRideEventKindDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicRideEventKindDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .play
+
+        case 2: return .pause
+
+        case 3: return .skip
+
+        case 4: return .itemChanged
+
+        case 5: return .providerDisconnected
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMusicRideEventKindDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .play:
+            writeInt(&buf, Int32(1))
+
+
+        case .pause:
+            writeInt(&buf, Int32(2))
+
+
+        case .skip:
+            writeInt(&buf, Int32(3))
+
+
+        case .itemChanged:
+            writeInt(&buf, Int32(4))
+
+
+        case .providerDisconnected:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicRideEventKindDto_lift(_ buf: RustBuffer) throws -> MobileMusicRideEventKindDto {
+    return try FfiConverterTypeMobileMusicRideEventKindDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicRideEventKindDto_lower(_ value: MobileMusicRideEventKindDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicRideEventKindDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Result of submitting one ride music transition.
+ */
+
+public enum MobileMusicTimelineOutcomeDto: Equatable, Hashable {
+
+    /**
+     * The event was recorded.
+     */
+    case recorded
+    /**
+     * The event repeated the newest event.
+     */
+    case duplicate
+    /**
+     * The event was older than the newest event.
+     */
+    case outOfOrder
+    /**
+     * Music history is disabled.
+     */
+    case disabled
+    /**
+     * The ride is no longer open.
+     */
+    case rideNotOpen
+    /**
+     * The bounded event capacity was reached.
+     */
+    case full
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMusicTimelineOutcomeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMusicTimelineOutcomeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicTimelineOutcomeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMusicTimelineOutcomeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .recorded
+
+        case 2: return .duplicate
+
+        case 3: return .outOfOrder
+
+        case 4: return .disabled
+
+        case 5: return .rideNotOpen
+
+        case 6: return .full
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMusicTimelineOutcomeDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .recorded:
+            writeInt(&buf, Int32(1))
+
+
+        case .duplicate:
+            writeInt(&buf, Int32(2))
+
+
+        case .outOfOrder:
+            writeInt(&buf, Int32(3))
+
+
+        case .disabled:
+            writeInt(&buf, Int32(4))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(5))
+
+
+        case .full:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicTimelineOutcomeDto_lift(_ buf: RustBuffer) throws -> MobileMusicTimelineOutcomeDto {
+    return try FfiConverterTypeMobileMusicTimelineOutcomeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMusicTimelineOutcomeDto_lower(_ value: MobileMusicTimelineOutcomeDto) -> RustBuffer {
+    return FfiConverterTypeMobileMusicTimelineOutcomeDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Mobile notification ingest outcome kind.
  */
 
@@ -14568,6 +15731,11 @@ public enum MobileRideMapError: Swift.Error, Equatable, Hashable, Foundation.Loc
     case InvalidLocationSample(String
     )
     /**
+     * A provider observation failed Rust validation.
+     */
+    case InvalidMusicSnapshot(String
+    )
+    /**
      * No ride exists for the requested command.
      */
     case NoActiveRide
@@ -14614,11 +15782,14 @@ public struct FfiConverterTypeMobileRideMapError: FfiConverterRustBuffer {
         case 3: return .InvalidLocationSample(
             try FfiConverterString.read(from: &buf)
             )
-        case 4: return .NoActiveRide
-        case 5: return .Storage(
+        case 4: return .InvalidMusicSnapshot(
             try FfiConverterString.read(from: &buf)
             )
-        case 6: return .InvalidTransition
+        case 5: return .NoActiveRide
+        case 6: return .Storage(
+            try FfiConverterString.read(from: &buf)
+            )
+        case 7: return .InvalidTransition
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -14644,17 +15815,22 @@ public struct FfiConverterTypeMobileRideMapError: FfiConverterRustBuffer {
             FfiConverterString.write(v1, into: &buf)
 
 
-        case .NoActiveRide:
+        case let .InvalidMusicSnapshot(v1):
             writeInt(&buf, Int32(4))
+            FfiConverterString.write(v1, into: &buf)
+
+
+        case .NoActiveRide:
+            writeInt(&buf, Int32(5))
 
 
         case let .Storage(v1):
-            writeInt(&buf, Int32(5))
+            writeInt(&buf, Int32(6))
             FfiConverterString.write(v1, into: &buf)
 
 
         case .InvalidTransition:
-            writeInt(&buf, Int32(6))
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -18442,6 +19618,30 @@ fileprivate struct FfiConverterOptionTypeMobileMonotonicMillisDto: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileMusicItemDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMusicItemDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMusicItemDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMusicItemDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileNotificationEvidenceDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileNotificationEvidenceDto?
 
@@ -19426,6 +20626,30 @@ fileprivate struct FfiConverterOptionTypePowerFlowDirection: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeMobileMusicRideEventDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMusicRideEventDto]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeMobileMusicRideEventDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeMobileMusicRideEventDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceUInt16: FfiConverterRustBuffer {
     typealias SwiftType = [UInt16]
 
@@ -19618,6 +20842,31 @@ fileprivate struct FfiConverterSequenceTypeMobileIdentificationProbeWriteDto: Ff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileIdentificationProbeWriteDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileMusicRideEventDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileMusicRideEventDto]
+
+    public static func write(_ value: [MobileMusicRideEventDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileMusicRideEventDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileMusicRideEventDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileMusicRideEventDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileMusicRideEventDto.read(from: &buf))
         }
         return seq
     }
@@ -20173,6 +21422,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_ingest() != 46273) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_current_music_events() != 20442) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_current_snapshot() != 30528) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -20194,10 +21446,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_points_after() != 45042) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_record_music_event() != 19953) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_resume() != 28578) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_save() != 63685) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_set_music_history_policy() != 40488) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_start_gps_only() != 18292) {

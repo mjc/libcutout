@@ -38,6 +38,7 @@ final class CutoutAppModel {
     private(set) var captureStatus: CaptureStatus?
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
+    private(set) var musicNowPlaying: MusicNowPlaying?
     private(set) var isRecordOnlyCapture = false
     private(set) var isFinishingCapture = false
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
@@ -96,6 +97,10 @@ final class CutoutAppModel {
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
+    private let musicCoordinator: MusicIntegrationCoordinator
+#if canImport(MediaPlayer) && os(iOS)
+    private let appleMusicProvider = AppleMusicProviderAdapter()
+#endif
     private var liveActivityIdentity: LiveActivityRideIdentity?
     private var liveActivityGlyph = LiveActivityRideGlyph.electricUnicycle
     private var lastLiveActivitySnapshot: LiveActivityRideSnapshot?
@@ -157,6 +162,7 @@ final class CutoutAppModel {
         )
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
+        musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         restoreRideMapState()
         self.core.onDisplayStateChange = { [weak self] displayState in
@@ -203,6 +209,34 @@ final class CutoutAppModel {
         self.core.onCaptureEvent = { [weak self] event in
             self?.applyCaptureEvent(event)
         }
+    }
+
+    func handleMusicCommand(_ command: MobileMusicCommandDto) {
+#if canImport(MediaPlayer) && os(iOS)
+        appleMusicProvider.perform(command)
+        refreshMusicSnapshot()
+#else
+        _ = command
+#endif
+    }
+
+    func dismissMusicPlayer() {
+        musicNowPlaying = nil
+    }
+
+    func refreshMusicSnapshot() {
+#if canImport(MediaPlayer) && os(iOS)
+        let snapshot = appleMusicProvider.snapshot(observedAtMs: core.now().rawValue)
+        musicCoordinator.update(snapshot: snapshot)
+        musicNowPlaying = musicCoordinator.nowPlaying
+#endif
+    }
+
+    func requestMusicAuthorizationAndRefresh() async {
+#if canImport(MediaPlayer) && os(iOS)
+        guard await appleMusicProvider.requestAuthorization() else { return }
+        refreshMusicSnapshot()
+#endif
     }
 
     private func restoreRideMapState() {
