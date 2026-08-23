@@ -21,6 +21,42 @@
       "comment" : "Accessibility label for opening the active music provider.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open music provider" } } }
     },
+    "music.expand" : {
+      "comment" : "Accessibility label and title for expanding the compact music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music details" } } }
+    },
+    "music.done" : {
+      "comment" : "Dismiss action for the expanded music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
+    },
+    "music.history.title" : {
+      "comment" : "Title for the music-history privacy choice.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride music history" } } }
+    },
+    "music.history.disabled" : {
+      "comment" : "Music-history policy that stores no music metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Don't save" } } }
+    },
+    "music.history.disabled.explanation" : {
+      "comment" : "Explanation for disabled music history.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No music metadata is associated with rides." } } }
+    },
+    "music.history.opaque_item" : {
+      "comment" : "Music-history policy that stores only provider and opaque item identifiers.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save track IDs" } } }
+    },
+    "music.history.opaque_item.explanation" : {
+      "comment" : "Explanation for opaque music history.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Store the provider and opaque track identifier, without title or artist." } } }
+    },
+    "music.history.human_readable" : {
+      "comment" : "Music-history policy that stores bounded title and artist metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save title and artist" } } }
+    },
+    "music.history.human_readable.explanation" : {
+      "comment" : "Explanation for human-readable music history.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Store bounded provider, title, and artist metadata with rides." } } }
+    },
     "music.state.authorization_required" : {
       "comment" : "Compact player state when music authorization is required.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Authorization required" } } }

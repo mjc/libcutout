@@ -77,6 +77,32 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 }
 
+public extension MobileMusicHistoryPolicyDto {
+    static var allCases: [Self] { [.disabled, .opaqueItem, .humanReadable] }
+
+    var title: String {
+        switch self {
+        case .disabled:
+            pevLocalizedText("music.history.disabled")
+        case .opaqueItem:
+            pevLocalizedText("music.history.opaque_item")
+        case .humanReadable:
+            pevLocalizedText("music.history.human_readable")
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .disabled:
+            pevLocalizedText("music.history.disabled.explanation")
+        case .opaqueItem:
+            pevLocalizedText("music.history.opaque_item.explanation")
+        case .humanReadable:
+            pevLocalizedText("music.history.human_readable.explanation")
+        }
+    }
+}
+
 /// The Rust-owned ride association is the only path for music metadata to enter a ride.
 @MainActor
 public final class MusicIntegrationCoordinator {
@@ -165,17 +191,24 @@ public final class MusicIntegrationCoordinator {
 /// neither artwork bytes nor an audio stream cross the app boundary.
 public struct MusicCompactPlayer: View {
     public let nowPlaying: MusicNowPlaying
+    public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onDismiss: () -> Void
+    public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
+    @State private var isExpanded = false
 
     public init(
         nowPlaying: MusicNowPlaying,
+        historyPolicy: MobileMusicHistoryPolicyDto = .disabled,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
-        onDismiss: @escaping () -> Void = {}
+        onDismiss: @escaping () -> Void = {},
+        onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool = { _ in false }
     ) {
         self.nowPlaying = nowPlaying
+        self.historyPolicy = historyPolicy
         self.onCommand = onCommand
         self.onDismiss = onDismiss
+        self.onSetHistoryPolicy = onSetHistoryPolicy
     }
 
     public var body: some View {
@@ -211,6 +244,10 @@ public struct MusicCompactPlayer: View {
                 }
                 .accessibilityLabel(pevLocalizedText("music.open_provider"))
             }
+            Button { isExpanded = true } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .accessibilityLabel(pevLocalizedText("music.expand"))
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
             }
@@ -221,22 +258,96 @@ public struct MusicCompactPlayer: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(nowPlaying.providerName), \(nowPlaying.title), \(nowPlaying.artist)")
+        .sheet(isPresented: $isExpanded) {
+            MusicExpandedPlayer(
+                nowPlaying: nowPlaying,
+                historyPolicy: historyPolicy,
+                onSetHistoryPolicy: onSetHistoryPolicy
+            )
+        }
+    }
+}
+
+public struct MusicExpandedPlayer: View {
+    public let nowPlaying: MusicNowPlaying
+    public let historyPolicy: MobileMusicHistoryPolicyDto
+    public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedPolicy: MobileMusicHistoryPolicyDto
+
+    public init(
+        nowPlaying: MusicNowPlaying,
+        historyPolicy: MobileMusicHistoryPolicyDto,
+        onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
+    ) {
+        self.nowPlaying = nowPlaying
+        self.historyPolicy = historyPolicy
+        self.onSetHistoryPolicy = onSetHistoryPolicy
+        _selectedPolicy = State(initialValue: historyPolicy)
+    }
+
+    public var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text(nowPlaying.title)
+                        .font(.headline)
+                    Text(nowPlaying.artist)
+                        .foregroundStyle(.secondary)
+                    if let status = nowPlaying.statusText {
+                        Text(status)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text(nowPlaying.providerName)
+                }
+
+                Section {
+                    Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
+                        ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
+                            Text(policy.title)
+                                .tag(policy)
+                        }
+                    }
+                    Text(selectedPolicy.explanation)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text(pevLocalizedText("music.history.title"))
+                }
+            }
+            .navigationTitle(pevLocalizedText("music.expand"))
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(pevLocalizedText("music.done")) { dismiss() }
+                }
+            }
+            .onChange(of: selectedPolicy) { _, policy in
+                if !onSetHistoryPolicy(policy) {
+                    selectedPolicy = historyPolicy
+                }
+            }
+        }
     }
 }
 
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
+    public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onDismiss: () -> Void
+    public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
 
     public func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom, spacing: 8) {
             if let nowPlaying {
                 MusicCompactPlayer(
                     nowPlaying: nowPlaying,
+                    historyPolicy: historyPolicy,
                     onCommand: onCommand,
-                    onDismiss: onDismiss
+                    onDismiss: onDismiss,
+                    onSetHistoryPolicy: onSetHistoryPolicy
                 )
                 .padding(.horizontal, 12)
             }
@@ -247,13 +358,17 @@ public struct MusicCompactPlayerInset: ViewModifier {
 public extension View {
     func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
+        historyPolicy: MobileMusicHistoryPolicyDto,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
-        onDismiss: @escaping () -> Void
+        onDismiss: @escaping () -> Void,
+        onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
     ) -> some View {
         modifier(MusicCompactPlayerInset(
             nowPlaying: nowPlaying,
+            historyPolicy: historyPolicy,
             onCommand: onCommand,
-            onDismiss: onDismiss
+            onDismiss: onDismiss,
+            onSetHistoryPolicy: onSetHistoryPolicy
         ))
     }
 }

@@ -94,6 +94,13 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.capabilities.openProvider)
     }
 
+    func testHistoryPolicyChoicesExplainTheirStorageBoundary() {
+        XCTAssertEqual(MobileMusicHistoryPolicyDto.allCases, [.disabled, .opaqueItem, .humanReadable])
+        XCTAssertEqual(MobileMusicHistoryPolicyDto.disabled.title, "Don't save")
+        XCTAssertTrue(MobileMusicHistoryPolicyDto.opaqueItem.explanation.contains("opaque track identifier"))
+        XCTAssertTrue(MobileMusicHistoryPolicyDto.humanReadable.explanation.contains("title"))
+    }
+
     private func snapshot(
         state: MobileMusicPlaybackStateDto = .playing,
         observedAtMs: UInt64 = 10

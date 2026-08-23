@@ -55,8 +55,10 @@ struct EucRideRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            historyPolicy: model.musicHistoryPolicy,
             onCommand: model.handleMusicCommand,
-            onDismiss: model.dismissMusicPlayer
+            onDismiss: model.dismissMusicPlayer,
+            onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
         .task {
             await model.monitorMusic()
@@ -143,8 +145,10 @@ struct VescRideRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            historyPolicy: model.musicHistoryPolicy,
             onCommand: model.handleMusicCommand,
-            onDismiss: model.dismissMusicPlayer
+            onDismiss: model.dismissMusicPlayer,
+            onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
         .task {
             await model.monitorMusic()
