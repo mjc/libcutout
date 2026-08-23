@@ -16,6 +16,12 @@ final class CutoutAppModel {
     private static let rideMapPointBatchLimit: UInt32 = 512
     private static let rideMapPreviewPointLimit = 4_096
 
+    private struct MusicCaptureKey: Equatable {
+        let provider: MobileMusicProviderDto
+        let itemIdentifier: String
+        let state: MobileMusicPlaybackStateDto
+    }
+
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
@@ -115,6 +121,7 @@ final class CutoutAppModel {
     private var liveActivityRequestID: UInt64 = 0
     private var captureFileName: String?
     private var captureNotificationCount = 0
+    private var lastMusicCaptureKey: MusicCaptureKey?
     private var captureLabel: String?
     private var hasStarted = false
     private var permitsStoredDeviceAutoPairing = true
@@ -288,7 +295,13 @@ final class CutoutAppModel {
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
-        core.updateMusicCaptureObservation(captureObservation)
+        if let captureObservation {
+            core.updateMusicCaptureObservation(captureObservation)
+        } else if musicHistoryPolicy == .disabled
+                    || observation.snapshot.item == nil
+                    || observation.snapshot.positionMilliseconds == nil {
+            core.updateMusicCaptureObservation(nil)
+        }
         do {
             _ = try musicCoordinator.ingest(
                 observation: observation,
@@ -310,10 +323,26 @@ final class CutoutAppModel {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) -> MobilePevcapMusicEventDto? {
-        guard musicHistoryPolicy != .disabled,
-              let item = observation.snapshot.item,
-              let positionMilliseconds = observation.snapshot.positionMilliseconds
-        else { return nil }
+        guard musicHistoryPolicy != .disabled else {
+            lastMusicCaptureKey = nil
+            return nil
+        }
+        guard
+            let item = observation.snapshot.item,
+            let positionMilliseconds = observation.snapshot.positionMilliseconds
+        else {
+            lastMusicCaptureKey = nil
+            return nil
+        }
+
+        let key = MusicCaptureKey(
+            provider: observation.snapshot.provider,
+            itemIdentifier: item.identifier,
+            state: observation.snapshot.state
+        )
+        guard key != lastMusicCaptureKey else { return nil }
+        lastMusicCaptureKey = key
+
         return MobilePevcapMusicEventDto(
             provider: observation.snapshot.provider,
             trackId: item.identifier,
@@ -327,6 +356,7 @@ final class CutoutAppModel {
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
         let previousPolicy = musicHistoryPolicy
         musicHistoryPolicy = policy
+        lastMusicCaptureKey = nil
         do {
             try musicCoordinator.setHistoryPolicy(policy)
             refreshMusicTimeline()
