@@ -185,6 +185,25 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRemainingSettingStatesAreExposedThroughTheSettingsDriver() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.accelerationAssistState = AccelerationAssistSettingState(
+            kind: .refused,
+            requested: .enabled,
+            refusalReason: .unsupportedCommand
+        )
+        driver.taillightState = LightSettingState(
+            kind: .refused,
+            requested: .on,
+            refusalReason: .unsupportedCommand
+        )
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.accelerationAssistState, driver.accelerationAssistState)
+        XCTAssertEqual(model.taillightState, driver.taillightState)
+    }
+
+    @MainActor
     func testTuneUsesRustOwnedConfirmedLightState() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
@@ -2886,6 +2905,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
     var pedalModeState: PedalModeSettingState?
+    var accelerationAssistState: AccelerationAssistSettingState?
+    var taillightState: LightSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
     var settingsCapabilities: EucSettingsCapabilities? {
         settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities

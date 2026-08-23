@@ -331,6 +331,12 @@ public final class CutoutSessionCore: NSObject {
     public var pedalModeState: PedalModeSettingState? {
         onBleQueue { liveOwner?.pedalModeState }
     }
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        onBleQueue { liveOwner?.accelerationAssistState }
+    }
+    public var taillightState: LightSettingState? {
+        onBleQueue { liveOwner?.taillightState }
+    }
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?

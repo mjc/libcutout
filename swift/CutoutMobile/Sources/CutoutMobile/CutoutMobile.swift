@@ -5492,6 +5492,24 @@ public enum CoreBluetoothSession: Sendable {
             nil
         }
     }
+
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.accelerationAssistState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var taillightState: LightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.taillightState
+        case .vescOnewheel:
+            nil
+        }
+    }
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5635,6 +5653,14 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var pedalModeState: PedalModeSettingState? {
         session.pedalModeState
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        session.accelerationAssistState
+    }
+
+    public var taillightState: LightSettingState? {
+        session.taillightState
     }
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
         switch event {
@@ -5850,6 +5876,14 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var pedalModeState: PedalModeSettingState? {
         runner.pedalModeState
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState? {
+        runner.accelerationAssistState
+    }
+
+    public var taillightState: LightSettingState? {
+        runner.taillightState
     }
     /// Configures the Rust-owned charge estimate profile for this connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {

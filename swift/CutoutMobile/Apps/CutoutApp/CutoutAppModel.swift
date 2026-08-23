@@ -191,6 +191,14 @@ final class CutoutAppModel {
         core.pedalModeState
     }
 
+    var accelerationAssistState: AccelerationAssistSettingState? {
+        core.accelerationAssistState
+    }
+
+    var taillightState: LightSettingState? {
+        core.taillightState
+    }
+
     var selectedRideTitle: String? {
         connectionState.selection?.title
     }
