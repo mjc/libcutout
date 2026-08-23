@@ -61,8 +61,9 @@ use cutout_core::{
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
-    RideStopReasonDto, RideWarningDto, SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto,
-    SeriesCount, SessionInputDto, SessionOutputDto, SettingState as CoreSettingState,
+    RideStopReasonDto, RideWarningDto, RollAngle as CoreRollAngle,
+    SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto, SeriesCount, SessionInputDto,
+    SessionOutputDto, SettingState as CoreSettingState,
     SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
     SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
@@ -2019,6 +2020,9 @@ pub enum MobileCommandDto {
     /// Set the documented pedal response; unverified models refuse this before transport.
     SetPedalMode(MobilePedalModeKindDto),
 
+    /// Set the documented Falcon roll-angle sensitivity; stationary-only.
+    SetRollAngle(MobileRollAngleKindDto),
+
     /// Enable or disable acceleration assist; unsupported models refuse this before transport.
     SetAccelerationAssist(MobileAccelerationAssistStateDto),
 
@@ -2109,6 +2113,39 @@ impl From<MobilePedalModeKindDto> for CorePedalMode {
     }
 }
 
+/// Documented Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRollAngleKindDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<CoreRollAngle> for MobileRollAngleKindDto {
+    fn from(angle: CoreRollAngle) -> Self {
+        match angle {
+            CoreRollAngle::Low => Self::Low,
+            CoreRollAngle::Medium => Self::Medium,
+            CoreRollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<MobileRollAngleKindDto> for CoreRollAngle {
+    fn from(angle: MobileRollAngleKindDto) -> Self {
+        match angle {
+            MobileRollAngleKindDto::Low => Self::Low,
+            MobileRollAngleKindDto::Medium => Self::Medium,
+            MobileRollAngleKindDto::High => Self::High,
+        }
+    }
+}
+
 /// Validation state for a setting write exposed to mobile consumers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingWriteSupportDto {
@@ -2128,6 +2165,9 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// Pedal-mode/settings write support.
     pub pedal_mode: MobileSettingWriteSupportDto,
 
+    /// Falcon roll-angle sensitivity write support.
+    pub roll_angle: MobileSettingWriteSupportDto,
+
     /// Acceleration-assist/behavior write support.
     pub acceleration_assist: MobileSettingWriteSupportDto,
 
@@ -2142,6 +2182,7 @@ impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
             pedal_mode: MobileSettingWriteSupportDto::Supported,
+            roll_angle: MobileSettingWriteSupportDto::Unsupported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2151,6 +2192,7 @@ impl MobileEucSettingsCapabilitiesDto {
     const fn falcon() -> Self {
         Self {
             pedal_mode: MobileSettingWriteSupportDto::Supported,
+            roll_angle: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2276,6 +2318,45 @@ pub struct MobilePedalModeSettingStateDto {
 }
 
 impl MobilePedalModeSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed Falcon roll-angle lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRollAngleSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current roll-angle sensitivity, when known.
+    pub current: Option<MobileRollAngleKindDto>,
+
+    /// Requested roll-angle sensitivity, when a write is pending or terminal.
+    pub requested: Option<MobileRollAngleKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileRollAngleSettingStateDto {
     fn unknown() -> Self {
         Self {
             kind: MobileSettingStateKindDto::Unknown,
@@ -2858,6 +2939,7 @@ where
 struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
     pedal_mode: MobileSettingTracker<CorePedalMode>,
+    roll_angle: MobileSettingTracker<CoreRollAngle>,
     acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
     taillight: MobileSettingTracker<CoreLightState>,
 }
@@ -2867,6 +2949,7 @@ impl MobileEucSettingTrackers {
         let now = input.monotonic_ms.into_core();
         self.headlight.observe_step(input.kind, now);
         self.pedal_mode.observe_step(input.kind, now);
+        self.roll_angle.observe_step(input.kind, now);
         self.acceleration_assist.observe_step(input.kind, now);
         self.taillight.observe_step(input.kind, now);
 
@@ -2876,6 +2959,9 @@ impl MobileEucSettingTrackers {
             }
             Some(MobileCommandDto::SetPedalMode(requested)) => {
                 self.pedal_mode.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetRollAngle(requested)) => {
+                self.roll_angle.observe_write(requested.into(), now, result);
             }
             Some(MobileCommandDto::SetAccelerationAssist(requested)) => {
                 self.acceleration_assist
@@ -2902,6 +2988,14 @@ impl MobileEucSettingTrackers {
             {
                 self.pedal_mode.observe_readback(pedal_mode, now);
             }
+            if let Some(roll_angle) = readback
+                .euc_garage
+                .roll_angle
+                .as_ref()
+                .and_then(|roll_angle| roll_angle.angle.map(CoreRollAngle::from))
+            {
+                self.roll_angle.observe_readback(roll_angle, now);
+            }
         }
     }
 
@@ -2911,6 +3005,10 @@ impl MobileEucSettingTrackers {
 
     fn pedal_mode(&self) -> MobilePedalModeSettingStateDto {
         mobile_pedal_mode_setting_state(self.pedal_mode.state)
+    }
+
+    fn roll_angle(&self) -> MobileRollAngleSettingStateDto {
+        mobile_roll_angle_setting_state(self.roll_angle.state)
     }
 
     fn acceleration_assist(&self) -> MobileAccelerationAssistSettingStateDto {
@@ -3014,6 +3112,72 @@ fn mobile_pedal_mode_setting_state(
     state: CoreSettingState<CorePedalMode>,
 ) -> MobilePedalModeSettingStateDto {
     let mut snapshot = MobilePedalModeSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_roll_angle_setting_state(
+    state: CoreSettingState<CoreRollAngle>,
+) -> MobileRollAngleSettingStateDto {
+    let mut snapshot = MobileRollAngleSettingStateDto::unknown();
     match state {
         CoreSettingState::Unknown => {}
         CoreSettingState::Current(value) => {
@@ -8551,6 +8715,9 @@ pub struct MobileEucGarageSettingsDto {
     /// Pedal mode setting, when understood.
     pub pedal_mode: Option<MobilePedalModeDto>,
 
+    /// Falcon roll-angle sensitivity, when understood.
+    pub roll_angle: Option<MobileRollAngleDto>,
+
     /// Light state reported by wheel telemetry, when the protocol provides it.
     pub light_state: Option<MobileLightStateDto>,
 
@@ -8569,6 +8736,16 @@ pub struct MobilePedalModeDto {
 
     /// Documented mode when the protocol-native value has a known mapping.
     pub mode: Option<MobilePedalModeKindDto>,
+}
+
+/// Read-only Falcon roll-angle projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRollAngleDto {
+    /// Protocol-native raw roll-angle value.
+    pub raw_angle: Option<u16>,
+
+    /// Documented roll-angle sensitivity when the value has a known mapping.
+    pub angle: Option<MobileRollAngleKindDto>,
 }
 
 /// Bounded read-only settings response for mobile UI.
@@ -9796,6 +9973,7 @@ impl MobileEucGarageSettingsDto {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -9825,6 +10003,9 @@ impl MobileEucGarageSettingsDto {
                         .and_then(|entry| u16::try_from(entry.field.value).ok())
                         .map(begode_pedal_mode)
                 }),
+            roll_angle: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(begode_roll_angle),
             light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
                 .and_then(|value| match value & 0x03 {
@@ -9869,6 +10050,19 @@ fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
         raw_mode,
         CorePedalMode::from_begode_settings_bits(settings_bits),
     )
+}
+
+fn begode_roll_angle(settings_bits: u16) -> MobileRollAngleDto {
+    let raw_angle = (settings_bits >> 7) & 0x03;
+    MobileRollAngleDto {
+        raw_angle: Some(raw_angle),
+        angle: match raw_angle {
+            0 => Some(MobileRollAngleKindDto::Low),
+            1 => Some(MobileRollAngleKindDto::Medium),
+            2 => Some(MobileRollAngleKindDto::High),
+            _ => None,
+        },
+    }
 }
 
 fn mobile_pedal_mode(raw_mode: u16, mode: Option<CorePedalMode>) -> MobilePedalModeDto {
@@ -10265,6 +10459,11 @@ impl AeroBenignControlSession {
         self.lock_settings().pedal_mode()
     }
 
+    /// Returns the Rust-owned roll-angle setting lifecycle state.
+    pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
+        self.lock_settings().roll_angle()
+    }
+
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
     pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
         self.lock_settings().acceleration_assist()
@@ -10344,6 +10543,9 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::SetPedalMode(mode) => {
                 Self::SetPedalMode(CorePedalMode::from(mode).into())
             }
+            MobileCommandDto::SetRollAngle(angle) => {
+                Self::SetRollAngle(CoreRollAngle::from(angle).into())
+            }
             MobileCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -10366,6 +10568,7 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::SetAccelerationAssist
         | CommandKindDto::SetLights
         | CommandKindDto::SetPedalMode
+        | CommandKindDto::SetRollAngle
         | CommandKindDto::SetTaillight
         | CommandKindDto::SetRawMotorCurrent => None,
     }
@@ -11684,6 +11887,11 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
         self.lock_settings().pedal_mode()
+    }
+
+    /// Returns the Rust-owned roll-angle setting lifecycle state.
+    pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
+        self.lock_settings().roll_angle()
     }
 
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
@@ -13163,6 +13371,7 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13260,6 +13469,7 @@ mod tests {
                     raw_mode: Some(1_920),
                     mode: None,
                 }),
+                roll_angle: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13348,6 +13558,7 @@ mod tests {
                     verification: MobileVerificationStatusDto::SourceVerified,
                 }),
                 pedal_mode: None,
+                roll_angle: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13376,6 +13587,32 @@ mod tests {
             Some(MobilePedalModeDto {
                 raw_mode: Some(2),
                 mode: Some(MobilePedalModeKindDto::Hard),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_roll_angle() {
+        let settings_bits = 2_i64 << 7;
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, settings_bits),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.roll_angle,
+            Some(MobileRollAngleDto {
+                raw_angle: Some(2),
+                angle: Some(MobileRollAngleKindDto::High),
             })
         );
     }
@@ -13451,6 +13688,7 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13472,6 +13710,7 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    roll_angle: None,
                     light_state: None,
                     auto_shutdown_seconds: None,
                     charge_mode: None,
@@ -13508,6 +13747,7 @@ mod tests {
                 beep_margin: None,
                 tiltback: None,
                 pedal_mode: None,
+                roll_angle: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13674,6 +13914,7 @@ mod tests {
                     beep_margin: None,
                     tiltback: None,
                     pedal_mode: None,
+                    roll_angle: None,
                     light_state: None,
                     auto_shutdown_seconds: None,
                     charge_mode: None,
@@ -14703,6 +14944,30 @@ mod tests {
         assert!(result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
         }));
+    }
+
+    #[test]
+    fn falcon_wrapper_writes_documented_roll_angle_after_stationary_arm() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetRollAngle(MobileRollAngleKindDto::High)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"<"
+        }));
+        assert_eq!(
+            session.roll_angle_state().requested,
+            Some(MobileRollAngleKindDto::High)
+        );
     }
 
     #[test]
