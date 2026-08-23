@@ -161,6 +161,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
     public private(set) var peripheralName: String?
+    public private(set) var peripheralIdentifier: String?
     public private(set) var commandEvidence = MelkLightingCommandEvidence()
     public private(set) var lastWritePlan: MelkLightingWritePlan?
 
@@ -209,6 +210,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             peripheral = nil
             advertisedName = nil
             peripheralName = nil
+            peripheralIdentifier = nil
             harness = nil
             sink = nil
             transition(to: .disconnected)
@@ -286,10 +288,11 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             self.peripheral = peripheral
             advertisedName = name
             peripheralName = name
+            peripheralIdentifier = peripheral.identifier.uuidString
             peripheral.delegate = self
             central.stopScan()
             transition(to: .connecting)
-            record("candidate=\(name ?? "") rssi=\(rssi)")
+            record("candidate=\(name ?? "") id=\(peripheral.identifier.uuidString) rssi=\(rssi)")
             central.connect(peripheral)
         }
     }
@@ -352,6 +355,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             peripheral = restoredPeripheral
             advertisedName = restoredPeripheral.name
             peripheralName = restoredPeripheral.name
+            peripheralIdentifier = restoredPeripheral.identifier.uuidString
             restoredPeripheral.delegate = self
             if restoredPeripheral.state == .connected {
                 transition(to: .discovering)
@@ -360,7 +364,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 transition(to: .connecting)
                 central.connect(restoredPeripheral)
             }
-            record("restore=melk")
+            record("restore=melk id=\(restoredPeripheral.identifier.uuidString)")
         }
     }
 
