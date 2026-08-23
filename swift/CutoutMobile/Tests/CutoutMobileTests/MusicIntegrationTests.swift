@@ -77,6 +77,32 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .pause])
     }
 
+    func testOutOfOrderProviderObservationDoesNotRegressPlayerOrHistory() throws {
+        let rideMap = MobileRideMapState()
+        _ = try rideMap.startGpsOnly(atMs: 1, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMap)
+        try coordinator.setHistoryPolicy(.opaqueItem)
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: snapshot(state: .playing, observedAtMs: 20),
+                wallClockAtMs: 30,
+                clockUncertaintyMs: 1
+            ),
+            .recorded
+        )
+
+        XCTAssertNil(
+            try coordinator.ingest(
+                snapshot: snapshot(state: .paused, observedAtMs: 10),
+                wallClockAtMs: 40,
+                clockUncertaintyMs: 1
+            )
+        )
+        XCTAssertEqual(coordinator.nowPlaying?.state, .playing)
+        XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged])
+    }
+
     func testProviderFailureDoesNotBecomeItemChanged() throws {
         let rideMap = MobileRideMapState()
         _ = try rideMap.startGpsOnly(atMs: 1, lastConnectedVehicle: nil)
