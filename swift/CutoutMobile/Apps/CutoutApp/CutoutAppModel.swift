@@ -565,11 +565,7 @@ final class CutoutAppModel {
             }
             let isCurrentRide = core.rideMapStateHandle.currentSnapshot()?.rideId == rideID
             if isCurrentRide {
-                musicHistoryPolicy = .disabled
-                lastMusicCaptureKey = nil
-                core.updateMusicCaptureObservation(nil)
-                try? musicCoordinator.setHistoryPolicy(.disabled)
-                refreshMusicTimeline()
+                resetActiveMusicHistoryState()
             }
             rideMapError = nil
             return true
@@ -577,6 +573,14 @@ final class CutoutAppModel {
             rideMapError = error as? MobileRideMapError
             return false
         }
+    }
+
+    private func resetActiveMusicHistoryState() {
+        musicHistoryPolicy = .disabled
+        lastMusicCaptureKey = nil
+        core.updateMusicCaptureObservation(nil)
+        try? musicCoordinator.setHistoryPolicy(.disabled)
+        refreshMusicTimeline()
     }
 
     private func refreshMusicTimeline() {
