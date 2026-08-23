@@ -786,11 +786,15 @@ public final class AppleMusicProviderAdapter {
     }
 
     public func requestAuthorization() async -> Bool {
-        await withCheckedContinuation { continuation in
+#if canImport(MusicKit) && os(iOS)
+        return await MusicAuthorization.request() == .authorized
+#else
+        return await withCheckedContinuation { continuation in
             MPMediaLibrary.requestAuthorization { status in
                 continuation.resume(returning: status == .authorized)
             }
         }
+#endif
     }
 
     public func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
