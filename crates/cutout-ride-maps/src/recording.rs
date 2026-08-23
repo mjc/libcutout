@@ -15,8 +15,30 @@ pub const MAX_LIVE_ROUTE_POINTS: usize = 4_096;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RideMapPoint {
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
+}
+
+/// Stable segment identity within one ride recording.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RideMapSegmentId(u64);
+
+impl RideMapSegmentId {
+    /// Creates a segment identity from its persisted representation.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the persisted representation.
+    #[must_use]
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
 }
 
 /// Provenance of the vehicle telemetry associated with one route point.
@@ -77,7 +99,7 @@ impl RideMapPoint {
     #[must_use]
     pub const fn new(
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
     ) -> Self {
         Self {
@@ -95,7 +117,7 @@ impl RideMapPoint {
 
     /// Returns the segment identity within the ride.
     #[must_use]
-    pub const fn segment_id(self) -> u64 {
+    pub const fn segment_id(self) -> RideMapSegmentId {
         self.segment_id
     }
 
@@ -148,7 +170,7 @@ pub struct RideMapRecorder {
     points: Vec<RideMapPoint>,
     first_point_sequence: u64,
     summary: RideSummary,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     segment_started: bool,
     last_monotonic_milliseconds: u64,
 }
@@ -173,7 +195,7 @@ impl RideMapRecorder {
             points: Vec::new(),
             first_point_sequence: 0,
             summary: RideSummary::from_stored(0, 0),
-            segment_id: 0,
+            segment_id: RideMapSegmentId::new(0),
             segment_started: false,
             last_monotonic_milliseconds: 0,
         }
@@ -262,7 +284,9 @@ impl RideMapRecorder {
             last_monotonic_milliseconds: points.last().map_or(created_at_milliseconds, |point| {
                 point.sample().monotonic_milliseconds()
             }),
-            segment_id: points.last().map_or(0, |point| point.segment_id()),
+            segment_id: points
+                .last()
+                .map_or(RideMapSegmentId::new(0), |point| point.segment_id()),
             segment_started: false,
             first_point_sequence,
             summary,
@@ -302,7 +326,7 @@ impl RideMapRecorder {
 
     /// Returns the current segment identity for the next accepted point.
     #[must_use]
-    pub const fn current_segment_id(&self) -> u64 {
+    pub const fn current_segment_id(&self) -> RideMapSegmentId {
         self.segment_id
     }
 
@@ -363,7 +387,7 @@ impl RideMapRecorder {
         self.points.clear();
         self.first_point_sequence = 0;
         self.summary = RideSummary::from_stored(0, 0);
-        self.segment_id = 0;
+        self.segment_id = RideMapSegmentId::new(0);
         self.segment_started = true;
         Ok(())
     }
@@ -383,7 +407,7 @@ impl RideMapRecorder {
     /// Applies a previously validated lifecycle state.
     pub fn apply_transition(&mut self, state: RideLifecycleState) {
         if self.state == Some(RideLifecycleState::Paused) && state == RideLifecycleState::Active {
-            self.segment_id = self.segment_id.saturating_add(1);
+            self.segment_id = self.segment_id.next();
             self.segment_started = true;
         }
         self.state = Some(state);
@@ -512,7 +536,7 @@ impl RideMapRecorder {
         });
         let segment_started = self.segment_started || gap_started;
         if gap_started {
-            self.segment_id = self.segment_id.saturating_add(1);
+            self.segment_id = self.segment_id.next();
         }
         let distance = if segment_started {
             0
@@ -586,13 +610,16 @@ mod tests {
             VehicleAssociation::AlreadyAssociated
         );
         recorder.apply_transition(RideLifecycleState::Active);
-        assert_eq!(recorder.current_segment_id(), 0);
+        assert_eq!(recorder.current_segment_id().value(), 0);
         recorder.apply_transition(RideLifecycleState::Paused);
         recorder.apply_transition(RideLifecycleState::Active);
-        assert_eq!(recorder.current_segment_id(), 1);
+        assert_eq!(recorder.current_segment_id().value(), 1);
         assert!(recorder.record_sample(sample(1_003, 40.001)));
         assert_eq!(
-            recorder.points().last().map(|point| point.segment_id()),
+            recorder
+                .points()
+                .last()
+                .map(|point| point.segment_id().value()),
             Some(1)
         );
     }
@@ -643,7 +670,7 @@ mod tests {
         let second = sample(40_000, 40.001);
         assert_eq!(recorder.check_sample(&second), LocationAdmission::Accepted);
         assert!(recorder.record_sample(second));
-        assert_eq!(recorder.current_segment_id(), 1);
+        assert_eq!(recorder.current_segment_id().value(), 1);
         assert_eq!(recorder.summary().distance_millimetres(), 0);
     }
 

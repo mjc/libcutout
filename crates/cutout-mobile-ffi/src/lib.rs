@@ -4341,7 +4341,7 @@ impl MobileRideMapCoreInner {
                 mobile_ride_location(point.location).ok().map(|sample| {
                     ride_maps::RideMapPoint::new(
                         sample,
-                        point.segment_id,
+                        ride_maps::RideMapSegmentId::new(point.segment_id),
                         map_ride_telemetry_state(point.telemetry_state),
                     )
                 })
@@ -4375,12 +4375,12 @@ impl MobileRideMapCoreInner {
     fn point_from_location(
         location: MobileRideLocationDto,
         sequence: u64,
-        segment_id: u64,
+        segment_id: ride_maps::RideMapSegmentId,
         telemetry_state: ride_maps::RouteTelemetryState,
     ) -> MobileRideMapCorePointDto {
         MobileRideMapCorePointDto {
             sequence,
-            segment_id,
+            segment_id: segment_id.value(),
             latitude_degrees: location.latitude_degrees,
             longitude_degrees: location.longitude_degrees,
             wall_clock_unix_ms: location.wall_clock_unix_milliseconds,
@@ -4754,7 +4754,7 @@ impl MobileRideMapCore {
                 .enqueue_location_with_segment_and_telemetry(
                     id,
                     location,
-                    segment_id,
+                    segment_id.value(),
                     telemetry_state.into(),
                 )
                 .map_err(map_core_error)?;
@@ -4808,7 +4808,7 @@ impl MobileRideMapCore {
                     MobileRideMapCoreInner::point_from_location(
                         point.location,
                         point.sequence,
-                        point.segment_id,
+                        ride_maps::RideMapSegmentId::new(point.segment_id),
                         map_ride_telemetry_state(point.telemetry_state),
                     )
                 })
