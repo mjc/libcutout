@@ -27,6 +27,7 @@ struct CutoutApp: App {
             rootView
                 .task {
                     model.start()
+                    lighting.startIfRemembered()
                 }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
