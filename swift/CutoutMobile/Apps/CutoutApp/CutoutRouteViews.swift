@@ -53,18 +53,13 @@ struct EucRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.eucRide")
         }
-        .safeAreaInset(edge: .bottom, spacing: 8) {
-            if let nowPlaying = model.musicNowPlaying {
-                MusicCompactPlayer(
-                    nowPlaying: nowPlaying,
-                    onCommand: model.handleMusicCommand,
-                    onDismiss: model.dismissMusicPlayer
-                )
-                .padding(.horizontal, 12)
-            }
-        }
+        .musicCompactPlayer(
+            nowPlaying: model.musicNowPlaying,
+            onCommand: model.handleMusicCommand,
+            onDismiss: model.dismissMusicPlayer
+        )
         .task {
-            await model.requestMusicAuthorizationAndRefresh()
+            await model.monitorMusic()
         }
     }
 }
@@ -146,18 +141,13 @@ struct VescRideRouteView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dashboard.screen.vescRide")
         }
-        .safeAreaInset(edge: .bottom, spacing: 8) {
-            if let nowPlaying = model.musicNowPlaying {
-                MusicCompactPlayer(
-                    nowPlaying: nowPlaying,
-                    onCommand: model.handleMusicCommand,
-                    onDismiss: model.dismissMusicPlayer
-                )
-                .padding(.horizontal, 12)
-            }
-        }
+        .musicCompactPlayer(
+            nowPlaying: model.musicNowPlaying,
+            onCommand: model.handleMusicCommand,
+            onDismiss: model.dismissMusicPlayer
+        )
         .task {
-            await model.requestMusicAuthorizationAndRefresh()
+            await model.monitorMusic()
         }
     }
 }

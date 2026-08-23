@@ -44,6 +44,38 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(coordinator.recordedEvents.isEmpty)
     }
 
+    func testIngestRecordsOnlyMeaningfulPlaybackTransitions() throws {
+        let rideMap = MobileRideMapState()
+        _ = try rideMap.startGpsOnly(atMs: 1, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMap)
+        try coordinator.setHistoryPolicy(.opaqueItem)
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: snapshot(state: .playing, observedAtMs: 10),
+                wallClockAtMs: 20,
+                clockUncertaintyMs: 1
+            ),
+            .recorded
+        )
+        XCTAssertNil(
+            try coordinator.ingest(
+                snapshot: snapshot(state: .playing, observedAtMs: 20),
+                wallClockAtMs: 30,
+                clockUncertaintyMs: 1
+            )
+        )
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: snapshot(state: .paused, observedAtMs: 30),
+                wallClockAtMs: 40,
+                clockUncertaintyMs: 1
+            ),
+            .recorded
+        )
+        XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .pause])
+    }
+
     func testSpotifyAdapterIsExplicitlyMetadataOnlyUntilAppRemoteIsProven() {
         let snapshot = SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 42)
 
@@ -54,19 +86,22 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(snapshot.item)
     }
 
-    private func snapshot() -> MobileMusicSnapshotDto {
+    private func snapshot(
+        state: MobileMusicPlaybackStateDto = .playing,
+        observedAtMs: UInt64 = 10
+    ) -> MobileMusicSnapshotDto {
         MobileMusicSnapshotDto(
             provider: .appleMusic,
             sessionId: "session-1",
-            state: .playing,
+            state: state,
             item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
             positionMilliseconds: 5,
             durationMilliseconds: 100,
-            observedAtMs: 10,
+            observedAtMs: observedAtMs,
             capabilities: MobileMusicCapabilitiesDto(
                 previous: true,
-                play: false,
-                pause: true,
+                play: state == .paused,
+                pause: state == .playing,
                 next: true,
                 openProvider: false
             )

@@ -45,6 +45,7 @@
 		30000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */; };
 		30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */; };
 		30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */; };
+		300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */; };
 		30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */; };
 		30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */; };
 		30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */; };
@@ -120,6 +121,7 @@
 		40000000000000000000001A /* Apps/CutoutApp/CutoutUITestSessionFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutUITestSessionFixture.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutAppState.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutRouteViews.swift; sourceTree = SOURCE_ROOT; };
+		400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/RideMapRouteView.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CaptureQuickLabel.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/CutoutSessionDriving.swift; sourceTree = SOURCE_ROOT; };
 		40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Apps/CutoutApp/PevDashboardPresentation.swift; sourceTree = SOURCE_ROOT; };
@@ -178,6 +180,7 @@
 				111111111111111111111123 /* Apps/CutoutApp/CutoutAppModel.swift */,
 				40000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift */,
 				40000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift */,
+				400000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift */,
 				40000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift */,
 				40000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift */,
 				40000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift */,
@@ -403,6 +406,7 @@
 				111111111111111111111113 /* Apps/CutoutApp/CutoutAppModel.swift in Sources */,
 				30000000000000000000001B /* Apps/CutoutApp/CutoutAppState.swift in Sources */,
 				30000000000000000000001C /* Apps/CutoutApp/CutoutRouteViews.swift in Sources */,
+				300000000000000000000025 /* Apps/CutoutApp/RideMapRouteView.swift in Sources */,
 				30000000000000000000001D /* Apps/CutoutApp/CaptureQuickLabel.swift in Sources */,
 				30000000000000000000001E /* Apps/CutoutApp/CutoutSessionDriving.swift in Sources */,
 				30000000000000000000001F /* Apps/CutoutApp/PevDashboardPresentation.swift in Sources */,

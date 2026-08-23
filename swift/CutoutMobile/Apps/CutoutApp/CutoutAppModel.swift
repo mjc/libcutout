@@ -39,6 +39,7 @@ final class CutoutAppModel {
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var musicNowPlaying: MusicNowPlaying?
+    private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private(set) var isRecordOnlyCapture = false
     private(set) var isFinishingCapture = false
     private(set) var activeCaptureLabels = Set<CaptureQuickLabel>()
@@ -227,15 +228,46 @@ final class CutoutAppModel {
     func refreshMusicSnapshot() {
 #if canImport(MediaPlayer) && os(iOS)
         let snapshot = appleMusicProvider.snapshot(observedAtMs: core.now().rawValue)
-        musicCoordinator.update(snapshot: snapshot)
+        do {
+            _ = try musicCoordinator.ingest(
+                snapshot: snapshot,
+                wallClockAtMs: UInt64(Date().timeIntervalSince1970 * 1_000),
+                clockUncertaintyMs: 1_000
+            )
+        } catch {
+            // Music must not turn a provider or ride-history failure into a ride error.
+        }
         musicNowPlaying = musicCoordinator.nowPlaying
 #endif
     }
 
-    func requestMusicAuthorizationAndRefresh() async {
+    func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
+        do {
+            try musicCoordinator.setHistoryPolicy(policy)
+            musicHistoryPolicy = policy
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func monitorMusic() async {
 #if canImport(MediaPlayer) && os(iOS)
-        guard await appleMusicProvider.requestAuthorization() else { return }
-        refreshMusicSnapshot()
+        guard await appleMusicProvider.requestAuthorization() else {
+            musicCoordinator.update(snapshot: appleMusicProvider.unauthorizedSnapshot(
+                observedAtMs: core.now().rawValue
+            ))
+            musicNowPlaying = musicCoordinator.nowPlaying
+            return
+        }
+        while !Task.isCancelled {
+            refreshMusicSnapshot()
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+        }
 #endif
     }
 

@@ -38,12 +38,12 @@ public struct MusicNowPlaying: Equatable, Sendable {
 
     public var providerName: String {
         switch provider {
-        case .appleMusic: "Apple Music"
-        case .spotify: "Spotify"
+        case .appleMusic: pevLocalizedText("music.provider.apple_music")
+        case .spotify: pevLocalizedText("music.provider.spotify")
         }
     }
 
-    public var title: String { item?.title ?? "Not playing" }
+    public var title: String { item?.title ?? pevLocalizedText("music.not_playing") }
     public var artist: String { item?.artist ?? providerName }
 
     public var playPauseCommand: MobileMusicCommandDto? {
@@ -70,6 +70,29 @@ public final class MusicIntegrationCoordinator {
         nowPlaying = MusicNowPlaying(snapshot: snapshot)
     }
 
+    /// Applies one provider observation and records only a meaningful transition.
+    /// A disabled history policy still updates the compact player but never writes
+    /// to the ride database.
+    @discardableResult
+    public func ingest(
+        snapshot: MobileMusicSnapshotDto,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto? {
+        let previous = nowPlaying
+        update(snapshot: snapshot)
+        guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
+            return nil
+        }
+        return try rideMapState.recordMusicEvent(
+            snapshot: snapshot,
+            kind: kind,
+            monotonicAtMs: snapshot.observedAtMs,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
+    }
+
     public func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         try rideMapState.setMusicHistoryPolicy(policy: policy)
     }
@@ -93,6 +116,27 @@ public final class MusicIntegrationCoordinator {
 
     public var recordedEvents: [MobileMusicRideEventDto] {
         rideMapState.currentMusicEvents() ?? []
+    }
+
+    private static func transitionKind(
+        from previous: MusicNowPlaying?,
+        to current: MusicNowPlaying?
+    ) -> MobileMusicRideEventKindDto? {
+        guard let current else { return .providerDisconnected }
+        guard let previous else { return current.item == nil ? nil : .itemChanged }
+        if previous.provider != current.provider || previous.item?.identifier != current.item?.identifier {
+            return .itemChanged
+        }
+        switch (previous.state, current.state) {
+        case (_, .playing) where previous.state != .playing:
+            return MobileMusicRideEventKindDto.play
+        case (_, .paused) where previous.state != .paused:
+            return MobileMusicRideEventKindDto.pause
+        case (_, .disconnected) where previous.state != .disconnected:
+            return MobileMusicRideEventKindDto.providerDisconnected
+        default:
+            return nil
+        }
     }
 }
 
@@ -143,13 +187,47 @@ public struct MusicCompactPlayer: View {
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
             }
-            .accessibilityLabel("Hide music player")
+            .accessibilityLabel(pevLocalizedText("music.hide"))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(nowPlaying.providerName), \(nowPlaying.title), \(nowPlaying.artist)")
+    }
+}
+
+/// Shared Ride/Map composition for the compact player.
+public struct MusicCompactPlayerInset: ViewModifier {
+    public let nowPlaying: MusicNowPlaying?
+    public let onCommand: (MobileMusicCommandDto) -> Void
+    public let onDismiss: () -> Void
+
+    public func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .bottom, spacing: 8) {
+            if let nowPlaying {
+                MusicCompactPlayer(
+                    nowPlaying: nowPlaying,
+                    onCommand: onCommand,
+                    onDismiss: onDismiss
+                )
+                .padding(.horizontal, 12)
+            }
+        }
+    }
+}
+
+public extension View {
+    func musicCompactPlayer(
+        nowPlaying: MusicNowPlaying?,
+        onCommand: @escaping (MobileMusicCommandDto) -> Void,
+        onDismiss: @escaping () -> Void
+    ) -> some View {
+        modifier(MusicCompactPlayerInset(
+            nowPlaying: nowPlaying,
+            onCommand: onCommand,
+            onDismiss: onDismiss
+        ))
     }
 }
 
@@ -170,6 +248,25 @@ public final class AppleMusicProviderAdapter {
                 continuation.resume(returning: status == .authorized)
             }
         }
+    }
+
+    public func unauthorizedSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
+        MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "system-music-player",
+            state: .unauthorized,
+            item: nil,
+            positionMilliseconds: nil,
+            durationMilliseconds: nil,
+            observedAtMs: observedAtMs,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: false,
+                next: false,
+                openProvider: false
+            )
+        )
     }
 
     public func perform(_ command: MobileMusicCommandDto) {

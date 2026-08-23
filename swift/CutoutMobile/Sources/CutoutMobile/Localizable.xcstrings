@@ -1,6 +1,22 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "music.hide" : {
+      "comment" : "Accessibility label for hiding the compact music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide music player" } } }
+    },
+    "music.not_playing" : {
+      "comment" : "Compact music player title when no current item is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not playing" } } }
+    },
+    "music.provider.apple_music" : {
+      "comment" : "Apple Music provider name shown by the compact player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Apple Music" } } }
+    },
+    "music.provider.spotify" : {
+      "comment" : "Spotify provider name shown by the compact player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Spotify" } } }
+    },
     "bms.accessibility.balancing" : {
       "comment" : "VoiceOver BMS cell-group state when that group is actively balancing.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "balancing" } } }
