@@ -186,6 +186,26 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.capabilities.openProvider)
     }
 
+    func testNowPlayingRefusesCommandsOutsideProviderCapabilities() {
+        let nowPlaying = MusicNowPlaying(
+            provider: .appleMusic,
+            state: .playing,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: false,
+                play: false,
+                pause: true,
+                next: false,
+                openProvider: false
+            )
+        )
+
+        XCTAssertTrue(nowPlaying.supports(.pause))
+        XCTAssertFalse(nowPlaying.supports(.play))
+        XCTAssertFalse(nowPlaying.supports(.previous))
+        XCTAssertFalse(nowPlaying.supports(.next))
+        XCTAssertFalse(nowPlaying.supports(.openProvider))
+    }
+
     func testHistoryPolicyChoicesExplainTheirStorageBoundary() {
         XCTAssertEqual(MobileMusicHistoryPolicyDto.allCases, [.disabled, .opaqueItem, .humanReadable])
         XCTAssertEqual(MobileMusicHistoryPolicyDto.disabled.title, "Don't save")

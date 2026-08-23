@@ -134,6 +134,16 @@ public struct MusicNowPlaying: Equatable, Sendable {
         default: nil
         }
     }
+
+    public func supports(_ command: MobileMusicCommandDto) -> Bool {
+        switch command {
+        case .previous: capabilities.previous
+        case .play: capabilities.play
+        case .pause: capabilities.pause
+        case .next: capabilities.next
+        case .openProvider: capabilities.openProvider
+        }
+    }
 }
 
 public extension MobileMusicHistoryPolicyDto {

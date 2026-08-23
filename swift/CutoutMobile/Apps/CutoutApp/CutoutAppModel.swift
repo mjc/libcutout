@@ -234,7 +234,8 @@ final class CutoutAppModel {
 
     func handleMusicCommand(_ command: MobileMusicCommandDto) {
 #if canImport(MediaPlayer) && os(iOS)
-        if (musicNowPlaying?.provider ?? selectedMusicProvider) == .spotify {
+        guard let nowPlaying, nowPlaying.supports(command) else { return }
+        if nowPlaying.provider == .spotify {
             spotifyMusicProvider.perform(command)
         } else {
             appleMusicProvider.perform(command)
