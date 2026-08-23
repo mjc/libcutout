@@ -1868,12 +1868,21 @@ final class CutoutAppModel {
             guard let self else { return }
             rideSessionRestorationState = .complete
             liveActivityError = error
-            if case .adopted = recoveryResult,
-               error == nil,
-               core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
-            {
-                lastLiveActivitySnapshot = snapshot
-                lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+            switch recoveryResult {
+            case .adopted:
+                if error == nil,
+                   core.rideSessionStateHandle.rideSessionSnapshot().phase == .active
+                {
+                    lastLiveActivitySnapshot = snapshot
+                    lastLiveActivityUpdate = snapshot == nil ? nil : core.now()
+                }
+            case .ended, .noPersistedRide:
+                if restoredPlatformIdentifier == nil,
+                   let scanState = devicePickerScanState
+                {
+                    permitsStoredDeviceAutoPairing = true
+                    handleScanStateChange(scanState)
+                }
             }
             syncLiveActivity()
         }

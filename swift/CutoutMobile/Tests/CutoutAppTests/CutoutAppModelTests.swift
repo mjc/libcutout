@@ -2604,6 +2604,39 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testOrphanRecoveryReplaysAnAlreadyDiscoveredSavedDevice() async throws {
+        let suiteName = "CutoutAppModelTests.orphanReplay.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let markerStore = RideSessionMarkerStore(defaults: defaults)
+        let selectedDeviceStore = DevicePickerSelectionStore(defaults: defaults)
+        let fixture = CutoutUITestSessionFixture.vesc
+        let platformIdentifier = fixture.candidate.platformIdentifier
+        selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+        let source = CutoutSessionStateHandle()
+        _ = try source.reduceRideSession(input: .start(platformIdentifier: platformIdentifier))
+        markerStore.save(try XCTUnwrap(source.exportRideSessionMarker()))
+        let driver = SessionDriverSpy(
+            rows: [fixture.candidate.pickerRow],
+            restoredPlatformIdentifier: nil
+        )
+        let model = CutoutAppModel(
+            core: driver,
+            selectedDeviceStore: selectedDeviceStore,
+            rideSessionMarkerStore: markerStore,
+            liveActivityManager: FailingLiveActivityManager(error: nil)
+        )
+
+        model.start()
+        for _ in 0 ..< 200 {
+            if driver.pairedPlatformIdentifiers.isEmpty == false { break }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
+    }
+
+    @MainActor
     func testScanningLaunchClearsAnOrphanedLiveActivity() async {
         let driver = SessionDriverSpy(rows: [])
         let manager = FailingLiveActivityManager(error: nil)
