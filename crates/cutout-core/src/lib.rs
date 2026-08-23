@@ -458,6 +458,65 @@ impl DangerousActuationPolicy {
     }
 }
 
+/// Short-lived authorization for a settings write while the vehicle is stationary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationarySettingsArm {
+    model: &'static str,
+    expires_at_ms: MonotonicTimestamp,
+}
+
+impl StationarySettingsArm {
+    /// Returns the model this token was issued for.
+    #[must_use]
+    pub const fn model(self) -> &'static str {
+        self.model
+    }
+
+    /// Returns the monotonic expiry timestamp for this token.
+    #[must_use]
+    pub const fn expires_at_ms(self) -> MonotonicTimestamp {
+        self.expires_at_ms
+    }
+
+    /// Returns whether this token is still valid for the model and timestamp.
+    #[must_use]
+    pub const fn is_valid_for(self, model: &str, monotonic_ms: MonotonicTimestamp) -> bool {
+        str_eq(self.model, model) && monotonic_ms.get() <= self.expires_at_ms.get()
+    }
+}
+
+/// Policy for issuing a short-lived stationary settings authorization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StationarySettingsPolicy {
+    /// Model this policy allows.
+    pub model: &'static str,
+
+    /// Duration of newly issued authorizations.
+    pub arm_duration: Duration,
+}
+
+impl StationarySettingsPolicy {
+    /// Issues an authorization only from an explicitly stationary ride state.
+    #[must_use]
+    pub const fn arm(
+        self,
+        state: RideOperatingState,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<StationarySettingsArm> {
+        match state {
+            RideOperatingState::Parked | RideOperatingState::Standing => {
+                Some(StationarySettingsArm {
+                    model: self.model,
+                    expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
+                })
+            }
+            RideOperatingState::Unknown
+            | RideOperatingState::Riding
+            | RideOperatingState::Charging => None,
+        }
+    }
+}
+
 /// Refusal reason for dangerous actuation authorization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DangerousActuationRefusal {
@@ -8252,6 +8311,7 @@ mod tests {
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::SetLights(_)
+                    | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
@@ -9889,7 +9949,7 @@ mod tests {
 
     #[test]
     fn benign_controls_are_distinct_from_read_only_requests() {
-        let lights = DeviceCommand::SetLights(crate::LightState::On);
+        let lights = DeviceCommand::SetLights(LightState::On);
         let horn = DeviceCommand::SoundHorn;
 
         assert_eq!(lights.kind(), crate::CommandKind::SetLights);
@@ -9918,6 +9978,10 @@ mod tests {
                 &[crate::CommandKind::SetLights, crate::CommandKind::SoundHorn][..],
             ),
             (
+                crate::SafetyClass::StationaryOnly,
+                &[crate::CommandKind::SetPedalMode][..],
+            ),
+            (
                 crate::SafetyClass::Actuation,
                 &[crate::CommandKind::SetRawMotorCurrent][..],
             ),
@@ -9928,6 +9992,40 @@ mod tests {
                 assert_eq!(command.safety_class(), safety_class);
             }
         }
+    }
+
+    #[test]
+    fn stationary_settings_policy_only_arms_stationary_states() {
+        let policy = crate::StationarySettingsPolicy {
+            model: "NOSFET Aero",
+            arm_duration: Duration::from_milliseconds(100),
+        };
+
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Unknown, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Riding, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Charging, ms(10))
+                .is_none()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Standing, ms(10))
+                .is_some()
+        );
+        assert!(
+            policy
+                .arm(crate::RideOperatingState::Parked, ms(10))
+                .is_some()
+        );
     }
 
     #[test]

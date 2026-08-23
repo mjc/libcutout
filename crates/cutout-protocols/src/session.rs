@@ -1110,6 +1110,9 @@ fn push_parser_error(error: ParserError, output: &mut Vec<SessionOutput>) {
 pub trait SupportsSettingsWrites: ProtocolModelSpec {
     /// Commands this model can write after stationary-state validation.
     const WRITE_CAPABILITIES: Capabilities;
+
+    /// Encodes a supported settings write.
+    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl>;
 }
 
 /// Type-level benign-control capability.
@@ -1600,6 +1603,138 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
+/// Session shell for settings writes that require an explicit stationary arm.
+pub struct StationarySettingsWriteSession<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> {
+    read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
+    arm: Option<cutout_core::StationarySettingsArm>,
+    monotonic_ms: MonotonicTimestamp,
+}
+
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
+    for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StationarySettingsWriteSession")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool> Clone
+    for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+where
+    ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            read_only: self.read_only.clone(),
+            arm: self.arm,
+            monotonic_ms: self.monotonic_ms,
+        }
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool> Default
+    for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn default() -> Self {
+        Self {
+            read_only: ReadOnlySession::default(),
+            arm: None,
+            monotonic_ms: MonotonicTimestamp::new(0),
+        }
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool>
+    StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    /// Creates a settings-write session with an explicitly configured decoder.
+    #[must_use]
+    pub const fn with_decoder(decoder: M::NotificationDecoder) -> Self {
+        Self {
+            read_only: ReadOnlySession::with_decoder(decoder),
+            arm: None,
+            monotonic_ms: MonotonicTimestamp::new(0),
+        }
+    }
+
+    /// Returns the read and stationary-settings commands this session can schedule.
+    #[must_use]
+    pub const fn capabilities() -> Capabilities {
+        M::READ_CAPABILITIES.union(M::WRITE_CAPABILITIES)
+    }
+
+    /// Installs a short-lived authorization issued from stationary evidence.
+    pub const fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
+        self.arm = Some(arm);
+    }
+}
+
+impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool>
+    ProtocolSession for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+{
+    fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
+        match input {
+            SessionInput::Tick { monotonic_ms } => {
+                self.monotonic_ms = monotonic_ms;
+                self.read_only.handle(input, output);
+            }
+            SessionInput::LinkDown => {
+                self.arm = None;
+                self.read_only.handle(input, output);
+            }
+            SessionInput::Command(command)
+                if command.safety_class() == SafetyClass::StationaryOnly =>
+            {
+                let kind = command.kind();
+                let reason = if M::WRITE_CAPABILITIES.supports_command_kind(kind) {
+                    match self.arm {
+                        None => Some(ControlRefusalReason::MissingArm),
+                        Some(arm) if arm.model() != M::MODEL => {
+                            Some(ControlRefusalReason::WrongModel)
+                        }
+                        Some(arm) if !arm.is_valid_for(M::MODEL, self.monotonic_ms) => {
+                            Some(ControlRefusalReason::ExpiredArm)
+                        }
+                        Some(_) => None,
+                    }
+                } else {
+                    Some(ControlRefusalReason::UnsupportedCommand)
+                };
+
+                if let Some(reason) = reason {
+                    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                        ControlRefusal {
+                            command: kind,
+                            safety_class: command.safety_class(),
+                            reason,
+                        },
+                    )));
+                } else if let Some(encoded) = M::encode_settings_write(command) {
+                    output.push(SessionOutput::Transport(TransportAction::Write {
+                        channel: M::WRITE_CHANNEL,
+                        bytes: encoded.payload,
+                        mode: encoded.mode,
+                    }));
+                } else {
+                    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                        ControlRefusal {
+                            command: kind,
+                            safety_class: command.safety_class(),
+                            reason: ControlRefusalReason::UnsupportedCommand,
+                        },
+                    )));
+                }
+            }
+            input => self.read_only.handle(input, output),
+        }
+    }
+}
+
 /// Feature-gated dangerous-control shell.
 #[cfg(feature = "dangerous-controls")]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1705,8 +1840,9 @@ mod tests {
     use arrayvec::ArrayVec;
     use core::mem::size_of;
     use cutout_core::{
-        BatteryPageKind, LinkInfo, Measured, ProtocolTag, RawFieldValue, ReadOnlyResponse,
-        TelemetryDelta, TransportAction, VerificationStatus, WriteMode,
+        BatteryPageKind, Duration, LinkInfo, Measured, ProtocolTag, RawFieldValue,
+        ReadOnlyResponse, RideOperatingState, StationarySettingsPolicy, TelemetryDelta,
+        TransportAction, VerificationStatus, WriteMode,
     };
     use proptest::prelude::*;
 
@@ -1731,6 +1867,15 @@ mod tests {
 
         fn encode_read_command(kind: CommandKind) -> Option<RequestDisposition<Self::Probe>> {
             AeroRequestEncoder::encode_command(kind)
+        }
+    }
+
+    impl SupportsSettingsWrites for TestModel {
+        const WRITE_CAPABILITIES: Capabilities =
+            Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+
+        fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+            AeroControlEncoder::encode(command)
         }
     }
 
@@ -3838,6 +3983,47 @@ mod tests {
                 mode: WriteMode::WithoutResponse,
             })]
         );
+    }
+
+    #[test]
+    fn stationary_settings_session_requires_fresh_stationary_arm() {
+        let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
+        let mut output = Vec::new();
+        let command = DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard);
+
+        session.handle(SessionInput::Command(command), &mut output);
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: CommandKind::SetPedalMode,
+                    safety_class: SafetyClass::StationaryOnly,
+                    reason: ControlRefusalReason::MissingArm,
+                }
+            ))]
+        );
+
+        let arm = StationarySettingsPolicy {
+            model: TestModel::MODEL,
+            arm_duration: Duration::from_milliseconds(100),
+        }
+        .arm(RideOperatingState::Standing, MonotonicTimestamp::new(10))
+        .expect("standing state arms settings writes");
+        session.arm(arm);
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: MonotonicTimestamp::new(10),
+            },
+            &mut output,
+        );
+        session.handle(SessionInput::Command(command), &mut output);
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SETh"
+        )));
     }
 
     #[test]
