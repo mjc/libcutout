@@ -839,7 +839,10 @@ mod tests {
             picker_candidates[2].support,
             DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(picker_candidates[2].detail, "Read-only protocol probe recommended");
+        assert_eq!(
+            picker_candidates[2].detail,
+            "Read-only protocol probe recommended"
+        );
         assert_eq!(picker_candidates[2].connection_route, None);
         assert_eq!(picker_candidates[2].electric_unicycle_model, None);
     }
