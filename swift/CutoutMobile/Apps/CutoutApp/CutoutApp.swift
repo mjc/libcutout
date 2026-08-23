@@ -26,6 +26,9 @@ struct CutoutApp: App {
                 .task {
                     model.start()
                 }
+                .task {
+                    await model.monitorMusic()
+                }
                 .onChange(of: scenePhase) {
                     switch scenePhase {
                     case .active:

@@ -60,9 +60,6 @@ struct EucRideRouteView: View {
             onDismiss: model.dismissMusicPlayer,
             onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
-        .task {
-            await model.monitorMusic()
-        }
     }
 }
 
@@ -150,9 +147,6 @@ struct VescRideRouteView: View {
             onDismiss: model.dismissMusicPlayer,
             onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
-        .task {
-            await model.monitorMusic()
-        }
     }
 }
 
