@@ -80,4 +80,27 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(store.confirmedState)
         XCTAssertEqual(store.confirmation, .unknown)
     }
+
+    func testStorePersistsNamedPresetsAndRejectsDuplicateNames() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-presets-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let state = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 9,
+            green: 8,
+            blue: 7,
+            brightness: 60
+        )
+        let store = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "preset-melk"))
+        try store.addPreset(name: "Night", requested: state)
+        XCTAssertEqual(store.presets.map(\.name), ["Night"])
+        XCTAssertEqual(store.presets.first?.requested, state)
+
+        XCTAssertThrowsError(try store.addPreset(name: "Night", requested: state))
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertEqual(reopened.presets.map(\.name), ["Night"])
+    }
 }

@@ -58,6 +58,10 @@ public final class LightingAccessoryPersistence {
         record?.restoreEnabled() ?? false
     }
 
+    public var presets: [MobileRgbLightingPresetDto] {
+        record?.presets() ?? []
+    }
+
     /// Creates a fresh record for a different connected identity.
     /// - Returns: `true` only when a new record was created.
     @discardableResult
@@ -105,6 +109,15 @@ public final class LightingAccessoryPersistence {
 
     public func markUnconfirmed() {
         record?.setConfirmation(state: .unconfirmed)
+        persist()
+    }
+
+    public func addPreset(
+        name: String,
+        requested: MobileMelkLightingRestoreStateDto
+    ) throws {
+        guard let record else { return }
+        try record.addPreset(name: name, requested: requested)
         persist()
     }
 
