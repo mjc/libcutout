@@ -151,20 +151,48 @@ final class LightingRouteModel {
         var green: UInt8
         var blue: UInt8
         var brightness: UInt8
+
+        init(powerOn: Bool, red: UInt8, green: UInt8, blue: UInt8, brightness: UInt8) {
+            self.powerOn = powerOn
+            self.red = red
+            self.green = green
+            self.blue = blue
+            self.brightness = brightness
+        }
+
+        init(_ state: MobileMelkLightingRestoreStateDto) {
+            powerOn = state.powerOn
+            red = state.red
+            green = state.green
+            blue = state.blue
+            brightness = state.brightness
+        }
+
+        var dto: MobileMelkLightingRestoreStateDto {
+            MobileMelkLightingRestoreStateDto(
+                powerOn: powerOn,
+                red: red,
+                green: green,
+                blue: blue,
+                brightness: brightness
+            )
+        }
     }
 
-    private enum RestoreKeys {
-        static let enabled = "lighting.restore.enabled"
-        static let platformIdentifier = "lighting.restore.platformIdentifier"
-        static let powerOn = "lighting.restore.powerOn"
-        static let red = "lighting.restore.red"
-        static let green = "lighting.restore.green"
-        static let blue = "lighting.restore.blue"
-        static let brightness = "lighting.restore.brightness"
+    private enum PersistenceKeys {
+        static let record = "lighting.accessory.record"
+        static let legacyEnabled = "lighting.restore.enabled"
+        static let legacyPlatformIdentifier = "lighting.restore.platformIdentifier"
+        static let legacyPowerOn = "lighting.restore.powerOn"
+        static let legacyRed = "lighting.restore.red"
+        static let legacyGreen = "lighting.restore.green"
+        static let legacyBlue = "lighting.restore.blue"
+        static let legacyBrightness = "lighting.restore.brightness"
     }
 
     private let session = MelkLightingPeripheralSession()
     private let defaults = UserDefaults.standard
+    private var persistedRecord: MobileRgbLightingAccessoryRecord?
 
     private(set) var connectionState: MelkLightingPeripheralState = .idle
     private(set) var peripheralName: String?
@@ -175,22 +203,19 @@ final class LightingRouteModel {
     private(set) var notificationCount = 0
     private var isRunning = false
     private var requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
-    private var restoreMarker: MobileMelkLightingRestoreMarker?
     private var restoreAttempted = false
 
     init() {
-        restoreEnabled = defaults.bool(forKey: RestoreKeys.enabled)
-        if let platformIdentifier = defaults.string(forKey: RestoreKeys.platformIdentifier) {
-            restoreMarker = try? MobileMelkLightingRestoreMarker(
-                platformIdentifier: platformIdentifier,
-                requested: MobileMelkLightingRestoreStateDto(
-                    powerOn: defaults.bool(forKey: RestoreKeys.powerOn),
-                    red: UInt8(clamping: defaults.integer(forKey: RestoreKeys.red)),
-                    green: UInt8(clamping: defaults.integer(forKey: RestoreKeys.green)),
-                    blue: UInt8(clamping: defaults.integer(forKey: RestoreKeys.blue)),
-                    brightness: UInt8(clamping: defaults.integer(forKey: RestoreKeys.brightness))
-                )
-            )
+        restoreEnabled = defaults.bool(forKey: PersistenceKeys.legacyEnabled)
+        if let data = defaults.data(forKey: PersistenceKeys.record),
+           let record = try? MobileRgbLightingAccessoryRecord.decode(bytes: data) {
+            persistedRecord = record
+            restoreEnabled = record.restoreEnabled()
+            if let requested = record.requestedState() {
+                requestedState = SolidState(requested)
+            }
+        } else {
+            migrateLegacyRecordIfPresent()
         }
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
@@ -201,7 +226,13 @@ final class LightingRouteModel {
                 }
                 self?.connectionState = state
                 if state == .ready {
+                    self?.ensureRecordForConnectedAccessory()
+                    self?.persistedRecord?.setConnection(state: .ready)
+                    self?.persistRecord()
                     self?.restoreIfEligible()
+                } else if state == .disconnected {
+                    self?.persistedRecord?.setConnection(state: .disconnected)
+                    self?.persistRecord()
                 }
             }
         }
@@ -232,6 +263,7 @@ final class LightingRouteModel {
     func setPower(_ on: Bool) {
         guard session.setPower(on) else { return }
         requestedState.powerOn = on
+        updatePersistedRequestedState()
         commandStatus = .requested
     }
 
@@ -240,12 +272,14 @@ final class LightingRouteModel {
         requestedState.red = red
         requestedState.green = green
         requestedState.blue = blue
+        updatePersistedRequestedState()
         commandStatus = .requested
     }
 
     func setBrightness(_ percentage: UInt8) {
         guard (try? session.setBrightness(percentage)) == true else { return }
         requestedState.brightness = percentage
+        updatePersistedRequestedState()
         commandStatus = .requested
     }
 
@@ -253,24 +287,20 @@ final class LightingRouteModel {
         guard commandStatus == .requested else { return }
         session.markLastCommandConfirmed()
         commandStatus = .confirmed
-        guard let peripheralIdentifier else { return }
-        restoreMarker = try? MobileMelkLightingRestoreMarker(
-            platformIdentifier: peripheralIdentifier,
-            requested: MobileMelkLightingRestoreStateDto(
-                powerOn: requestedState.powerOn,
-                red: requestedState.red,
-                green: requestedState.green,
-                blue: requestedState.blue,
-                brightness: requestedState.brightness
-            )
-        )
-        persistRestoreMarker()
+        guard let record = persistedRecord else { return }
+        try? record.setRequestedState(state: requestedState.dto)
+        try? record.setConfirmedState(state: requestedState.dto)
+        record.setConfirmation(state: .confirmed)
+        record.setRestoreEnabled(enabled: restoreEnabled)
+        persistRecord()
         restoreAttempted = true
     }
 
     func markUnconfirmed() {
         guard commandStatus == .requested else { return }
         session.markLastCommandUnconfirmed()
+        persistedRecord?.setConfirmation(state: .unconfirmed)
+        persistRecord()
         commandStatus = .unconfirmed
     }
 
@@ -278,7 +308,8 @@ final class LightingRouteModel {
 
     func setRestoreEnabled(_ enabled: Bool) {
         restoreEnabled = enabled
-        defaults.set(enabled, forKey: RestoreKeys.enabled)
+        persistedRecord?.setRestoreEnabled(enabled: enabled)
+        persistRecord()
         if enabled {
             restoreIfEligible()
         }
@@ -319,44 +350,84 @@ final class LightingRouteModel {
         peripheralIdentifier = String(identifier)
     }
 
-    private func persistRestoreMarker() {
-        guard restoreMarker != nil, let identifier = peripheralIdentifier else {
+    private func migrateLegacyRecordIfPresent() {
+        guard let identifier = defaults.string(forKey: PersistenceKeys.legacyPlatformIdentifier),
+              let record = try? MobileRgbLightingAccessoryRecord(
+                  platformIdentifier: identifier,
+                  profile: .melkOc21,
+                  profileVersion: 1
+              ) else {
             return
         }
-        defaults.set(identifier, forKey: RestoreKeys.platformIdentifier)
-        defaults.set(requestedState.powerOn, forKey: RestoreKeys.powerOn)
-        defaults.set(Int(requestedState.red), forKey: RestoreKeys.red)
-        defaults.set(Int(requestedState.green), forKey: RestoreKeys.green)
-        defaults.set(Int(requestedState.blue), forKey: RestoreKeys.blue)
-        defaults.set(Int(requestedState.brightness), forKey: RestoreKeys.brightness)
+        persistedRecord = record
+        restoreEnabled = defaults.bool(forKey: PersistenceKeys.legacyEnabled)
+        record.setRestoreEnabled(enabled: restoreEnabled)
+        let state = MobileMelkLightingRestoreStateDto(
+            powerOn: defaults.bool(forKey: PersistenceKeys.legacyPowerOn),
+            red: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyRed)),
+            green: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyGreen)),
+            blue: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyBlue)),
+            brightness: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyBrightness))
+        )
+        guard (try? record.setRequestedState(state: state)) != nil,
+              (try? record.setConfirmedState(state: state)) != nil else {
+            return
+        }
+        record.setConfirmation(state: .confirmed)
+        persistRecord()
+        for key in [
+            PersistenceKeys.legacyEnabled,
+            PersistenceKeys.legacyPlatformIdentifier,
+            PersistenceKeys.legacyPowerOn,
+            PersistenceKeys.legacyRed,
+            PersistenceKeys.legacyGreen,
+            PersistenceKeys.legacyBlue,
+            PersistenceKeys.legacyBrightness,
+        ] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private func ensureRecordForConnectedAccessory() {
+        guard let identifier = peripheralIdentifier, !identifier.isEmpty else { return }
+        if persistedRecord?.platformIdentifier() == identifier { return }
+        persistedRecord = try? MobileRgbLightingAccessoryRecord(
+            platformIdentifier: identifier,
+            profile: .melkOc21,
+            profileVersion: 1
+        )
+        persistedRecord?.setRestoreEnabled(enabled: restoreEnabled)
+        persistRecord()
+    }
+
+    private func updatePersistedRequestedState() {
+        guard let record = persistedRecord else { return }
+        try? record.setRequestedState(state: requestedState.dto)
+        record.setConfirmation(state: .unknown)
+        persistRecord()
+    }
+
+    private func persistRecord() {
+        guard let record = persistedRecord, let data = try? record.encode() else { return }
+        defaults.set(data, forKey: PersistenceKeys.record)
     }
 
     private func restoreIfEligible() {
         guard restoreEnabled, !restoreAttempted,
-              let restoreMarker,
-              let peripheralIdentifier else {
+              let record = persistedRecord,
+              let peripheralIdentifier,
+              record.platformIdentifier() == peripheralIdentifier,
+              record.confirmation() == .confirmed,
+              let requested = record.confirmedState() else {
             return
         }
         restoreAttempted = true
-        let decision = restoreMarker.recover(
-            restoredPlatformIdentifier: peripheralIdentifier,
-            restoreEnabled: true
-        )
-        guard decision.kind == .restore, let requested = decision.requested else {
-            return
-        }
         guard session.setPower(requested.powerOn),
               session.setSolidColor(red: requested.red, green: requested.green, blue: requested.blue),
               (try? session.setBrightness(requested.brightness)) == true else {
             return
         }
-        requestedState = SolidState(
-            powerOn: requested.powerOn,
-            red: requested.red,
-            green: requested.green,
-            blue: requested.blue,
-            brightness: requested.brightness
-        )
+        requestedState = SolidState(requested)
         commandStatus = .requested
         records = Array((records + [MelkValidationLogEntry(text: "restore=requested")]).suffix(12))
     }
