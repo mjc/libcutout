@@ -18,8 +18,8 @@ mod summary;
 pub use summary::{DistanceMillimetres, RideSummary, distance_between_millimetres};
 mod recording;
 pub use recording::{
-    RideMapPoint, RideMapRecorder, RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS,
-    TelemetryObservation, VehicleAssociation,
+    MAX_LIVE_ROUTE_POINTS, RideMapMetadata, RideMapPoint, RideMapRecorder, RouteTelemetryState,
+    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation,
 };
 
 #[cfg(test)]

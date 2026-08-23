@@ -4222,6 +4222,26 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    /// Enqueues a location sample for ordered background persistence.
+    pub fn enqueue_location_with_segment_and_telemetry(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+        segment_id: u64,
+        telemetry_state: MobileRideMapCoreTelemetryStateDto,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        let location = mobile_ride_location(location)?;
+        self.inner
+            .enqueue_location_with_segment_and_telemetry(
+                id,
+                location,
+                segment_id,
+                map_ride_telemetry_state(telemetry_state),
+            )
+            .map_err(map_ride_database_error)
+    }
+
     /// Loads the durable summary projection for a ride.
     pub fn summary(
         &self,
@@ -4294,34 +4314,48 @@ impl MobileRideMapCoreInner {
             return;
         };
         self.active_ride_id = Some(ride.id.clone());
-        if let Ok(points) = database.route_points(ride.id, None, 500) {
-            let samples = points
-                .points
-                .into_iter()
-                .filter_map(|point| {
-                    mobile_ride_location(point.location).ok().map(|sample| {
-                        ride_maps::RideMapPoint::new(
-                            sample,
-                            point.segment_id,
-                            map_ride_telemetry_state(point.telemetry_state),
-                        )
-                    })
+        let mut cursor = None;
+        let mut samples = Vec::new();
+        loop {
+            let Ok(page) = database.route_points(ride.id.clone(), cursor, 500) else {
+                return;
+            };
+            samples.extend(page.points.into_iter().filter_map(|point| {
+                mobile_ride_location(point.location).ok().map(|sample| {
+                    ride_maps::RideMapPoint::new(
+                        sample,
+                        point.segment_id,
+                        map_ride_telemetry_state(point.telemetry_state),
+                    )
                 })
-                .collect();
-            self.recorder = ride_maps::RideMapRecorder::restored_with_metadata(
-                map_ride_lifecycle_state(ride.state),
-                ride.created_at_milliseconds,
-                ride.candidate_vehicle,
-                ride.associated_vehicle,
-                ride.associated_at_milliseconds,
-                ride.last_telemetry_at_milliseconds,
-                samples,
-            );
+            }));
+            if samples.len() > ride_maps::MAX_LIVE_ROUTE_POINTS {
+                let excess = samples.len() - ride_maps::MAX_LIVE_ROUTE_POINTS;
+                samples.drain(..excess);
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
         }
+        self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary(
+            map_ride_lifecycle_state(ride.state),
+            ride.created_at_milliseconds,
+            ride_maps::RideMapMetadata {
+                candidate_vehicle: ride.candidate_vehicle,
+                associated_vehicle: ride.associated_vehicle,
+                associated_at_milliseconds: ride.associated_at_milliseconds,
+                last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds,
+            },
+            samples,
+            ride_maps::RideSummary::from_stored(
+                ride.summary.point_count,
+                ride.summary.distance_millimetres,
+            ),
+        );
     }
 
     fn point_from_location(
-        &self,
         location: MobileRideLocationDto,
         sequence: u64,
         segment_id: u64,
@@ -4663,41 +4697,23 @@ impl MobileRideMapCore {
             .recorder
             .telemetry_state_at(location.monotonic_milliseconds);
         if let Some(database) = state.database.as_ref() {
-            match database
-                .append_location_with_segment_and_telemetry(
-                    id.clone(),
+            database
+                .enqueue_location_with_segment_and_telemetry(
+                    id,
                     location,
                     segment_id,
                     telemetry_state.into(),
                 )
-                .map_err(map_core_error)?
-            {
-                MobileRideLocationAdmissionDto::Accepted => {}
-                MobileRideLocationAdmissionDto::Duplicate => {
-                    return Ok(MobileRideMapCoreDecisionDto::Ignored {
-                        reason: "duplicate location".to_owned(),
-                    });
-                }
-                MobileRideLocationAdmissionDto::OutOfOrder => {
-                    return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                        reason: "timestamp out of order".to_owned(),
-                    });
-                }
-                MobileRideLocationAdmissionDto::AccuracyTooLow => {
-                    return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                        reason: "horizontal accuracy too low".to_owned(),
-                    });
-                }
-                MobileRideLocationAdmissionDto::UnrealisticJump => {
-                    return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                        reason: "location jump is unrealistic".to_owned(),
-                    });
-                }
-            }
+                .map_err(map_core_error)?;
         }
-        let sequence = state.recorder.points().len() as u64;
+        let sequence = state.recorder.point_count();
         let segment_started = state.recorder.record_sample(sample);
-        let point = state.point_from_location(location, sequence, segment_id, telemetry_state);
+        let point = MobileRideMapCoreInner::point_from_location(
+            location,
+            sequence,
+            segment_id,
+            telemetry_state,
+        );
         Ok(MobileRideMapCoreDecisionDto::Accepted {
             point,
             segment_started,
@@ -4706,7 +4722,7 @@ impl MobileRideMapCore {
 
     /// Returns a bounded page of active route points.
     ///
-    /// Durable recordings are paged directly from SQLite so the bridge never materializes the
+    /// Durable recordings are paged directly from `SQLite` so the bridge never materializes the
     /// complete route just to answer a preview request.
     pub fn points_after(
         &self,
@@ -4732,7 +4748,7 @@ impl MobileRideMapCore {
                 .points
                 .into_iter()
                 .map(|point| {
-                    state.point_from_location(
+                    MobileRideMapCoreInner::point_from_location(
                         point.location,
                         point.sequence,
                         point.segment_id,
@@ -4747,19 +4763,27 @@ impl MobileRideMapCore {
             });
         }
 
-        let start = after_cursor.map_or(0, |cursor| cursor.saturating_add(1) as usize);
+        let start = after_cursor.map_or(state.recorder.first_point_sequence(), |cursor| {
+            cursor.saturating_add(1)
+        });
         let mut points: Vec<_> = state
             .recorder
             .points()
             .iter()
             .copied()
             .enumerate()
-            .skip(start)
+            .map(|(offset, sample)| {
+                (
+                    state.recorder.first_point_sequence() + offset as u64,
+                    sample,
+                )
+            })
+            .filter(|(sequence, _)| *sequence >= start)
             .take(page_size as usize + 1)
             .map(|(sequence, sample)| {
-                state.point_from_location(
+                MobileRideMapCoreInner::point_from_location(
                     mobile_ride_location_dto(sample.sample()),
-                    sequence as u64,
+                    sequence,
                     sample.segment_id(),
                     sample.telemetry_state(),
                 )
@@ -12844,9 +12868,17 @@ mod tests {
             state
                 .start_gps_only(1_000, Some("pev-1".to_owned()))
                 .expect("map recording starts");
-            state
-                .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
-                .expect("route point is accepted");
+            for index in 0..501_u64 {
+                state
+                    .ingest_location(
+                        1_000 + index * 1_000,
+                        1_700_000_000_000 + index * 1_000,
+                        40.0 + (f64::from(u32::try_from(index).expect("bounded")) * 0.000_01),
+                        -105.0,
+                        3.0,
+                    )
+                    .expect("route point is accepted");
+            }
             database.shutdown().expect("database shuts down");
         }
 
@@ -12855,8 +12887,11 @@ mod tests {
         let state = MobileRideMapCore::with_database(database.clone());
         let snapshot = state.current_snapshot().expect("interrupted ride restores");
         assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
-        assert_eq!(snapshot.summary.point_count, 1);
-        assert_eq!(state.points_after(None, 10).unwrap().points.len(), 1);
+        assert_eq!(snapshot.summary.point_count, 501);
+        let last_page = state.points_after(Some(499), 10).unwrap();
+        assert_eq!(last_page.points.len(), 1);
+        assert_eq!(last_page.points[0].sequence, 500);
+        assert!(!last_page.has_more);
         let rides = database.list_rides(None, 10).expect("recovered ride lists");
         assert_eq!(rides.rides.len(), 1);
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));

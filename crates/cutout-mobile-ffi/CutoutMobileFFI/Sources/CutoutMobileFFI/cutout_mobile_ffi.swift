@@ -2455,7 +2455,7 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     /**
      * Returns a bounded page of active route points.
      *
-     * Durable recordings are paged directly from SQLite so the bridge never materializes the
+     * Durable recordings are paged directly from `SQLite` so the bridge never materializes the
      * complete route just to answer a preview request.
      */
     func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws  -> MobileRideMapCorePointBatchDto
@@ -2636,7 +2636,7 @@ open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
     /**
      * Returns a bounded page of active route points.
      *
-     * Durable recordings are paged directly from SQLite so the bridge never materializes the
+     * Durable recordings are paged directly from `SQLite` so the bridge never materializes the
      * complete route just to answer a preview request.
      */
 open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideMapCorePointBatchDto  {
@@ -2814,6 +2814,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Creates an indexed trail definition.
      */
     func createTrail(name: String) throws  -> MobileTrailIdDto
+
+    /**
+     * Enqueues a location sample for ordered background persistence.
+     */
+    func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto) throws
 
     /**
      * Exports one ride summary as a versioned JSON document.
@@ -3133,6 +3138,20 @@ open func createTrail(name: String)throws  -> MobileTrailIdDto  {
         FfiConverterString.lower(name),$0
     )
 })
+}
+
+    /**
+     * Enqueues a location sample for ordered background persistence.
+     */
+open func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterTypeMobileRideLocationDto_lower(location),
+        FfiConverterUInt64.lower(segmentId),
+        FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lower(telemetryState),$0
+    )
+}
 }
 
     /**
@@ -23008,7 +23027,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 48725) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 46230) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 30733) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 26059) {
@@ -23060,6 +23079,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 39184) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry() != 39300) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 3509) {

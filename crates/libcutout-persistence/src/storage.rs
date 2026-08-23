@@ -1401,6 +1401,31 @@ impl RideDatabase {
         })
     }
 
+    /// Enqueues one location for ordered background persistence.
+    ///
+    /// The command remains ordered with lifecycle transitions on this worker. The bounded queue
+    /// applies backpressure when the worker is busy so an accepted map sample is never dropped.
+    /// Callers must perform admission against their Rust-owned recording projection before
+    /// enqueueing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::WorkerStopped`] when the worker is no longer available.
+    pub fn enqueue_location_with_segment_and_telemetry(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<(), StorageError> {
+        self.enqueue_blocking(Command::AppendLocationNoReply {
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+        })
+    }
+
     /// Loads the durable summary projection for one ride.
     ///
     /// # Errors
@@ -1455,7 +1480,7 @@ impl RideDatabase {
     /// Returns [`StorageError`] when the worker cannot stop or its ownership slot cannot be
     /// released.
     pub fn shutdown(self) -> Result<(), StorageError> {
-        self.request(|reply| Command::Shutdown { reply })?;
+        self.request_blocking(|reply| Command::Shutdown { reply })?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
         let Some(mut existing) = owner.take() else {
             return Ok(());
@@ -1476,11 +1501,26 @@ impl RideDatabase {
         receive(&response)
     }
 
+    fn request_blocking<T>(
+        &self,
+        build: impl FnOnce(Reply<T>) -> Command,
+    ) -> Result<T, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue_blocking(build(reply))?;
+        receive(&response)
+    }
+
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
         self.sender.try_send(command).map_err(|error| match error {
             mpsc::TrySendError::Full(_) => StorageError::QueueFull,
             mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
         })
+    }
+
+    fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
+        self.sender
+            .send(command)
+            .map_err(|_| StorageError::WorkerStopped)
     }
 }
 
@@ -1646,6 +1686,12 @@ enum Command {
         segment_id: u64,
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
+    },
+    AppendLocationNoReply {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
     },
     Summary {
         ride_id: RideId,
@@ -1900,6 +1946,20 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     segment_id,
                     telemetry_state,
                 ));
+            }
+            Command::AppendLocationNoReply {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+            } => {
+                let _ = append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                );
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
@@ -3512,8 +3572,7 @@ fn append_location_in_transaction(
             let sequence = previous
                 .map(|(sequence, _, _)| sequence + 1)
                 .unwrap_or_default();
-            match insert_location(
-                connection,
+            let insert = LocationInsert {
                 ride_id,
                 sequence,
                 sample,
@@ -3521,7 +3580,8 @@ fn append_location_in_transaction(
                 telemetry_state,
                 distance_millimetres,
                 updated_at_ms,
-            ) {
+            };
+            match insert_location(connection, &insert) {
                 Ok(()) => Ok(LocationAdmission::Accepted),
                 Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
                     if error.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -3554,8 +3614,8 @@ fn load_ride_write_state(
     ))
 }
 
-fn insert_location(
-    connection: &Connection,
+#[derive(Clone, Copy)]
+struct LocationInsert {
     ride_id: RideId,
     sequence: i64,
     sample: LocationSample,
@@ -3563,7 +3623,18 @@ fn insert_location(
     telemetry_state: RouteTelemetryState,
     distance_millimetres: u64,
     updated_at_ms: u64,
-) -> Result<(), StorageError> {
+}
+
+fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(), StorageError> {
+    let LocationInsert {
+        ride_id,
+        sequence,
+        sample,
+        segment_id,
+        telemetry_state,
+        distance_millimetres,
+        updated_at_ms,
+    } = *insert;
     connection.execute(
         "INSERT INTO ride_points
             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
