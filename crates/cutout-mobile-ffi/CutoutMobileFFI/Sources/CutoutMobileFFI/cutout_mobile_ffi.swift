@@ -2447,6 +2447,11 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double) throws  -> MobileRideMapCoreDecisionDto
 
     /**
+     * Returns a storage error encountered while restoring the previous ride projection.
+     */
+    func initializationError()  -> MobileRideMapCoreErrorDto?
+
+    /**
      * Records a confirmed vehicle telemetry timestamp without backfilling route points.
      *
      * # Errors
@@ -2643,6 +2648,17 @@ open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeD
         FfiConverterDouble.lower(latitudeDegrees),
         FfiConverterDouble.lower(longitudeDegrees),
         FfiConverterDouble.lower(horizontalAccuracyMeters),$0
+    )
+})
+}
+
+    /**
+     * Returns a storage error encountered while restoring the previous ride projection.
+     */
+open func initializationError() -> MobileRideMapCoreErrorDto?  {
+    return try!  FfiConverterOptionTypeMobileRideMapCoreErrorDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_initialization_error(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -22188,6 +22204,30 @@ fileprivate struct FfiConverterOptionTypeMobileProtocolFamilyDto: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreErrorDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideMapCoreErrorDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideMapCoreErrorDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileVerificationStatusDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileVerificationStatusDto?
 
@@ -23204,6 +23244,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 25961) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_initialization_error() != 36652) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_telemetry() != 27964) {

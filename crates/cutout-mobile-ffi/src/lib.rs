@@ -4299,6 +4299,7 @@ struct MobileRideMapCoreInner {
     database: Option<Arc<RideDatabaseHandle>>,
     active_ride_id: Option<MobileRideIdDto>,
     recorder: ride_maps::RideMapRecorder,
+    initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
 
 impl MobileRideMapCoreInner {
@@ -4307,18 +4308,19 @@ impl MobileRideMapCoreInner {
             database,
             active_ride_id: None,
             recorder: ride_maps::RideMapRecorder::new(),
+            initialization_error: None,
         };
-        state.restore_active_ride();
+        if let Err(error) = state.restore_active_ride() {
+            state.initialization_error = Some(error);
+        }
         state
     }
 
-    fn restore_active_ride(&mut self) {
+    fn restore_active_ride(&mut self) -> Result<(), MobileRideMapCoreErrorDto> {
         let Some(database) = self.database.as_ref() else {
-            return;
+            return Ok(());
         };
-        let Ok(page) = database.list_rides(None, 50) else {
-            return;
-        };
+        let page = database.list_rides(None, 50).map_err(map_core_error)?;
         let Some(ride) = page.rides.into_iter().find(|ride| {
             matches!(
                 ride.state,
@@ -4328,24 +4330,23 @@ impl MobileRideMapCoreInner {
                     | MobileRideLifecycleStateDto::Interrupted
             )
         }) else {
-            return;
+            return Ok(());
         };
         self.active_ride_id = Some(ride.id.clone());
         let mut cursor = None;
         let mut samples = Vec::new();
         loop {
-            let Ok(page) = database.route_points(ride.id.clone(), cursor, 500) else {
-                return;
-            };
-            samples.extend(page.points.into_iter().filter_map(|point| {
-                mobile_ride_location(point.location).ok().map(|sample| {
-                    ride_maps::RideMapPoint::new(
-                        sample,
-                        ride_maps::RideMapSegmentId::new(point.segment_id),
-                        map_ride_telemetry_state(point.telemetry_state),
-                    )
-                })
-            }));
+            let page = database
+                .route_points(ride.id.clone(), cursor, 500)
+                .map_err(map_core_error)?;
+            for point in page.points {
+                let sample = mobile_ride_location(point.location).map_err(map_core_error)?;
+                samples.push(ride_maps::RideMapPoint::new(
+                    sample,
+                    ride_maps::RideMapSegmentId::new(point.segment_id),
+                    map_ride_telemetry_state(point.telemetry_state),
+                ));
+            }
             if samples.len() > ride_maps::MAX_LIVE_ROUTE_POINTS {
                 let excess = samples.len() - ride_maps::MAX_LIVE_ROUTE_POINTS;
                 samples.drain(..excess);
@@ -4370,6 +4371,7 @@ impl MobileRideMapCoreInner {
                 ride.summary.distance_millimetres,
             ),
         );
+        Ok(())
     }
 
     fn point_from_location(
@@ -4523,6 +4525,13 @@ impl MobileRideMapCore {
             .as_ref()
             .zip(state.recorder.state())
             .map(|(_, active)| state.snapshot(active.into()))
+    }
+
+    /// Returns a storage error encountered while restoring the previous ride projection.
+    #[must_use]
+    pub fn initialization_error(&self) -> Option<MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.initialization_error.clone()
     }
 
     /// Starts a GPS-only ride and retains the last connected vehicle as a candidate.
@@ -12954,6 +12963,30 @@ mod tests {
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
 
         database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_reports_storage_failure_during_restore() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-recovery-error-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database.shutdown().expect("database shuts down");
+
+        let state = MobileRideMapCore::with_database(database);
+        assert!(matches!(
+            state.initialization_error(),
+            Some(MobileRideMapCoreErrorDto::Storage(_))
+        ));
+
         let _ = fs::remove_file(path);
     }
 }

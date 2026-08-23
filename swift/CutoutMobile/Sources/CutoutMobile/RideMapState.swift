@@ -114,15 +114,19 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable {
 public final class MobileRideMapState: @unchecked Sendable {
     private let core: MobileRideMapCore
     private let database: RideDatabaseHandle?
+    public private(set) var initializationError: MobileRideMapError?
 
     public init() {
         core = MobileRideMapCore()
         database = nil
+        initializationError = nil
     }
 
     init(database: RideDatabaseHandle) {
-        core = MobileRideMapCore.withDatabase(database: database)
+        let core = MobileRideMapCore.withDatabase(database: database)
+        self.core = core
         self.database = database
+        initializationError = core.initializationError().map(map)
     }
 
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {

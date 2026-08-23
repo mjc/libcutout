@@ -469,7 +469,8 @@ public final class CutoutSessionCore: NSObject {
         guard let database = RustPersistenceStore.shared else {
             return (MobileRideMapState(), "Rust ride database is unavailable")
         }
-        return (MobileRideMapState(database: database), nil)
+        let state = MobileRideMapState(database: database)
+        return (state, state.initializationError.map(String.init(describing:)))
     }
 
     public func start() {
