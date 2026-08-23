@@ -390,12 +390,10 @@ struct LightingRouteView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Lighting")
-                    .font(.largeTitle.bold())
-
-                Text("Standalone RGB controller")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                PevScreenTitleBlock(
+                    title: "Lighting",
+                    subtitle: "Standalone RGB controller"
+                )
 
                 connectionCard
                 rideCard
@@ -403,7 +401,8 @@ struct LightingRouteView: View {
                 presetsCard
                 commandStatusCard
             }
-            .padding()
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
         .background(PevColors.pageBackground.ignoresSafeArea())
         .task { model.start() }
@@ -411,50 +410,82 @@ struct LightingRouteView: View {
     }
 
     private var connectionCard: some View {
-        GroupBox("Controller") {
-            VStack(alignment: .leading, spacing: 8) {
-                Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
-                    .accessibilityIdentifier("lighting.connection-state")
-                Text(model.peripheralName ?? "Scanning for MELK-OC21")
+        lightingCard {
+            HStack(alignment: .top, spacing: 12) {
+                Label("Controller", systemImage: "lightbulb.led.fill")
                     .font(.headline)
-                Text("Verified MELK-OC21 profile · FFF0 service · FFF3 write · FFF4 notify")
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-                if model.canReconnect {
-                    Button("Reconnect") { model.reconnect() }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("lighting.reconnect")
-                }
-                Toggle(
-                    "Restore last confirmed state",
-                    isOn: Binding(
-                        get: { model.restoreEnabled },
-                        set: { model.setRestoreEnabled($0) }
-                    )
-                )
-                .accessibilityIdentifier("lighting.restore-toggle")
-                Text("Restore is attempted only after the same verified accessory reconnects.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                connectionPill
             }
+
+            Text(model.peripheralName ?? "MELK-OC21")
+                .font(.title3.weight(.bold))
+                .accessibilityIdentifier("lighting.controller-name")
+
+            Text(model.peripheralName == nil ? "Scanning for a verified accessory" : "Verified MELK-OC21 profile")
+                .font(.subheadline)
+                .foregroundStyle(PevColors.muted)
+
+            HStack(spacing: 8) {
+                profileBadge("FFF0 service")
+                profileBadge("FFF3 write")
+                profileBadge("FFF4 notify")
+            }
+
+            if model.canReconnect {
+                Button {
+                    model.reconnect()
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("lighting.reconnect")
+            }
+
+            Toggle(
+                "Restore last confirmed state",
+                isOn: Binding(
+                    get: { model.restoreEnabled },
+                    set: { model.setRestoreEnabled($0) }
+                )
+            )
+            .accessibilityIdentifier("lighting.restore-toggle")
+            Text("Only the same verified accessory can restore its last confirmed state.")
+                .font(.footnote)
+                .foregroundStyle(PevColors.muted)
         }
     }
 
     private var rideCard: some View {
-        GroupBox("Ride session") {
-            VStack(alignment: .leading, spacing: 8) {
-                Label(rideModel.connectionStatusText, systemImage: "figure.roll")
-                Text("Lighting uses an independent CoreBluetooth central and remains available while the ride session is connected.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+        lightingCard {
+            HStack(alignment: .top, spacing: 12) {
+                Label("Ride session", systemImage: "figure.roll")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Text(rideModel.connectionStatusText)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(PevColors.muted)
             }
+            Text("Lighting uses an independent Bluetooth connection and does not replace the active ride.")
+                .font(.footnote)
+                .foregroundStyle(PevColors.muted)
         }
     }
 
     private var controlsCard: some View {
-        GroupBox("Manual controls") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
+        lightingCard {
+            HStack {
+                Label("Manual controls", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+                Spacer()
+                Text(controlsEnabled ? "Ready" : "Connect first")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(controlsEnabled ? PevColors.green : PevColors.muted)
+            }
+
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
                     lightingButton("Power on", systemImage: "power", identifier: "lighting.power-on") {
                         model.setPower(true)
                     }
@@ -463,7 +494,7 @@ struct LightingRouteView: View {
                     }
                 }
 
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     colorButton("Red", color: .red, identifier: "lighting.color.red") {
                         model.setSolidColor(red: 255, green: 0, blue: 0)
                     }
@@ -478,7 +509,7 @@ struct LightingRouteView: View {
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("Brightness", systemImage: "sun.max")
                         Spacer()
@@ -500,32 +531,39 @@ struct LightingRouteView: View {
     }
 
     private var commandStatusCard: some View {
-        GroupBox("Command status") {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Status: \(model.commandStatus.displayText)", systemImage: model.commandStatus.symbolName)
-                    .accessibilityIdentifier("lighting.command-status")
-                Text("Writes remain requested until you explicitly observe the controller change.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button("Mark confirmed") { model.markConfirmed() }
-                        .accessibilityIdentifier("lighting.mark-confirmed")
-                    Button("Mark unconfirmed") { model.markUnconfirmed() }
-                        .accessibilityIdentifier("lighting.mark-unconfirmed")
-                }
-                .buttonStyle(.bordered)
-                .disabled(model.commandStatus != .requested)
+        lightingCard {
+            HStack(spacing: 12) {
+                Label("Command status", systemImage: model.commandStatus.symbolName)
+                    .font(.headline)
+                Spacer()
+                Text(model.commandStatus.displayText)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(commandStatusColor)
             }
+            .accessibilityIdentifier("lighting.command-status")
+            Text("A write stays requested until the controller is explicitly observed. No guessed success is shown.")
+                .font(.footnote)
+                .foregroundStyle(PevColors.muted)
+            HStack(spacing: 10) {
+                Button("Mark confirmed") { model.markConfirmed() }
+                    .accessibilityIdentifier("lighting.mark-confirmed")
+                Button("Mark unconfirmed") { model.markUnconfirmed() }
+                    .accessibilityIdentifier("lighting.mark-unconfirmed")
+            }
+            .buttonStyle(.bordered)
+            .disabled(model.commandStatus != .requested)
         }
     }
 
     private var presetsCard: some View {
-        GroupBox("Presets") {
+        lightingCard {
+            Label("Presets", systemImage: "square.stack.3d.up.fill")
+                .font(.headline)
             VStack(alignment: .leading, spacing: 10) {
                 if model.presets.isEmpty {
                     Text("Save a confirmed solid color and brightness as a named preset.")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PevColors.muted)
                 } else {
                     ForEach(model.presets, id: \.name) { preset in
                         Button {
@@ -559,6 +597,56 @@ struct LightingRouteView: View {
                 }
             }
         }
+    }
+
+    private var connectionPill: some View {
+        Label(model.connectionState.displayText, systemImage: model.connectionState.symbolName)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(connectionStatusColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(connectionStatusColor.opacity(0.14), in: Capsule())
+            .accessibilityIdentifier("lighting.connection-state")
+    }
+
+    private var connectionStatusColor: Color {
+        switch model.connectionState {
+        case .ready:
+            PevColors.green
+        case .failed:
+            PevColors.red
+        default:
+            PevColors.yellow
+        }
+    }
+
+    private var commandStatusColor: Color {
+        switch model.commandStatus {
+        case .confirmed:
+            PevColors.green
+        case .unconfirmed:
+            PevColors.orange
+        case .requested:
+            PevColors.yellow
+        case .idle:
+            PevColors.muted
+        }
+    }
+
+    private func profileBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.monospaced())
+            .foregroundStyle(PevColors.muted)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(PevColors.cardFill.opacity(0.7), in: Capsule())
+    }
+
+    private func lightingCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12, content: content)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(PevDashboardCardBackground(cornerRadius: 20))
     }
 
     private func lightingButton(
