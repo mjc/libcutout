@@ -1313,6 +1313,21 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
     }
 
+    func testElectricUnicycleSessionExposesRustOwnedPedalModeState() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertEqual(session.pedalModeState.kind, .unknown)
+
+        XCTAssertThrowsError(
+            try session.perform(.setPedalMode(.hard), at: MonotonicMilliseconds(10))
+        )
+
+        XCTAssertEqual(session.pedalModeState.kind, .refused)
+        XCTAssertEqual(session.pedalModeState.requested, .hard)
+        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
+    }
+
+
     func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(

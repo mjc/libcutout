@@ -1309,6 +1309,45 @@ public struct LightSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+public struct PedalModeSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: PedalMode.Kind?
+    public let requested: PedalMode.Kind?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: PedalMode.Kind? = nil,
+        requested: PedalMode.Kind? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobilePedalModeSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(PedalMode.Kind.init)
+        self.requested = dto.requested.map(PedalMode.Kind.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+
 public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     case supported
     case unverified
@@ -4872,6 +4911,14 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var pedalModeState: PedalModeSettingState {
+        switch inner {
+        case .aero(let session):
+            PedalModeSettingState(session.pedalModeState())
+        case .falcon(let session):
+            PedalModeSettingState(session.pedalModeState())
+        }
+    }
     public var currentSnapshot: TelemetrySnapshot {
         switch inner {
         case .aero(let session):
@@ -5337,6 +5384,14 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var pedalModeState: PedalModeSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.pedalModeState
+        case .vescOnewheel:
+            nil
+        }
+    }
     fileprivate var currentSnapshot: TelemetrySnapshot {
         switch self {
         case .electricUnicycle(let session):
@@ -5468,6 +5523,9 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
         session.headlightState
     }
 
+    public var pedalModeState: PedalModeSettingState? {
+        session.pedalModeState
+    }
     public func handle(_ event: CoreBluetoothSessionEvent) throws -> CoreBluetoothSessionStep {
         switch event {
         case .linkUp(let monotonicMilliseconds):
@@ -5669,6 +5727,9 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         runner.headlightState
     }
 
+    public var pedalModeState: PedalModeSettingState? {
+        runner.pedalModeState
+    }
     /// Configures the Rust-owned charge estimate profile for this connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         runner.configureChargeEstimate(profile: profile)
