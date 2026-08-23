@@ -202,6 +202,43 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.musicNowPlaying?.title, "Track")
         XCTAssertEqual(model.musicTimelineEvents.count, 1)
         XCTAssertEqual(driver.rideMapStateHandle.currentMusicEvents()?.count, 1)
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.trackId, "track-1")
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.trackPositionMs, 0)
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.wallClockUnixMs, 20)
+    }
+
+    @MainActor
+    func testMusicCaptureObservationClearsWhenHistoryDisabled() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertTrue(model.startGpsOnlyRide())
+
+        let snapshot = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session-1",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            positionMilliseconds: 1_000,
+            durationMilliseconds: 60_000,
+            observedAtMs: 10,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: true,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: false
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: snapshot),
+            wallClockAtMs: 20,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertNotNil(driver.lastMusicCaptureObservation)
+
+        XCTAssertTrue(model.setMusicHistoryPolicy(.disabled))
+        XCTAssertNil(driver.lastMusicCaptureObservation)
     }
 
     @MainActor
@@ -2207,6 +2244,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
+    private(set) var lastMusicCaptureObservation: MobilePevcapMusicEventDto?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     private let scanState: DevicePickerScanState
     private let pairingSucceeds: Bool
@@ -2272,6 +2310,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func disconnectAndScan() {
         disconnectCount += 1
+    }
+
+    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?) {
+        lastMusicCaptureObservation = observation
     }
 
     func now() -> MonotonicMilliseconds {

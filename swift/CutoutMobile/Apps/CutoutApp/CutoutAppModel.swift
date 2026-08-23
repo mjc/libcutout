@@ -282,10 +282,26 @@ final class CutoutAppModel {
         wallClockAtMs: UInt64? = nil,
         clockUncertaintyMs: UInt64 = 1_000
     ) -> Bool {
+        let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
+        let captureObservation: MobilePevcapMusicEventDto? = {
+            guard musicHistoryPolicy != .disabled,
+                  let item = observation.snapshot.item,
+                  let positionMilliseconds = observation.snapshot.positionMilliseconds
+            else { return nil }
+            return MobilePevcapMusicEventDto(
+                provider: observation.snapshot.provider,
+                trackId: item.identifier,
+                trackPositionMs: positionMilliseconds,
+                wallClockUnixMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs,
+                rideSequence: nil
+            )
+        }()
+        core.updateMusicCaptureObservation(captureObservation)
         do {
             _ = try musicCoordinator.ingest(
                 observation: observation,
-                wallClockAtMs: wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000),
+                wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
             refreshMusicTimeline()
@@ -304,10 +320,16 @@ final class CutoutAppModel {
         do {
             try musicCoordinator.setHistoryPolicy(policy)
             refreshMusicTimeline()
+            if policy == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
             return true
         } catch MobileRideMapError.NoActiveRide {
             // Keep the choice as the default for the next ride. Rust will
             // apply it once a recording exists.
+            if policy == .disabled {
+                core.updateMusicCaptureObservation(nil)
+            }
             return true
         } catch {
             musicHistoryPolicy = previousPolicy

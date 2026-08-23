@@ -32,6 +32,7 @@ protocol CutoutSessionDriving: AnyObject {
     func flushCapture() async -> Bool
     func disconnectAndScan()
     func now() -> MonotonicMilliseconds
+    func updateMusicCaptureObservation(_ observation: MobilePevcapMusicEventDto?)
 }
 
 extension CutoutSessionCore: CutoutSessionDriving {}
