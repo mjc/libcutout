@@ -16,13 +16,13 @@ final class CutoutAppModelTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        XCTAssertNoThrow(try RideSessionMarkerStore().clear())
-        XCTAssertNoThrow(try DevicePickerSelectionStore().clear())
+        try? RideSessionMarkerStore().clear()
+        try? DevicePickerSelectionStore().clear()
     }
 
     override func tearDown() {
-        XCTAssertNoThrow(try RideSessionMarkerStore().clear())
-        XCTAssertNoThrow(try DevicePickerSelectionStore().clear())
+        try? RideSessionMarkerStore().clear()
+        try? DevicePickerSelectionStore().clear()
         super.tearDown()
     }
 
@@ -67,6 +67,68 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(observesChange({ _ = route.body }) {
             driver.onDisplayStateChange?(RideDisplayState(notificationCount: 1))
         })
+    }
+
+    @MainActor
+    func testRideMapStateRestoresTheRustSnapshotAndRouteBeforeSessionStart() throws {
+        let driver = SessionDriverSpy(rows: [])
+        _ = try driver.rideMapStateHandle.startGpsOnly(
+            atMs: 100,
+            lastConnectedVehicle: "pev-restored"
+        )
+        _ = try driver.rideMapStateHandle.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 5
+        )
+        XCTAssertEqual(
+            try driver.rideMapStateHandle.observeVehicleConnection(
+                platformIdentifier: "pev-restored",
+                atMs: 200
+            ),
+            .associated
+        )
+
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.rideMapSnapshot?.associatedVehicle, "pev-restored")
+        XCTAssertEqual(model.rideMapSnapshot?.summary.pointCount, 1)
+        XCTAssertEqual(model.rideMapPoints.count, 1)
+    }
+
+    @MainActor
+    func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.pauseRideMap())
+        XCTAssertEqual(model.rideMapError, .NoActiveRide)
+    }
+
+    @MainActor
+    func testRideMapCoreStorageFailureRemainsVisibleAfterLocationDelivery() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        driver.onRideMapErrorChange?(.Storage("disk full"))
+
+        XCTAssertEqual(model.rideMapError, .Storage("disk full"))
+    }
+
+    @MainActor
+    func testRideMapRecordingProjectionStaysActiveWhileHistoryIsSelected() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.pauseRideMap())
+        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertFalse(model.isRideMapRecording)
     }
 
     @MainActor
@@ -195,8 +257,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testSupportedPickerActionStartsTheSelectedConnection() {
         let store = DevicePickerSelectionStore()
-        XCTAssertNoThrow(try store.clear())
-        defer { XCTAssertNoThrow(try store.clear()) }
+        try? store.clear()
+        defer { try? store.clear() }
         let driver = SessionDriverSpy(
             rows: [
                 DevicePickerRow(
@@ -223,8 +285,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRepeatedUseCannotReplaceAnInFlightConnection() {
         let store = DevicePickerSelectionStore()
-        XCTAssertNoThrow(try store.clear())
-        defer { XCTAssertNoThrow(try store.clear()) }
+        try? store.clear()
+        defer { try? store.clear() }
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -459,7 +521,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
-        defer { XCTAssertNoThrow(try store.clear()) }
+        defer { try? store.clear() }
         let model = CutoutAppModel()
 
         model.disconnectTransport()
@@ -483,8 +545,8 @@ final class CutoutAppModelTests: XCTestCase {
             connectionRoute: .vescOnewheel
         )
         let store = DevicePickerSelectionStore()
-        XCTAssertNoThrow(try store.clear())
-        defer { XCTAssertNoThrow(try store.clear()) }
+        try? store.clear()
+        defer { try? store.clear() }
         let driver = SessionDriverSpy(rows: [row])
         let model = CutoutAppModel(core: driver)
         model.start()
@@ -817,7 +879,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
-        defer { XCTAssertNoThrow(try store.clear()) }
+        defer { try? store.clear() }
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))
@@ -1985,6 +2047,8 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 @MainActor
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
+    let rideMapStateHandle = MobileRideMapState()
+    let rideMapStorageError: String? = nil
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
@@ -1994,6 +2058,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
+    var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
+    var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?

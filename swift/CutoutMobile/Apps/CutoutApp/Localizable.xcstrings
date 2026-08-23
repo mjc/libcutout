@@ -633,6 +633,150 @@
       "comment" : "Visible capture status. The placeholder is the saved filename.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved capture: %@" } } }
     },
+    "navigation.section.map" : {
+      "comment" : "Top-level app navigation title for live and historical ride maps.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Map" } } }
+    },
+    "common.cancel" : {
+      "comment" : "Generic cancellation action used by confirmation dialogs.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
+    },
+    "ride_map.associated_vehicle" : {
+      "comment" : "Ride-map summary label for the confirmed vehicle identity.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vehicle: %@" } } }
+    },
+    "ride_map.distance" : {
+      "comment" : "Ride-map summary label. The placeholder is the formatted distance.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Distance: %@" } } }
+    },
+    "ride_map.current_marker" : {
+      "comment" : "Map marker for the most recent validated route point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current location" } } }
+    },
+    "ride_map.duration" : {
+      "comment" : "Ride-map summary label. The placeholder is the formatted duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Duration: %@" } } }
+    },
+    "ride_map.discard" : {
+      "comment" : "Ride-map destructive control that discards a stopped ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard" } } }
+    },
+    "ride_map.discard_confirm_title" : {
+      "comment" : "Ride-map confirmation title before deleting a stopped ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discard this ride?" } } }
+    },
+    "ride_map.gps_only" : {
+      "comment" : "Ride-map summary when no vehicle has been associated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS-only ride" } } }
+    },
+    "ride_map.following" : {
+      "comment" : "Camera state while the map follows the latest validated point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Following route" } } }
+    },
+    "ride_map.history_empty" : {
+      "comment" : "Ride-map history state before durable history queries are available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved rides will appear here when history storage is available." } } }
+    },
+    "ride_map.map_alternative" : {
+      "comment" : "Accessible textual alternative for the route map.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Route map. The text summary below contains the validated route facts." } } }
+    },
+    "ride_map.mode.history" : {
+      "comment" : "Ride-map mode picker option for historical rides.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "History" } } }
+    },
+    "ride_map.mode.live" : {
+      "comment" : "Ride-map mode picker option for the active ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Live" } } }
+    },
+    "ride_map.no_active" : {
+      "comment" : "Live ride-map state before a ride has been started.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No active ride" } } }
+    },
+    "ride_map.no_points" : {
+      "comment" : "Live ride-map state before the first location point is admitted.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for a validated location fix." } } }
+    },
+    "ride_map.persistence_unavailable" : {
+      "comment" : "Warning shown when the ride-map database could not be opened and the map is session-only.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride maps are stored only for this session because durable storage is unavailable." } } }
+    },
+    "ride_map.command_failed" : {
+      "comment" : "Warning shown when a Rust-owned ride-map command or query fails without changing ride state.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The map action could not be completed; the ride state was not changed." } } }
+    },
+    "ride_map.history_truncated" : {
+      "comment" : "History route warning when the bounded UI point preview is incomplete.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }
+    },
+    "ride_map.history_recording_continues" : {
+      "comment" : "Persistent history-mode status while the Rust-owned ride recording continues in the background.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording continues" } } }
+    },
+    "ride_map.pause" : {
+      "comment" : "Ride-map control that pauses the active recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pause" } } }
+    },
+    "ride_map.points" : {
+      "comment" : "Ride-map summary label. The placeholder is the admitted point count.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Points: %lld" } } }
+    },
+    "ride_map.not_following" : {
+      "comment" : "Camera state after the user pans or zooms the map.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Manual map position" } } }
+    },
+    "ride_map.recenter" : {
+      "comment" : "Ride-map control that returns the camera to the latest validated point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recenter" } } }
+    },
+    "ride_map.resume" : {
+      "comment" : "Ride-map control that resumes a paused recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Resume" } } }
+    },
+    "ride_map.return_live" : {
+      "comment" : "History-mode action that returns to the active live ride map.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Return to Live" } } }
+    },
+    "ride_map.save" : {
+      "comment" : "Ride-map control that finalizes a stopped ride as saved.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Save" } } }
+    },
+    "ride_map.start" : {
+      "comment" : "Ride-map control that starts a GPS-only recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start GPS-only ride" } } }
+    },
+    "ride_map.start_marker" : {
+      "comment" : "Map marker for the first validated point in a route.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start" } } }
+    },
+    "ride_map.start_new" : {
+      "comment" : "Ride-map control that starts another recording after a stopped ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Start new ride" } } }
+    },
+    "ride_map.status.paused" : {
+      "comment" : "Ride-map recording status for a paused ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused" } } }
+    },
+    "ride_map.status.recording" : {
+      "comment" : "Ride-map recording status for an active ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording" } } }
+    },
+    "ride_map.status.stopped" : {
+      "comment" : "Ride-map recording status for a stopped ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stopped" } } }
+    },
+    "ride_map.status.saved" : {
+      "comment" : "Ride-map status after Rust confirms durable save.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved" } } }
+    },
+    "ride_map.status.discarded" : {
+      "comment" : "Ride-map status after Rust confirms explicit discard.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Discarded" } } }
+    },
+    "ride_map.stop" : {
+      "comment" : "Ride-map control that permanently stops the active recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stop" } } }
+    },
     "navigation.section.capture" : {
       "comment" : "Top-level app navigation title for recording a capture.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture" } } }

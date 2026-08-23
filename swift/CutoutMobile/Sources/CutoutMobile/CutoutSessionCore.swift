@@ -309,6 +309,8 @@ struct BoundedDiagnosticLog {
 
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
+    public var rideMapStateHandle: MobileRideMapState { rideMapState }
+    public private(set) var rideMapStorageError: String?
     public private(set) var displayState = RideDisplayState()
     public private(set) var phase = SessionConnectionPhase.starting
     public var records: [String] { diagnosticLog.values }
@@ -331,6 +333,9 @@ public final class CutoutSessionCore: NSObject {
     public var onFaultHistoryReadbackChange: ((FaultHistoryReadback?) -> Void)?
     public var onBmsSnapshotChange: ((BmsSnapshot?) -> Void)?
     public var onPhoneLocationSnapshotChange: ((MobilePhoneLocationSnapshotDto, MonotonicMilliseconds) -> Void)?
+    public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
+    public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
+    public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
@@ -370,6 +375,7 @@ public final class CutoutSessionCore: NSObject {
     private var lastDisplayPublication: MonotonicMilliseconds?
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let phoneLocationState = MobilePhoneLocationState()
+    private let rideMapState: MobileRideMapState
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
@@ -415,6 +421,14 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
         self.selectedDeviceStore = selectedDeviceStore
+        if testScript == nil {
+            let storage = Self.makeRideMapState()
+            self.rideMapState = storage.state
+            self.rideMapStorageError = storage.error
+        } else {
+            self.rideMapState = MobileRideMapState()
+            self.rideMapStorageError = nil
+        }
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
@@ -434,10 +448,20 @@ public final class CutoutSessionCore: NSObject {
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
+        let storage = Self.makeRideMapState()
+        self.rideMapState = storage.state
+        self.rideMapStorageError = storage.error
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
     }
 #endif
+
+    private static func makeRideMapState() -> (state: MobileRideMapState, error: String?) {
+        guard let database = RustPersistenceStore.shared else {
+            return (MobileRideMapState(), "Rust ride database is unavailable")
+        }
+        return (MobileRideMapState(database: database), nil)
+    }
 
     public func start() {
 #if DEBUG
@@ -1497,6 +1521,21 @@ public final class CutoutSessionCore: NSObject {
         publishOnMain { self.onPhoneLocationSnapshotChange?(value, receivedAt) }
     }
 
+    private func publishRideMapDecision(_ decision: MobileRideMapDecisionDto) {
+        guard let snapshot = rideMapState.currentSnapshot() else { return }
+        publishOnMain { self.onRideMapDecisionChange?(snapshot, decision) }
+    }
+
+    private func publishRideMapSnapshot() {
+        guard let snapshot = rideMapState.currentSnapshot() else { return }
+        publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
+    }
+
+    private func publishRideMapError(_ error: Error) {
+        guard let error = error as? MobileRideMapError, error != .NoActiveRide else { return }
+        publishOnMain { self.onRideMapErrorChange?(error) }
+    }
+
     private func publishProtocolIdentityCandidate() {
         let value = protocolIdentityCandidate
         publishOnMain { self.onProtocolIdentityCandidateChange?(value) }
@@ -2045,6 +2084,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
+        observeRideMapConnection(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {
@@ -2054,6 +2094,20 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
+    }
+
+    private func observeRideMapConnection(platformIdentifier: String) {
+        do {
+            let outcome = try rideMapState.observeVehicleConnection(
+                platformIdentifier: platformIdentifier,
+                atMs: clock.now().rawValue
+            )
+            if outcome == .associated {
+                publishRideMapSnapshot()
+            }
+        } catch {
+            publishRideMapError(error)
+        }
     }
 
     public func centralManager(_: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -2506,7 +2560,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        phoneLocationSnapshot = phoneLocationState.ingest(sample: MobilePhoneLocationSampleDto(
+        let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: UInt64(max(0, location.timestamp.timeIntervalSince1970 * 1_000)),
             latitudeDegrees: location.coordinate.latitude,
             longitudeDegrees: location.coordinate.longitude,
@@ -2517,7 +2571,20 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             speedAccuracyMetersPerSecond: location.speedAccuracy,
             courseDegrees: location.course,
             courseAccuracyDegrees: location.courseAccuracy
-        ))
+        )
+        phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
+        do {
+            let decision = try rideMapState.ingestLocation(
+                monotonicMs: clock.now().rawValue,
+                wallClockUnixMs: sample.wallClockUnixMs,
+                latitudeDegrees: sample.latitudeDegrees,
+                longitudeDegrees: sample.longitudeDegrees,
+                horizontalAccuracyMeters: sample.horizontalAccuracyMeters
+            )
+            publishRideMapDecision(decision)
+        } catch {
+            publishRideMapError(error)
+        }
         publishPhoneLocationSnapshot()
     }
 }
