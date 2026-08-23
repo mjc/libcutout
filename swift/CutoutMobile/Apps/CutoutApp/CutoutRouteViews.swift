@@ -277,7 +277,7 @@ final class LightingRouteModel {
     func start() {
         guard !isRunning else { return }
         isRunning = true
-        session.start()
+        session.start(preferredPlatformIdentifier: persistence.platformIdentifier)
     }
 
     func stop() {

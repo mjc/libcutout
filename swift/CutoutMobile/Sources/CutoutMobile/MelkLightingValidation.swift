@@ -1,6 +1,31 @@
 import CutoutMobileFFI
 import Foundation
 
+/// Limits reconnects to a remembered CoreBluetooth identity after first pairing.
+///
+/// A missing identity is the only state that permits first-pairing discovery. Persisted values
+/// are parsed as UUIDs before they can influence a connection; malformed values fail closed.
+struct MelkLightingTargetPolicy: Equatable, Sendable {
+    let preferredUUID: UUID?
+    let isInvalid: Bool
+
+    init(preferredPlatformIdentifier: String?) {
+        guard let preferredPlatformIdentifier else {
+            preferredUUID = nil
+            isInvalid = false
+            return
+        }
+        preferredUUID = UUID(uuidString: preferredPlatformIdentifier)
+        isInvalid = preferredUUID == nil
+    }
+
+    func accepts(_ identifier: CoreBluetoothPeripheralIdentifier) -> Bool {
+        guard !isInvalid else { return false }
+        guard let preferredUUID else { return true }
+        return UUID(uuidString: identifier.rawValue) == preferredUUID
+    }
+}
+
 /// Failure while matching an observed standalone MELK controller to its typed profile.
 public enum MelkLightingValidationError: Error, Equatable, Sendable {
     case missingService
@@ -158,6 +183,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var advertisedName: String?
     private var harness: MelkLightingValidationHarness?
     private var sink: CoreBluetoothPeripheralOperationSink?
+    private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
     private var reconnectEnabled = true
     private var reconnectAttempt = 0
     private var reconnectWorkItem: DispatchWorkItem?
@@ -183,9 +209,12 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         queue.setSpecific(key: queueKey, value: ())
     }
 
-    public func start() {
+    public func start(preferredPlatformIdentifier: String? = nil) {
         onQueue {
             guard central == nil else { return }
+            targetPolicy = MelkLightingTargetPolicy(
+                preferredPlatformIdentifier: preferredPlatformIdentifier
+            )
             reconnectEnabled = true
             reconnectAttempt = 0
             reconnectWorkItem?.cancel()
@@ -263,6 +292,11 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         onQueue {
+            guard !targetPolicy.isInvalid else {
+                transition(to: .failed("Remembered lighting identity is invalid"))
+                record("scan=refused invalid remembered identity")
+                return
+            }
             guard central.state == .poweredOn else {
                 reconnectWorkItem?.cancel()
                 reconnectWorkItem = nil
@@ -276,12 +310,20 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
                 return
             }
+            if let preferredUUID = targetPolicy.preferredUUID,
+               let restoredPeripheral = central.retrievePeripherals(withIdentifiers: [preferredUUID]).first {
+                connect(central: central, peripheral: restoredPeripheral)
+                record("target=melk id=\(preferredUUID.uuidString)")
+                return
+            }
             // MELK-OC21 does not advertise FFF0 in its advertisement packet. Filter only after
             // connecting and discovering the GATT inventory; the advertised name is the
-            // candidate gate that keeps this standalone scan narrow.
+            // candidate gate that keeps this standalone scan narrow. When a remembered identity
+            // exists, didDiscoverPeripheral applies the identity filter before this gate.
             central.scanForPeripherals(withServices: nil)
             transition(to: .scanning)
-            record("scan=melk services=all; gatt=FFF0 post-connect")
+            let target = targetPolicy.preferredUUID.map { " id=\($0.uuidString)" } ?? ""
+            record("scan=melk services=all; gatt=FFF0 post-connect\(target)")
         }
     }
 
@@ -292,20 +334,19 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         rssi: NSNumber
     ) {
         onQueue {
+            guard targetPolicy.accepts(
+                CoreBluetoothPeripheralIdentifier(peripheral.identifier.uuidString)
+            ) else {
+                return
+            }
             let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? peripheral.name
             guard name?.trimmingCharacters(in: .whitespacesAndNewlines)
                 .lowercased().hasPrefix("melk") == true else {
                 return
             }
-            self.peripheral = peripheral
-            advertisedName = name
-            peripheralName = name
-            peripheralIdentifier = peripheral.identifier.uuidString
-            peripheral.delegate = self
             central.stopScan()
-            transition(to: .connecting)
             record("candidate=\(name ?? "") id=\(peripheral.identifier.uuidString) rssi=\(rssi)")
-            central.connect(peripheral)
+            connect(central: central, peripheral: peripheral, advertisedName: name)
         }
     }
 
@@ -373,6 +414,13 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                   let restoredPeripheral = restored.first else {
                 return
             }
+            guard targetPolicy.preferredUUID != nil,
+                  targetPolicy.accepts(
+                      CoreBluetoothPeripheralIdentifier(restoredPeripheral.identifier.uuidString)
+                  ) else {
+                record("restore=melk ignored different identity")
+                return
+            }
             peripheral = restoredPeripheral
             advertisedName = restoredPeripheral.name
             peripheralName = restoredPeripheral.name
@@ -386,6 +434,25 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 central.connect(restoredPeripheral)
             }
             record("restore=melk id=\(restoredPeripheral.identifier.uuidString)")
+        }
+    }
+
+    private func connect(
+        central: CBCentralManager,
+        peripheral: CBPeripheral,
+        advertisedName: String? = nil
+    ) {
+        self.peripheral = peripheral
+        self.advertisedName = advertisedName ?? peripheral.name
+        peripheralName = advertisedName ?? peripheral.name
+        peripheralIdentifier = peripheral.identifier.uuidString
+        peripheral.delegate = self
+        if peripheral.state == .connected {
+            transition(to: .discovering)
+            peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
+        } else {
+            transition(to: .connecting)
+            central.connect(peripheral)
         }
     }
 
