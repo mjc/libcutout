@@ -205,6 +205,16 @@ struct RideMapRouteView: View {
                         .padding(.horizontal, 20)
                         .accessibilityIdentifier("ride-map.history-truncated")
                 }
+
+                if model.rideMapHistoryMusicEvents.isEmpty == false {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(localizedAppText("music.timeline.title"))
+                            .font(.headline)
+                        MusicTimelineRows(events: model.rideMapHistoryMusicEvents)
+                    }
+                    .padding(.horizontal, 20)
+                    .accessibilityIdentifier("ride-map.history-music-timeline")
+                }
                 if model.selectedRideMapHistoryID != nil {
                     Button(localizedAppText("music.history.forget"), role: .destructive) {
                         isForgetMusicHistoryConfirmationPresented = true

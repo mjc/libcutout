@@ -3939,6 +3939,28 @@ impl MobileRideMapState {
             has_more: batch.has_more(),
         })
     }
+
+    /// Returns the bounded stored music timeline for one ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MobileRideMapError::Storage` when the ride identity or query is invalid.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn stored_music_events(
+        &self,
+        ride_id: String,
+    ) -> Result<Vec<MobileMusicRideEventDto>, MobileRideMapError> {
+        let ride_id = Uuid::parse_str(&ride_id)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+        let store = self.lock_store();
+        let Some(store) = store.as_ref() else {
+            return Ok(Vec::new());
+        };
+        store
+            .music_events(ride_id)
+            .map(|events| events.iter().map(Into::into).collect())
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))
+    }
 }
 
 impl MobileRideMapState {
@@ -12075,6 +12097,33 @@ mod ride_map_tests {
             .expect("stored points should query");
         assert_eq!(points.points.len(), 1);
         assert!(!points.has_more);
+    }
+
+    #[test]
+    fn mobile_ride_map_facade_queries_stored_music_events_for_saved_ride() {
+        let state = MobileRideMapState::new_with_database(":memory:".to_owned())
+            .expect("database should open");
+        let started = state.start_gps_only(100, None).expect("ride should start");
+        state
+            .set_music_history_policy(MobileMusicHistoryPolicyDto::HumanReadable)
+            .expect("music history should enable");
+        state
+            .record_music_event(
+                music_snapshot(),
+                MobileMusicRideEventKindDto::Play,
+                110,
+                1_700_000_000_110,
+                5,
+            )
+            .expect("music event should record");
+        state.stop().expect("ride should stop");
+
+        let events = state
+            .stored_music_events(started.ride_id)
+            .expect("stored music events should query");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
+        assert_eq!(events[0].wall_clock_at_ms, 1_700_000_000_110);
     }
 
     #[test]

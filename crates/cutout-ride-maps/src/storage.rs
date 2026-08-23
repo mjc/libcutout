@@ -8,8 +8,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use cutout_core::{
-    MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent, MusicRideEventKind,
-    WallClockUnixTimestamp,
+    MAX_MUSIC_TIMELINE_EVENTS, MusicEventTiming, MusicHistoryPolicy, MusicProvider, MusicRideEvent,
+    MusicRideEventKind, WallClockUnixTimestamp,
 };
 
 use crate::{
@@ -247,6 +247,10 @@ enum StoreCommand {
         after_sequence: u64,
         limit: usize,
         reply: mpsc::Sender<Result<RoutePointBatch, RideMapStoreError>>,
+    },
+    MusicEvents {
+        ride_id: Uuid,
+        reply: mpsc::Sender<Result<Vec<MusicRideEvent>, RideMapStoreError>>,
     },
     Recover {
         reply: mpsc::Sender<Result<Option<RideRecording>, RideMapStoreError>>,
@@ -564,6 +568,26 @@ impl RideMapStore {
         })
     }
 
+    /// Queries the bounded music timeline for one persisted ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage or event-decoding errors.
+    pub fn music_events(&self, ride_id: Uuid) -> Result<Vec<MusicRideEvent>, RideMapStoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT provider, item_identifier, title, artist, kind,
+                    monotonic_ms, wall_clock_unix_ms, clock_uncertainty_ms
+             FROM ride_music_event
+             WHERE ride_id = ?1
+             ORDER BY sequence ASC",
+        )?;
+        statement
+            .query_map(params![ride_id.to_string()], decode_music_event)?
+            .take(MAX_MUSIC_TIMELINE_EVENTS)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
     /// Reconstructs the newest non-terminal ride after an app restart.
     ///
     /// The route is revalidated by the domain constructor before it becomes
@@ -732,6 +756,17 @@ impl RideMapDatabase {
             recording: Box::new(recording.clone()),
             reply,
         })?;
+        receiver.recv().map_err(worker_closed)?
+    }
+
+    /// Queries the bounded music timeline for one persisted ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage or event-decoding errors.
+    pub fn music_events(&self, ride_id: Uuid) -> Result<Vec<MusicRideEvent>, RideMapStoreError> {
+        let (reply, receiver) = mpsc::channel();
+        self.send(StoreCommand::MusicEvents { ride_id, reply })?;
         receiver.recv().map_err(worker_closed)?
     }
 
@@ -951,6 +986,9 @@ fn run_worker(
                 reply,
             } => {
                 let _ = reply.send(store.points_after(ride_id, after_sequence, limit));
+            }
+            StoreCommand::MusicEvents { ride_id, reply } => {
+                let _ = reply.send(store.music_events(ride_id));
             }
             StoreCommand::Recover { reply } => {
                 let _ = reply.send(store.recover_open_recording());

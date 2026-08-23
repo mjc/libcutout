@@ -2566,6 +2566,15 @@ public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
     func stop() throws  -> MobileRideMapSnapshotDto
 
     /**
+     * Returns the bounded stored music timeline for one ride.
+     *
+     * # Errors
+     *
+     * Returns `MobileRideMapError::Storage` when the ride identity or query is invalid.
+     */
+    func storedMusicEvents(rideId: String) throws  -> [MobileMusicRideEventDto]
+
+    /**
      * Returns a bounded stored route batch after a sequence cursor.
      *
      * # Errors
@@ -2916,6 +2925,22 @@ open func stop()throws  -> MobileRideMapSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_stop(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the bounded stored music timeline for one ride.
+     *
+     * # Errors
+     *
+     * Returns `MobileRideMapError::Storage` when the ride identity or query is invalid.
+     */
+open func storedMusicEvents(rideId: String)throws  -> [MobileMusicRideEventDto]  {
+    return try  FfiConverterSequenceTypeMobileMusicRideEventDto.lift(try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_stored_music_events(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(rideId),$0
     )
 })
 }
@@ -21493,6 +21518,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_stop() != 4742) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_stored_music_events() != 3240) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_stored_points_after() != 15421) {

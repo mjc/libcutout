@@ -32,6 +32,7 @@ final class CutoutAppModel {
     private(set) var rideMapPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapHistoryMusicEvents = [MobileMusicRideEventDto]()
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var selectedRideMapHistoryID: String?
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
@@ -405,6 +406,7 @@ final class CutoutAppModel {
         }
         rideMapHistoryPoints = []
         rideMapHistoryPointsTruncated = false
+        rideMapHistoryMusicEvents = []
         loadRideMapHistory()
         return true
     }
@@ -417,6 +419,7 @@ final class CutoutAppModel {
                 selectedRideMapHistoryID = nil
                 rideMapHistoryPoints = []
                 rideMapHistoryPointsTruncated = false
+                rideMapHistoryMusicEvents = []
                 return
             }
             selectRideMapHistory(first.rideId)
@@ -426,6 +429,7 @@ final class CutoutAppModel {
             selectedRideMapHistoryID = nil
             rideMapHistoryPoints = []
             rideMapHistoryPointsTruncated = false
+            rideMapHistoryMusicEvents = []
         }
     }
 
@@ -434,6 +438,7 @@ final class CutoutAppModel {
         selectedRideMapHistoryID = rideID
         rideMapHistoryPointsTruncated = false
         do {
+            let historyEvents = try core.rideMapStateHandle.storedMusicEvents(rideId: rideID)
             guard let (points, truncated) = try collectRideMapPoints({ cursor, limit in
                 try core.rideMapStateHandle.storedPointsAfter(
                     rideId: rideID,
@@ -448,10 +453,12 @@ final class CutoutAppModel {
             rideMapError = nil
             rideMapHistoryPoints = points
             rideMapHistoryPointsTruncated = truncated
+            rideMapHistoryMusicEvents = historyEvents
         } catch {
             rideMapError = error as? MobileRideMapError
             rideMapHistoryPoints = []
             rideMapHistoryPointsTruncated = false
+            rideMapHistoryMusicEvents = []
         }
     }
 
@@ -463,6 +470,7 @@ final class CutoutAppModel {
                 selectedRideMapHistoryID = nil
                 rideMapHistoryPoints = []
                 rideMapHistoryPointsTruncated = false
+                rideMapHistoryMusicEvents = []
             }
             if rideMapSnapshot?.rideId == rideID {
                 refreshMusicTimeline()

@@ -1170,6 +1170,11 @@ mod tests {
             recovered.music_events()[0].kind(),
             MusicRideEventKind::ItemChanged
         );
+        let stored_events = store
+            .music_events(ride.ride_id())
+            .expect("stored music events query succeeds");
+        assert_eq!(stored_events.len(), 1);
+        assert_eq!(stored_events[0].title(), Some("Song"));
     }
 
     #[test]

@@ -487,6 +487,20 @@ private struct MusicTimelineRow: View {
     }
 }
 
+public struct MusicTimelineRows: View {
+    public let events: [MobileMusicRideEventDto]
+
+    public init(events: [MobileMusicRideEventDto]) {
+        self.events = events
+    }
+
+    public var body: some View {
+        ForEach(events, id: \.timelineID) { event in
+            MusicTimelineRow(event: event)
+        }
+    }
+}
+
 public struct MusicExpandedPlayer: View {
     public let nowPlaying: MusicNowPlaying
     public let timeline: [MobileMusicRideEventDto]
@@ -532,9 +546,7 @@ public struct MusicExpandedPlayer: View {
 
                 if timeline.isEmpty == false {
                     Section {
-                        ForEach(timeline, id: \.timelineID) { event in
-                            MusicTimelineRow(event: event)
-                        }
+                        MusicTimelineRows(events: timeline)
                     } header: {
                         Text(pevLocalizedText("music.timeline.title"))
                     }
