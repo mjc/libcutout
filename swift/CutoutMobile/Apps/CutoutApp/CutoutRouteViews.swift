@@ -261,6 +261,7 @@ final class LightingRouteModel {
                     self?.persistence.setConnection(.ready)
                     self?.restoreIfEligible()
                 } else if state == .disconnected {
+                    self?.restoreAttempted = false
                     self?.persistence.setConnection(.disconnected)
                 }
             }
@@ -418,7 +419,7 @@ final class LightingRouteModel {
     private func ensureRecordForConnectedAccessory() {
         guard let identifier = peripheralIdentifier else { return }
         if persistence.ensureRecord(platformIdentifier: identifier) {
-            persistence.setRestoreEnabled(restoreEnabled)
+            restoreEnabled = persistence.restoreEnabled
         }
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
@@ -437,9 +438,16 @@ final class LightingRouteModel {
             return
         }
         restoreAttempted = true
-        guard session.setPower(requested.powerOn),
-              session.setSolidColor(red: requested.red, green: requested.green, blue: requested.blue),
-              (try? session.setBrightness(requested.brightness)) == true else {
+        guard session.setPower(requested.powerOn) else {
+            restoreAttempted = false
+            return
+        }
+        guard session.setSolidColor(red: requested.red, green: requested.green, blue: requested.blue) else {
+            restoreAttempted = false
+            return
+        }
+        guard (try? session.setBrightness(requested.brightness)) == true else {
+            restoreAttempted = false
             return
         }
         requestedState = SolidState(requested)
