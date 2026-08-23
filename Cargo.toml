@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/cutout-core",
     "crates/cutout-ride-maps",
+    "crates/libcutout-persistence",
     "crates/cutout-protocols",
     "crates/cutout-mobile-ffi",
     "crates/cutout-btle",

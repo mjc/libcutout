@@ -54,7 +54,9 @@ impl RideSummary {
         self.distance_millimetres.as_u64()
     }
 
-    pub(crate) const fn from_stored(point_count: u64, distance_millimetres: u64) -> Self {
+    /// Reconstructs a summary persisted by the storage layer.
+    #[must_use]
+    pub const fn from_stored(point_count: u64, distance_millimetres: u64) -> Self {
         Self {
             point_count,
             distance_millimetres: DistanceMillimetres::new(distance_millimetres),
@@ -62,7 +64,9 @@ impl RideSummary {
     }
 }
 
-pub(crate) fn distance_between_millimetres(first: LocationSample, second: LocationSample) -> u64 {
+/// Returns the rounded distance between two location samples.
+#[must_use]
+pub fn distance_between_millimetres(first: LocationSample, second: LocationSample) -> u64 {
     rounded_distance_millimetres(haversine_metres(first, second))
 }
 

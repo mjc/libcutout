@@ -563,6 +563,7 @@ dependencies = [
  "cutout-protocols",
  "cutout-ride-maps",
  "hex-literal",
+ "libcutout-persistence",
  "thiserror 2.0.18",
  "uniffi",
  "uuid",
@@ -589,13 +590,7 @@ dependencies = [
 name = "cutout-ride-maps"
 version = "0.1.0"
 dependencies = [
- "cutout-core",
- "hex",
- "proptest",
- "rusqlite",
- "sha2",
  "thiserror 2.0.18",
- "uuid",
 ]
 
 [[package]]
@@ -1142,6 +1137,19 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libcutout-persistence"
+version = "0.1.0"
+dependencies = [
+ "cutout-core",
+ "cutout-ride-maps",
+ "hex",
+ "rusqlite",
+ "sha2",
+ "thiserror 2.0.18",
+ "uuid",
+]
 
 [[package]]
 name = "libdbus-sys"

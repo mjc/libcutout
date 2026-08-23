@@ -73,6 +73,7 @@ use cutout_protocols::{
     try_new_begode_falcon_read_only_session,
 };
 use cutout_ride_maps as ride_maps;
+use libcutout_persistence as persistence;
 use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
@@ -2921,7 +2922,7 @@ pub enum MobileRideSourceDto {
     PevcapImport,
 }
 
-impl From<MobileRideSourceDto> for ride_maps::RideSource {
+impl From<MobileRideSourceDto> for persistence::RideSource {
     fn from(source: MobileRideSourceDto) -> Self {
         match source {
             MobileRideSourceDto::Live => Self::Live,
@@ -3181,29 +3182,29 @@ pub enum MobileRideDatabaseError {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn map_ride_database_error(error: ride_maps::StorageError) -> MobileRideDatabaseError {
+fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
-        ride_maps::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
-        ride_maps::StorageError::AlreadyOpenForDifferentPath => {
+        persistence::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
+        persistence::StorageError::AlreadyOpenForDifferentPath => {
             MobileRideDatabaseError::AlreadyOpenForDifferentPath
         }
-        ride_maps::StorageError::UnsupportedSchemaVersion(_) => {
+        persistence::StorageError::UnsupportedSchemaVersion(_) => {
             MobileRideDatabaseError::UnsupportedSchemaVersion
         }
-        ride_maps::StorageError::NotFound => MobileRideDatabaseError::NotFound,
-        ride_maps::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
-        ride_maps::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
-        ride_maps::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
-        ride_maps::StorageError::WorkerStopped
-        | ride_maps::StorageError::ResponseDropped
-        | ride_maps::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
-        ride_maps::StorageError::Sqlite(_)
-        | ride_maps::StorageError::Io(_)
-        | ride_maps::StorageError::InvalidStoredValue { .. }
-        | ride_maps::StorageError::InvalidSqliteVersion(_)
-        | ride_maps::StorageError::PevcapImport(_)
-        | ride_maps::StorageError::SpatialCapabilityUnavailable
-        | ride_maps::StorageError::SpatialSchemaInitialization(_) => {
+        persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
+        persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
+        persistence::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
+        persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
+        persistence::StorageError::WorkerStopped
+        | persistence::StorageError::ResponseDropped
+        | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
+        persistence::StorageError::Sqlite(_)
+        | persistence::StorageError::Io(_)
+        | persistence::StorageError::InvalidStoredValue { .. }
+        | persistence::StorageError::InvalidSqliteVersion(_)
+        | persistence::StorageError::PevcapImport(_)
+        | persistence::StorageError::SpatialCapabilityUnavailable
+        | persistence::StorageError::SpatialSchemaInitialization(_) => {
             MobileRideDatabaseError::StorageFailure
         }
     }
@@ -3211,17 +3212,17 @@ fn map_ride_database_error(error: ride_maps::StorageError) -> MobileRideDatabase
 
 fn parse_mobile_ride_id(
     id: &MobileRideIdDto,
-) -> Result<ride_maps::RideId, MobileRideDatabaseError> {
+) -> Result<persistence::RideId, MobileRideDatabaseError> {
     Uuid::parse_str(&id.value)
-        .map(ride_maps::RideId::from_uuid)
+        .map(persistence::RideId::from_uuid)
         .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
 }
 
 fn parse_mobile_trail_id(
     id: &MobileTrailIdDto,
-) -> Result<ride_maps::TrailId, MobileRideDatabaseError> {
+) -> Result<persistence::TrailId, MobileRideDatabaseError> {
     Uuid::parse_str(&id.value)
-        .map(ride_maps::TrailId::from_uuid)
+        .map(persistence::TrailId::from_uuid)
         .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
 }
 
@@ -3260,7 +3261,7 @@ fn mobile_ride_location(
 /// Rust-owned synchronous ride database handle for mobile clients.
 #[derive(Debug, uniffi::Object)]
 pub struct RideDatabaseHandle {
-    inner: ride_maps::RideDatabase,
+    inner: persistence::RideDatabase,
 }
 
 #[uniffi::export]
@@ -3273,7 +3274,7 @@ impl RideDatabaseHandle {
     /// Opens the process-wide Rust-owned ride database.
     #[uniffi::constructor]
     pub fn open(path: String) -> Result<Arc<Self>, MobileRideDatabaseError> {
-        ride_maps::RideDatabase::open(Path::new(&path))
+        persistence::RideDatabase::open(Path::new(&path))
             .map(|inner| Arc::new(Self { inner }))
             .map_err(map_ride_database_error)
     }
@@ -3491,7 +3492,7 @@ impl RideDatabaseHandle {
         self.inner
             .save_voltage_sag_model(
                 &device_identity,
-                ride_maps::VoltageSagModelRecord {
+                persistence::VoltageSagModelRecord {
                     schema_version: model.schema_version,
                     effective_resistance_milliohms: model.effective_resistance_milliohms,
                     observations: model.observations,
