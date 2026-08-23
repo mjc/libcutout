@@ -113,6 +113,7 @@ final class CutoutAppModel {
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
     private var rideMapHistoryCursor: MobileRideCursorDto?
+    private var rideMapHistoryTask: Task<Void, Never>?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -284,55 +285,70 @@ final class CutoutAppModel {
     }
 
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
-        do {
-            var page = try core.rideMapStateHandle.storedHistoryPage(cursor: nil, limit: 50)
-            var summaries = page.summaries
-            if let requestedRideID {
-                while summaries.contains(where: { $0.rideId == requestedRideID }) == false,
-                      let cursor = page.nextCursor
-                {
-                    page = try core.rideMapStateHandle.storedHistoryPage(cursor: cursor, limit: 50)
-                    summaries.append(contentsOf: page.summaries)
+        rideMapHistoryTask?.cancel()
+        let state = core.rideMapStateHandle
+        rideMapHistoryTask = Task { [weak self] in
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    var page = try state.storedHistoryPage(cursor: nil, limit: 50)
+                    var summaries = page.summaries
+                    if let requestedRideID {
+                        while summaries.contains(where: { $0.rideId == requestedRideID }) == false,
+                              let cursor = page.nextCursor
+                        {
+                            page = try state.storedHistoryPage(cursor: cursor, limit: 50)
+                            summaries.append(contentsOf: page.summaries)
+                        }
+                    }
+                    return (summaries, page.nextCursor)
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistory = result.0
+                self.rideMapHistoryCursor = result.1
+                self.rideMapHistoryCanLoadMore = result.1 != nil
+                self.rideMapError = nil
+                let selectedID = requestedRideID.flatMap { requestedID in
+                    result.0.first(where: { $0.rideId == requestedID })?.rideId
+                } ?? result.0.first?.rideId
+                guard let selectedID else {
+                    self.selectedRideMapHistoryID = nil
+                    self.rideMapHistoryPoints = []
+                    self.rideMapHistoryPointsTruncated = false
+                    return
                 }
+                self.selectRideMapHistory(selectedID)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapError = error as? MobileRideMapError
+                self.rideMapHistory = []
+                self.rideMapHistoryCursor = nil
+                self.rideMapHistoryCanLoadMore = false
+                self.selectedRideMapHistoryID = nil
+                self.rideMapHistoryPoints = []
+                self.rideMapHistoryPointsTruncated = false
             }
-            rideMapHistory = summaries
-            rideMapHistoryCursor = page.nextCursor
-            rideMapHistoryCanLoadMore = page.nextCursor != nil
-            rideMapError = nil
-            let selectedID = requestedRideID.flatMap { requestedID in
-                rideMapHistory.first(where: { $0.rideId == requestedID })?.rideId
-            } ?? rideMapHistory.first?.rideId
-            guard let selectedID else {
-                selectedRideMapHistoryID = nil
-                rideMapHistoryPoints = []
-                rideMapHistoryPointsTruncated = false
-                return
-            }
-            selectRideMapHistory(selectedID)
-        } catch {
-            rideMapError = error as? MobileRideMapError
-            rideMapHistory = []
-            rideMapHistoryCursor = nil
-            rideMapHistoryCanLoadMore = false
-            selectedRideMapHistoryID = nil
-            rideMapHistoryPoints = []
-            rideMapHistoryPointsTruncated = false
         }
     }
 
     func loadMoreRideMapHistory() {
         guard rideMapHistoryCanLoadMore else { return }
-        do {
-            let page = try core.rideMapStateHandle.storedHistoryPage(
-                cursor: rideMapHistoryCursor,
-                limit: 50
-            )
-            rideMapHistory.append(contentsOf: page.summaries)
-            rideMapHistoryCursor = page.nextCursor
-            rideMapHistoryCanLoadMore = page.nextCursor != nil
-            rideMapError = nil
-        } catch {
-            rideMapError = error as? MobileRideMapError
+        rideMapHistoryTask?.cancel()
+        let state = core.rideMapStateHandle
+        let cursor = rideMapHistoryCursor
+        rideMapHistoryTask = Task { [weak self] in
+            do {
+                let page = try await Task.detached(priority: .userInitiated) {
+                    try state.storedHistoryPage(cursor: cursor, limit: 50)
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistory.append(contentsOf: page.summaries)
+                self.rideMapHistoryCursor = page.nextCursor
+                self.rideMapHistoryCanLoadMore = page.nextCursor != nil
+                self.rideMapError = nil
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapError = error as? MobileRideMapError
+            }
         }
     }
 
@@ -348,27 +364,50 @@ final class CutoutAppModel {
 
     func selectRideMapHistory(_ rideID: String) {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
+        rideMapHistoryTask?.cancel()
         selectedRideMapHistoryID = rideID
         rideMapHistoryPointsTruncated = false
-        do {
-            guard let (points, truncated) = try collectRideMapPoints({ cursor, limit in
-                try core.rideMapStateHandle.storedPointsAfter(
-                    rideId: rideID,
-                    afterCursor: cursor,
-                    limit: limit
-                )
-            }) else {
-                rideMapHistoryPoints = []
-                rideMapHistoryPointsTruncated = false
-                return
+        let state = core.rideMapStateHandle
+        let pointBatchLimit = Self.rideMapPointBatchLimit
+        let previewPointLimit = Self.rideMapPreviewPointLimit
+        rideMapHistoryTask = Task { [weak self] in
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    var points = [MobileRideMapPointDto]()
+                    var cursor: UInt64?
+                    while true {
+                        guard let batch = try state.storedPointsAfter(
+                            rideId: rideID,
+                            afterCursor: cursor,
+                            limit: pointBatchLimit
+                        ) else {
+                            return ([MobileRideMapPointDto](), false)
+                        }
+                        let remaining = previewPointLimit - points.count
+                        if batch.points.count > remaining {
+                            points.append(contentsOf: batch.points.prefix(remaining))
+                            return (points, true)
+                        }
+                        points.append(contentsOf: batch.points)
+                        cursor = batch.nextCursor
+                        if points.count == previewPointLimit {
+                            return (points, batch.hasMore)
+                        }
+                        if batch.hasMore == false {
+                            return (points, false)
+                        }
+                    }
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapError = nil
+                self.rideMapHistoryPoints = result.0
+                self.rideMapHistoryPointsTruncated = result.1
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapError = error as? MobileRideMapError
+                self.rideMapHistoryPoints = []
+                self.rideMapHistoryPointsTruncated = false
             }
-            rideMapError = nil
-            rideMapHistoryPoints = points
-            rideMapHistoryPointsTruncated = truncated
-        } catch {
-            rideMapError = error as? MobileRideMapError
-            rideMapHistoryPoints = []
-            rideMapHistoryPointsTruncated = false
         }
     }
 

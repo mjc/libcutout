@@ -2850,26 +2850,46 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
 
     /**
      * Appends a location sample and reports duplicate/out-of-order admission.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the sample, ride, or worker rejects the append.
      */
     func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto) throws  -> MobileRideLocationAdmissionDto
 
     /**
      * Appends a location sample with its Rust-owned route segment identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the sample, ride, or worker rejects the append.
      */
     func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64) throws  -> MobileRideLocationAdmissionDto
 
     /**
      * Appends a location sample with segment and telemetry provenance.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the sample, ride, or worker rejects the append.
      */
     func appendLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto) throws  -> MobileRideLocationAdmissionDto
 
     /**
      * Appends and spatially indexes one trail segment.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail or spatial index rejects the segment.
      */
     func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start: MobileMapCoordinateDto, end: MobileMapCoordinateDto) throws
 
     /**
      * Writes a consistent `SQLite` backup to a caller-selected file.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the destination or worker cannot complete the backup.
      */
     func backupTo(path: String) throws
 
@@ -2880,56 +2900,100 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
 
     /**
      * Returns runtime `SQLite` capabilities.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot report capabilities.
      */
     func capabilities() throws  -> MobileSqliteCapabilitiesDto
 
     /**
      * Clears opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the marker.
      */
     func clearRideSessionMarker() throws
 
     /**
      * Clears the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the selection.
      */
     func clearSelectedDevice() throws
 
     /**
      * Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the preview changed or the import cannot be committed.
      */
     func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMilliseconds: UInt64) throws  -> MobilePevcapImportReceiptDto
 
     /**
      * Stores and spatially indexes one charging/food map point.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the point or spatial index rejects the value.
      */
     func createMapPoint(name: String, coordinate: MobileMapCoordinateDto) throws  -> UInt64
 
     /**
      * Creates a draft ride and returns its Rust-created identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot create the ride.
      */
     func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64) throws  -> MobileRideIdDto
 
     /**
      * Creates an indexed trail definition.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail cannot be stored or indexed.
      */
     func createTrail(name: String) throws  -> MobileTrailIdDto
 
     /**
      * Enqueues a location sample for ordered background persistence.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the durable append is rejected by the worker.
      */
     func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto) throws
 
     /**
      * Exports one ride summary as a versioned JSON document.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, destination, or worker is invalid.
      */
     func exportRideJson(id: MobileRideIdDto, path: String) throws
 
     /**
      * Lists one bounded page of ride history in stable newest-first order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, limit, worker, or stored page is invalid.
      */
     func listRides(cursor: MobileRideCursorDto?, limit: UInt32) throws  -> MobileRidePageDto
 
     /**
      * Queries indexed map points intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
     func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32) throws  -> MobileMapPointPageDto
 
@@ -2944,41 +3008,73 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
 
     /**
      * Rebuilds all derived spatial indexes from their canonical tables.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the spatial schema or worker is unavailable.
      */
     func rebuildSpatialIndexes() throws
 
     /**
      * Removes a learned voltage-sag model.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
     func removeVoltageSagModel(deviceIdentity: String) throws
 
     /**
      * Loads opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the marker.
      */
     func rideSessionMarker() throws  -> Data?
 
     /**
      * Loads one bounded page of canonical route points in stable sequence order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
      */
     func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32) throws  -> MobileRoutePointPageDto
 
     /**
      * Stores opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the marker or worker is invalid.
      */
     func saveRideSessionMarker(marker: Data) throws
 
     /**
      * Stores the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier or worker is invalid.
      */
     func saveSelectedDevice(platformIdentifier: String, updatedAtMilliseconds: UInt64) throws
 
     /**
      * Stores a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the model, identity, or worker is invalid.
      */
     func saveVoltageSagModel(deviceIdentity: String, model: MobileVoltageSagModelDto, learnedAtMilliseconds: UInt64) throws
 
     /**
      * Loads the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the selection.
      */
     func selectedDevice() throws  -> String?
 
@@ -2993,31 +3089,55 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * This is an explicit process-wide teardown operation. Callers must not use any
      * `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
      * `WorkerStopped` until the process opens a new database service.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot stop cleanly.
      */
     func shutdown() throws
 
     /**
      * Loads the durable summary projection for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride or worker cannot provide its summary.
      */
     func summary(id: MobileRideIdDto) throws  -> MobileRideSummaryDto
 
     /**
      * Queries indexed trail segments intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
     func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailSegmentCursorDto?, limit: UInt32) throws  -> MobileTrailSegmentPageDto
 
     /**
      * Applies a lifecycle event to a Rust-created ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the transition or worker rejects the event.
      */
     func transition(id: MobileRideIdDto, event: MobileRideEventDto) throws  -> MobileRideLifecycleStateDto
 
     /**
      * Persists Rust-owned map association and telemetry metadata for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the metadata or worker rejects the update.
      */
     func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) throws
 
     /**
      * Loads a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
     func voltageSagModel(deviceIdentity: String) throws  -> MobileVoltageSagModelDto?
 
@@ -3080,6 +3200,10 @@ open class RideDatabaseHandle: RideDatabaseHandleProtocol, @unchecked Sendable {
 
     /**
      * Appends a location sample and reports duplicate/out-of-order admission.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the sample, ride, or worker rejects the append.
      */
 open func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto)throws  -> MobileRideLocationAdmissionDto  {
     return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3093,6 +3217,10 @@ open func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto)th
 
     /**
      * Appends a location sample with its Rust-owned route segment identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the sample, ride, or worker rejects the append.
      */
 open func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64)throws  -> MobileRideLocationAdmissionDto  {
     return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3107,6 +3235,10 @@ open func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLoc
 
     /**
      * Appends a location sample with segment and telemetry provenance.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the sample, ride, or worker rejects the append.
      */
 open func appendLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto)throws  -> MobileRideLocationAdmissionDto  {
     return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3122,6 +3254,10 @@ open func appendLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: M
 
     /**
      * Appends and spatially indexes one trail segment.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail or spatial index rejects the segment.
      */
 open func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start: MobileMapCoordinateDto, end: MobileMapCoordinateDto)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_append_trail_segment(
@@ -3136,6 +3272,10 @@ open func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start:
 
     /**
      * Writes a consistent `SQLite` backup to a caller-selected file.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the destination or worker cannot complete the backup.
      */
 open func backupTo(path: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_backup_to(
@@ -3158,6 +3298,10 @@ open func bootstrapSnapshot() -> MobileBootstrapSnapshotDto  {
 
     /**
      * Returns runtime `SQLite` capabilities.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot report capabilities.
      */
 open func capabilities()throws  -> MobileSqliteCapabilitiesDto  {
     return try  FfiConverterTypeMobileSqliteCapabilitiesDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3169,6 +3313,10 @@ open func capabilities()throws  -> MobileSqliteCapabilitiesDto  {
 
     /**
      * Clears opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the marker.
      */
 open func clearRideSessionMarker()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_clear_ride_session_marker(
@@ -3179,6 +3327,10 @@ open func clearRideSessionMarker()throws   {try rustCallWithError(FfiConverterTy
 
     /**
      * Clears the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the selection.
      */
 open func clearSelectedDevice()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_clear_selected_device(
@@ -3189,6 +3341,10 @@ open func clearSelectedDevice()throws   {try rustCallWithError(FfiConverterTypeM
 
     /**
      * Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the preview changed or the import cannot be committed.
      */
 open func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMilliseconds: UInt64)throws  -> MobilePevcapImportReceiptDto  {
     return try  FfiConverterTypeMobilePevcapImportReceiptDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3202,6 +3358,10 @@ open func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMi
 
     /**
      * Stores and spatially indexes one charging/food map point.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the point or spatial index rejects the value.
      */
 open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws  -> UInt64  {
     return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3215,6 +3375,10 @@ open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws
 
     /**
      * Creates a draft ride and returns its Rust-created identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot create the ride.
      */
 open func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64)throws  -> MobileRideIdDto  {
     return try  FfiConverterTypeMobileRideIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3228,6 +3392,10 @@ open func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64)
 
     /**
      * Creates an indexed trail definition.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail cannot be stored or indexed.
      */
 open func createTrail(name: String)throws  -> MobileTrailIdDto  {
     return try  FfiConverterTypeMobileTrailIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3240,6 +3408,10 @@ open func createTrail(name: String)throws  -> MobileTrailIdDto  {
 
     /**
      * Enqueues a location sample for ordered background persistence.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the durable append is rejected by the worker.
      */
 open func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry(
@@ -3254,6 +3426,10 @@ open func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: 
 
     /**
      * Exports one ride summary as a versioned JSON document.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, destination, or worker is invalid.
      */
 open func exportRideJson(id: MobileRideIdDto, path: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_export_ride_json(
@@ -3266,6 +3442,10 @@ open func exportRideJson(id: MobileRideIdDto, path: String)throws   {try rustCal
 
     /**
      * Lists one bounded page of ride history in stable newest-first order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, limit, worker, or stored page is invalid.
      */
 open func listRides(cursor: MobileRideCursorDto?, limit: UInt32)throws  -> MobileRidePageDto  {
     return try  FfiConverterTypeMobileRidePageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3279,6 +3459,10 @@ open func listRides(cursor: MobileRideCursorDto?, limit: UInt32)throws  -> Mobil
 
     /**
      * Queries indexed map points intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
 open func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32)throws  -> MobileMapPointPageDto  {
     return try  FfiConverterTypeMobileMapPointPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3310,6 +3494,10 @@ open func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto)throws
 
     /**
      * Rebuilds all derived spatial indexes from their canonical tables.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the spatial schema or worker is unavailable.
      */
 open func rebuildSpatialIndexes()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_rebuild_spatial_indexes(
@@ -3320,6 +3508,10 @@ open func rebuildSpatialIndexes()throws   {try rustCallWithError(FfiConverterTyp
 
     /**
      * Removes a learned voltage-sag model.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
 open func removeVoltageSagModel(deviceIdentity: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_remove_voltage_sag_model(
@@ -3331,6 +3523,10 @@ open func removeVoltageSagModel(deviceIdentity: String)throws   {try rustCallWit
 
     /**
      * Loads opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the marker.
      */
 open func rideSessionMarker()throws  -> Data?  {
     return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3342,6 +3538,10 @@ open func rideSessionMarker()throws  -> Data?  {
 
     /**
      * Loads one bounded page of canonical route points in stable sequence order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
      */
 open func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32)throws  -> MobileRoutePointPageDto  {
     return try  FfiConverterTypeMobileRoutePointPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3356,6 +3556,10 @@ open func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto
 
     /**
      * Stores opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the marker or worker is invalid.
      */
 open func saveRideSessionMarker(marker: Data)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_ride_session_marker(
@@ -3367,6 +3571,10 @@ open func saveRideSessionMarker(marker: Data)throws   {try rustCallWithError(Ffi
 
     /**
      * Stores the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier or worker is invalid.
      */
 open func saveSelectedDevice(platformIdentifier: String, updatedAtMilliseconds: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_selected_device(
@@ -3379,6 +3587,10 @@ open func saveSelectedDevice(platformIdentifier: String, updatedAtMilliseconds: 
 
     /**
      * Stores a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the model, identity, or worker is invalid.
      */
 open func saveVoltageSagModel(deviceIdentity: String, model: MobileVoltageSagModelDto, learnedAtMilliseconds: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_voltage_sag_model(
@@ -3392,6 +3604,10 @@ open func saveVoltageSagModel(deviceIdentity: String, model: MobileVoltageSagMod
 
     /**
      * Loads the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the selection.
      */
 open func selectedDevice()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3418,6 +3634,10 @@ open func serviceId() -> String  {
      * This is an explicit process-wide teardown operation. Callers must not use any
      * `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
      * `WorkerStopped` until the process opens a new database service.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot stop cleanly.
      */
 open func shutdown()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_shutdown(
@@ -3428,6 +3648,10 @@ open func shutdown()throws   {try rustCallWithError(FfiConverterTypeMobileRideDa
 
     /**
      * Loads the durable summary projection for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride or worker cannot provide its summary.
      */
 open func summary(id: MobileRideIdDto)throws  -> MobileRideSummaryDto  {
     return try  FfiConverterTypeMobileRideSummaryDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3440,6 +3664,10 @@ open func summary(id: MobileRideIdDto)throws  -> MobileRideSummaryDto  {
 
     /**
      * Queries indexed trail segments intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
 open func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailSegmentCursorDto?, limit: UInt32)throws  -> MobileTrailSegmentPageDto  {
     return try  FfiConverterTypeMobileTrailSegmentPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3454,6 +3682,10 @@ open func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailS
 
     /**
      * Applies a lifecycle event to a Rust-created ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the transition or worker rejects the event.
      */
 open func transition(id: MobileRideIdDto, event: MobileRideEventDto)throws  -> MobileRideLifecycleStateDto  {
     return try  FfiConverterTypeMobileRideLifecycleStateDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -3467,6 +3699,10 @@ open func transition(id: MobileRideIdDto, event: MobileRideEventDto)throws  -> M
 
     /**
      * Persists Rust-owned map association and telemetry metadata for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the metadata or worker rejects the update.
      */
 open func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_update_ride_map_metadata(
@@ -3482,6 +3718,10 @@ open func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, 
 
     /**
      * Loads a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
 open func voltageSagModel(deviceIdentity: String)throws  -> MobileVoltageSagModelDto?  {
     return try  FfiConverterOptionTypeMobileVoltageSagModelDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -23277,103 +23517,103 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 50377) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 46770) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 60604) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment() != 27305) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment() != 2983) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment_and_telemetry() != 56230) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment_and_telemetry() != 52890) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_trail_segment() != 21723) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_trail_segment() != 31482) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_backup_to() != 57522) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_backup_to() != 27625) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_bootstrap_snapshot() != 32370) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_capabilities() != 29297) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_capabilities() != 8245) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_ride_session_marker() != 33806) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_ride_session_marker() != 28355) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_selected_device() != 43108) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_selected_device() != 56796) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_confirm_pevcap_import() != 34418) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_confirm_pevcap_import() != 44346) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 37425) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 21532) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride() != 26448) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride() != 30433) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 39184) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 6712) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry() != 39300) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry() != 31825) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 3509) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 4935) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 47097) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 9190) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 46828) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 20830) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_preflight_pevcap() != 64663) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_rebuild_spatial_indexes() != 44741) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_rebuild_spatial_indexes() != 39593) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_remove_voltage_sag_model() != 48306) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_remove_voltage_sag_model() != 39417) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_ride_session_marker() != 13432) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_ride_session_marker() != 18701) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_route_points() != 34785) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_route_points() != 59770) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_ride_session_marker() != 45915) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_ride_session_marker() != 52189) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_selected_device() != 63400) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_selected_device() != 62862) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_voltage_sag_model() != 42735) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_voltage_sag_model() != 1177) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_selected_device() != 48596) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_selected_device() != 26995) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_service_id() != 44814) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_shutdown() != 61276) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_shutdown() != 45190) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_summary() != 63249) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_summary() != 42214) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_trail_segments_in_bounds() != 59585) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_trail_segments_in_bounds() != 34545) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 62540) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 52940) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_update_ride_map_metadata() != 42313) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_update_ride_map_metadata() != 10444) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_voltage_sag_model() != 58929) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_voltage_sag_model() != 34882) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_vescreadonlysession_current_snapshot() != 39573) {

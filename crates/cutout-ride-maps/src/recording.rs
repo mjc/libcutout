@@ -43,6 +43,7 @@ impl RideMapSegmentId {
 
 /// Provenance of the vehicle telemetry associated with one route point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum RouteTelemetryState {
     /// The point was recorded before a vehicle was associated.
     GpsOnly,
@@ -81,6 +82,7 @@ impl RouteTelemetryState {
 
 /// Result of observing one confirmed telemetry timestamp.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum TelemetryObservation {
     /// The timestamp became the newest telemetry evidence.
     Observed,
@@ -130,6 +132,7 @@ impl RideMapPoint {
 
 /// Vehicle association result for one connected platform identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum VehicleAssociation {
     /// The identity was associated with the recording.
     Associated,

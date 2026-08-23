@@ -1,6 +1,6 @@
 import CutoutMobileFFI
 
-public enum MobileRideMapAvailability: Equatable, Hashable {
+public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
     case checking
     case ready
     case permissionRequired
@@ -10,7 +10,7 @@ public enum MobileRideMapAvailability: Equatable, Hashable {
 }
 
 /// Errors surfaced by the map presentation adapter.
-public enum MobileRideMapError: Error, Equatable, Hashable {
+public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case AlreadyRecording
     case NoActiveRide
     case InvalidTransition
@@ -18,7 +18,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable {
     case Storage(String)
 }
 
-public enum MobileRideMapStateDto: Equatable, Hashable {
+public enum MobileRideMapStateDto: Equatable, Hashable, Sendable {
     case recording
     case paused
     case stopped
@@ -26,14 +26,14 @@ public enum MobileRideMapStateDto: Equatable, Hashable {
     case discarded
 }
 
-public enum MobileRideMapTelemetryStateDto: Equatable, Hashable {
+public enum MobileRideMapTelemetryStateDto: Equatable, Hashable, Sendable {
     case gpsOnly
     case associatedNoTelemetry
     case associatedFresh
     case associatedStale
 }
 
-public enum MobileRideMapTelemetryObservation: Equatable, Hashable {
+public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
     case observed
     case alreadyObserved
     case notAssociated
@@ -41,13 +41,13 @@ public enum MobileRideMapTelemetryObservation: Equatable, Hashable {
     case rideNotOpen
 }
 
-public struct MobileRideMapSummaryDto: Equatable, Hashable {
+public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public var pointCount: UInt64
     public var distanceMeters: Double
     public var durationMilliseconds: UInt64
 }
 
-public struct MobileRideMapPointDto: Equatable, Hashable {
+public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     public var sequence: UInt64
     public var segmentId: UInt64
     public var latitudeDegrees: Double
@@ -58,20 +58,20 @@ public struct MobileRideMapPointDto: Equatable, Hashable {
     public var telemetryState: MobileRideMapTelemetryStateDto
 }
 
-public struct MobileRideMapPointBatchDto: Equatable, Hashable {
+public struct MobileRideMapPointBatchDto: Equatable, Hashable, Sendable {
     public var points: [MobileRideMapPointDto]
     public var nextCursor: UInt64?
     public var hasMore: Bool
 }
 
-public struct MobileRideMapSnapshotDto: Equatable, Hashable {
+public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public var rideId: String
     public var state: MobileRideMapStateDto
     public var summary: MobileRideMapSummaryDto
     public var associatedVehicle: String?
 }
 
-public struct MobileRideMapHistorySummaryDto: Equatable, Hashable {
+public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
     public var rideId: String
     public var state: MobileRideMapStateDto
     public var summary: MobileRideMapSummaryDto
@@ -80,12 +80,12 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable {
     public var associatedVehicle: String?
 }
 
-public struct MobileRideMapHistoryPageDto: Equatable, Hashable {
+public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
     public var summaries: [MobileRideMapHistorySummaryDto]
     public var nextCursor: MobileRideCursorDto?
 }
 
-public enum MobileRideMapAssociationDto: Equatable, Hashable {
+public enum MobileRideMapAssociationDto: Equatable, Hashable, Sendable {
     case associated
     case alreadyAssociated
     case candidateMissing
@@ -94,7 +94,7 @@ public enum MobileRideMapAssociationDto: Equatable, Hashable {
     case rideNotOpen
 }
 
-public enum MobileRideMapDecisionReason: Equatable, Hashable {
+public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
     case rideNotRecording
     case duplicateLocation
     case timestampOutOfOrder
@@ -102,7 +102,7 @@ public enum MobileRideMapDecisionReason: Equatable, Hashable {
     case unrealisticJump
 }
 
-public enum MobileRideMapDecisionDto: Equatable, Hashable {
+public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)

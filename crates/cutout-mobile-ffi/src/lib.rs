@@ -3118,7 +3118,7 @@ impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservation
             ride_maps::TelemetryObservation::AlreadyObserved => Self::AlreadyObserved,
             ride_maps::TelemetryObservation::NotAssociated => Self::NotAssociated,
             ride_maps::TelemetryObservation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
-            ride_maps::TelemetryObservation::RideNotOpen => Self::RideNotOpen,
+            _ => Self::RideNotOpen,
         }
     }
 }
@@ -3129,7 +3129,7 @@ impl From<ride_maps::RouteTelemetryState> for MobileRideMapCoreTelemetryStateDto
             ride_maps::RouteTelemetryState::GpsOnly => Self::GpsOnly,
             ride_maps::RouteTelemetryState::AssociatedNoTelemetry => Self::AssociatedNoTelemetry,
             ride_maps::RouteTelemetryState::AssociatedFresh => Self::AssociatedFresh,
-            ride_maps::RouteTelemetryState::AssociatedStale => Self::AssociatedStale,
+            _ => Self::AssociatedStale,
         }
     }
 }
@@ -3215,7 +3215,7 @@ impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
             ride_maps::VehicleAssociation::CandidateMissing => Self::CandidateMissing,
             ride_maps::VehicleAssociation::IdentityMismatch => Self::IdentityMismatch,
             ride_maps::VehicleAssociation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
-            ride_maps::VehicleAssociation::RideNotOpen => Self::RideNotOpen,
+            _ => Self::RideNotOpen,
         }
     }
 }
@@ -3753,19 +3753,18 @@ pub fn open_ride_database(
 
 #[uniffi::export]
 #[allow(
-    // UniFFI exposes a broad database surface whose error contracts are documented on the
-    // stable error type and the individual Rust methods that are map-specific below.
-    clippy::missing_errors_doc,
-    clippy::must_use_candidate,
-    clippy::needless_pass_by_value
+    clippy::needless_pass_by_value,
+    reason = "UniFFI methods intentionally accept owned boundary DTOs and strings"
 )]
 impl RideDatabaseHandle {
     /// Returns the stable identity of the process-wide database service.
+    #[must_use]
     pub fn service_id(&self) -> String {
         self.inner.service_id().to_string()
     }
 
     /// Returns the bounded startup recovery state captured while acquiring this service.
+    #[must_use]
     pub fn bootstrap_snapshot(&self) -> MobileBootstrapSnapshotDto {
         MobileBootstrapSnapshotDto {
             recovered_rides: self
@@ -3781,6 +3780,10 @@ impl RideDatabaseHandle {
     }
 
     /// Lists one bounded page of ride history in stable newest-first order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the cursor, limit, worker, or stored page is invalid.
     pub fn list_rides(
         &self,
         cursor: Option<MobileRideCursorDto>,
@@ -3834,6 +3837,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads one bounded page of canonical route points in stable sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
     pub fn route_points(
         &self,
         ride_id: MobileRideIdDto,
@@ -3864,6 +3871,10 @@ impl RideDatabaseHandle {
     }
 
     /// Returns runtime `SQLite` capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot report capabilities.
     pub fn capabilities(&self) -> Result<MobileSqliteCapabilitiesDto, MobileRideDatabaseError> {
         self.inner
             .capabilities()
@@ -3897,6 +3908,10 @@ impl RideDatabaseHandle {
     }
 
     /// Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the preview changed or the import cannot be committed.
     pub fn confirm_pevcap_import(
         &self,
         preview: MobilePevcapImportPreviewDto,
@@ -3916,6 +3931,10 @@ impl RideDatabaseHandle {
     }
 
     /// Creates an indexed trail definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the trail cannot be stored or indexed.
     pub fn create_trail(&self, name: String) -> Result<MobileTrailIdDto, MobileRideDatabaseError> {
         self.inner
             .create_trail(&name)
@@ -3926,6 +3945,10 @@ impl RideDatabaseHandle {
     }
 
     /// Appends and spatially indexes one trail segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the trail or spatial index rejects the segment.
     pub fn append_trail_segment(
         &self,
         trail_id: MobileTrailIdDto,
@@ -3942,6 +3965,10 @@ impl RideDatabaseHandle {
     }
 
     /// Queries indexed trail segments intersecting a WGS84 bounding box.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
     pub fn trail_segments_in_bounds(
         &self,
         bounds: MobileGeoBoundsDto,
@@ -3984,6 +4011,10 @@ impl RideDatabaseHandle {
     }
 
     /// Stores and spatially indexes one charging/food map point.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the point or spatial index rejects the value.
     pub fn create_map_point(
         &self,
         name: String,
@@ -3997,6 +4028,10 @@ impl RideDatabaseHandle {
     }
 
     /// Queries indexed map points intersecting a WGS84 bounding box.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
     pub fn map_points_in_bounds(
         &self,
         bounds: MobileGeoBoundsDto,
@@ -4028,6 +4063,10 @@ impl RideDatabaseHandle {
     }
 
     /// Rebuilds all derived spatial indexes from their canonical tables.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the spatial schema or worker is unavailable.
     pub fn rebuild_spatial_indexes(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .rebuild_spatial_indexes()
@@ -4035,6 +4074,10 @@ impl RideDatabaseHandle {
     }
 
     /// Writes a consistent `SQLite` backup to a caller-selected file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the destination or worker cannot complete the backup.
     pub fn backup_to(&self, path: String) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .backup_to(Path::new(&path))
@@ -4042,6 +4085,10 @@ impl RideDatabaseHandle {
     }
 
     /// Exports one ride summary as a versioned JSON document.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, destination, or worker is invalid.
     pub fn export_ride_json(
         &self,
         id: MobileRideIdDto,
@@ -4054,6 +4101,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads the selected platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot read the selection.
     pub fn selected_device(&self) -> Result<Option<String>, MobileRideDatabaseError> {
         self.inner
             .selected_device()
@@ -4061,6 +4112,10 @@ impl RideDatabaseHandle {
     }
 
     /// Stores the selected platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identifier or worker is invalid.
     pub fn save_selected_device(
         &self,
         platform_identifier: String,
@@ -4072,6 +4127,10 @@ impl RideDatabaseHandle {
     }
 
     /// Clears the selected platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot clear the selection.
     pub fn clear_selected_device(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clear_selected_device()
@@ -4079,6 +4138,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads a learned voltage-sag model for one device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identity or worker is invalid.
     pub fn voltage_sag_model(
         &self,
         device_identity: String,
@@ -4097,6 +4160,10 @@ impl RideDatabaseHandle {
     }
 
     /// Stores a learned voltage-sag model for one device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the model, identity, or worker is invalid.
     pub fn save_voltage_sag_model(
         &self,
         device_identity: String,
@@ -4118,6 +4185,10 @@ impl RideDatabaseHandle {
     }
 
     /// Removes a learned voltage-sag model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identity or worker is invalid.
     pub fn remove_voltage_sag_model(
         &self,
         device_identity: String,
@@ -4128,6 +4199,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads opaque Rust-owned ride-session marker bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot read the marker.
     pub fn ride_session_marker(&self) -> Result<Option<Vec<u8>>, MobileRideDatabaseError> {
         self.inner
             .ride_session_marker()
@@ -4135,6 +4210,10 @@ impl RideDatabaseHandle {
     }
 
     /// Stores opaque Rust-owned ride-session marker bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the marker or worker is invalid.
     pub fn save_ride_session_marker(&self, marker: Vec<u8>) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .save_ride_session_marker(&marker)
@@ -4142,6 +4221,10 @@ impl RideDatabaseHandle {
     }
 
     /// Clears opaque Rust-owned ride-session marker bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot clear the marker.
     pub fn clear_ride_session_marker(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clear_ride_session_marker()
@@ -4149,6 +4232,10 @@ impl RideDatabaseHandle {
     }
 
     /// Creates a draft ride and returns its Rust-created identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot create the ride.
     pub fn create_ride(
         &self,
         source: MobileRideSourceDto,
@@ -4163,6 +4250,10 @@ impl RideDatabaseHandle {
     }
 
     /// Persists Rust-owned map association and telemetry metadata for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the metadata or worker rejects the update.
     pub fn update_ride_map_metadata(
         &self,
         id: MobileRideIdDto,
@@ -4184,6 +4275,10 @@ impl RideDatabaseHandle {
     }
 
     /// Applies a lifecycle event to a Rust-created ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the transition or worker rejects the event.
     pub fn transition(
         &self,
         id: MobileRideIdDto,
@@ -4197,6 +4292,10 @@ impl RideDatabaseHandle {
     }
 
     /// Appends a location sample and reports duplicate/out-of-order admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the sample, ride, or worker rejects the append.
     pub fn append_location(
         &self,
         id: MobileRideIdDto,
@@ -4206,6 +4305,10 @@ impl RideDatabaseHandle {
     }
 
     /// Appends a location sample with its Rust-owned route segment identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the sample, ride, or worker rejects the append.
     pub fn append_location_with_segment(
         &self,
         id: MobileRideIdDto,
@@ -4221,6 +4324,10 @@ impl RideDatabaseHandle {
     }
 
     /// Appends a location sample with segment and telemetry provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the sample, ride, or worker rejects the append.
     pub fn append_location_with_segment_and_telemetry(
         &self,
         id: MobileRideIdDto,
@@ -4242,6 +4349,10 @@ impl RideDatabaseHandle {
     }
 
     /// Enqueues a location sample for ordered background persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the durable append is rejected by the worker.
     pub fn enqueue_location_with_segment_and_telemetry(
         &self,
         id: MobileRideIdDto,
@@ -4262,6 +4373,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads the durable summary projection for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride or worker cannot provide its summary.
     pub fn summary(
         &self,
         id: MobileRideIdDto,
@@ -4281,6 +4396,10 @@ impl RideDatabaseHandle {
     /// This is an explicit process-wide teardown operation. Callers must not use any
     /// `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
     /// `WorkerStopped` until the process opens a new database service.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot stop cleanly.
     pub fn shutdown(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clone()
