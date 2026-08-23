@@ -78,8 +78,9 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable {
 }
 
 /// Swift keeps only presentation DTOs and the canonical history handle. Rust owns all active
-/// lifecycle, association, admission, locking, and live-route projection state.
-public final class MobileRideMapState {
+/// lifecycle, association, admission, locking, and live-route projection state. The FFI core
+/// serializes every mutation, so this adapter is safe to call from the BLE and location queues.
+public final class MobileRideMapState: @unchecked Sendable {
     private let core: MobileRideMapCore
     private let database: RideDatabaseHandle?
 
