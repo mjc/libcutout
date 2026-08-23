@@ -2733,6 +2733,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto) throws  -> MobileRideLocationAdmissionDto
 
     /**
+     * Appends a location sample with its Rust-owned route segment identity.
+     */
+    func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64) throws  -> MobileRideLocationAdmissionDto
+
+    /**
      * Appends and spatially indexes one trail segment.
      */
     func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start: MobileMapCoordinateDto, end: MobileMapCoordinateDto) throws
@@ -2946,6 +2951,20 @@ open func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto)th
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileRideIdDto_lower(id),
         FfiConverterTypeMobileRideLocationDto_lower(location),$0
+    )
+})
+}
+
+    /**
+     * Appends a location sample with its Rust-owned route segment identity.
+     */
+open func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64)throws  -> MobileRideLocationAdmissionDto  {
+    return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_append_location_with_segment(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterTypeMobileRideLocationDto_lower(location),
+        FfiConverterUInt64.lower(segmentId),$0
     )
 })
 }
@@ -9807,16 +9826,18 @@ public struct MobileRideRecordDto: Equatable, Hashable {
     public var createdAtMilliseconds: UInt64
     public var updatedAtMilliseconds: UInt64
     public var summary: MobileRideSummaryDto
+    public var segmentCount: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto) {
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64) {
         self.id = id
         self.source = source
         self.state = state
         self.createdAtMilliseconds = createdAtMilliseconds
         self.updatedAtMilliseconds = updatedAtMilliseconds
         self.summary = summary
+        self.segmentCount = segmentCount
     }
 
 
@@ -9840,7 +9861,8 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
                 state: FfiConverterTypeMobileRideLifecycleStateDto.read(from: &buf),
                 createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 updatedAtMilliseconds: FfiConverterUInt64.read(from: &buf),
-                summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf)
+                summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf),
+                segmentCount: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -9851,6 +9873,7 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.createdAtMilliseconds, into: &buf)
         FfiConverterUInt64.write(value.updatedAtMilliseconds, into: &buf)
         FfiConverterTypeMobileRideSummaryDto.write(value.summary, into: &buf)
+        FfiConverterUInt64.write(value.segmentCount, into: &buf)
     }
 }
 
@@ -10244,12 +10267,14 @@ public func FfiConverterTypeMobileRoutePointCursorDto_lower(_ value: MobileRoute
  */
 public struct MobileRoutePointDto: Equatable, Hashable {
     public var sequence: UInt64
+    public var segmentId: UInt64
     public var location: MobileRideLocationDto
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, location: MobileRideLocationDto) {
+    public init(sequence: UInt64, segmentId: UInt64, location: MobileRideLocationDto) {
         self.sequence = sequence
+        self.segmentId = segmentId
         self.location = location
     }
 
@@ -10270,12 +10295,14 @@ public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
         return
             try MobileRoutePointDto(
                 sequence: FfiConverterUInt64.read(from: &buf),
+                segmentId: FfiConverterUInt64.read(from: &buf),
                 location: FfiConverterTypeMobileRideLocationDto.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileRoutePointDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.segmentId, into: &buf)
         FfiConverterTypeMobileRideLocationDto.write(value.location, into: &buf)
     }
 }
@@ -22776,6 +22803,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 46770) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment() != 27305) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_trail_segment() != 21723) {

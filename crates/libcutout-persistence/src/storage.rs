@@ -28,7 +28,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 5;
+const CURRENT_SCHEMA_VERSION: i64 = 6;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -145,6 +145,7 @@ pub struct RideRecord {
     created_at_ms: u64,
     updated_at_ms: u64,
     summary: RideSummary,
+    segment_count: u64,
 }
 
 impl RideRecord {
@@ -182,6 +183,12 @@ impl RideRecord {
     #[must_use]
     pub const fn summary(self) -> RideSummary {
         self.summary
+    }
+
+    /// Returns the number of persisted route segments.
+    #[must_use]
+    pub const fn segment_count(self) -> u64 {
+        self.segment_count
     }
 }
 
@@ -228,6 +235,7 @@ impl RoutePointCursor {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoutePoint {
     sequence: u64,
+    segment_id: u64,
     sample: LocationSample,
 }
 
@@ -236,6 +244,12 @@ impl RoutePoint {
     #[must_use]
     pub const fn sequence(self) -> u64 {
         self.sequence
+    }
+
+    /// Returns the Rust-owned segment identity within the ride.
+    #[must_use]
+    pub const fn segment_id(self) -> u64 {
+        self.segment_id
     }
 
     /// Returns the admitted canonical sample.
@@ -1272,9 +1286,25 @@ impl RideDatabase {
         ride_id: RideId,
         sample: LocationSample,
     ) -> Result<LocationAdmission, StorageError> {
+        self.append_location_with_segment(ride_id, sample, 0)
+    }
+
+    /// Appends one location with its Rust-owned route segment identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride is missing, not accepting samples, or the worker
+    /// cannot commit the point.
+    pub fn append_location_with_segment(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+    ) -> Result<LocationAdmission, StorageError> {
         self.request(move |reply| Command::AppendLocation {
             ride_id,
             sample,
+            segment_id,
             reply,
         })
     }
@@ -1513,6 +1543,7 @@ enum Command {
     AppendLocation {
         ride_id: RideId,
         sample: LocationSample,
+        segment_id: u64,
         reply: Reply<LocationAdmission>,
     },
     Summary {
@@ -1740,9 +1771,15 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             Command::AppendLocation {
                 ride_id,
                 sample,
+                segment_id,
                 reply,
             } => {
-                let _ = reply.send(append_location(&mut connection, ride_id, sample));
+                let _ = reply.send(append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                ));
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
@@ -1876,7 +1913,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                 PRAGMA user_version = 5;
+                PRAGMA user_version = 6;
                  COMMIT;",
             )?;
         }
@@ -1929,6 +1966,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         }
         3 => migrate_v3_to_current(connection)?,
         4 => migrate_v4_to_current(connection)?,
+        5 => migrate_v5_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1955,6 +1993,7 @@ fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
         CREATE TABLE ride_points (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
             monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
             wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
             latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
@@ -2102,7 +2141,12 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     transaction.execute_batch(
         "
         INSERT INTO rides SELECT * FROM rides_legacy;
-        INSERT INTO ride_points SELECT * FROM ride_points_legacy;
+        INSERT INTO ride_points
+            (ride_id, sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7,
+             longitude_e7, horizontal_accuracy_mm, source)
+        SELECT ride_id, sequence, 0, monotonic_ms, wall_clock_ms, latitude_e7,
+               longitude_e7, horizontal_accuracy_mm, source
+        FROM ride_points_legacy;
         INSERT INTO selected_device SELECT * FROM selected_device_legacy;
         INSERT INTO voltage_sag_models SELECT * FROM voltage_sag_models_legacy;
         INSERT INTO ride_session_marker SELECT * FROM ride_session_marker_legacy;
@@ -2119,7 +2163,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-        PRAGMA user_version = 5;
+        PRAGMA user_version = 6;
         ",
     )?;
     transaction.commit()?;
@@ -2186,6 +2230,19 @@ fn migrate_v4_to_current(connection: &mut Connection) -> Result<(), StorageError
         ",
     )?;
     transaction.commit()?;
+    migrate_v5_to_current(connection)
+}
+
+fn migrate_v5_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    connection.execute_batch(
+        "
+        BEGIN IMMEDIATE;
+        ALTER TABLE ride_points ADD COLUMN segment_id INTEGER NOT NULL DEFAULT 0 CHECK (segment_id >= 0);
+        PRAGMA user_version = 6;
+        COMMIT;
+        ",
+    )?;
     Ok(())
 }
 
@@ -2947,6 +3004,7 @@ fn append_pevcap_location_batch(
             &transaction,
             ride_id,
             sample,
+            0,
             LocationWriteMode::PevcapImport,
         )? == LocationAdmission::Accepted
         {
@@ -3178,10 +3236,16 @@ fn append_location(
     connection: &mut Connection,
     ride_id: RideId,
     sample: LocationSample,
+    segment_id: u64,
 ) -> Result<LocationAdmission, StorageError> {
     let transaction = connection.transaction()?;
-    let admission =
-        append_location_in_transaction(&transaction, ride_id, sample, LocationWriteMode::Live)?;
+    let admission = append_location_in_transaction(
+        &transaction,
+        ride_id,
+        sample,
+        segment_id,
+        LocationWriteMode::Live,
+    )?;
     transaction.commit()?;
     Ok(admission)
 }
@@ -3190,18 +3254,19 @@ fn append_location_in_transaction(
     connection: &Connection,
     ride_id: RideId,
     sample: LocationSample,
+    segment_id: u64,
     mode: LocationWriteMode,
 ) -> Result<LocationAdmission, StorageError> {
     let write_state = load_ride_write_state(connection, ride_id)?;
     let previous = connection
         .query_row(
-            "SELECT sequence, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source
+            "SELECT sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source
              FROM ride_points WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
             params![ride_id.uuid().to_string()],
             |row| {
-                let coordinate = Coordinate::from_fixed_parts(row.get(3)?, row.get(4)?).map_err(|_| {
+                let coordinate = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        3,
+                        4,
                         rusqlite::types::Type::Integer,
                         Box::new(StorageError::InvalidStoredValue {
                             field: "coordinate",
@@ -3209,20 +3274,21 @@ fn append_location_in_transaction(
                         }),
                     )
                 })?;
-                let source = source_from_db(row.get::<_, String>(6)?.as_str()).map_err(|error| {
+                let source = source_from_db(row.get::<_, String>(7)?.as_str()).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        6,
+                        7,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
                 })?;
                 Ok((
                     row.get::<_, i64>(0)?,
+                    row.get::<_, u64>(1)?,
                     LocationSample::new(
                         coordinate,
-                        row.get::<_, u64>(1)?,
                         row.get::<_, u64>(2)?,
-                        row.get::<_, Option<u32>>(5)?,
+                        row.get::<_, u64>(3)?,
+                        row.get::<_, Option<u32>>(6)?,
                         source,
                     ),
                 ))
@@ -3230,7 +3296,16 @@ fn append_location_in_transaction(
         )
         .optional()?;
     let decision = write_state
-        .decide_location(previous.map(|(_, sample)| sample), sample, mode)
+        .decide_location(
+            previous
+                .as_ref()
+                .map(|(_, previous_segment_id, previous_sample)| {
+                    (*previous_segment_id, *previous_sample)
+                }),
+            sample,
+            segment_id,
+            mode,
+        )
         .map_err(StorageError::InvalidRideState)?;
     match decision {
         LocationWriteDecision::Accepted {
@@ -3238,13 +3313,14 @@ fn append_location_in_transaction(
             updated_at_ms,
         } => {
             let sequence = previous
-                .map(|(sequence, _)| sequence + 1)
+                .map(|(sequence, _, _)| sequence + 1)
                 .unwrap_or_default();
             match insert_location(
                 connection,
                 ride_id,
                 sequence,
                 sample,
+                segment_id,
                 distance_millimetres,
                 updated_at_ms,
             ) {
@@ -3285,16 +3361,18 @@ fn insert_location(
     ride_id: RideId,
     sequence: i64,
     sample: LocationSample,
+    segment_id: u64,
     distance_millimetres: u64,
     updated_at_ms: u64,
 ) -> Result<(), StorageError> {
     connection.execute(
         "INSERT INTO ride_points
-            (ride_id, sequence, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            (ride_id, sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             ride_id.uuid().to_string(),
             sequence,
+            segment_id,
             sample.monotonic_milliseconds(),
             sample.wall_clock_unix_milliseconds(),
             sample.coordinate().latitude().as_i32(),
@@ -3340,7 +3418,8 @@ fn list_rides(
     let mut rides = Vec::new();
     if let Some(cursor) = cursor {
         let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
+            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm,
+                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id)
              FROM rides
              WHERE state != 'draft'
                AND (created_at_ms < ?1 OR (created_at_ms = ?1 AND id < ?2))
@@ -3360,7 +3439,8 @@ fn list_rides(
         }
     } else {
         let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
+            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm,
+                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id)
              FROM rides WHERE state != 'draft'
              ORDER BY created_at_ms DESC, id DESC
              LIMIT ?1",
@@ -3413,6 +3493,7 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         created_at_ms: row.get(3)?,
         updated_at_ms: row.get(4)?,
         summary: RideSummary::from_stored(row.get(5)?, row.get(6)?),
+        segment_count: row.get(7)?,
     })
 }
 
@@ -3433,7 +3514,7 @@ fn route_points(
     let after = cursor.map_or(-1_i64, |cursor| i64::try_from(cursor.0).unwrap_or(i64::MAX));
     let fetch_limit = i64::from(limit.get()) + 1;
     let mut statement = connection.prepare(
-        "SELECT sequence, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
+        "SELECT sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
                 horizontal_accuracy_mm, source
          FROM ride_points
          WHERE ride_id = ?1 AND sequence > ?2
@@ -3463,20 +3544,21 @@ fn route_points(
 }
 
 fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint> {
-    let source_value: String = row.get(6)?;
+    let source_value: String = row.get(7)?;
     let source = source_from_db(&source_value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(error))
+        rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(error))
     })?;
-    let coordinate = Coordinate::from_fixed_parts(row.get(3)?, row.get(4)?).map_err(|error| {
+    let coordinate = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
-            3,
+            4,
             rusqlite::types::Type::Integer,
             Box::new(error),
         )
     })?;
     Ok(RoutePoint {
         sequence: row.get(0)?,
-        sample: LocationSample::new(coordinate, row.get(1)?, row.get(2)?, row.get(5)?, source),
+        segment_id: row.get(1)?,
+        sample: LocationSample::new(coordinate, row.get(2)?, row.get(3)?, row.get(6)?, source),
     })
 }
 

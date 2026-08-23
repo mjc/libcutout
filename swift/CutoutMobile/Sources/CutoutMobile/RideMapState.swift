@@ -170,7 +170,7 @@ public final class MobileRideMapState {
                         distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
                         durationMilliseconds: ride.updatedAtMilliseconds - ride.createdAtMilliseconds
                     ),
-                    segmentCount: ride.summary.pointCount > 0 ? 1 : 0,
+                    segmentCount: ride.segmentCount,
                     candidateVehicle: nil,
                     associatedVehicle: nil
                 )
@@ -265,7 +265,7 @@ public final class MobileRideMapState {
     private func mapStoredPoint(_ point: MobileRoutePointDto) -> MobileRideMapPointDto {
         MobileRideMapPointDto(
             sequence: point.sequence,
-            segmentId: 0,
+            segmentId: point.segmentId,
             latitudeDegrees: point.location.latitudeDegrees,
             longitudeDegrees: point.location.longitudeDegrees,
             wallClockUnixMs: point.location.wallClockUnixMilliseconds,

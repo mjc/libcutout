@@ -1,6 +1,34 @@
 use crate::{
     LocationAdmission, LocationSample, RideEvent, RideLifecycleState, RideSummary, TransitionError,
+    distance_between_millimetres,
 };
+
+/// One accepted route sample with its Rust-owned segment identity.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RideMapPoint {
+    sample: LocationSample,
+    segment_id: u64,
+}
+
+impl RideMapPoint {
+    /// Creates a segmented route point.
+    #[must_use]
+    pub const fn new(sample: LocationSample, segment_id: u64) -> Self {
+        Self { sample, segment_id }
+    }
+
+    /// Returns the canonical location sample.
+    #[must_use]
+    pub const fn sample(self) -> LocationSample {
+        self.sample
+    }
+
+    /// Returns the segment identity within the ride.
+    #[must_use]
+    pub const fn segment_id(self) -> u64 {
+        self.segment_id
+    }
+}
 
 /// Vehicle association result for one connected platform identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -20,14 +48,23 @@ pub enum VehicleAssociation {
 }
 
 /// Rust-owned live recording projection independent of storage or FFI DTOs.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct RideMapRecorder {
     state: Option<RideLifecycleState>,
     created_at_milliseconds: u64,
     candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
-    points: Vec<LocationSample>,
+    points: Vec<RideMapPoint>,
+    summary: RideSummary,
+    segment_id: u64,
+    segment_started: bool,
     last_monotonic_milliseconds: u64,
+}
+
+impl Default for RideMapRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RideMapRecorder {
@@ -40,6 +77,9 @@ impl RideMapRecorder {
             candidate_vehicle: None,
             associated_vehicle: None,
             points: Vec::new(),
+            summary: RideSummary::from_stored(0, 0),
+            segment_id: 0,
+            segment_started: false,
             last_monotonic_milliseconds: 0,
         }
     }
@@ -49,16 +89,25 @@ impl RideMapRecorder {
     pub fn restored(
         state: RideLifecycleState,
         created_at_milliseconds: u64,
-        points: Vec<LocationSample>,
+        points: Vec<RideMapPoint>,
     ) -> Self {
+        let point_count = points.len() as u64;
+        let distance_millimetres = points
+            .windows(2)
+            .filter(|pair| pair[0].segment_id() == pair[1].segment_id())
+            .map(|pair| distance_between_millimetres(pair[0].sample(), pair[1].sample()))
+            .sum();
         Self {
             state: Some(state),
             created_at_milliseconds,
             candidate_vehicle: None,
             associated_vehicle: None,
             last_monotonic_milliseconds: points.last().map_or(created_at_milliseconds, |point| {
-                point.monotonic_milliseconds()
+                point.sample().monotonic_milliseconds()
             }),
+            segment_id: points.last().map_or(0, |point| point.segment_id()),
+            segment_started: false,
+            summary: RideSummary::from_stored(point_count, distance_millimetres),
             points,
         }
     }
@@ -75,16 +124,22 @@ impl RideMapRecorder {
         self.associated_vehicle.as_deref()
     }
 
+    /// Returns the current segment identity for the next accepted point.
+    #[must_use]
+    pub const fn current_segment_id(&self) -> u64 {
+        self.segment_id
+    }
+
     /// Returns the projected canonical points.
     #[must_use]
-    pub fn points(&self) -> &[LocationSample] {
+    pub fn points(&self) -> &[RideMapPoint] {
         &self.points
     }
 
     /// Returns the point count, distance, and duration projection.
     #[must_use]
     pub fn summary(&self) -> RideSummary {
-        RideSummary::from_samples(&self.points)
+        self.summary
     }
 
     /// Returns elapsed recording time using the latest accepted monotonic sample.
@@ -116,6 +171,9 @@ impl RideMapRecorder {
         self.candidate_vehicle = candidate_vehicle;
         self.associated_vehicle = None;
         self.points.clear();
+        self.summary = RideSummary::from_stored(0, 0);
+        self.segment_id = 0;
+        self.segment_started = true;
         Ok(())
     }
 
@@ -133,6 +191,10 @@ impl RideMapRecorder {
 
     /// Applies a previously validated lifecycle state.
     pub fn apply_transition(&mut self, state: RideLifecycleState) {
+        if self.state == Some(RideLifecycleState::Paused) && state == RideLifecycleState::Active {
+            self.segment_id = self.segment_id.saturating_add(1);
+            self.segment_started = true;
+        }
         self.state = Some(state);
     }
 
@@ -170,13 +232,28 @@ impl RideMapRecorder {
     /// Checks a candidate sample against the latest accepted sample.
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
-        sample.admission(self.points.last())
+        let previous = self.points.last().map(|point| point.sample());
+        sample.admission(previous.as_ref())
     }
 
     /// Records a sample after durable storage has accepted it.
-    pub fn record_sample(&mut self, sample: LocationSample) {
+    pub fn record_sample(&mut self, sample: LocationSample) -> bool {
+        let segment_started = self.segment_started;
+        let distance = if segment_started {
+            0
+        } else {
+            self.points.last().map_or(0, |previous| {
+                distance_between_millimetres(previous.sample(), sample)
+            })
+        };
+        self.summary = RideSummary::from_stored(
+            self.summary.point_count().saturating_add(1),
+            self.summary.distance_millimetres().saturating_add(distance),
+        );
         self.last_monotonic_milliseconds = sample.monotonic_milliseconds();
-        self.points.push(sample);
+        self.points.push(RideMapPoint::new(sample, self.segment_id));
+        self.segment_started = false;
+        segment_started
     }
 }
 
@@ -220,6 +297,16 @@ mod tests {
         assert_eq!(
             recorder.observe_vehicle("pev-1", 1_002),
             VehicleAssociation::AlreadyAssociated
+        );
+        recorder.apply_transition(RideLifecycleState::Active);
+        assert_eq!(recorder.current_segment_id(), 0);
+        recorder.apply_transition(RideLifecycleState::Paused);
+        recorder.apply_transition(RideLifecycleState::Active);
+        assert_eq!(recorder.current_segment_id(), 1);
+        assert!(recorder.record_sample(sample(1_003, 40.001)));
+        assert_eq!(
+            recorder.points().last().map(|point| point.segment_id()),
+            Some(1)
         );
     }
 }
