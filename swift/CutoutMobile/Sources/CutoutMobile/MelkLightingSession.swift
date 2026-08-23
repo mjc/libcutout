@@ -190,6 +190,7 @@ public extension MelkLightingPeripheralState {
 public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<Void>()
+    private let reconnectController: ConnectionReconnectController
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var advertisedName: String?
@@ -197,8 +198,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var sink: CoreBluetoothPeripheralOperationSink?
     private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
     private var reconnectEnabled = true
-    private var reconnectAttempt = 0
-    private var reconnectWorkItem: DispatchWorkItem?
 
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
     public private(set) var peripheralName: String?
@@ -216,6 +215,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
         self.queue = queue
+        self.reconnectController = ConnectionReconnectController(
+            scheduler: DispatchQueueReconnectScheduler(queue: queue)
+        )
         super.init()
         queue.setSpecific(key: queueKey, value: ())
     }
@@ -227,9 +229,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 preferredPlatformIdentifier: preferredPlatformIdentifier
             )
             reconnectEnabled = true
-            reconnectAttempt = 0
-            reconnectWorkItem?.cancel()
-            reconnectWorkItem = nil
+            reconnectController.cancel()
 #if os(iOS)
             central = CBCentralManager(
                 delegate: self,
@@ -245,9 +245,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public func stop() {
         onQueue {
             reconnectEnabled = false
-            reconnectAttempt = 0
-            reconnectWorkItem?.cancel()
-            reconnectWorkItem = nil
+            reconnectController.cancel()
             if commandEvidence.status == .requested {
                 commandEvidence.unconfirmed()
             }
@@ -309,9 +307,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 return
             }
             guard central.state == .poweredOn else {
-                reconnectWorkItem?.cancel()
-                reconnectWorkItem = nil
-                reconnectAttempt = 0
+                reconnectController.cancel()
                 transition(to: .failed("Bluetooth unavailable: \(central.state.rawValue)"))
                 return
             }
@@ -363,9 +359,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         onQueue {
-            reconnectAttempt = 0
-            reconnectWorkItem?.cancel()
-            reconnectWorkItem = nil
+            reconnectController.cancel()
             transition(to: .discovering)
             peripheral.discoverServices(CoreBluetoothScanPolicy.melk.coreBluetoothServiceUuids)
         }
@@ -555,19 +549,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         peripheral: CBPeripheral,
         reason: String
     ) {
-        reconnectAttempt += 1
-        guard let delay = ConnectionReconnectPolicy.delayMilliseconds(
-            attempt: reconnectAttempt,
-            jitter: 0.5
-        ) else {
-            reconnectWorkItem = nil
-            transition(to: .failed("Accessory reconnect exhausted after \(reconnectAttempt - 1) attempts"))
-            record("reconnect_exhausted reason=\(reason)")
-            return
-        }
-
-        reconnectWorkItem?.cancel()
-        let workItem = DispatchWorkItem { [weak self] in
+        guard let schedule = reconnectController.schedule(jitter: 0.5, operation: { [weak self] in
             guard let self,
                   self.reconnectEnabled,
                   self.central === central,
@@ -575,16 +557,22 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                   central.state == .poweredOn else {
                 return
             }
-            self.reconnectWorkItem = nil
             self.transition(to: .connecting)
             central.connect(peripheral)
+        }) else {
+            transition(to: .failed(
+                "Accessory reconnect exhausted after \(ConnectionReconnectPolicy.maximumAttempts) attempts"
+            ))
+            record("reconnect_exhausted reason=\(reason)")
+            return
         }
-        reconnectWorkItem = workItem
-        transition(to: .retrying(attempt: reconnectAttempt, delayMilliseconds: delay))
-        record("reconnect_attempt=\(reconnectAttempt) delay_ms=\(delay) reason=\(reason)")
-        queue.asyncAfter(
-            deadline: .now() + .milliseconds(Int(delay)),
-            execute: workItem
+
+        transition(to: .retrying(
+            attempt: schedule.attempt,
+            delayMilliseconds: schedule.delayMilliseconds
+        ))
+        record(
+            "reconnect_attempt=\(schedule.attempt) delay_ms=\(schedule.delayMilliseconds) reason=\(reason)"
         )
     }
 
