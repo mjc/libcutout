@@ -2,9 +2,6 @@ import Accessibility
 import CutoutMobile
 import Foundation
 import SwiftUI
-#if os(iOS)
-import UIKit
-#endif
 
 struct ContentView: View {
     let model: CutoutAppModel
@@ -229,17 +226,9 @@ struct ContentView: View {
         #if os(iOS)
         switch route {
         case .vescRide, .vescDebug, .lighting(.vesc):
-            Color(uiColor: UIColor { traits in
-                traits.userInterfaceStyle == .dark
-                    ? .systemPurple
-                    : UIColor(red: 0.34, green: 0.08, blue: 0.52, alpha: 1)
-            })
+            Color.purple
         default:
-            Color(uiColor: UIColor { traits in
-                traits.userInterfaceStyle == .dark
-                    ? .systemYellow
-                    : UIColor(red: 0.45, green: 0.25, blue: 0.0, alpha: 1)
-                })
+            Color.yellow
         }
         #else
         .primary
