@@ -1,4 +1,7 @@
-use std::{fs, sync::Mutex};
+use std::{
+    fs,
+    sync::{Mutex, PoisonError},
+};
 
 use cutout_mobile_ffi::{
     MobileRideEventDto, MobileRideLifecycleStateDto, MobileRideLocationDto, MobileRideSourceDto,
@@ -9,7 +12,7 @@ static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn mobile_clients_open_the_rust_owned_database() {
-    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let path = std::env::temp_dir().join(format!(
         "cutout-mobile-ffi-ride-database-{}-{}.sqlite",
         std::process::id(),
@@ -27,7 +30,7 @@ fn mobile_clients_open_the_rust_owned_database() {
 
 #[test]
 fn mobile_clients_bootstrap_recovered_rides_and_page_history() {
-    let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let path = std::env::temp_dir().join(format!(
         "cutout-mobile-ffi-recovery-{}-{}.sqlite",
         std::process::id(),

@@ -3150,13 +3150,65 @@ impl From<MobilePevcapEncodingDto> for CorePevcapEncoding {
     }
 }
 
+impl From<CorePevcapEncoding> for MobilePevcapEncodingDto {
+    fn from(encoding: CorePevcapEncoding) -> Self {
+        match encoding {
+            CorePevcapEncoding::Jsonl => Self::Jsonl,
+            CorePevcapEncoding::Binary => Self::Binary,
+        }
+    }
+}
+
+/// Durable outcome selected by PEVCAP preflight.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapImportOutcomeDto {
+    /// Confirmation produces a canonical ride and a managed capture.
+    RideAndCapture,
+    /// Confirmation produces only a managed capture because no route locations exist.
+    CaptureOnly,
+}
+
+impl From<persistence::PevcapImportOutcome> for MobilePevcapImportOutcomeDto {
+    fn from(outcome: persistence::PevcapImportOutcome) -> Self {
+        match outcome {
+            persistence::PevcapImportOutcome::RideAndCapture => Self::RideAndCapture,
+            persistence::PevcapImportOutcome::CaptureOnly => Self::CaptureOnly,
+        }
+    }
+}
+
+/// Non-fatal PEVCAP preflight warning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePevcapImportWarningDto {
+    /// No phone route locations were present.
+    NoRouteLocations,
+}
+
+/// Bounded PEVCAP facts presented before explicit confirmation.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobilePevcapImportPreviewDto {
+    pub source_path: String,
+    pub encoding: MobilePevcapEncodingDto,
+    pub artifact_digest: String,
+    pub artifact_size: u64,
+    pub record_count: u64,
+    pub location_count: u64,
+    pub duration_milliseconds: u64,
+    pub outcome: MobilePevcapImportOutcomeDto,
+    pub warnings: Vec<MobilePevcapImportWarningDto>,
+}
+
 /// Durable result of importing one PEVCAP artifact.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobilePevcapImportReceiptDto {
-    /// Rust-created ride UUID.
-    pub ride_id: MobileRideIdDto,
+    /// Rust-created ride UUID, when route locations were present.
+    pub ride_id: Option<MobileRideIdDto>,
     /// SHA-256 digest of the source artifact.
     pub artifact_digest: String,
+    /// Immutable application-managed artifact path.
+    pub managed_artifact_path: String,
+    /// Whether confirmation produced a ride and capture or only a capture.
+    pub outcome: MobilePevcapImportOutcomeDto,
     /// Number of transport records read.
     pub record_count: u64,
     /// Number of phone locations admitted.
@@ -3269,6 +3321,15 @@ pub enum MobileRideDatabaseError {
     /// Geographic query bounds were non-finite, out of range, or reversed.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
+    /// PEVCAP preflight rejected an artifact that exceeded a hard resource limit.
+    #[error("PEVCAP resource limit exceeded")]
+    PevcapLimitExceeded,
+    /// The PEVCAP source changed after the preview was presented.
+    #[error("PEVCAP source changed after preflight")]
+    PevcapPreviewChanged,
+    /// Another confirmation for the same artifact is already active.
+    #[error("PEVCAP import is already in progress")]
+    PevcapImportInProgress,
     /// A coordinate failed WGS84 validation.
     #[error("invalid coordinate")]
     InvalidCoordinate,
@@ -3313,6 +3374,15 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::InvalidGeographicBounds => {
             MobileRideDatabaseError::InvalidGeographicBounds
+        }
+        persistence::StorageError::PevcapLimitExceeded { .. } => {
+            MobileRideDatabaseError::PevcapLimitExceeded
+        }
+        persistence::StorageError::PevcapPreviewChanged => {
+            MobileRideDatabaseError::PevcapPreviewChanged
+        }
+        persistence::StorageError::PevcapImportInProgress => {
+            MobileRideDatabaseError::PevcapImportInProgress
         }
         persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
         persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
@@ -3377,6 +3447,46 @@ fn mobile_geo_bounds(
 
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
     persistence::QueryLimit::new(value).map_err(map_ride_database_error)
+}
+
+fn mobile_pevcap_preview(
+    preview: &persistence::PevcapImportPreview,
+) -> MobilePevcapImportPreviewDto {
+    MobilePevcapImportPreviewDto {
+        source_path: preview.source_path().to_string_lossy().into_owned(),
+        encoding: preview.encoding().into(),
+        artifact_digest: preview.artifact_digest().to_owned(),
+        artifact_size: preview.artifact_size(),
+        record_count: preview.record_count(),
+        location_count: preview.location_count(),
+        duration_milliseconds: preview.duration_milliseconds(),
+        outcome: preview.outcome().into(),
+        warnings: preview
+            .warnings()
+            .iter()
+            .map(|warning| match warning {
+                persistence::PevcapImportWarning::NoRouteLocations => {
+                    MobilePevcapImportWarningDto::NoRouteLocations
+                }
+            })
+            .collect(),
+    }
+}
+
+fn mobile_pevcap_receipt(
+    receipt: persistence::PevcapImportReceipt,
+) -> MobilePevcapImportReceiptDto {
+    MobilePevcapImportReceiptDto {
+        ride_id: receipt.ride_id.map(|ride_id| MobileRideIdDto {
+            value: ride_id.uuid().to_string(),
+        }),
+        artifact_digest: receipt.artifact_digest,
+        managed_artifact_path: receipt.managed_artifact_path.to_string_lossy().into_owned(),
+        outcome: receipt.outcome.into(),
+        record_count: receipt.record_count,
+        location_count: receipt.location_count,
+        duplicate: receipt.duplicate,
+    }
 }
 
 fn mobile_ride_location(
@@ -3551,28 +3661,38 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
-    /// Streams a PEVCAP artifact into a Rust-owned imported ride.
+    /// Validates a PEVCAP artifact and returns bounded facts for explicit confirmation.
     ///
     /// # Errors
     ///
-    /// Returns a stable database error when the path, encoding, or artifact is invalid.
-    pub fn import_pevcap(
+    /// Returns a stable database error when the path, encoding, replay, or limits are invalid.
+    pub fn preflight_pevcap(
         &self,
         path: String,
         encoding: MobilePevcapEncodingDto,
+    ) -> Result<MobilePevcapImportPreviewDto, MobileRideDatabaseError> {
+        self.inner
+            .preflight_pevcap(Path::new(&path), encoding.into())
+            .map(|preview| mobile_pevcap_preview(&preview))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+    pub fn confirm_pevcap_import(
+        &self,
+        preview: MobilePevcapImportPreviewDto,
         created_at_milliseconds: u64,
     ) -> Result<MobilePevcapImportReceiptDto, MobileRideDatabaseError> {
+        let current = self
+            .inner
+            .preflight_pevcap(Path::new(&preview.source_path), preview.encoding.into())
+            .map_err(map_ride_database_error)?;
+        if mobile_pevcap_preview(&current) != preview {
+            return Err(MobileRideDatabaseError::PevcapPreviewChanged);
+        }
         self.inner
-            .import_pevcap(Path::new(&path), encoding.into(), created_at_milliseconds)
-            .map(|receipt| MobilePevcapImportReceiptDto {
-                ride_id: MobileRideIdDto {
-                    value: receipt.ride_id.uuid().to_string(),
-                },
-                artifact_digest: receipt.artifact_digest,
-                record_count: receipt.record_count,
-                location_count: receipt.location_count,
-                duplicate: receipt.duplicate,
-            })
+            .confirm_pevcap_import(&current, created_at_milliseconds)
+            .map(mobile_pevcap_receipt)
             .map_err(map_ride_database_error)
     }
 
@@ -7957,6 +8077,8 @@ mod tests {
         BEGODE_DATA_CHANNEL, BEGODE_SERVICE_CHANNEL, VESC_COMM_CUSTOM_APP_DATA, VESC_NOTIFY_CHANNEL,
     };
 
+    static RIDE_DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -11580,6 +11702,9 @@ mod tests {
 
     #[test]
     fn spatial_pages_round_trip_mobile_cursors_and_antimeridian_bounds() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let path = std::env::temp_dir().join(format!(
             "cutout-mobile-spatial-{}-{}.sqlite3",
             std::process::id(),
@@ -11626,5 +11751,60 @@ mod tests {
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_pevcap_requires_preview_confirmation_and_reports_capture_only() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let database_path =
+            std::env::temp_dir().join(format!("cutout-mobile-pevcap-{}.sqlite3", Uuid::new_v4()));
+        let artifact_path =
+            std::env::temp_dir().join(format!("cutout-mobile-pevcap-{}.jsonl", Uuid::new_v4()));
+        let header = PevcapHeader::new(
+            WallClockUnixTimestamp::new(1_700_000_000_000),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "test",
+            [0; 32],
+            &[],
+        )
+        .unwrap();
+        let capture = PevcapCapture::new(
+            header,
+            vec![PevcapRecord::link_up(MonotonicTimestamp::new(1), None)],
+        );
+        fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+        let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+
+        let preview = database
+            .preflight_pevcap(
+                artifact_path.to_string_lossy().into_owned(),
+                MobilePevcapEncodingDto::Jsonl,
+            )
+            .unwrap();
+        assert_eq!(preview.outcome, MobilePevcapImportOutcomeDto::CaptureOnly);
+        assert_eq!(
+            preview.warnings,
+            vec![MobilePevcapImportWarningDto::NoRouteLocations]
+        );
+        let receipt = database
+            .confirm_pevcap_import(preview, 1_700_000_000_000)
+            .unwrap();
+        assert_eq!(receipt.ride_id, None);
+        assert_eq!(receipt.outcome, MobilePevcapImportOutcomeDto::CaptureOnly);
+        let managed_path = PathBuf::from(&receipt.managed_artifact_path);
+        assert!(managed_path.exists());
+
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(&managed_path);
+        let _ = fs::remove_dir(managed_path.parent().unwrap());
+        let _ = fs::remove_file(database_path);
+        let _ = fs::remove_file(artifact_path);
     }
 }
