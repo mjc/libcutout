@@ -39,6 +39,7 @@ impl AeroProbe {
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,
@@ -90,6 +91,7 @@ impl FalconProbe {
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => None,

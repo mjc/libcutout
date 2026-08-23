@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     CommandKind, DeviceCommand, LightState, PedalMode, PendingProbe, RequestKey, RequestTarget,
-    VescControllerId, WriteMode, WritePayload,
+    RollAngle, VescControllerId, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -89,6 +89,9 @@ impl FalconControlEncoder {
             DeviceCommand::SetPedalMode(PedalMode::Hard) => b"h".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Medium) => b"f".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Soft) => b"s".as_slice(),
+            DeviceCommand::SetRollAngle(RollAngle::Low) => b">".as_slice(),
+            DeviceCommand::SetRollAngle(RollAngle::Medium) => b"=".as_slice(),
+            DeviceCommand::SetRollAngle(RollAngle::High) => b"<".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
@@ -232,6 +235,7 @@ impl VescRequestEncoder {
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
@@ -299,6 +303,7 @@ impl VescCanTarget {
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
+            | CommandKind::SetRollAngle
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
@@ -374,6 +379,26 @@ mod tests {
             .expect("documented Begode pedal mode encoder");
         assert_eq!(falcon.command, CommandKind::SetPedalMode);
         assert_eq!(falcon.payload.as_slice(), b"s");
+    }
+
+    #[test]
+    fn documented_falcon_roll_angle_encoders_match_protocol_bytes() {
+        let low = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low))
+            .expect("Begode low roll-angle encoder");
+        let medium = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Medium))
+            .expect("Begode medium roll-angle encoder");
+        let high = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::High))
+            .expect("Begode high roll-angle encoder");
+
+        assert_eq!(low.command, CommandKind::SetRollAngle);
+        assert_eq!(low.payload.as_slice(), b">");
+        assert_eq!(medium.payload.as_slice(), b"=");
+        assert_eq!(high.payload.as_slice(), b"<");
+        assert_eq!(low.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low)),
+            None
+        );
     }
 
     #[test]

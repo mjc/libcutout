@@ -1318,8 +1318,10 @@ impl SupportsBenignControls for BegodeFalconModel {
 }
 
 impl SupportsSettingsWrites for BegodeFalconModel {
-    const WRITE_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SetPedalMode,
+        CommandKind::SetRollAngle,
+    ]);
 
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
         FalconControlEncoder::encode(command)
@@ -1436,6 +1438,7 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::SetAccelerationAssist
         | CommandKind::SetLights
         | CommandKind::SetPedalMode
+        | CommandKind::SetRollAngle
         | CommandKind::SetTaillight
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
@@ -4123,6 +4126,36 @@ mod tests {
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
                 if bytes.as_slice() == b"h"
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_writes_documented_roll_angle() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetRollAngle(cutout_core::RollAngle::High)),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"<"
         )));
     }
 

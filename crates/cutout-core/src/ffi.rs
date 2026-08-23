@@ -10,7 +10,7 @@ use crate::{
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, SafetyClass,
+    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
     SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
     TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
@@ -229,6 +229,9 @@ pub enum CommandKindDto {
     /// Set pedal stiffness.
     SetPedalMode,
 
+    /// Set Falcon roll-angle sensitivity.
+    SetRollAngle,
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist,
 
@@ -254,6 +257,7 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestSettings => Self::RequestSettings,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
+            CommandKind::SetRollAngle => Self::SetRollAngle,
             CommandKind::SetAccelerationAssist => Self::SetAccelerationAssist,
             CommandKind::SetTaillight => Self::SetTaillight,
             CommandKind::SoundHorn => Self::SoundHorn,
@@ -292,6 +296,9 @@ pub enum DeviceCommandDto {
     /// Set pedal stiffness.
     SetPedalMode(PedalModeDto),
 
+    /// Set Falcon roll-angle sensitivity.
+    SetRollAngle(RollAngleDto),
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist(AccelerationAssistStateDto),
 
@@ -320,6 +327,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
             DeviceCommand::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -344,6 +352,7 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
             DeviceCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -423,6 +432,39 @@ impl From<PedalModeDto> for PedalMode {
             PedalModeDto::Hard => Self::Hard,
             PedalModeDto::Medium => Self::Medium,
             PedalModeDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// UniFFI-ready Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RollAngleDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<RollAngle> for RollAngleDto {
+    fn from(angle: RollAngle) -> Self {
+        match angle {
+            RollAngle::Low => Self::Low,
+            RollAngle::Medium => Self::Medium,
+            RollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<RollAngleDto> for RollAngle {
+    fn from(angle: RollAngleDto) -> Self {
+        match angle {
+            RollAngleDto::Low => Self::Low,
+            RollAngleDto::Medium => Self::Medium,
+            RollAngleDto::High => Self::High,
         }
     }
 }

@@ -204,6 +204,19 @@ impl PedalMode {
     }
 }
 
+/// Documented roll-angle sensitivity setting for Begode wheels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RollAngle {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -233,6 +246,9 @@ pub enum DeviceCommand {
 
     /// Set pedal stiffness; this command is stationary-only.
     SetPedalMode(PedalMode),
+
+    /// Set roll-angle sensitivity; this command is stationary-only.
+    SetRollAngle(RollAngle),
 
     /// Enable or disable acceleration assist; this command is stationary-only.
     SetAccelerationAssist(AccelerationAssistState),
@@ -264,6 +280,7 @@ impl DeviceCommand {
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
+            Self::SetRollAngle(_) => CommandKind::SetRollAngle,
             Self::SetAccelerationAssist(_) => CommandKind::SetAccelerationAssist,
             Self::SetTaillight(_) => CommandKind::SetTaillight,
             Self::SoundHorn => CommandKind::SoundHorn,
@@ -337,6 +354,9 @@ pub enum CommandKind {
     /// Set pedal stiffness.
     SetPedalMode,
 
+    /// Set roll-angle sensitivity.
+    SetRollAngle,
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist,
 
@@ -363,7 +383,9 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::SetPedalMode | Self::SetAccelerationAssist => SafetyClass::StationaryOnly,
+            Self::SetPedalMode | Self::SetRollAngle | Self::SetAccelerationAssist => {
+                SafetyClass::StationaryOnly
+            }
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
