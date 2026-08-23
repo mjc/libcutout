@@ -2,17 +2,76 @@ import CutoutMobileFFI
 import Foundation
 import SwiftUI
 
+/// Bounded provider-supplied analysis data for visualization.
+///
+/// This is intentionally not an audio buffer. A provider adapter may populate
+/// it when it has an approved analysis surface; the app never captures or
+/// forwards the system audio stream.
+public struct MusicAnalysisFrame: Equatable, Sendable {
+    public let bass: Double
+    public let mid: Double
+    public let treble: Double
+    public let energy: Double
+    public let beat: Double
+
+    public init?(bass: Double, mid: Double, treble: Double, energy: Double, beat: Double) {
+        guard Self.isValid(bass), Self.isValid(mid), Self.isValid(treble),
+              Self.isValid(energy), Self.isValid(beat) else { return nil }
+        self.bass = bass
+        self.mid = mid
+        self.treble = treble
+        self.energy = energy
+        self.beat = beat
+    }
+
+    private static func isValid(_ value: Double) -> Bool {
+        value.isFinite && (0...1).contains(value)
+    }
+}
+
+/// One normalized RGB frame suitable for a hardware or UI renderer.
+public struct MusicRGBFrame: Equatable, Sendable {
+    public let red: Double
+    public let green: Double
+    public let blue: Double
+    public let brightness: Double
+
+    public static let silent = MusicRGBFrame(red: 0, green: 0, blue: 0, brightness: 0)
+
+    fileprivate init(red: Double, green: Double, blue: Double, brightness: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.brightness = brightness
+    }
+}
+
+/// Maps optional provider analysis into a stable RGB signal.
+public enum MusicVisualizer {
+    public static func rgb(from analysis: MusicAnalysisFrame?) -> MusicRGBFrame {
+        guard let analysis else { return .silent }
+        return MusicRGBFrame(
+            red: max(analysis.bass, analysis.beat),
+            green: max(analysis.mid, analysis.beat * 0.7),
+            blue: max(analysis.treble, analysis.beat * 0.4),
+            brightness: max(analysis.energy, analysis.beat)
+        )
+    }
+}
+
 /// Provider-neutral music state used by the compact ride/map player.
 public struct MusicNowPlaying: Equatable, Sendable {
     public let provider: MobileMusicProviderDto
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
     public let capabilities: MobileMusicCapabilitiesDto
+    public let analysis: MusicAnalysisFrame?
 
     public init(
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto,
         item: MobileMusicItemDto? = nil,
+        analysis: MusicAnalysisFrame? = nil,
         capabilities: MobileMusicCapabilitiesDto = .init(
             previous: false,
             play: false,
@@ -25,13 +84,15 @@ public struct MusicNowPlaying: Equatable, Sendable {
         self.state = state
         self.item = item
         self.capabilities = capabilities
+        self.analysis = analysis
     }
 
-    public init(snapshot: MobileMusicSnapshotDto) {
+    public init(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
         self.init(
             provider: snapshot.provider,
             state: snapshot.state,
             item: snapshot.item,
+            analysis: analysis,
             capabilities: snapshot.capabilities
         )
     }
@@ -113,8 +174,12 @@ public final class MusicIntegrationCoordinator {
         self.rideMapState = rideMapState
     }
 
-    public func update(snapshot: MobileMusicSnapshotDto) {
-        nowPlaying = MusicNowPlaying(snapshot: snapshot)
+    public func update(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
+        nowPlaying = MusicNowPlaying(snapshot: snapshot, analysis: analysis)
+    }
+
+    public var visualizationFrame: MusicRGBFrame {
+        MusicVisualizer.rgb(from: nowPlaying?.analysis)
     }
 
     /// Applies one provider observation and records only a meaningful transition.
@@ -123,11 +188,12 @@ public final class MusicIntegrationCoordinator {
     @discardableResult
     public func ingest(
         snapshot: MobileMusicSnapshotDto,
+        analysis: MusicAnalysisFrame? = nil,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         let previous = nowPlaying
-        update(snapshot: snapshot)
+        update(snapshot: snapshot, analysis: analysis)
         guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
             return nil
         }
@@ -149,9 +215,10 @@ public final class MusicIntegrationCoordinator {
         kind: MobileMusicRideEventKindDto,
         monotonicAtMs: UInt64,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64
+        clockUncertaintyMs: UInt64,
+        analysis: MusicAnalysisFrame? = nil
     ) throws -> MobileMusicTimelineOutcomeDto {
-        update(snapshot: snapshot)
+        update(snapshot: snapshot, analysis: analysis)
         return try rideMapState.recordMusicEvent(
             snapshot: snapshot,
             kind: kind,

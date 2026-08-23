@@ -101,6 +101,33 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(MobileMusicHistoryPolicyDto.humanReadable.explanation.contains("title"))
     }
 
+    func testVisualizerMapsPermittedAnalysisToBoundedRgbWithoutAudioCapture() {
+        let analysis = MusicAnalysisFrame(bass: 0.8, mid: 0.4, treble: 0.2, energy: 0.7, beat: 0.9)
+        XCTAssertNotNil(analysis)
+
+        let rgb = MusicVisualizer.rgb(from: analysis)
+
+        XCTAssertEqual(rgb.red, 0.9, accuracy: 0.0001)
+        XCTAssertEqual(rgb.green, 0.63, accuracy: 0.0001)
+        XCTAssertEqual(rgb.blue, 0.36, accuracy: 0.0001)
+        XCTAssertEqual(rgb.brightness, 0.9, accuracy: 0.0001)
+    }
+
+    func testVisualizerRejectsOutOfRangeAnalysisAndFallsBackToSilent() {
+        XCTAssertNil(MusicAnalysisFrame(bass: 1.1, mid: 0, treble: 0, energy: 0, beat: 0))
+        XCTAssertEqual(MusicVisualizer.rgb(from: nil), .silent)
+    }
+
+    func testCoordinatorPublishesTheCurrentVisualizerFrame() {
+        let coordinator = MusicIntegrationCoordinator(rideMapState: MobileRideMapState())
+        let analysis = MusicAnalysisFrame(bass: 0.2, mid: 0.4, treble: 0.6, energy: 0.5, beat: 0.1)
+
+        coordinator.update(snapshot: snapshot(), analysis: analysis)
+
+        XCTAssertEqual(coordinator.visualizationFrame.blue, 0.6, accuracy: 0.0001)
+        XCTAssertEqual(coordinator.visualizationFrame.brightness, 0.5, accuracy: 0.0001)
+    }
+
     private func snapshot(
         state: MobileMusicPlaybackStateDto = .playing,
         observedAtMs: UInt64 = 10
