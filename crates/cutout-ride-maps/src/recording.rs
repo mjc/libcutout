@@ -309,4 +309,42 @@ mod tests {
             Some(1)
         );
     }
+
+    #[test]
+    fn association_requires_the_snapshotted_candidate_and_stays_stable() {
+        let mut no_candidate = RideMapRecorder::new();
+        no_candidate.start(1_000, None).expect("starts");
+        assert_eq!(
+            no_candidate.observe_vehicle("pev-1", 1_001),
+            VehicleAssociation::CandidateMissing
+        );
+        assert!(no_candidate.associated_vehicle().is_none());
+
+        let mut associated = RideMapRecorder::new();
+        associated
+            .start(1_000, Some("pev-1".to_owned()))
+            .expect("starts");
+        assert_eq!(
+            associated.observe_vehicle("pev-1", 1_001),
+            VehicleAssociation::Associated
+        );
+        assert_eq!(
+            associated.observe_vehicle("pev-2", 1_002),
+            VehicleAssociation::IdentityMismatch
+        );
+        assert_eq!(associated.associated_vehicle(), Some("pev-1"));
+    }
+
+    #[test]
+    fn changed_coordinates_at_the_same_monotonic_time_are_out_of_order() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(1_000, None).expect("starts");
+        let first = sample(1_001, 40.0);
+        recorder.record_sample(first);
+        let changed = sample(1_001, 40.001);
+        assert_eq!(
+            recorder.check_sample(&changed),
+            LocationAdmission::OutOfOrder
+        );
+    }
 }

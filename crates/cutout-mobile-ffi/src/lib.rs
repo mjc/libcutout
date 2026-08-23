@@ -12438,7 +12438,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_ride_map_core_associates_a_pev_found_after_gps_only_start() {
+    fn mobile_ride_map_core_does_not_associate_without_a_candidate() {
         let state = MobileRideMapCore::new();
         state
             .start_gps_only(1_000, None)
@@ -12447,13 +12447,39 @@ mod tests {
             state
                 .observe_vehicle_connection("pev-found-later".to_owned(), 1_001)
                 .expect("late PEV connection is observed"),
-            MobileRideMapCoreAssociationDto::Associated
+            MobileRideMapCoreAssociationDto::CandidateMissing
         );
         assert_eq!(
             state
                 .current_snapshot()
                 .and_then(|snapshot| snapshot.associated_vehicle),
-            Some("pev-found-later".to_owned())
+            None
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_keeps_the_first_confirmed_association() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, Some("pev-1".to_owned()))
+            .expect("recording starts");
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-1".to_owned(), 1_001)
+                .expect("matching connection is observed"),
+            MobileRideMapCoreAssociationDto::Associated
+        );
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-2".to_owned(), 1_002)
+                .expect("different connection is observed"),
+            MobileRideMapCoreAssociationDto::IdentityMismatch
+        );
+        assert_eq!(
+            state
+                .current_snapshot()
+                .and_then(|snapshot| snapshot.associated_vehicle),
+            Some("pev-1".to_owned())
         );
     }
 
@@ -12493,6 +12519,11 @@ mod tests {
         assert_eq!(second.points[0].sequence, 1);
         assert_eq!(second.points[0].segment_id, 1);
         assert!(!second.has_more);
+
+        let empty = state.points_after(None, 0);
+        assert!(empty.points.is_empty());
+        assert!(!empty.has_more);
+        assert!(empty.next_cursor.is_none());
 
         state.stop().expect("map recording stops");
         state.save().expect("map recording saves");

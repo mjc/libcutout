@@ -897,6 +897,34 @@ fn ride_history_and_route_queries_are_stably_bounded() {
 }
 
 #[test]
+fn ride_history_excludes_explicitly_discarded_rides() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-discarded-history-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let discarded = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(discarded, RideEvent::Start).unwrap();
+    database.transition(discarded, RideEvent::Stop).unwrap();
+    database.transition(discarded, RideEvent::Discard).unwrap();
+
+    let saved = database.create_ride(RideSource::Live, 20).unwrap();
+    database.transition(saved, RideEvent::Start).unwrap();
+    database.transition(saved, RideEvent::Stop).unwrap();
+    database.transition(saved, RideEvent::Save).unwrap();
+
+    let page = database
+        .list_rides(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(page.rides().len(), 1);
+    assert_eq!(page.rides()[0].id(), saved);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn migrated_ride_tables_enforce_the_current_constraints() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
