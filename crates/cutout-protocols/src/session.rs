@@ -1771,10 +1771,10 @@ impl<M: SupportsDangerousActuation> DangerousControlSession<M> {
         output: &mut Vec<SessionOutput>,
         command: CommandKind,
         safety_class: SafetyClass,
-        reason: cutout_core::ControlRefusalReason,
+        reason: ControlRefusalReason,
     ) {
         output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-            cutout_core::ControlRefusal {
+            ControlRefusal {
                 command,
                 safety_class,
                 reason,
@@ -1798,7 +1798,7 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         output,
                         kind,
                         safety_class,
-                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                        ControlRefusalReason::UnsupportedCommand,
                     );
                     return;
                 }
@@ -1808,13 +1808,13 @@ impl<M: SupportsDangerousActuation> ProtocolSession for DangerousControlSession<
                         output,
                         metadata.kind,
                         metadata.safety_class,
-                        cutout_core::ControlRefusalReason::UnsupportedCommand,
+                        ControlRefusalReason::UnsupportedCommand,
                     ),
                     Err(reason) => Self::push_refusal(
                         output,
                         kind,
                         safety_class,
-                        cutout_core::ControlRefusalReason::from(reason),
+                        ControlRefusalReason::from(reason),
                     ),
                 }
             }
@@ -4405,7 +4405,7 @@ mod tests {
             DangerousControlSession::<TestModel>::new(cutout_core::DangerousActuationPolicy {
                 model: TestModel::MODEL,
                 max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-                arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+                arm_duration: Duration::from_milliseconds(1_000),
             });
         let mut output = Vec::new();
 
@@ -4424,10 +4424,10 @@ mod tests {
         assert_eq!(
             output,
             vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::MissingArm,
+                    reason: ControlRefusalReason::MissingArm,
                 }
             ))]
         );
@@ -4439,7 +4439,7 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -4465,10 +4465,10 @@ mod tests {
         );
         assert!(
             output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::ExpiredArm,
+                    reason: ControlRefusalReason::ExpiredArm,
                 }
             )))
         );
@@ -4480,12 +4480,12 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let wrong_model_policy = cutout_core::DangerousActuationPolicy {
             model: "other model",
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -4511,10 +4511,10 @@ mod tests {
         );
         assert!(
             output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::WrongModel,
+                    reason: ControlRefusalReason::WrongModel,
                 }
             )))
         );
@@ -4526,7 +4526,7 @@ mod tests {
         let policy = cutout_core::DangerousActuationPolicy {
             model: TestModel::MODEL,
             max_current: cutout_core::PhaseCurrent::from_milliamps(5_000),
-            arm_duration: cutout_core::Duration::from_milliseconds(1_000),
+            arm_duration: Duration::from_milliseconds(1_000),
         };
         let mut session = DangerousControlSession::<TestModel>::new(policy);
         let mut output = Vec::new();
@@ -4552,10 +4552,10 @@ mod tests {
         );
         assert!(
             output.contains(&SessionOutput::Event(DeviceEvent::ControlRefusal(
-                cutout_core::ControlRefusal {
+                ControlRefusal {
                     command: CommandKind::SetRawMotorCurrent,
                     safety_class: SafetyClass::Actuation,
-                    reason: cutout_core::ControlRefusalReason::CurrentLimitExceeded,
+                    reason: ControlRefusalReason::CurrentLimitExceeded,
                 }
             )))
         );
