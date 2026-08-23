@@ -73,11 +73,11 @@ use cutout_core::{
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
-    BEGODE_FIELD_TILTBACK_SPEED_KMH,
-    ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
-    ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
-    DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
-    PendingProbe, ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
+    BEGODE_FIELD_TILTBACK_SPEED_KMH, ConcreteAeroBenignControlSession,
+    ConcreteFalconBenignControlSession, ConcreteFalconProfileDto, ConcreteSessionErrorDto,
+    ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
+    DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
+    ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
     StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
     VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
     VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
@@ -10534,10 +10534,8 @@ impl MobileEucGarageSettingsDto {
             .or_else(|| settings_speed(entries, BEGODE_FIELD_TILTBACK_SPEED_KMH, speed_from_kmh)),
             pedal_mode: settings_entry(entries, VETERAN_FIELD_PEDALS_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
-                .map(|raw_mode| MobilePedalModeDto {
-                    raw_mode: Some(raw_mode),
-                    mode: CorePedalMode::from_veteran_raw(raw_mode)
-                        .map(MobilePedalModeKindDto::from),
+                .map(|raw_mode| {
+                    mobile_pedal_mode(raw_mode, CorePedalMode::from_veteran_raw(raw_mode))
                 })
                 .or_else(|| {
                     settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
@@ -10566,10 +10564,17 @@ fn settings_entry(
 }
 
 fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
+    let raw_mode = (settings_bits >> 13) & 0x03;
+    mobile_pedal_mode(
+        raw_mode,
+        CorePedalMode::from_begode_settings_bits(settings_bits),
+    )
+}
+
+fn mobile_pedal_mode(raw_mode: u16, mode: Option<CorePedalMode>) -> MobilePedalModeDto {
     MobilePedalModeDto {
-        raw_mode: Some((settings_bits >> 13) & 0x03),
-        mode: CorePedalMode::from_begode_settings_bits(settings_bits)
-            .map(MobilePedalModeKindDto::from),
+        raw_mode: Some(raw_mode),
+        mode: mode.map(MobilePedalModeKindDto::from),
     }
 }
 
