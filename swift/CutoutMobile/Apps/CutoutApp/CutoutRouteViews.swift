@@ -228,39 +228,6 @@ struct VescDebugRouteView: View {
 @MainActor
 @Observable
 final class LightingRouteModel {
-    private struct SolidState {
-        var powerOn: Bool
-        var red: UInt8
-        var green: UInt8
-        var blue: UInt8
-        var brightness: UInt8
-
-        init(powerOn: Bool, red: UInt8, green: UInt8, blue: UInt8, brightness: UInt8) {
-            self.powerOn = powerOn
-            self.red = red
-            self.green = green
-            self.blue = blue
-            self.brightness = brightness
-        }
-
-        init(_ state: MobileMelkLightingRestoreStateDto) {
-            powerOn = state.powerOn
-            red = state.red
-            green = state.green
-            blue = state.blue
-            brightness = state.brightness
-        }
-
-        var dto: MobileMelkLightingRestoreStateDto {
-            MobileMelkLightingRestoreStateDto(
-                powerOn: powerOn,
-                red: red,
-                green: green,
-                blue: blue,
-                brightness: brightness
-            )
-        }
-    }
 
     private let session = MelkLightingPeripheralSession()
     private let persistence: LightingAccessoryPersistence
@@ -275,7 +242,13 @@ final class LightingRouteModel {
     private(set) var records: [MelkLightingLogEntry] = []
     private(set) var notificationCount = 0
     private var isRunning = false
-    private var requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
+    private var requestedState = MobileMelkLightingRestoreStateDto(
+        powerOn: false,
+        red: 255,
+        green: 0,
+        blue: 0,
+        brightness: 100
+    )
     private var restoreAttempted = false
     private var lastColorPreviewAt: TimeInterval = 0
 
@@ -285,7 +258,7 @@ final class LightingRouteModel {
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
         if let requested = persistence.requestedState {
-            requestedState = SolidState(requested)
+            requestedState = requested
         }
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
@@ -338,7 +311,13 @@ final class LightingRouteModel {
         accessoryAlias = nil
         vehicleIdentifier = nil
         restoreEnabled = false
-        requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
+        requestedState = MobileMelkLightingRestoreStateDto(
+            powerOn: false,
+            red: 255,
+            green: 0,
+            blue: 0,
+            brightness: 100
+        )
         commandStatus = .idle
         restoreAttempted = true
     }
@@ -386,7 +365,7 @@ final class LightingRouteModel {
         guard commandStatus == .requested else { return }
         session.markLastCommandConfirmed()
         commandStatus = .confirmed
-        try? persistence.confirm(requestedState.dto)
+        try? persistence.confirm(requestedState)
         restoreAttempted = true
     }
 
@@ -419,7 +398,7 @@ final class LightingRouteModel {
     func savePreset(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSavePreset, !trimmed.isEmpty else { return }
-        try? persistence.addPreset(name: trimmed, requested: requestedState.dto)
+        try? persistence.addPreset(name: trimmed, requested: requestedState)
     }
 
     func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
@@ -495,7 +474,7 @@ final class LightingRouteModel {
     }
 
     private func updatePersistedRequestedState() {
-        try? persistence.updateRequestedState(requestedState.dto)
+        try? persistence.updateRequestedState(requestedState)
     }
 
     private func restoreIfEligible() {
@@ -519,7 +498,7 @@ final class LightingRouteModel {
             restoreAttempted = false
             return
         }
-        requestedState = SolidState(requested)
+        requestedState = requested
         commandStatus = .requested
         records = Array((records + [MelkLightingLogEntry(text: "restore=requested")]).suffix(12))
     }
