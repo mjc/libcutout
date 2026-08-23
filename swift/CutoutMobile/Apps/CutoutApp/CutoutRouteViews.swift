@@ -179,20 +179,8 @@ final class LightingRouteModel {
         }
     }
 
-    private enum PersistenceKeys {
-        static let record = "lighting.accessory.record"
-        static let legacyEnabled = "lighting.restore.enabled"
-        static let legacyPlatformIdentifier = "lighting.restore.platformIdentifier"
-        static let legacyPowerOn = "lighting.restore.powerOn"
-        static let legacyRed = "lighting.restore.red"
-        static let legacyGreen = "lighting.restore.green"
-        static let legacyBlue = "lighting.restore.blue"
-        static let legacyBrightness = "lighting.restore.brightness"
-    }
-
     private let session = MelkLightingPeripheralSession()
-    private let defaults = UserDefaults.standard
-    private var persistedRecord: MobileRgbLightingAccessoryRecord?
+    private let persistence: LightingAccessoryPersistence
 
     private(set) var connectionState: MelkLightingPeripheralState = .idle
     private(set) var peripheralName: String?
@@ -206,16 +194,10 @@ final class LightingRouteModel {
     private var restoreAttempted = false
 
     init() {
-        restoreEnabled = defaults.bool(forKey: PersistenceKeys.legacyEnabled)
-        if let data = defaults.data(forKey: PersistenceKeys.record),
-           let record = try? MobileRgbLightingAccessoryRecord.decode(bytes: data) {
-            persistedRecord = record
-            restoreEnabled = record.restoreEnabled()
-            if let requested = record.requestedState() {
-                requestedState = SolidState(requested)
-            }
-        } else {
-            migrateLegacyRecordIfPresent()
+        persistence = LightingAccessoryPersistence()
+        restoreEnabled = persistence.restoreEnabled
+        if let requested = persistence.requestedState {
+            requestedState = SolidState(requested)
         }
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
@@ -227,12 +209,10 @@ final class LightingRouteModel {
                 self?.connectionState = state
                 if state == .ready {
                     self?.ensureRecordForConnectedAccessory()
-                    self?.persistedRecord?.setConnection(state: .ready)
-                    self?.persistRecord()
+                    self?.persistence.setConnection(.ready)
                     self?.restoreIfEligible()
                 } else if state == .disconnected {
-                    self?.persistedRecord?.setConnection(state: .disconnected)
-                    self?.persistRecord()
+                    self?.persistence.setConnection(.disconnected)
                 }
             }
         }
@@ -287,20 +267,14 @@ final class LightingRouteModel {
         guard commandStatus == .requested else { return }
         session.markLastCommandConfirmed()
         commandStatus = .confirmed
-        guard let record = persistedRecord else { return }
-        try? record.setRequestedState(state: requestedState.dto)
-        try? record.setConfirmedState(state: requestedState.dto)
-        record.setConfirmation(state: .confirmed)
-        record.setRestoreEnabled(enabled: restoreEnabled)
-        persistRecord()
+        try? persistence.confirm(requestedState.dto)
         restoreAttempted = true
     }
 
     func markUnconfirmed() {
         guard commandStatus == .requested else { return }
         session.markLastCommandUnconfirmed()
-        persistedRecord?.setConfirmation(state: .unconfirmed)
-        persistRecord()
+        persistence.markUnconfirmed()
         commandStatus = .unconfirmed
     }
 
@@ -308,8 +282,7 @@ final class LightingRouteModel {
 
     func setRestoreEnabled(_ enabled: Bool) {
         restoreEnabled = enabled
-        persistedRecord?.setRestoreEnabled(enabled: enabled)
-        persistRecord()
+        persistence.setRestoreEnabled(enabled)
         if enabled {
             restoreIfEligible()
         }
@@ -350,75 +323,23 @@ final class LightingRouteModel {
         peripheralIdentifier = String(identifier)
     }
 
-    private func migrateLegacyRecordIfPresent() {
-        guard let identifier = defaults.string(forKey: PersistenceKeys.legacyPlatformIdentifier),
-              let record = try? MobileRgbLightingAccessoryRecord(
-                  platformIdentifier: identifier,
-                  profile: .melkOc21,
-                  profileVersion: 1
-              ) else {
-            return
-        }
-        persistedRecord = record
-        restoreEnabled = defaults.bool(forKey: PersistenceKeys.legacyEnabled)
-        record.setRestoreEnabled(enabled: restoreEnabled)
-        let state = MobileMelkLightingRestoreStateDto(
-            powerOn: defaults.bool(forKey: PersistenceKeys.legacyPowerOn),
-            red: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyRed)),
-            green: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyGreen)),
-            blue: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyBlue)),
-            brightness: UInt8(clamping: defaults.integer(forKey: PersistenceKeys.legacyBrightness))
-        )
-        guard (try? record.setRequestedState(state: state)) != nil,
-              (try? record.setConfirmedState(state: state)) != nil else {
-            return
-        }
-        record.setConfirmation(state: .confirmed)
-        persistRecord()
-        for key in [
-            PersistenceKeys.legacyEnabled,
-            PersistenceKeys.legacyPlatformIdentifier,
-            PersistenceKeys.legacyPowerOn,
-            PersistenceKeys.legacyRed,
-            PersistenceKeys.legacyGreen,
-            PersistenceKeys.legacyBlue,
-            PersistenceKeys.legacyBrightness,
-        ] {
-            defaults.removeObject(forKey: key)
-        }
-    }
-
     private func ensureRecordForConnectedAccessory() {
-        guard let identifier = peripheralIdentifier, !identifier.isEmpty else { return }
-        if persistedRecord?.platformIdentifier() == identifier { return }
-        persistedRecord = try? MobileRgbLightingAccessoryRecord(
-            platformIdentifier: identifier,
-            profile: .melkOc21,
-            profileVersion: 1
-        )
-        persistedRecord?.setRestoreEnabled(enabled: restoreEnabled)
-        persistRecord()
+        guard let identifier = peripheralIdentifier else { return }
+        if persistence.ensureRecord(platformIdentifier: identifier) {
+            persistence.setRestoreEnabled(restoreEnabled)
+        }
     }
 
     private func updatePersistedRequestedState() {
-        guard let record = persistedRecord else { return }
-        try? record.setRequestedState(state: requestedState.dto)
-        record.setConfirmation(state: .unknown)
-        persistRecord()
-    }
-
-    private func persistRecord() {
-        guard let record = persistedRecord, let data = try? record.encode() else { return }
-        defaults.set(data, forKey: PersistenceKeys.record)
+        try? persistence.updateRequestedState(requestedState.dto)
     }
 
     private func restoreIfEligible() {
         guard restoreEnabled, !restoreAttempted,
-              let record = persistedRecord,
               let peripheralIdentifier,
-              record.platformIdentifier() == peripheralIdentifier,
-              record.confirmation() == .confirmed,
-              let requested = record.confirmedState() else {
+              persistence.platformIdentifier == peripheralIdentifier,
+              persistence.confirmation == .confirmed,
+              let requested = persistence.confirmedState else {
             return
         }
         restoreAttempted = true
