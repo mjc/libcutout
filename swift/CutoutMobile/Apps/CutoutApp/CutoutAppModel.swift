@@ -246,7 +246,7 @@ final class CutoutAppModel {
 
     /// Accepts a provider callback without coupling the app model to a
     /// particular SDK. History failures remain best-effort while the current
-    /// provider state still reaches the player and visualization.
+    /// provider state still reaches the player and ride recorder.
     @discardableResult
     func ingestMusicObservation(
         _ observation: MusicProviderObservation,

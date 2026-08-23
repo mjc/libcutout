@@ -108,8 +108,8 @@ public extension MobileMusicHistoryPolicyDto {
 
 /// One provider observation entering the shared music pipeline.
 ///
-/// Providers may attach bounded analysis for visualization, but never an audio
-/// buffer or artwork payload.
+/// Providers may attach bounded metadata, but never an audio buffer or artwork
+/// payload.
 public struct MusicProviderObservation: Equatable, Sendable {
     public let snapshot: MobileMusicSnapshotDto
 
