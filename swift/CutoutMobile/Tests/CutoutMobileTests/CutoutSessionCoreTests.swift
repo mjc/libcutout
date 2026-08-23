@@ -1665,7 +1665,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             EucGarageSettingsSnapshot(
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
-                pedalMode: .unsupported
+                pedalMode: .unsupported,
+                autoShutdownSeconds: .unsupported,
+                chargeMode: .unsupported
             )
         )
     }
@@ -1686,7 +1688,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             EucGarageSettingsSnapshot(
                 beepMargin: .unsupported,
                 tiltback: .unsupported,
-                pedalMode: .unsupported
+                pedalMode: .unsupported,
+                autoShutdownSeconds: .unsupported,
+                chargeMode: .unsupported
             )
         )
     }

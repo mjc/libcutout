@@ -1140,7 +1140,9 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
         EucGarageSettingsSnapshot(
             beepMargin: Self.missingReadback(for: availability),
             tiltback: Self.missingReadback(for: availability),
-            pedalMode: Self.missingReadback(for: availability)
+            pedalMode: Self.missingReadback(for: availability),
+            autoShutdownSeconds: Self.missingReadback(for: availability),
+            chargeMode: Self.missingReadback(for: availability)
         )
     }
 
@@ -2781,17 +2783,23 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
     public let tiltback: ReadbackValue<Speed>
     public let pedalMode: ReadbackValue<PedalMode>
     public let lightState: LightState?
+    public let autoShutdownSeconds: ReadbackValue<UInt64>
+    public let chargeMode: ReadbackValue<ChargeMode>
 
     public init(
         beepMargin: ReadbackValue<Speed> = .unavailable,
         tiltback: ReadbackValue<Speed> = .unavailable,
         pedalMode: ReadbackValue<PedalMode> = .unavailable,
-        lightState: LightState? = nil
+        lightState: LightState? = nil,
+        autoShutdownSeconds: ReadbackValue<UInt64> = .unavailable,
+        chargeMode: ReadbackValue<ChargeMode> = .unavailable
     ) {
         self.beepMargin = beepMargin
         self.tiltback = tiltback
         self.pedalMode = pedalMode
         self.lightState = lightState
+        self.autoShutdownSeconds = autoShutdownSeconds
+        self.chargeMode = chargeMode
     }
 
     fileprivate init(_ dto: MobileEucGarageSettingsDto) {
@@ -2803,7 +2811,15 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
                 dto.pedalMode.flatMap(PedalMode.init),
                 availability: availability
             ),
-            lightState: dto.lightState.map(LightState.init)
+            lightState: dto.lightState.map(LightState.init),
+            autoShutdownSeconds: Self.readback(
+                dto.autoShutdownSeconds,
+                availability: availability
+            ),
+            chargeMode: Self.readback(
+                dto.chargeMode.map { ChargeMode($0.value) },
+                availability: availability
+            )
         )
     }
 
@@ -2812,7 +2828,9 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
             beepMargin: Self.merged(beepMargin, update.beepMargin),
             tiltback: Self.merged(tiltback, update.tiltback),
             pedalMode: Self.merged(pedalMode, update.pedalMode),
-            lightState: update.lightState ?? lightState
+            lightState: update.lightState ?? lightState,
+            autoShutdownSeconds: Self.merged(autoShutdownSeconds, update.autoShutdownSeconds),
+            chargeMode: Self.merged(chargeMode, update.chargeMode)
         )
     }
 

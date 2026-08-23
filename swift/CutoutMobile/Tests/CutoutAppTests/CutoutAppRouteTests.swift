@@ -153,6 +153,14 @@ final class CutoutAppRouteTests: XCTestCase {
             EucSettingReadbackPresentation.pedalMode(.unsupported),
             "Not supported"
         )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.seconds(.available(900)),
+            "900 s"
+        )
+        XCTAssertEqual(
+            EucSettingReadbackPresentation.chargeMode(.available(.charging)),
+            "Charging"
+        )
     }
 
     func testSettingCapabilityPresentationPrefersLifecycleStatusWhenActionable() {

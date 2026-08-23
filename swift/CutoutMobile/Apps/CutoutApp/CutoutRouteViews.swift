@@ -160,6 +160,16 @@ struct EucTuneRouteView: View {
                                 fallback: settings.pedalMode
                             )
                         )
+                        EucSettingReadbackRow(
+                            id: "autoShutdown",
+                            title: localizedAppText("settings.auto_shutdown.title"),
+                            value: EucSettingReadbackPresentation.seconds(settings.autoShutdownSeconds)
+                        )
+                        EucSettingReadbackRow(
+                            id: "chargeMode",
+                            title: localizedAppText("settings.charge_mode.title"),
+                            value: EucSettingReadbackPresentation.chargeMode(settings.chargeMode)
+                        )
                     } header: {
                         Text(localizedAppText("settings.readback.title"))
                     } footer: {
@@ -255,6 +265,25 @@ enum EucSettingReadbackPresentation {
             return "Raw \(rawMode)"
         }
         return availabilityText(.unavailable)
+    }
+
+    static func seconds(_ readback: ReadbackValue<UInt64>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        return localizedAppText("settings.seconds.value", value)
+    }
+
+    static func chargeMode(_ readback: ReadbackValue<ChargeMode>) -> String {
+        guard let value = readback.value else {
+            return availabilityText(readback.availability)
+        }
+        switch value {
+        case .charging:
+            return localizedAppText("settings.charge_mode.charging")
+        case .notCharging:
+            return localizedAppText("settings.charge_mode.not_charging")
+        }
     }
 
     private static func availabilityText(_ availability: ReadbackAvailability) -> String {

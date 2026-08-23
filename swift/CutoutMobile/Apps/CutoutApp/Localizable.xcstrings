@@ -105,6 +105,26 @@
       "comment" : "Label for the EUC tiltback setting readback.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tiltback" } } }
     },
+    "settings.auto_shutdown.title" : {
+      "comment" : "Label for the EUC auto-shutdown time readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Auto-shutdown" } } }
+    },
+    "settings.charge_mode.title" : {
+      "comment" : "Label for the EUC charge mode readback.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charge mode" } } }
+    },
+    "settings.charge_mode.charging" : {
+      "comment" : "Value for an EUC that reports active charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Charging" } } }
+    },
+    "settings.charge_mode.not_charging" : {
+      "comment" : "Value for an EUC that reports no active charging.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not charging" } } }
+    },
+    "settings.seconds.value" : {
+      "comment" : "Value for a settings duration reported in seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld s" } } }
+    },
     "settings.capabilities.unverified" : {
       "comment" : "Status for a setting whose command still needs wheel validation.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Needs validation" } } }

@@ -80,11 +80,11 @@ use cutout_protocols::{
     ConcreteSessionStepResultDto, DeviceDetectionEvent, DeviceDetectionResolution,
     DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence, PendingProbe,
     ProtocolFamilyClassification, ProtocolFamilyState, ProtocolModelIdentityEvidence,
-    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_PEDALS_MODE,
-    VETERAN_FIELD_SPEED_ALERT_DECI_KMH, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH,
-    VescBatteryType as CoreVescBatteryType, VescBoardProfile as CoreVescBoardProfile,
-    VescReadOnlySession as CoreVescReadOnlySession, begode_identification_probes,
-    identify_known_model, new_nosfet_aero_benign_control_session,
+    StagedIdentityInput, StagedIdentityOutcome, VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+    VETERAN_FIELD_CHARGE_MODE, VETERAN_FIELD_PEDALS_MODE, VETERAN_FIELD_SPEED_ALERT_DECI_KMH,
+    VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, VescBatteryType as CoreVescBatteryType,
+    VescBoardProfile as CoreVescBoardProfile, VescReadOnlySession as CoreVescReadOnlySession,
+    begode_identification_probes, identify_known_model, new_nosfet_aero_benign_control_session,
     try_new_begode_falcon_benign_control_session,
 };
 use uuid::Uuid;
@@ -8553,6 +8553,12 @@ pub struct MobileEucGarageSettingsDto {
 
     /// Light state reported by wheel telemetry, when the protocol provides it.
     pub light_state: Option<MobileLightStateDto>,
+
+    /// Auto-shutdown time remaining, in reported seconds.
+    pub auto_shutdown_seconds: Option<u64>,
+
+    /// Charge mode reported by wheel telemetry.
+    pub charge_mode: Option<MobileChargeModeReadingDto>,
 }
 
 /// Read-only pedal mode projection for mobile UI.
@@ -9791,6 +9797,8 @@ impl MobileEucGarageSettingsDto {
                 tiltback: None,
                 pedal_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             };
         }
 
@@ -9824,6 +9832,23 @@ impl MobileEucGarageSettingsDto {
                     1 => Some(MobileLightStateDto::On),
                     _ => None,
                 }),
+            auto_shutdown_seconds: settings_entry(
+                entries,
+                VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
+            )
+            .and_then(|entry| u64::try_from(entry.field.value).ok()),
+            charge_mode: settings_entry(entries, VETERAN_FIELD_CHARGE_MODE).and_then(|entry| {
+                Some(MobileChargeModeReadingDto {
+                    value: if entry.field.value == 0 {
+                        MobileChargeModeDto::NotCharging
+                    } else {
+                        MobileChargeModeDto::Charging
+                    },
+                    source: entry.source,
+                    quality: entry.quality,
+                    verification: entry.verification,
+                })
+            }),
         }
     }
 }
@@ -13093,6 +13118,8 @@ mod tests {
                 tiltback: None,
                 pedal_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -13188,7 +13215,37 @@ mod tests {
                     mode: None,
                 }),
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_projects_veteran_auto_shutdown_and_charge_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS, 900),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_CHARGE_MODE, 1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::HardwareVerified,
+            }),
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(mobile.euc_garage.auto_shutdown_seconds, Some(900));
+        assert_eq!(
+            mobile.euc_garage.charge_mode.map(|reading| reading.value),
+            Some(MobileChargeModeDto::Charging)
         );
     }
 
@@ -13246,6 +13303,8 @@ mod tests {
                 }),
                 pedal_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -13347,6 +13406,8 @@ mod tests {
                 tiltback: None,
                 pedal_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
         assert_eq!(mobile.entries.len(), 3);
@@ -13366,6 +13427,8 @@ mod tests {
                     tiltback: None,
                     pedal_mode: None,
                     light_state: None,
+                    auto_shutdown_seconds: None,
+                    charge_mode: None,
                 },
                 entries: Vec::new(),
             }
@@ -13400,6 +13463,8 @@ mod tests {
                 tiltback: None,
                 pedal_mode: None,
                 light_state: None,
+                auto_shutdown_seconds: None,
+                charge_mode: None,
             }
         );
     }
@@ -13564,6 +13629,8 @@ mod tests {
                     tiltback: None,
                     pedal_mode: None,
                     light_state: None,
+                    auto_shutdown_seconds: None,
+                    charge_mode: None,
                 },
                 entries: vec![MobileSettingsEntryDto {
                     field: MobileRawFieldValueDto {
