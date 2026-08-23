@@ -21,6 +21,12 @@ final class CutoutAppModel {
         let sessionID: String
         let itemIdentifier: String
         let state: MobileMusicPlaybackStateDto
+        init(snapshot: MobileMusicSnapshotDto, item: MobileMusicItemDto) {
+            provider = snapshot.provider
+            sessionID = snapshot.sessionId
+            itemIdentifier = item.identifier
+            state = snapshot.state
+        }
     }
 
     private(set) var displayState = RideDisplayState()
@@ -388,12 +394,7 @@ final class CutoutAppModel {
             return nil
         }
 
-        let key = MusicCaptureKey(
-            provider: observation.snapshot.provider,
-            sessionID: observation.snapshot.sessionId,
-            itemIdentifier: item.identifier,
-            state: observation.snapshot.state
-        )
+        let key = MusicCaptureKey(snapshot: observation.snapshot, item: item)
         guard key != lastMusicCaptureKey else { return nil }
         lastMusicCaptureKey = key
 
