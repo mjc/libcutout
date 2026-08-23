@@ -2099,6 +2099,11 @@ fn auto_session_resolution() -> Result<SessionResolution> {
 }
 
 #[cfg(test)]
+const fn selected_aero_session_profile() -> SelectedSessionProfile {
+    selected_session_profile(SessionProfile::Aero)
+}
+
+#[cfg(test)]
 const fn selected_falcon_session_profile() -> SelectedSessionProfile {
     selected_session_profile(SessionProfile::Falcon)
 }
