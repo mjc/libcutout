@@ -37,6 +37,12 @@ mod tests {
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+        TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn create_legacy_schema(path: &std::path::Path, version: i64) {
         let connection = Connection::open(path).unwrap();
         connection
@@ -156,13 +162,13 @@ mod tests {
         );
         let summary = RideSummary::from_samples(&[first, second]);
         assert_eq!(summary.point_count(), 2);
-        assert!(summary.distance_millimeters() > 80_000);
-        assert!(summary.distance_millimeters() < 100_000);
+        assert!(summary.distance_millimetres() > 80_000);
+        assert!(summary.distance_millimetres() < 100_000);
     }
 
     #[test]
     fn database_owns_one_service_and_reopens_persisted_rides() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         let path =
             std::env::temp_dir().join(format!("cutout-ride-maps-{}.sqlite", uuid::Uuid::new_v4()));
         let first = RideDatabase::open(&path).unwrap();
@@ -185,6 +191,17 @@ mod tests {
             first.append_location(ride, sample).unwrap(),
             LocationAdmission::Accepted
         );
+        let second = LocationSample::new(
+            Coordinate::from_degrees(40.001, -105.001).unwrap(),
+            1_000,
+            1_700_000_000_001,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            first.append_location(ride, second).unwrap(),
+            LocationAdmission::Accepted
+        );
         let export_path = std::env::temp_dir().join(format!(
             "cutout-ride-maps-timestamp-{}.json",
             uuid::Uuid::new_v4()
@@ -192,7 +209,7 @@ mod tests {
         first.export_ride_json(ride, &export_path).unwrap();
         let export = std::fs::read_to_string(&export_path).unwrap();
         assert!(export.contains("\"created_at_ms\":1600000000000"));
-        assert!(export.contains("\"updated_at_ms\":1700000000000"));
+        assert!(!export.contains("\"updated_at_ms\":1600000000000"));
         let _ = std::fs::remove_file(export_path);
         assert_eq!(
             first.append_location(ride, sample).unwrap(),
@@ -200,19 +217,18 @@ mod tests {
         );
         first.transition(ride, RideEvent::Stop).unwrap();
         first.transition(ride, RideEvent::Save).unwrap();
-        drop(second);
         first.shutdown().unwrap();
 
         let reopened = RideDatabase::open(&path).unwrap();
         let summary = reopened.summary(ride).unwrap();
-        assert_eq!(summary.point_count(), 1);
+        assert_eq!(summary.point_count(), 2);
         reopened.shutdown().unwrap();
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
     fn database_persists_migrated_mobile_state() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         let path = std::env::temp_dir().join(format!(
             "cutout-ride-maps-mobile-state-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -255,7 +271,7 @@ mod tests {
 
     #[test]
     fn database_streams_pevcap_and_deduplicates_artifact_digest() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         let database_path = std::env::temp_dir().join(format!(
             "cutout-ride-maps-pevcap-db-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -318,7 +334,7 @@ mod tests {
 
     #[test]
     fn malformed_pevcap_import_does_not_publish_an_orphan_ride() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         let database_path = std::env::temp_dir().join(format!(
             "cutout-ride-maps-malformed-pevcap-db-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -355,13 +371,42 @@ mod tests {
 
     #[test]
     fn legacy_schema_versions_migrate_to_the_current_schema() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         for version in [1_i64, 2_i64] {
             let path = std::env::temp_dir().join(format!(
                 "cutout-ride-maps-legacy-v{version}-{}.sqlite",
                 uuid::Uuid::new_v4()
             ));
             create_legacy_schema(&path, version);
+            let ride_id = uuid::Uuid::new_v4().to_string();
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO rides
+                        (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                     VALUES (?1, 'live', 'saved', 10, 20, 1, 1234)",
+                    [&ride_id],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO ride_points
+                        (ride_id, sequence, monotonic_ms, wall_clock_ms, latitude_e7,
+                         longitude_e7, horizontal_accuracy_mm, source)
+                     VALUES (?1, 0, 1, 2, 400000000, -1050000000, NULL, 'live')",
+                    [&ride_id],
+                )
+                .unwrap();
+            if version >= 2 {
+                connection
+                    .execute(
+                        "INSERT INTO selected_device (id, platform_identifier, updated_at_ms)
+                         VALUES (1, 'legacy-device', 42)",
+                        [],
+                    )
+                    .unwrap();
+            }
+            drop(connection);
             let database = RideDatabase::open(&path).unwrap();
             database.shutdown().unwrap();
 
@@ -378,13 +423,31 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(pevcap_table, "pevcap_imports");
+            let persisted_ride: (String, u64, u64) = connection
+                .query_row(
+                    "SELECT id, point_count, distance_mm FROM rides WHERE id = ?1",
+                    [&ride_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(persisted_ride, (ride_id, 1, 1234));
+            if version >= 2 {
+                let selected: String = connection
+                    .query_row(
+                        "SELECT platform_identifier FROM selected_device WHERE id = 1",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(selected, "legacy-device");
+            }
             let _ = std::fs::remove_file(path);
         }
     }
 
     #[test]
     fn newer_schema_is_rejected_without_resetting_the_database() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         let path = std::env::temp_dir().join(format!(
             "cutout-ride-maps-newer-schema-{}.sqlite",
             uuid::Uuid::new_v4()
@@ -409,7 +472,7 @@ mod tests {
 
     #[test]
     fn database_indexes_trails_and_map_points_with_rtree() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = test_guard();
         let path = std::env::temp_dir().join(format!(
             "cutout-ride-maps-spatial-{}.sqlite",
             uuid::Uuid::new_v4()

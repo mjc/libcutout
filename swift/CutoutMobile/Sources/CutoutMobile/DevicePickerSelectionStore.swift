@@ -58,12 +58,14 @@ public struct DevicePickerSelectionStore {
         defaults.set(trimmed, forKey: Self.key)
     }
 
-    public func clear() {
+    public func clear() throws {
         if let database {
-            if (try? database.clearSelectedDevice()) != nil {
+            do {
+                try database.clearSelectedDevice()
                 defaults.removeObject(forKey: Self.key)
-            } else {
+            } catch {
                 defaults.set("", forKey: Self.key)
+                throw error
             }
             return
         }

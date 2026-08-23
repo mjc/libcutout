@@ -4447,6 +4447,7 @@ struct VoltageSagModelStore {
     }
 
     func load(for deviceIdentity: String) -> MobileVoltageSagModelDto? {
+        guard !deviceIdentity.isEmpty else { return nil }
         if let database {
             let key = Self.keyPrefix + deviceIdentity
             if let data = defaults.data(forKey: key) {
@@ -4484,7 +4485,6 @@ struct VoltageSagModelStore {
             return nil
         }
         guard
-            !deviceIdentity.isEmpty,
             let data = defaults.data(forKey: Self.keyPrefix + deviceIdentity),
             let legacy = try? JSONDecoder().decode(Record.self, from: data),
             legacy.schemaVersion == 1,
@@ -4533,13 +4533,15 @@ struct VoltageSagModelStore {
         defaults.set(data, forKey: Self.keyPrefix + deviceIdentity)
     }
 
-    func remove(for deviceIdentity: String) {
+    func remove(for deviceIdentity: String) throws {
         guard !deviceIdentity.isEmpty else { return }
         if let database {
-            if (try? database.removeVoltageSagModel(deviceIdentity: deviceIdentity)) != nil {
+            do {
+                try database.removeVoltageSagModel(deviceIdentity: deviceIdentity)
                 defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
-            } else {
+            } catch {
                 defaults.set(Data(), forKey: Self.keyPrefix + deviceIdentity)
+                throw error
             }
             return
         }
@@ -4608,7 +4610,7 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         if hadVoltageSagModel, chargeEstimator.voltageSagModel() == nil {
             persistedVoltageSagObservations = 0
             if let voltageSagIdentity {
-                voltageSagStore.remove(for: voltageSagIdentity)
+                try? voltageSagStore.remove(for: voltageSagIdentity)
             }
         }
         refreshChargeEstimate(at: currentSnapshot.at ?? MonotonicMilliseconds(0))

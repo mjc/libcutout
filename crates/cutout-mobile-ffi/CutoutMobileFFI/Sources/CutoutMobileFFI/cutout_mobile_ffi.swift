@@ -2521,7 +2521,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func serviceId()  -> String
 
     /**
-     * Stops the process-wide worker.
+     * Stops the process-wide worker and invalidates every handle to it.
+     *
+     * This is an explicit process-wide teardown operation. Callers must not use any
+     * `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
+     * `WorkerStopped` until the process opens a new database service.
      */
     func shutdown() throws
 
@@ -2846,7 +2850,11 @@ open func serviceId() -> String  {
 }
 
     /**
-     * Stops the process-wide worker.
+     * Stops the process-wide worker and invalidates every handle to it.
+     *
+     * This is an explicit process-wide teardown operation. Callers must not use any
+     * `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
+     * `WorkerStopped` until the process opens a new database service.
      */
 open func shutdown()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_shutdown(
@@ -20310,7 +20318,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_service_id() != 44814) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_shutdown() != 17388) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_shutdown() != 61276) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_summary() != 63249) {

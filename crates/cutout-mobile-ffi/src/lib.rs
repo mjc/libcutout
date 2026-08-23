@@ -3202,7 +3202,8 @@ fn map_ride_database_error(error: ride_maps::StorageError) -> MobileRideDatabase
         | ride_maps::StorageError::InvalidStoredValue { .. }
         | ride_maps::StorageError::InvalidSqliteVersion(_)
         | ride_maps::StorageError::PevcapImport(_)
-        | ride_maps::StorageError::SpatialCapabilityUnavailable => {
+        | ride_maps::StorageError::SpatialCapabilityUnavailable
+        | ride_maps::StorageError::SpatialSchemaInitialization(_) => {
             MobileRideDatabaseError::StorageFailure
         }
     }
@@ -3583,12 +3584,16 @@ impl RideDatabaseHandle {
             .summary(id)
             .map(|summary| MobileRideSummaryDto {
                 point_count: summary.point_count(),
-                distance_millimetres: summary.distance_millimeters(),
+                distance_millimetres: summary.distance_millimetres(),
             })
             .map_err(map_ride_database_error)
     }
 
-    /// Stops the process-wide worker.
+    /// Stops the process-wide worker and invalidates every handle to it.
+    ///
+    /// This is an explicit process-wide teardown operation. Callers must not use any
+    /// `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
+    /// `WorkerStopped` until the process opens a new database service.
     pub fn shutdown(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clone()

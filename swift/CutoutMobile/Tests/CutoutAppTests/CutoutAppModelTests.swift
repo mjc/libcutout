@@ -16,13 +16,13 @@ final class CutoutAppModelTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        RideSessionMarkerStore().clear()
-        DevicePickerSelectionStore().clear()
+        try? RideSessionMarkerStore().clear()
+        try? DevicePickerSelectionStore().clear()
     }
 
     override func tearDown() {
-        RideSessionMarkerStore().clear()
-        DevicePickerSelectionStore().clear()
+        try? RideSessionMarkerStore().clear()
+        try? DevicePickerSelectionStore().clear()
         super.tearDown()
     }
 
@@ -195,8 +195,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testSupportedPickerActionStartsTheSelectedConnection() {
         let store = DevicePickerSelectionStore()
-        store.clear()
-        defer { store.clear() }
+        try? store.clear()
+        defer { try? store.clear() }
         let driver = SessionDriverSpy(
             rows: [
                 DevicePickerRow(
@@ -223,8 +223,8 @@ final class CutoutAppModelTests: XCTestCase {
     @MainActor
     func testRepeatedUseCannotReplaceAnInFlightConnection() {
         let store = DevicePickerSelectionStore()
-        store.clear()
-        defer { store.clear() }
+        try? store.clear()
+        defer { try? store.clear() }
         let row = DevicePickerRow(
             id: "vesc-1234",
             title: "VESC",
@@ -459,7 +459,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testDisconnectKeepsSavedDeviceUntilExplicitForget() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
-        defer { store.clear() }
+        defer { try? store.clear() }
         let model = CutoutAppModel()
 
         model.disconnectTransport()
@@ -483,8 +483,8 @@ final class CutoutAppModelTests: XCTestCase {
             connectionRoute: .vescOnewheel
         )
         let store = DevicePickerSelectionStore()
-        store.clear()
-        defer { store.clear() }
+        try? store.clear()
+        defer { try? store.clear() }
         let driver = SessionDriverSpy(rows: [row])
         let model = CutoutAppModel(core: driver)
         model.start()
@@ -817,7 +817,7 @@ final class CutoutAppModelTests: XCTestCase {
     func testRecordOnlyCaptureKeepsTheRememberedDevice() {
         let store = DevicePickerSelectionStore()
         store.save(platformIdentifier: "saved-device")
-        defer { store.clear() }
+        defer { try? store.clear() }
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []))
 
         XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "Unknown device"))

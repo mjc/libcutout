@@ -42,7 +42,7 @@ public struct RideSessionMarkerStore: @unchecked Sendable {
 
     public func save(_ marker: Data) {
         guard marker.isEmpty == false else {
-            clear()
+            try? clear()
             return
         }
         if let database {
@@ -56,12 +56,14 @@ public struct RideSessionMarkerStore: @unchecked Sendable {
         defaults.set(marker, forKey: Self.key)
     }
 
-    public func clear() {
+    public func clear() throws {
         if let database {
-            if (try? database.clearRideSessionMarker()) != nil {
+            do {
+                try database.clearRideSessionMarker()
                 defaults.removeObject(forKey: Self.key)
-            } else {
+            } catch {
                 defaults.set(Data(), forKey: Self.key)
+                throw error
             }
             return
         }

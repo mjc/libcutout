@@ -288,6 +288,16 @@ pub enum StorageError {
     /// The requested spatial `SQLite` extension is unavailable.
     #[error("SQLite R*Tree capability is unavailable")]
     SpatialCapabilityUnavailable,
+    /// The spatial schema could not be initialized.
+    #[error("SQLite spatial schema initialization failed: {0}")]
+    SpatialSchemaInitialization(String),
+}
+
+enum SpatialSchemaState {
+    Uninitialized,
+    Ready,
+    Unavailable,
+    Failed(String),
 }
 
 struct OwnerEntry {
@@ -839,6 +849,7 @@ enum Command {
 
 #[allow(clippy::too_many_lines)]
 fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
+    let mut spatial_schema = SpatialSchemaState::Uninitialized;
     while let Ok(command) = receiver.recv() {
         match command {
             Command::Capabilities { reply } => {
@@ -910,7 +921,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 ));
             }
             Command::CreateTrail { name, reply } => {
-                let _ = reply.send(create_trail(&connection, &name));
+                let _ = reply.send(create_trail(&connection, &mut spatial_schema, &name));
             }
             Command::AppendTrailSegment {
                 trail_id,
@@ -920,7 +931,8 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 reply,
             } => {
                 let _ = reply.send(append_trail_segment(
-                    &connection,
+                    &mut connection,
+                    &mut spatial_schema,
                     trail_id,
                     sequence,
                     start,
@@ -936,6 +948,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             } => {
                 let _ = reply.send(trail_segments_in_bounds(
                     &connection,
+                    &mut spatial_schema,
                     minimum_latitude_degrees,
                     maximum_latitude_degrees,
                     minimum_longitude_degrees,
@@ -947,7 +960,12 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 coordinate,
                 reply,
             } => {
-                let _ = reply.send(create_map_point(&connection, &name, coordinate));
+                let _ = reply.send(create_map_point(
+                    &mut connection,
+                    &mut spatial_schema,
+                    &name,
+                    coordinate,
+                ));
             }
             Command::MapPointsInBounds {
                 minimum_latitude_degrees,
@@ -958,6 +976,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             } => {
                 let _ = reply.send(map_points_in_bounds(
                     &connection,
+                    &mut spatial_schema,
                     minimum_latitude_degrees,
                     maximum_latitude_degrees,
                     minimum_longitude_degrees,
@@ -1232,11 +1251,23 @@ fn create_ride(
     Ok(ride_id)
 }
 
-fn ensure_spatial_schema(connection: &Connection) -> Result<(), StorageError> {
+fn ensure_spatial_schema(
+    connection: &Connection,
+    state: &mut SpatialSchemaState,
+) -> Result<(), StorageError> {
+    match state {
+        SpatialSchemaState::Ready => return Ok(()),
+        SpatialSchemaState::Unavailable => return Err(StorageError::SpatialCapabilityUnavailable),
+        SpatialSchemaState::Failed(message) => {
+            return Err(StorageError::SpatialSchemaInitialization(message.clone()));
+        }
+        SpatialSchemaState::Uninitialized => {}
+    }
     if !sqlite_capabilities(connection)?.has_rtree() {
+        *state = SpatialSchemaState::Unavailable;
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
-    connection.execute_batch(
+    if let Err(error) = connection.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS trails (
             id TEXT PRIMARY KEY NOT NULL,
@@ -1263,18 +1294,27 @@ fn ensure_spatial_schema(connection: &Connection) -> Result<(), StorageError> {
         CREATE VIRTUAL TABLE IF NOT EXISTS map_points_rtree
             USING rtree(id, min_lat, max_lat, min_lon, max_lon);
         ",
-    )?;
+    ) {
+        let message = error.to_string();
+        *state = SpatialSchemaState::Failed(message);
+        return Err(error.into());
+    }
+    *state = SpatialSchemaState::Ready;
     Ok(())
 }
 
-fn create_trail(connection: &Connection, name: &str) -> Result<TrailId, StorageError> {
+fn create_trail(
+    connection: &Connection,
+    state: &mut SpatialSchemaState,
+    name: &str,
+) -> Result<TrailId, StorageError> {
     if name.trim().is_empty() {
         return Err(StorageError::InvalidStoredValue {
             field: "trail name",
             value: "empty".to_owned(),
         });
     }
-    ensure_spatial_schema(connection)?;
+    ensure_spatial_schema(connection, state)?;
     let trail_id = TrailId::new();
     connection.execute(
         "INSERT INTO trails (id, name) VALUES (?1, ?2)",
@@ -1284,15 +1324,17 @@ fn create_trail(connection: &Connection, name: &str) -> Result<TrailId, StorageE
 }
 
 fn append_trail_segment(
-    connection: &Connection,
+    connection: &mut Connection,
+    state: &mut SpatialSchemaState,
     trail_id: TrailId,
     sequence: u32,
     start: Coordinate,
     end: Coordinate,
 ) -> Result<(), StorageError> {
-    ensure_spatial_schema(connection)?;
+    ensure_spatial_schema(connection, state)?;
+    let transaction = connection.transaction()?;
     let trail = trail_id.uuid().to_string();
-    let exists: bool = connection.query_row(
+    let exists: bool = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM trails WHERE id = ?1)",
         params![trail],
         |row| row.get(0),
@@ -1300,7 +1342,7 @@ fn append_trail_segment(
     if !exists {
         return Err(StorageError::NotFound);
     }
-    connection.execute(
+    transaction.execute(
         "INSERT INTO trail_segments
             (trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1313,27 +1355,29 @@ fn append_trail_segment(
             end.longitude().as_i32(),
         ],
     )?;
-    let segment_id = connection.last_insert_rowid();
+    let segment_id = transaction.last_insert_rowid();
     let min_lat = start.latitude_degrees().min(end.latitude_degrees());
     let max_lat = start.latitude_degrees().max(end.latitude_degrees());
     let min_lon = start.longitude_degrees().min(end.longitude_degrees());
     let max_lon = start.longitude_degrees().max(end.longitude_degrees());
-    connection.execute(
+    transaction.execute(
         "INSERT INTO trail_segments_rtree (id, min_lat, max_lat, min_lon, max_lon)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![segment_id, min_lat, max_lat, min_lon, max_lon],
     )?;
+    transaction.commit()?;
     Ok(())
 }
 
 fn trail_segments_in_bounds(
     connection: &Connection,
+    state: &mut SpatialSchemaState,
     minimum_latitude_degrees: f64,
     maximum_latitude_degrees: f64,
     minimum_longitude_degrees: f64,
     maximum_longitude_degrees: f64,
 ) -> Result<Vec<TrailSegment>, StorageError> {
-    ensure_spatial_schema(connection)?;
+    ensure_spatial_schema(connection, state)?;
     let mut statement = connection.prepare(
         "SELECT s.trail_id, s.sequence, s.start_lat_e7, s.start_lon_e7,
                 s.end_lat_e7, s.end_lon_e7
@@ -1378,7 +1422,8 @@ fn trail_segments_in_bounds(
 }
 
 fn create_map_point(
-    connection: &Connection,
+    connection: &mut Connection,
+    state: &mut SpatialSchemaState,
     name: &str,
     coordinate: Coordinate,
 ) -> Result<u64, StorageError> {
@@ -1388,8 +1433,9 @@ fn create_map_point(
             value: "empty".to_owned(),
         });
     }
-    ensure_spatial_schema(connection)?;
-    connection.execute(
+    ensure_spatial_schema(connection, state)?;
+    let transaction = connection.transaction()?;
+    transaction.execute(
         "INSERT INTO map_points (name, latitude_e7, longitude_e7) VALUES (?1, ?2, ?3)",
         params![
             name,
@@ -1397,8 +1443,8 @@ fn create_map_point(
             coordinate.longitude().as_i32()
         ],
     )?;
-    let id = connection.last_insert_rowid();
-    connection.execute(
+    let id = transaction.last_insert_rowid();
+    transaction.execute(
         "INSERT INTO map_points_rtree (id, min_lat, max_lat, min_lon, max_lon)
          VALUES (?1, ?2, ?2, ?3, ?3)",
         params![
@@ -1407,6 +1453,7 @@ fn create_map_point(
             coordinate.longitude_degrees()
         ],
     )?;
+    transaction.commit()?;
     u64::try_from(id).map_err(|_| StorageError::InvalidStoredValue {
         field: "map point identifier",
         value: id.to_string(),
@@ -1415,12 +1462,13 @@ fn create_map_point(
 
 fn map_points_in_bounds(
     connection: &Connection,
+    state: &mut SpatialSchemaState,
     minimum_latitude_degrees: f64,
     maximum_latitude_degrees: f64,
     minimum_longitude_degrees: f64,
     maximum_longitude_degrees: f64,
 ) -> Result<Vec<MapPoint>, StorageError> {
-    ensure_spatial_schema(connection)?;
+    ensure_spatial_schema(connection, state)?;
     let mut statement = connection.prepare(
         "SELECT p.id, p.name, p.latitude_e7, p.longitude_e7
          FROM map_points_rtree r JOIN map_points p ON p.id = r.id
@@ -1699,7 +1747,8 @@ fn transition_ride(
     let current = state_from_db(&state)?;
     let next = current.apply(event)?;
     connection.execute(
-        "UPDATE rides SET state = ?2 WHERE id = ?1",
+        "UPDATE rides SET state = ?2,
+         updated_at_ms = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = ?1",
         params![ride_id.uuid().to_string(), state_to_db(next)],
     )?;
     Ok(next)
@@ -1780,8 +1829,15 @@ fn append_location_in_transaction(
     match sample.admission(Some(&previous_sample)) {
         LocationAdmission::Accepted => {
             let distance = crate::distance_between_millimetres(previous_sample, sample);
-            insert_location(connection, ride_id, previous_sequence + 1, sample, distance)?;
-            Ok(LocationAdmission::Accepted)
+            match insert_location(connection, ride_id, previous_sequence + 1, sample, distance) {
+                Ok(()) => Ok(LocationAdmission::Accepted),
+                Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
+                    if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    Ok(LocationAdmission::Duplicate)
+                }
+                Err(error) => Err(error),
+            }
         }
         admission => Ok(admission),
     }
@@ -1811,12 +1867,8 @@ fn insert_location(
     )?;
     connection.execute(
         "UPDATE rides SET point_count = point_count + 1, distance_mm = distance_mm + ?2,
-         updated_at_ms = MAX(updated_at_ms, ?3) WHERE id = ?1",
-        params![
-            ride_id.uuid().to_string(),
-            distance_millimetres,
-            sample.wall_clock_unix_milliseconds()
-        ],
+         updated_at_ms = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = ?1",
+        params![ride_id.uuid().to_string(), distance_millimetres],
     )?;
     Ok(())
 }

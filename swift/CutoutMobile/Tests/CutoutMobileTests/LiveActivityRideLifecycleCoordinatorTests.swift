@@ -5,11 +5,11 @@ import CutoutMobileFFI
 final class LiveActivityRideLifecycleCoordinatorTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        RideSessionMarkerStore().clear()
+        try? RideSessionMarkerStore().clear()
     }
 
     override func tearDown() {
-        RideSessionMarkerStore().clear()
+        try? RideSessionMarkerStore().clear()
         super.tearDown()
     }
 

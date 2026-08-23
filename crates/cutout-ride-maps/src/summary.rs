@@ -50,7 +50,7 @@ impl RideSummary {
 
     /// Returns the derived distance in millimetres.
     #[must_use]
-    pub const fn distance_millimeters(self) -> u64 {
+    pub const fn distance_millimetres(self) -> u64 {
         self.distance_millimetres.as_u64()
     }
 
@@ -87,5 +87,6 @@ fn haversine_metres(first: LocationSample, second: LocationSample) -> f64 {
     let second_latitude = second.coordinate().latitude_degrees().to_radians();
     let haversine = (latitude_delta / 2.0).sin().powi(2)
         + first_latitude.cos() * second_latitude.cos() * (longitude_delta / 2.0).sin().powi(2);
+    let haversine = haversine.clamp(0.0, 1.0);
     2.0 * EARTH_RADIUS_METRES * haversine.sqrt().atan2((1.0 - haversine).sqrt())
 }
