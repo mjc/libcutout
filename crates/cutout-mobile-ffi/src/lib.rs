@@ -2735,9 +2735,7 @@ impl MobilePedalModeSettingTracker {
             self.state = CoreSettingState::unknown();
         }
 
-        if input.kind == MobileSessionInputKindDto::Tick {
-            self.state.timeout();
-        }
+        observe_setting_tick(&mut self.state, input.kind);
 
         if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
             observe_setting_write(
@@ -2783,9 +2781,7 @@ impl MobileLightSettingTracker {
             self.state = CoreSettingState::unknown();
         }
 
-        if input.kind == MobileSessionInputKindDto::Tick {
-            self.state.timeout();
-        }
+        observe_setting_tick(&mut self.state, input.kind);
 
         if let Some(MobileCommandDto::SetLights(requested)) = input.command {
             observe_setting_write(
@@ -2813,6 +2809,17 @@ impl MobileLightSettingTracker {
 
     fn snapshot(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.state)
+    }
+}
+
+fn observe_setting_tick<Value>(
+    state: &mut CoreSettingState<Value>,
+    kind: MobileSessionInputKindDto,
+) where
+    Value: Copy + Eq,
+{
+    if kind == MobileSessionInputKindDto::Tick {
+        state.timeout();
     }
 }
 
