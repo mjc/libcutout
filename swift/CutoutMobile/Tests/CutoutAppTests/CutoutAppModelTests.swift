@@ -200,6 +200,7 @@ final class CutoutAppModelTests: XCTestCase {
             clockUncertaintyMs: 1
         ))
         XCTAssertEqual(model.musicNowPlaying?.title, "Track")
+        XCTAssertEqual(model.musicTimelineEvents.count, 1)
         XCTAssertEqual(driver.rideMapStateHandle.currentMusicEvents()?.count, 1)
     }
 

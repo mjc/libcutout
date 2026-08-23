@@ -55,6 +55,7 @@ struct EucRideRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            timeline: model.musicTimelineEvents,
             selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
@@ -146,6 +147,7 @@ struct VescRideRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            timeline: model.musicTimelineEvents,
             selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,

@@ -39,6 +39,7 @@ final class CutoutAppModel {
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var musicNowPlaying: MusicNowPlaying?
+    private(set) var musicTimelineEvents = [MobileMusicRideEventDto]()
     private(set) var selectedMusicProvider = MobileMusicProviderDto.appleMusic
     private(set) var isMusicPlayerHidden: Bool
     private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
@@ -174,6 +175,7 @@ final class CutoutAppModel {
         self.musicPlayerVisibilityStore = musicPlayerVisibilityStore
         isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
         musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
+        musicTimelineEvents = musicCoordinator.recordedEvents
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         restoreRideMapState()
         self.core.onDisplayStateChange = { [weak self] displayState in
@@ -285,9 +287,11 @@ final class CutoutAppModel {
                 wallClockAtMs: wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000),
                 clockUncertaintyMs: clockUncertaintyMs
             )
+            musicTimelineEvents = musicCoordinator.recordedEvents
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return true
         } catch {
+            musicTimelineEvents = musicCoordinator.recordedEvents
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return false
         }
@@ -298,6 +302,7 @@ final class CutoutAppModel {
         musicHistoryPolicy = policy
         do {
             try musicCoordinator.setHistoryPolicy(policy)
+            musicTimelineEvents = musicCoordinator.recordedEvents
             return true
         } catch MobileRideMapError.NoActiveRide {
             // Keep the choice as the default for the next ride. Rust will
@@ -336,6 +341,7 @@ final class CutoutAppModel {
 
     private func restoreRideMapState() {
         rideMapSnapshot = core.rideMapStateHandle.currentSnapshot()
+        musicTimelineEvents = musicCoordinator.recordedEvents
         guard rideMapSnapshot != nil else { return }
         guard let (points, _) = collectRideMapPoints({ cursor, limit in
             core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: limit)
@@ -361,6 +367,7 @@ final class CutoutAppModel {
             )
         }
         guard didStart else { return false }
+        musicTimelineEvents = musicCoordinator.recordedEvents
         // Music history is deliberately best-effort: a provider or storage
         // failure must never prevent a ride from starting.
         try? musicCoordinator.setHistoryPolicy(musicHistoryPolicy)
@@ -456,6 +463,9 @@ final class CutoutAppModel {
                 selectedRideMapHistoryID = nil
                 rideMapHistoryPoints = []
                 rideMapHistoryPointsTruncated = false
+            }
+            if rideMapSnapshot?.rideId == rideID {
+                musicTimelineEvents = []
             }
             rideMapError = nil
             return true

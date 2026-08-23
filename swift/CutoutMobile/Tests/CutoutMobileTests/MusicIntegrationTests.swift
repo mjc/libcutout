@@ -153,6 +153,35 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(MobileMusicProviderDto.spotify.title, "Spotify")
     }
 
+    func testTimelineProjectionHasStableIdentityAndPrivacyFallback() {
+        let event = MobileMusicRideEventDto(
+            provider: .appleMusic,
+            itemIdentifier: "opaque-track",
+            title: nil,
+            artist: nil,
+            kind: .providerDisconnected,
+            monotonicAtMs: 10,
+            wallClockAtMs: 20,
+            clockUncertaintyMs: 1
+        )
+
+        XCTAssertEqual(event.timelineItemTitle, "opaque-track")
+        XCTAssertEqual(event.kind.timelineTitle, "Provider disconnected")
+        XCTAssertFalse(event.timelineID.isEmpty)
+
+        let redacted = MobileMusicRideEventDto(
+            provider: .appleMusic,
+            itemIdentifier: nil,
+            title: nil,
+            artist: nil,
+            kind: .pause,
+            monotonicAtMs: 11,
+            wallClockAtMs: 21,
+            clockUncertaintyMs: 1
+        )
+        XCTAssertEqual(redacted.timelineItemTitle, "No track metadata")
+    }
+
     func testMusicPlayerVisibilityStorePersistsTheHideChoice() {
         let defaults = UserDefaults(suiteName: "music-integration-tests")!
         defaults.removePersistentDomain(forName: "music-integration-tests")

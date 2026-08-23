@@ -162,6 +162,55 @@ public extension MobileMusicHistoryPolicyDto {
     }
 }
 
+public extension MobileMusicRideEventKindDto {
+    var timelineTitle: String {
+        switch self {
+        case .play: pevLocalizedText("music.timeline.play")
+        case .pause: pevLocalizedText("music.timeline.pause")
+        case .skip: pevLocalizedText("music.timeline.skip")
+        case .itemChanged: pevLocalizedText("music.timeline.item_changed")
+        case .providerDisconnected: pevLocalizedText("music.timeline.provider_disconnected")
+        }
+    }
+}
+
+private extension MobileMusicProviderDto {
+    var timelineIDComponent: String {
+        switch self {
+        case .appleMusic: "apple-music"
+        case .spotify: "spotify"
+        }
+    }
+}
+
+private extension MobileMusicRideEventKindDto {
+    var timelineIDComponent: String {
+        switch self {
+        case .play: "play"
+        case .pause: "pause"
+        case .skip: "skip"
+        case .itemChanged: "item-changed"
+        case .providerDisconnected: "provider-disconnected"
+        }
+    }
+}
+
+public extension MobileMusicRideEventDto {
+    var timelineID: String {
+        [
+            provider.timelineIDComponent,
+            String(monotonicAtMs),
+            String(wallClockAtMs),
+            kind.timelineIDComponent,
+            itemIdentifier ?? "",
+        ].joined(separator: "-")
+    }
+
+    var timelineItemTitle: String {
+        title ?? itemIdentifier ?? pevLocalizedText("music.timeline.unknown_item")
+    }
+}
+
 /// One provider observation entering the shared music pipeline.
 ///
 /// Providers may attach bounded metadata, but never an audio buffer or artwork
@@ -294,6 +343,7 @@ public final class MusicIntegrationCoordinator {
 /// neither artwork bytes nor an audio stream cross the app boundary.
 public struct MusicCompactPlayer: View {
     public let nowPlaying: MusicNowPlaying
+    public let timeline: [MobileMusicRideEventDto]
     public let selectedProvider: MobileMusicProviderDto
     public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onCommand: (MobileMusicCommandDto) -> Void
@@ -304,6 +354,7 @@ public struct MusicCompactPlayer: View {
 
     public init(
         nowPlaying: MusicNowPlaying,
+        timeline: [MobileMusicRideEventDto] = [],
         selectedProvider: MobileMusicProviderDto = .appleMusic,
         historyPolicy: MobileMusicHistoryPolicyDto = .disabled,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
@@ -312,6 +363,7 @@ public struct MusicCompactPlayer: View {
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool = { _ in false }
     ) {
         self.nowPlaying = nowPlaying
+        self.timeline = timeline
         self.selectedProvider = selectedProvider
         self.historyPolicy = historyPolicy
         self.onCommand = onCommand
@@ -369,6 +421,7 @@ public struct MusicCompactPlayer: View {
         .sheet(isPresented: $isExpanded) {
             MusicExpandedPlayer(
                 nowPlaying: nowPlaying,
+                timeline: timeline,
                 selectedProvider: selectedProvider,
                 historyPolicy: historyPolicy,
                 onSelectProvider: onSelectProvider,
@@ -410,8 +463,33 @@ public struct MusicCompactPlayer: View {
     }
 }
 
+private struct MusicTimelineRow: View {
+    let event: MobileMusicRideEventDto
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(event.timelineItemTitle)
+                    .lineLimit(1)
+                Text("\(event.provider.title) · \(event.kind.timelineTitle)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Text(
+                Date(timeIntervalSince1970: Double(event.wallClockAtMs) / 1_000),
+                style: .time
+            )
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 public struct MusicExpandedPlayer: View {
     public let nowPlaying: MusicNowPlaying
+    public let timeline: [MobileMusicRideEventDto]
     public let selectedProvider: MobileMusicProviderDto
     public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onSelectProvider: (MobileMusicProviderDto) -> Void
@@ -421,12 +499,14 @@ public struct MusicExpandedPlayer: View {
 
     public init(
         nowPlaying: MusicNowPlaying,
+        timeline: [MobileMusicRideEventDto] = [],
         selectedProvider: MobileMusicProviderDto,
         historyPolicy: MobileMusicHistoryPolicyDto,
         onSelectProvider: @escaping (MobileMusicProviderDto) -> Void,
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
     ) {
         self.nowPlaying = nowPlaying
+        self.timeline = timeline
         self.selectedProvider = selectedProvider
         self.historyPolicy = historyPolicy
         self.onSelectProvider = onSelectProvider
@@ -448,6 +528,16 @@ public struct MusicExpandedPlayer: View {
                     }
                 } header: {
                     Text(nowPlaying.providerName)
+                }
+
+                if timeline.isEmpty == false {
+                    Section {
+                        ForEach(timeline, id: \.timelineID) { event in
+                            MusicTimelineRow(event: event)
+                        }
+                    } header: {
+                        Text(pevLocalizedText("music.timeline.title"))
+                    }
                 }
 
                 Section {
@@ -498,6 +588,7 @@ public struct MusicExpandedPlayer: View {
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
+    public let timeline: [MobileMusicRideEventDto]
     public let selectedProvider: MobileMusicProviderDto
     public let isHidden: Bool
     public let historyPolicy: MobileMusicHistoryPolicyDto
@@ -512,6 +603,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
             if let nowPlaying {
                 MusicCompactPlayer(
                     nowPlaying: nowPlaying,
+                    timeline: timeline,
                     selectedProvider: selectedProvider,
                     historyPolicy: historyPolicy,
                     onCommand: onCommand,
@@ -537,6 +629,7 @@ public struct MusicCompactPlayerInset: ViewModifier {
 public extension View {
     func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
+        timeline: [MobileMusicRideEventDto] = [],
         selectedProvider: MobileMusicProviderDto,
         isHidden: Bool,
         historyPolicy: MobileMusicHistoryPolicyDto,
@@ -548,6 +641,7 @@ public extension View {
     ) -> some View {
         modifier(MusicCompactPlayerInset(
             nowPlaying: nowPlaying,
+            timeline: timeline,
             selectedProvider: selectedProvider,
             isHidden: isHidden,
             historyPolicy: historyPolicy,

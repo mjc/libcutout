@@ -65,6 +65,34 @@
       "comment" : "Explanation for human-readable music history.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Store bounded provider, title, and artist metadata with rides." } } }
     },
+    "music.timeline.title" : {
+      "comment" : "Section title for bounded music transitions associated with the active ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride timeline" } } }
+    },
+    "music.timeline.unknown_item" : {
+      "comment" : "Fallback label when a retained music transition has no item metadata.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "No track metadata" } } }
+    },
+    "music.timeline.play" : {
+      "comment" : "Music ride timeline event label for playback beginning or resuming.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Played" } } }
+    },
+    "music.timeline.pause" : {
+      "comment" : "Music ride timeline event label for playback pausing.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Paused" } } }
+    },
+    "music.timeline.skip" : {
+      "comment" : "Music ride timeline event label for skipping.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Skipped" } } }
+    },
+    "music.timeline.item_changed" : {
+      "comment" : "Music ride timeline event label for a current-item change.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Track changed" } } }
+    },
+    "music.timeline.provider_disconnected" : {
+      "comment" : "Music ride timeline event label for provider disconnection.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Provider disconnected" } } }
+    },
     "music.state.authorization_required" : {
       "comment" : "Compact player state when music authorization is required.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Authorization required" } } }

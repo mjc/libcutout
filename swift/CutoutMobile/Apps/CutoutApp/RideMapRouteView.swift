@@ -60,6 +60,7 @@ struct RideMapRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            timeline: model.musicTimelineEvents,
             selectedProvider: model.selectedMusicProvider,
             isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
