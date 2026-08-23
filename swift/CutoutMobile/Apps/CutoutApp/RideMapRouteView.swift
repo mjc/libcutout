@@ -58,18 +58,7 @@ struct RideMapRouteView: View {
             }
             Button(localizedAppText("common.cancel"), role: .cancel) {}
         }
-        .musicCompactPlayer(
-            nowPlaying: model.musicNowPlaying,
-            timeline: model.musicTimelineEvents,
-            selectedProvider: model.selectedMusicProvider,
-            isHidden: model.isMusicPlayerHidden,
-            historyPolicy: model.musicHistoryPolicy,
-            onCommand: model.handleMusicCommand,
-            onDismiss: model.dismissMusicPlayer,
-            onRestore: model.restoreMusicPlayer,
-            onSelectProvider: model.selectMusicProvider,
-            onSetHistoryPolicy: model.setMusicHistoryPolicy
-        )
+        .appMusicCompactPlayer(model: model)
     }
 
     private var liveContent: some View {
