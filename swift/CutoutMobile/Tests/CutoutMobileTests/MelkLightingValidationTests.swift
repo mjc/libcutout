@@ -75,4 +75,26 @@ final class MelkLightingValidationTests: XCTestCase {
             )
         )
     }
+
+    func testRememberedMELKTargetAcceptsOnlyTheSamePlatformIdentity() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+
+        XCTAssertTrue(target.accepts(CoreBluetoothPeripheralIdentifier("a1b2c3d4-e5f6-4789-abcd-0123456789ab")))
+        XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("B1B2C3D4-E5F6-4789-ABCD-0123456789AB")))
+        XCTAssertFalse(target.isInvalid)
+    }
+
+    func testFirstPairingTargetAcceptsAnyPlatformIdentity() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
+
+        XCTAssertTrue(target.accepts(CoreBluetoothPeripheralIdentifier("first-melk")))
+        XCTAssertFalse(target.isInvalid)
+    }
+
+    func testMalformedRememberedTargetFailsClosed() {
+        let target = MelkLightingTargetPolicy(preferredPlatformIdentifier: "legacy-melk")
+
+        XCTAssertTrue(target.isInvalid)
+        XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("legacy-melk")))
+    }
 }
