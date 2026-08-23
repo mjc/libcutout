@@ -749,7 +749,7 @@ impl RideRecording {
         if !matches!(self.state, RideState::Recording | RideState::Paused) {
             return MusicTimelineOutcome::RideNotOpen;
         }
-        if monotonic_at < self.started_at {
+        if music_event_predates_ride_start(monotonic_at.as_milliseconds(), self.started_at) {
             return MusicTimelineOutcome::OutOfOrder;
         }
         let Some(event) = MusicRideEvent::from_snapshot(
@@ -1008,7 +1008,7 @@ fn restore_music_timeline(
 ) -> Result<MusicTimeline, String> {
     let mut timeline = MusicTimeline::new();
     for event in events {
-        if event.monotonic_at().as_milliseconds() < started_at.as_milliseconds() {
+        if music_event_predates_ride_start(event.monotonic_at().as_milliseconds(), started_at) {
             return Err("persisted music event predates ride start".to_owned());
         }
         if timeline.append(event) != MusicTimelineOutcome::Recorded {
@@ -1019,6 +1019,9 @@ fn restore_music_timeline(
         return Err("disabled music history contains persisted events".to_owned());
     }
     Ok(timeline)
+}
+fn music_event_predates_ride_start(event_at_ms: u64, started_at: MonotonicMilliseconds) -> bool {
+    event_at_ms < started_at.as_milliseconds()
 }
 
 fn distance_meters(previous: LocationSample, current: LocationSample) -> f64 {
