@@ -22,12 +22,13 @@ use cutout_core::{
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
-    BluetoothServiceUuid as CoreBluetoothServiceUuid, Capacity, ChargeEstimateError,
-    ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
-    ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
-    ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
-    ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto, CutoutSessionState,
-    DeviceCommandDto, DiscoveryCandidateSnapshot,
+    BegodeBeeperVolume as CoreBegodeBeeperVolume, BegodeLedModeSetting as CoreBegodeLedModeSetting,
+    BegodeMaxSpeed as CoreBegodeMaxSpeed, BluetoothServiceUuid as CoreBluetoothServiceUuid,
+    Capacity, ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason,
+    ChargeEstimateState, ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto,
+    ChargeModeReadingDto, ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate,
+    CommandKindDto, ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto,
+    CutoutSessionState, DeviceCommandDto, DiscoveryCandidateSnapshot,
     DiscoveryCandidateSupport as CoreDiscoveryCandidateSupport,
     DiscoveryConnectionRoute as CoreDiscoveryConnectionRoute,
     DiscoveryElectricUnicycleModel as CoreDiscoveryElectricUnicycleModel,
@@ -2026,6 +2027,15 @@ pub enum MobileCommandDto {
     /// Set the documented Begode speed-alarm mode; stationary-only.
     SetSpeedAlarmMode(MobileSpeedAlarmModeKindDto),
 
+    /// Set Begode max speed through the timed `W` submenu.
+    SetBegodeMaxSpeed(MobileBegodeMaxSpeedDto),
+
+    /// Set Begode beeper volume through the timed `W` submenu.
+    SetBegodeBeeperVolume(MobileBegodeBeeperVolumeDto),
+
+    /// Set Begode LED mode through the timed `W` submenu.
+    SetBegodeLedMode(MobileBegodeLedModeDto),
+
     /// Enable or disable acceleration assist; unsupported models refuse this before transport.
     SetAccelerationAssist(MobileAccelerationAssistStateDto),
 
@@ -2168,6 +2178,27 @@ pub enum MobileSpeedAlarmModeKindDto {
     PwmTiltback,
 }
 
+/// Begode max-speed input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeMaxSpeedDto {
+    /// Whole kilometres per hour, limited by the two-digit protocol field.
+    pub kilometres_per_hour: u8,
+}
+
+/// Begode beeper-volume input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeBeeperVolumeDto {
+    /// Protocol volume level, 1 through 9.
+    pub level: u8,
+}
+
+/// Begode LED-mode input for the timed `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBegodeLedModeDto {
+    /// Protocol LED mode, 0 through 9.
+    pub mode: u8,
+}
+
 impl From<CoreSpeedAlarmMode> for MobileSpeedAlarmModeKindDto {
     fn from(mode: CoreSpeedAlarmMode) -> Self {
         match mode {
@@ -2215,6 +2246,15 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// Begode speed-alarm mode write support.
     pub speed_alarm_mode: MobileSettingWriteSupportDto,
 
+    /// Begode max-speed write support.
+    pub begode_max_speed: MobileSettingWriteSupportDto,
+
+    /// Begode beeper-volume write support.
+    pub begode_beeper_volume: MobileSettingWriteSupportDto,
+
+    /// Begode LED-mode write support.
+    pub begode_led_mode: MobileSettingWriteSupportDto,
+
     /// Acceleration-assist/behavior write support.
     pub acceleration_assist: MobileSettingWriteSupportDto,
 
@@ -2231,6 +2271,9 @@ impl MobileEucSettingsCapabilitiesDto {
             pedal_mode: MobileSettingWriteSupportDto::Supported,
             roll_angle: MobileSettingWriteSupportDto::Unsupported,
             speed_alarm_mode: MobileSettingWriteSupportDto::Unsupported,
+            begode_max_speed: MobileSettingWriteSupportDto::Unsupported,
+            begode_beeper_volume: MobileSettingWriteSupportDto::Unsupported,
+            begode_led_mode: MobileSettingWriteSupportDto::Unsupported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2242,6 +2285,9 @@ impl MobileEucSettingsCapabilitiesDto {
             pedal_mode: MobileSettingWriteSupportDto::Supported,
             roll_angle: MobileSettingWriteSupportDto::Supported,
             speed_alarm_mode: MobileSettingWriteSupportDto::Supported,
+            begode_max_speed: MobileSettingWriteSupportDto::Supported,
+            begode_beeper_volume: MobileSettingWriteSupportDto::Supported,
+            begode_led_mode: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -10757,6 +10803,19 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::SetSpeedAlarmMode(mode) => {
                 Self::SetSpeedAlarmMode(CoreSpeedAlarmMode::from(mode).into())
             }
+            MobileCommandDto::SetBegodeMaxSpeed(speed) => {
+                CoreBegodeMaxSpeed::new(speed.kilometres_per_hour)
+                    .map(DeviceCommandDto::SetBegodeMaxSpeed)
+                    .unwrap_or(DeviceCommandDto::RequestSettings)
+            }
+            MobileCommandDto::SetBegodeBeeperVolume(volume) => {
+                CoreBegodeBeeperVolume::new(volume.level)
+                    .map(DeviceCommandDto::SetBegodeBeeperVolume)
+                    .unwrap_or(DeviceCommandDto::RequestSettings)
+            }
+            MobileCommandDto::SetBegodeLedMode(mode) => CoreBegodeLedModeSetting::new(mode.mode)
+                .map(DeviceCommandDto::SetBegodeLedMode)
+                .unwrap_or(DeviceCommandDto::RequestSettings),
             MobileCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -10781,6 +10840,9 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         | CommandKindDto::SetPedalMode
         | CommandKindDto::SetRollAngle
         | CommandKindDto::SetSpeedAlarmMode
+        | CommandKindDto::SetBegodeMaxSpeed
+        | CommandKindDto::SetBegodeBeeperVolume
+        | CommandKindDto::SetBegodeLedMode
         | CommandKindDto::SetTaillight
         | CommandKindDto::SetRawMotorCurrent => None,
     }
@@ -15245,6 +15307,41 @@ mod tests {
             session.speed_alarm_mode_state().requested,
             Some(MobileSpeedAlarmModeKindDto::StageOneOnly)
         );
+    }
+
+    #[test]
+    fn falcon_wrapper_schedules_typed_w_setting_sequence() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetBegodeMaxSpeed(
+                MobileBegodeMaxSpeedDto {
+                    kilometres_per_hour: 30,
+                },
+            )),
+        });
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"W"
+        }));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(100),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"Y"
+        }));
     }
 
     #[test]

@@ -1518,6 +1518,60 @@ public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     }
 }
 
+/// Begode max speed accepted by the documented two-digit `W` submenu.
+public struct BegodeMaxSpeed: Equatable, Hashable, Sendable {
+    public let kilometresPerHour: UInt8
+
+    public init?(kilometresPerHour: UInt8) {
+        guard kilometresPerHour <= 99 else { return nil }
+        self.kilometresPerHour = kilometresPerHour
+    }
+
+    fileprivate init(_ dto: MobileBegodeMaxSpeedDto) {
+        self.kilometresPerHour = dto.kilometresPerHour
+    }
+
+    fileprivate var dto: MobileBegodeMaxSpeedDto {
+        MobileBegodeMaxSpeedDto(kilometresPerHour: kilometresPerHour)
+    }
+}
+
+/// Begode beeper volume accepted by the documented `W` submenu.
+public struct BegodeBeeperVolume: Equatable, Hashable, Sendable {
+    public let level: UInt8
+
+    public init?(level: UInt8) {
+        guard (1...9).contains(level) else { return nil }
+        self.level = level
+    }
+
+    fileprivate init(_ dto: MobileBegodeBeeperVolumeDto) {
+        self.level = dto.level
+    }
+
+    fileprivate var dto: MobileBegodeBeeperVolumeDto {
+        MobileBegodeBeeperVolumeDto(level: level)
+    }
+}
+
+/// Begode LED mode accepted by the documented `W` submenu.
+public struct BegodeLedMode: Equatable, Hashable, Sendable {
+    public let mode: UInt8
+
+    public init?(mode: UInt8) {
+        guard mode <= 9 else { return nil }
+        self.mode = mode
+    }
+
+    fileprivate init(_ dto: MobileBegodeLedModeDto) {
+        self.mode = dto.mode
+    }
+
+    fileprivate var dto: MobileBegodeLedModeDto {
+        MobileBegodeLedModeDto(mode: mode)
+    }
+}
+
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let pedalMode: SettingWriteSupport
     public let rollAngle: SettingWriteSupport
@@ -1525,6 +1579,9 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let accelerationAssist: SettingWriteSupport
     public let headlight: SettingWriteSupport
     public let taillight: SettingWriteSupport
+    public let begodeMaxSpeed: SettingWriteSupport
+    public let begodeBeeperVolume: SettingWriteSupport
+    public let begodeLedMode: SettingWriteSupport
 
     public init(
         pedalMode: SettingWriteSupport,
@@ -1532,7 +1589,10 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         speedAlarmMode: SettingWriteSupport = .unsupported,
         accelerationAssist: SettingWriteSupport,
         headlight: SettingWriteSupport,
-        taillight: SettingWriteSupport
+        taillight: SettingWriteSupport,
+        begodeMaxSpeed: SettingWriteSupport = .unsupported,
+        begodeBeeperVolume: SettingWriteSupport = .unsupported,
+        begodeLedMode: SettingWriteSupport = .unsupported
     ) {
         self.pedalMode = pedalMode
         self.rollAngle = rollAngle
@@ -1540,6 +1600,9 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.accelerationAssist = accelerationAssist
         self.headlight = headlight
         self.taillight = taillight
+        self.begodeMaxSpeed = begodeMaxSpeed
+        self.begodeBeeperVolume = begodeBeeperVolume
+        self.begodeLedMode = begodeLedMode
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
@@ -1549,6 +1612,9 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.accelerationAssist = SettingWriteSupport(dto.accelerationAssist)
         self.headlight = SettingWriteSupport(dto.headlight)
         self.taillight = SettingWriteSupport(dto.taillight)
+        self.begodeMaxSpeed = SettingWriteSupport(dto.begodeMaxSpeed)
+        self.begodeBeeperVolume = SettingWriteSupport(dto.begodeBeeperVolume)
+        self.begodeLedMode = SettingWriteSupport(dto.begodeLedMode)
     }
 }
 
@@ -1576,6 +1642,9 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case setPedalMode(PedalMode.Kind)
     case setRollAngle(RollAngle.Kind)
     case setSpeedAlarmMode(SpeedAlarmMode.Kind)
+    case setBegodeMaxSpeed(BegodeMaxSpeed)
+    case setBegodeBeeperVolume(BegodeBeeperVolume)
+    case setBegodeLedMode(BegodeLedMode)
     case setAccelerationAssist(AccelerationAssistState)
     case setTaillight(LightState)
     case soundHorn
@@ -1604,6 +1673,12 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .setRollAngle(RollAngle.Kind(angle))
         case .setSpeedAlarmMode(let mode):
             self = .setSpeedAlarmMode(SpeedAlarmMode.Kind(mode))
+        case .setBegodeMaxSpeed(let speed):
+            self = .setBegodeMaxSpeed(BegodeMaxSpeed(speed))
+        case .setBegodeBeeperVolume(let volume):
+            self = .setBegodeBeeperVolume(BegodeBeeperVolume(volume))
+        case .setBegodeLedMode(let mode):
+            self = .setBegodeLedMode(BegodeLedMode(mode))
         case .setAccelerationAssist(let state):
             self = .setAccelerationAssist(AccelerationAssistState(state))
         case .setTaillight(let state):
@@ -1637,6 +1712,12 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .setRollAngle(angle.dto)
         case .setSpeedAlarmMode(let mode):
             .setSpeedAlarmMode(mode.dto)
+        case .setBegodeMaxSpeed(let speed):
+            .setBegodeMaxSpeed(speed.dto)
+        case .setBegodeBeeperVolume(let volume):
+            .setBegodeBeeperVolume(volume.dto)
+        case .setBegodeLedMode(let mode):
+            .setBegodeLedMode(mode.dto)
         case .setAccelerationAssist(let state):
             .setAccelerationAssist(state.dto)
         case .setTaillight(let state):
@@ -5048,6 +5129,7 @@ public enum CommandRefusalReason: Equatable, Hashable, Sendable {
     case expiredArm
     case currentLimitExceeded
     case unsupportedCommand
+    case busy
 
     fileprivate init(_ dto: MobileControlRefusalReasonDto) {
         switch dto {
@@ -5063,6 +5145,8 @@ public enum CommandRefusalReason: Equatable, Hashable, Sendable {
             self = .currentLimitExceeded
         case .unsupportedCommand:
             self = .unsupportedCommand
+        case .busy:
+            self = .busy
         }
     }
 }

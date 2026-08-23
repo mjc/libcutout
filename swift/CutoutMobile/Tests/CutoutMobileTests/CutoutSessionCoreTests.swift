@@ -1317,6 +1317,25 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.begodeMaxSpeed, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeMaxSpeed, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeBeeperVolume, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeLedMode, .supported)
+    }
+
+    func testBegodeWSettingValuesUseDocumentedRanges() {
+        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 0)?.kilometresPerHour, 0)
+        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 99)?.kilometresPerHour, 99)
+        XCTAssertNil(BegodeMaxSpeed(kilometresPerHour: 100))
+
+        XCTAssertEqual(BegodeBeeperVolume(level: 1)?.level, 1)
+        XCTAssertEqual(BegodeBeeperVolume(level: 9)?.level, 9)
+        XCTAssertNil(BegodeBeeperVolume(level: 0))
+        XCTAssertNil(BegodeBeeperVolume(level: 10))
+
+        XCTAssertEqual(BegodeLedMode(mode: 0)?.mode, 0)
+        XCTAssertEqual(BegodeLedMode(mode: 9)?.mode, 9)
+        XCTAssertNil(BegodeLedMode(mode: 10))
     }
 
     func testUnverifiedEucSettingCommandsAreTypedRefusals() throws {
