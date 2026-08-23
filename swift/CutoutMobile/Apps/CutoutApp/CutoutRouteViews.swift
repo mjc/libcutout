@@ -530,6 +530,8 @@ struct LightingRouteView: View {
             "Scanning for nearby accessories…"
         case .connecting, .discovering:
             "Connecting…"
+        case let .retrying(attempt, delayMilliseconds):
+            "Retrying (\(attempt)) in \(max(1, Int((delayMilliseconds + 999) / 1000)))s…"
         case .disconnected:
             "Not connected"
         case .failed:
@@ -1217,6 +1219,8 @@ private extension MelkLightingPeripheralState {
         case .idle: "Idle"
         case .scanning: "Scanning for MELK-OC21"
         case .connecting: "Connecting"
+        case let .retrying(attempt, delayMilliseconds):
+            "Retrying (\(attempt)) in \(max(1, Int((delayMilliseconds + 999) / 1000)))s"
         case .discovering: "Discovering FFF0/FFF3/FFF4"
         case .ready: "Ready"
         case .disconnected: "Disconnected"
