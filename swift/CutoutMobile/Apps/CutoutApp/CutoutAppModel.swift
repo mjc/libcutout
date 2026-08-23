@@ -323,6 +323,11 @@ final class CutoutAppModel {
         clockUncertaintyMs: UInt64
     ) {
         guard musicCoordinator.nowPlaying == MusicNowPlaying(observation: observation) else { return }
+        guard let rideSnapshot = core.rideMapStateHandle.currentSnapshot(),
+              rideSnapshot.state == .recording || rideSnapshot.state == .paused else {
+            core.updateMusicCaptureObservation(nil)
+            return
+        }
         updateMusicCaptureObservation(
             from: observation,
             wallClockAtMs: wallClockAtMs,

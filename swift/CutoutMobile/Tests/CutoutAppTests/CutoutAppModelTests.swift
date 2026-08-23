@@ -201,6 +201,7 @@ final class CutoutAppModelTests: XCTestCase {
         ))
         XCTAssertEqual(model.musicNowPlaying?.title, "Track")
         XCTAssertTrue(model.musicTimelineEvents.isEmpty)
+        XCTAssertNil(driver.lastMusicCaptureObservation)
 
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertTrue(model.ingestMusicObservation(
