@@ -14,15 +14,41 @@ final class RideMapStateTests: XCTestCase {
             horizontalAccuracyMeters: 4
         )
         XCTAssertEqual(try state.observeVehicleConnection(platformIdentifier: "pev-1", atMs: 200), .associated)
-        let stopped = try state.stop()
-        XCTAssertEqual(stopped.state, .stopped)
 
         guard case let .accepted(point, _) = decision else {
             return XCTFail("expected the location to be admitted")
         }
+        XCTAssertEqual(
+            try state.ingestLocation(
+                monotonicMs: 101,
+                wallClockUnixMs: 1_700_000_000_101,
+                latitudeDegrees: 39.7393,
+                longitudeDegrees: -104.9902,
+                horizontalAccuracyMeters: 4
+            ),
+            .accepted(
+                point: MobileRideMapPointDto(
+                    sequence: 1,
+                    segmentId: 0,
+                    latitudeDegrees: 39.7393,
+                    longitudeDegrees: -104.9902,
+                    wallClockUnixMs: 1_700_000_000_101,
+                    monotonicMs: 101,
+                    horizontalAccuracyMeters: 4,
+                    telemetryState: .associatedNoTelemetry
+                ),
+                segmentStarted: false
+            )
+        )
+        let stopped = try state.stop()
+        XCTAssertEqual(stopped.state, .stopped)
         XCTAssertEqual(point.sequence, 0)
-        XCTAssertEqual(stopped.summary.pointCount, 1)
-        XCTAssertEqual(state.pointsAfter(afterCursor: 0, limit: 10)?.points.count, 1)
+        XCTAssertEqual(stopped.summary.pointCount, 2)
+        let firstBatch = state.pointsAfter(afterCursor: nil, limit: 1)
+        XCTAssertEqual(firstBatch?.points.count, 1)
+        XCTAssertEqual(firstBatch?.nextCursor, 0)
+        XCTAssertTrue(firstBatch?.hasMore == true)
+        XCTAssertEqual(state.pointsAfter(afterCursor: firstBatch?.nextCursor, limit: 10)?.points.map(\.sequence), [1])
         XCTAssertEqual(try state.save().state, .saved)
     }
 }

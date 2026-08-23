@@ -43,7 +43,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable {
 
 public struct MobileRideMapPointBatchDto: Equatable, Hashable {
     public var points: [MobileRideMapPointDto]
-    public var nextCursor: UInt64
+    public var nextCursor: UInt64?
     public var hasMore: Bool
 }
 
@@ -83,6 +83,7 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable {
 /// This adapter owns only the transient active-ride projection. All durable ride and route
 /// writes go through `RideDatabaseHandle`; it intentionally has no SQLite implementation.
 public final class MobileRideMapState {
+    private let lock = NSRecursiveLock()
     private let database: RideDatabaseHandle?
     private var activeRideID: MobileRideIdDto?
     private var activeState: MobileRideMapStateDto?
@@ -118,63 +119,73 @@ public final class MobileRideMapState {
     }
 
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
-        guard let id = activeRideID, let state = activeState else { return nil }
-        return snapshot(id: id.value, state: state)
+        withLock {
+            guard let id = activeRideID, let state = activeState else { return nil }
+            return snapshot(id: id.value, state: state)
+        }
     }
 
     public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
-        guard activeState == nil || activeState == .saved || activeState == .discarded else {
-            throw MobileRideMapError.AlreadyRecording
-        }
-        let id: MobileRideIdDto
-        if let database {
-            do {
-                id = try database.createRide(source: .live, createdAtMilliseconds: atMs)
-                _ = try database.transition(id: id, event: .start)
-            } catch {
-                throw map(error)
+        try withLock {
+            guard activeState == nil || activeState == .saved || activeState == .discarded else {
+                throw MobileRideMapError.AlreadyRecording
             }
-        } else {
-            id = MobileRideIdDto(value: UUID().uuidString)
+            let id: MobileRideIdDto
+            if let database {
+                do {
+                    id = try database.createRide(source: .live, createdAtMilliseconds: atMs)
+                    _ = try database.transition(id: id, event: .start)
+                } catch {
+                    throw map(error)
+                }
+            } else {
+                id = MobileRideIdDto(value: UUID().uuidString)
+            }
+            activeRideID = id
+            activeState = .recording
+            activeCreatedAt = atMs
+            candidateVehicle = lastConnectedVehicle
+            activeVehicle = nil
+            activePoints = []
+            lastMonotonic = atMs
+            return snapshot(id: id.value, state: .recording)
         }
-        activeRideID = id
-        activeState = .recording
-        activeCreatedAt = atMs
-        candidateVehicle = lastConnectedVehicle
-        activeVehicle = nil
-        activePoints = []
-        lastMonotonic = atMs
-        return snapshot(id: id.value, state: .recording)
     }
 
-    public func pause() throws -> MobileRideMapSnapshotDto { try transition(.pause, state: .paused) }
-    public func resume() throws -> MobileRideMapSnapshotDto { try transition(.resume, state: .recording) }
-    public func stop() throws -> MobileRideMapSnapshotDto { try transition(.stop, state: .stopped) }
+    public func pause() throws -> MobileRideMapSnapshotDto { try withLock { try transition(.pause, state: .paused) } }
+    public func resume() throws -> MobileRideMapSnapshotDto { try withLock { try transition(.resume, state: .recording) } }
+    public func stop() throws -> MobileRideMapSnapshotDto { try withLock { try transition(.stop, state: .stopped) } }
 
     public func save() throws -> MobileRideMapSnapshotDto {
-        let snapshot = try transition(.save, state: .saved)
-        activeRideID = nil
-        activeState = .saved
-        return snapshot
+        try withLock {
+            let snapshot = try transition(.save, state: .saved)
+            activeRideID = nil
+            activeState = .saved
+            return snapshot
+        }
     }
 
     public func discard() throws -> MobileRideMapSnapshotDto {
-        let snapshot = try transition(.discard, state: .discarded)
-        activeRideID = nil
-        activeState = .discarded
-        return snapshot
+        try withLock {
+            let snapshot = try transition(.discard, state: .discarded)
+            activeRideID = nil
+            activeState = .discarded
+            return snapshot
+        }
     }
 
     public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
-        guard activeRideID != nil, activeState == .recording || activeState == .paused else {
-            return .rideNotOpen
+        withLock {
+            guard activeRideID != nil, activeState == .recording || activeState == .paused else {
+                return .rideNotOpen
+            }
+            guard atMs >= lastMonotonic else { return .timestampOutOfOrder }
+            if let activeVehicle, activeVehicle == platformIdentifier { return .alreadyAssociated }
+            if let candidateVehicle, candidateVehicle != platformIdentifier { return .identityMismatch }
+            activeVehicle = platformIdentifier
+            candidateVehicle = nil
+            return .associated
         }
-        guard atMs >= lastMonotonic else { return .timestampOutOfOrder }
-        if let activeVehicle, activeVehicle == platformIdentifier { return .alreadyAssociated }
-        if let candidateVehicle, candidateVehicle != platformIdentifier { return .identityMismatch }
-        activeVehicle = platformIdentifier
-        candidateVehicle = nil
-        return .associated
     }
 
     public func ingestLocation(
@@ -184,12 +195,13 @@ public final class MobileRideMapState {
         longitudeDegrees: Double,
         horizontalAccuracyMeters: Double
     ) throws -> MobileRideMapDecisionDto {
-        guard let id = activeRideID, let state = activeState else { throw MobileRideMapError.NoActiveRide }
-        guard state == .recording else {
-            return .ignored(reason: "ride is not recording")
-        }
-        guard monotonicMs >= lastMonotonic else { return .rejected(reason: "timestamp out of order") }
-        let location = MobileRideLocationDto(
+        try withLock {
+            guard let id = activeRideID, let state = activeState else { throw MobileRideMapError.NoActiveRide }
+            guard state == .recording else {
+                return .ignored(reason: "ride is not recording")
+            }
+            guard monotonicMs >= lastMonotonic else { return .rejected(reason: "timestamp out of order") }
+            let location = MobileRideLocationDto(
             latitudeDegrees: latitudeDegrees,
             longitudeDegrees: longitudeDegrees,
             monotonicMilliseconds: monotonicMs,
@@ -198,37 +210,39 @@ public final class MobileRideMapState {
                 ? UInt32(min(horizontalAccuracyMeters * 1_000, Double(UInt32.max))) : nil,
             source: .live
         )
-        if let database {
-            do {
-                switch try database.appendLocation(id: id, location: location) {
-                case .accepted:
-                    break
-                case .duplicate:
-                    return .ignored(reason: "duplicate location")
-                case .outOfOrder:
-                    return .rejected(reason: "timestamp out of order")
-                }
-            } catch { throw map(error) }
-        }
-        let point = MobileRideMapPointDto(
+            if let database {
+                do {
+                    switch try database.appendLocation(id: id, location: location) {
+                    case .accepted:
+                        break
+                    case .duplicate:
+                        return .ignored(reason: "duplicate location")
+                    case .outOfOrder:
+                        return .rejected(reason: "timestamp out of order")
+                    }
+                } catch { throw map(error) }
+            }
+            let point = MobileRideMapPointDto(
             sequence: UInt64(activePoints.count), segmentId: 0,
             latitudeDegrees: latitudeDegrees, longitudeDegrees: longitudeDegrees,
             wallClockUnixMs: wallClockUnixMs, monotonicMs: monotonicMs,
             horizontalAccuracyMeters: horizontalAccuracyMeters,
             telemetryState: activeVehicle == nil ? .gpsOnly : .associatedNoTelemetry
         )
-        activePoints.append(point)
-        lastMonotonic = monotonicMs
-        return .accepted(point: point, segmentStarted: activePoints.count == 1)
+            activePoints.append(point)
+            lastMonotonic = monotonicMs
+            return .accepted(point: point, segmentStarted: activePoints.count == 1)
+        }
     }
 
-    public func pointsAfter(afterCursor: UInt64, limit: UInt32) -> MobileRideMapPointBatchDto? {
-        batch(from: activePoints, after: afterCursor, limit: limit)
+    public func pointsAfter(afterCursor: UInt64?, limit: UInt32) -> MobileRideMapPointBatchDto? {
+        withLock { batch(from: activePoints, after: afterCursor, limit: limit) }
     }
 
     public func storedSummaries(limit: UInt32) throws -> [MobileRideMapHistorySummaryDto] {
-        guard let database else { return [] }
-        do {
+        try withLock {
+            guard let database else { return [] }
+            do {
             let page = try database.listRides(cursor: nil, limit: limit)
             return page.rides.map { ride in
                 MobileRideMapHistorySummaryDto(
@@ -241,28 +255,36 @@ public final class MobileRideMapState {
                     candidateVehicle: nil, associatedVehicle: nil
                 )
             }
-        } catch { throw map(error) }
+            } catch { throw map(error) }
+        }
     }
 
-    public func storedPointsAfter(rideId: String, afterCursor: UInt64, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
-        guard let database else { return nil }
-        do {
+    public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
+        try withLock {
+            guard let database else { return nil }
+            do {
             let page = try database.routePoints(
                 rideId: MobileRideIdDto(value: rideId),
-                cursor: afterCursor == 0 ? nil : MobileRoutePointCursorDto(sequence: afterCursor),
+                cursor: afterCursor.map(MobileRoutePointCursorDto.init(sequence:)),
                 limit: limit
             )
             let points = page.points.map { mapPoint($0.location, sequence: $0.sequence) }
             return MobileRideMapPointBatchDto(
                 points: points,
-                nextCursor: page.nextCursor?.sequence ?? 0,
+                nextCursor: page.nextCursor?.sequence,
                 hasMore: page.nextCursor != nil
             )
-        } catch { throw map(error) }
+            } catch { throw map(error) }
+        }
     }
 
     private func transition(_ event: MobileRideEventDto, state: MobileRideMapStateDto) throws -> MobileRideMapSnapshotDto {
-        guard let id = activeRideID, activeState != nil else { throw MobileRideMapError.NoActiveRide }
+        guard let id = activeRideID, let currentState = activeState else { throw MobileRideMapError.NoActiveRide }
+        let valid = switch (currentState, event) {
+        case (.recording, .pause), (.paused, .resume), (.recording, .stop), (.paused, .stop), (.stopped, .save), (.stopped, .discard): true
+        default: false
+        }
+        guard valid else { throw MobileRideMapError.InvalidTransition }
         if let database { do { _ = try database.transition(id: id, event: event) } catch { throw map(error) } }
         activeState = state
         return snapshot(id: id.value, state: state)
@@ -287,10 +309,16 @@ public final class MobileRideMapState {
         )
     }
 
-    private func batch(from points: [MobileRideMapPointDto], after cursor: UInt64, limit: UInt32) -> MobileRideMapPointBatchDto {
-        let start = cursor == 0 ? 0 : points.firstIndex { $0.sequence > cursor } ?? points.count
+    private func batch(from points: [MobileRideMapPointDto], after cursor: UInt64?, limit: UInt32) -> MobileRideMapPointBatchDto {
+        let start = cursor.flatMap { cursor in points.firstIndex { $0.sequence > cursor } } ?? 0
         let end = min(points.count, start + Int(limit))
-        return MobileRideMapPointBatchDto(points: Array(points[start..<end]), nextCursor: end == 0 ? 0 : points[end - 1].sequence, hasMore: end < points.count)
+        return MobileRideMapPointBatchDto(points: Array(points[start..<end]), nextCursor: end < points.count ? points[end - 1].sequence : nil, hasMore: end < points.count)
+    }
+
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try body()
     }
 
     private func mapPoint(_ location: MobileRideLocationDto, sequence: UInt64) -> MobileRideMapPointDto {

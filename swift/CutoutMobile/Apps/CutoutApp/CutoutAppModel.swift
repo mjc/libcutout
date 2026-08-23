@@ -315,17 +315,22 @@ final class CutoutAppModel {
     }
 
     private func collectRideMapPoints(
-        _ fetch: (UInt64, UInt32) throws -> MobileRideMapPointBatchDto?
+        _ fetch: (UInt64?, UInt32) throws -> MobileRideMapPointBatchDto?
     ) rethrows -> ([MobileRideMapPointDto], Bool)? {
         var points = [MobileRideMapPointDto]()
-        var cursor: UInt64 = 0
+        var cursor: UInt64?
         repeat {
             guard let batch = try fetch(cursor, Self.rideMapPointBatchLimit) else {
                 return nil
             }
+            let remaining = Self.rideMapPreviewPointLimit - points.count
+            if batch.points.count > remaining {
+                points.append(contentsOf: batch.points.prefix(remaining))
+                return (points, true)
+            }
             points.append(contentsOf: batch.points)
             cursor = batch.nextCursor
-            if points.count >= Self.rideMapPreviewPointLimit {
+            if points.count == Self.rideMapPreviewPointLimit {
                 return (points, batch.hasMore)
             }
             if batch.hasMore == false {
