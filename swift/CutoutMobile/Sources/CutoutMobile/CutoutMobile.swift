@@ -1360,6 +1360,44 @@ public struct PedalModeSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+public struct AccelerationAssistSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AccelerationAssistState?
+    public let requested: AccelerationAssistState?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    public init(
+        kind: SettingStateKind,
+        current: AccelerationAssistState? = nil,
+        requested: AccelerationAssistState? = nil,
+        source: SettingValueSource = .unknown,
+        submittedAt: MonotonicMilliseconds? = nil,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        refusalReason: CommandRefusalReason? = nil
+    ) {
+        self.kind = kind
+        self.current = current
+        self.requested = requested
+        self.source = source
+        self.submittedAt = submittedAt
+        self.confirmedAt = confirmedAt
+        self.refusalReason = refusalReason
+    }
+
+    fileprivate init(_ dto: MobileAccelerationAssistSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AccelerationAssistState.init)
+        self.requested = dto.requested.map(AccelerationAssistState.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
 
 public enum SettingWriteSupport: Equatable, Hashable, Sendable {
     case supported
@@ -4940,6 +4978,24 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             PedalModeSettingState(session.pedalModeState())
         case .falcon(let session):
             PedalModeSettingState(session.pedalModeState())
+        }
+    }
+
+    public var accelerationAssistState: AccelerationAssistSettingState {
+        switch inner {
+        case .aero(let session):
+            AccelerationAssistSettingState(session.accelerationAssistState())
+        case .falcon(let session):
+            AccelerationAssistSettingState(session.accelerationAssistState())
+        }
+    }
+
+    public var taillightState: LightSettingState {
+        switch inner {
+        case .aero(let session):
+            LightSettingState(session.taillightState())
+        case .falcon(let session):
+            LightSettingState(session.taillightState())
         }
     }
     public var currentSnapshot: TelemetrySnapshot {

@@ -1368,6 +1368,24 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
     }
 
+    func testElectricUnicycleSessionExposesRustOwnedUnverifiedSettingStates() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+
+        XCTAssertThrowsError(
+            try session.perform(.setAccelerationAssist(.enabled), at: MonotonicMilliseconds(10))
+        )
+        XCTAssertEqual(session.accelerationAssistState.kind, .refused)
+        XCTAssertEqual(session.accelerationAssistState.requested, .enabled)
+        XCTAssertEqual(session.accelerationAssistState.refusalReason, .unsupportedCommand)
+
+        XCTAssertThrowsError(
+            try session.perform(.setTaillight(.on), at: MonotonicMilliseconds(11))
+        )
+        XCTAssertEqual(session.taillightState.kind, .refused)
+        XCTAssertEqual(session.taillightState.requested, .on)
+        XCTAssertEqual(session.taillightState.refusalReason, .unsupportedCommand)
+    }
+
 
     func testVescLiveOwnerWritesRequestsBeforeSubscribing() throws {
         let sink = RecordingOperationSink()
