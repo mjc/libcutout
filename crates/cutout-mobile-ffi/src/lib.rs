@@ -66,13 +66,13 @@ use cutout_core::{
     SessionOutputDto, SettingState as CoreSettingState,
     SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
-    TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
-    TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
-    ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
-    VerificationStatus, VerificationStatusDto, VerifiedValue, Voltage as CoreVoltage,
-    VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator, VoltageSagInput, VoltageSagModel,
-    WallClockUnixTimestamp, WriteMode,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedAlarmMode as CoreSpeedAlarmMode, SpeedReadingDto,
+    TelemetryFreshness, TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto,
+    TransportWriteLimit, TransportWriteLimitDto, UsablePackCapacity, ValueQuality,
+    ValueQuality as CoreValueQuality, ValueQualityDto, ValueSource, ValueSource as CoreValueSource,
+    ValueSourceDto, VerificationStatus, VerificationStatusDto, VerifiedValue,
+    Voltage as CoreVoltage, VoltageReadingDto, VoltageSagEstimate, VoltageSagEstimator,
+    VoltageSagInput, VoltageSagModel, WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
     BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
@@ -2023,6 +2023,9 @@ pub enum MobileCommandDto {
     /// Set the documented Falcon roll-angle sensitivity; stationary-only.
     SetRollAngle(MobileRollAngleKindDto),
 
+    /// Set the documented Begode speed-alarm mode; stationary-only.
+    SetSpeedAlarmMode(MobileSpeedAlarmModeKindDto),
+
     /// Enable or disable acceleration assist; unsupported models refuse this before transport.
     SetAccelerationAssist(MobileAccelerationAssistStateDto),
 
@@ -2146,6 +2149,44 @@ impl From<MobileRollAngleKindDto> for CoreRollAngle {
     }
 }
 
+/// Documented Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileSpeedAlarmModeKindDto {
+    /// Both speed alarms are enabled.
+    Both,
+
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+
+    /// Speed alarms are disabled.
+    Off,
+
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl From<CoreSpeedAlarmMode> for MobileSpeedAlarmModeKindDto {
+    fn from(mode: CoreSpeedAlarmMode) -> Self {
+        match mode {
+            CoreSpeedAlarmMode::Both => Self::Both,
+            CoreSpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            CoreSpeedAlarmMode::Off => Self::Off,
+            CoreSpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<MobileSpeedAlarmModeKindDto> for CoreSpeedAlarmMode {
+    fn from(mode: MobileSpeedAlarmModeKindDto) -> Self {
+        match mode {
+            MobileSpeedAlarmModeKindDto::Both => Self::Both,
+            MobileSpeedAlarmModeKindDto::StageOneOnly => Self::StageOneOnly,
+            MobileSpeedAlarmModeKindDto::Off => Self::Off,
+            MobileSpeedAlarmModeKindDto::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
 /// Validation state for a setting write exposed to mobile consumers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingWriteSupportDto {
@@ -2168,6 +2209,9 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// Falcon roll-angle sensitivity write support.
     pub roll_angle: MobileSettingWriteSupportDto,
 
+    /// Begode speed-alarm mode write support.
+    pub speed_alarm_mode: MobileSettingWriteSupportDto,
+
     /// Acceleration-assist/behavior write support.
     pub acceleration_assist: MobileSettingWriteSupportDto,
 
@@ -2183,6 +2227,7 @@ impl MobileEucSettingsCapabilitiesDto {
         Self {
             pedal_mode: MobileSettingWriteSupportDto::Supported,
             roll_angle: MobileSettingWriteSupportDto::Unsupported,
+            speed_alarm_mode: MobileSettingWriteSupportDto::Unsupported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2193,6 +2238,7 @@ impl MobileEucSettingsCapabilitiesDto {
         Self {
             pedal_mode: MobileSettingWriteSupportDto::Supported,
             roll_angle: MobileSettingWriteSupportDto::Supported,
+            speed_alarm_mode: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2357,6 +2403,45 @@ pub struct MobileRollAngleSettingStateDto {
 }
 
 impl MobileRollAngleSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed Begode speed-alarm lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSpeedAlarmModeSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current speed-alarm mode, when known.
+    pub current: Option<MobileSpeedAlarmModeKindDto>,
+
+    /// Requested speed-alarm mode, when a write is pending or terminal.
+    pub requested: Option<MobileSpeedAlarmModeKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileSpeedAlarmModeSettingStateDto {
     fn unknown() -> Self {
         Self {
             kind: MobileSettingStateKindDto::Unknown,
@@ -2940,6 +3025,7 @@ struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
     pedal_mode: MobileSettingTracker<CorePedalMode>,
     roll_angle: MobileSettingTracker<CoreRollAngle>,
+    speed_alarm_mode: MobileSettingTracker<CoreSpeedAlarmMode>,
     acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
     taillight: MobileSettingTracker<CoreLightState>,
 }
@@ -2950,6 +3036,7 @@ impl MobileEucSettingTrackers {
         self.headlight.observe_step(input.kind, now);
         self.pedal_mode.observe_step(input.kind, now);
         self.roll_angle.observe_step(input.kind, now);
+        self.speed_alarm_mode.observe_step(input.kind, now);
         self.acceleration_assist.observe_step(input.kind, now);
         self.taillight.observe_step(input.kind, now);
 
@@ -2962,6 +3049,10 @@ impl MobileEucSettingTrackers {
             }
             Some(MobileCommandDto::SetRollAngle(requested)) => {
                 self.roll_angle.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetSpeedAlarmMode(requested)) => {
+                self.speed_alarm_mode
+                    .observe_write(requested.into(), now, result);
             }
             Some(MobileCommandDto::SetAccelerationAssist(requested)) => {
                 self.acceleration_assist
@@ -2996,6 +3087,15 @@ impl MobileEucSettingTrackers {
             {
                 self.roll_angle.observe_readback(roll_angle, now);
             }
+            if let Some(speed_alarm_mode) = readback
+                .euc_garage
+                .speed_alarm_mode
+                .as_ref()
+                .and_then(|mode| mode.mode.map(CoreSpeedAlarmMode::from))
+            {
+                self.speed_alarm_mode
+                    .observe_readback(speed_alarm_mode, now);
+            }
         }
     }
 
@@ -3009,6 +3109,10 @@ impl MobileEucSettingTrackers {
 
     fn roll_angle(&self) -> MobileRollAngleSettingStateDto {
         mobile_roll_angle_setting_state(self.roll_angle.state)
+    }
+
+    fn speed_alarm_mode(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        mobile_speed_alarm_mode_setting_state(self.speed_alarm_mode.state)
     }
 
     fn acceleration_assist(&self) -> MobileAccelerationAssistSettingStateDto {
@@ -3178,6 +3282,72 @@ fn mobile_roll_angle_setting_state(
     state: CoreSettingState<CoreRollAngle>,
 ) -> MobileRollAngleSettingStateDto {
     let mut snapshot = MobileRollAngleSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_speed_alarm_mode_setting_state(
+    state: CoreSettingState<CoreSpeedAlarmMode>,
+) -> MobileSpeedAlarmModeSettingStateDto {
+    let mut snapshot = MobileSpeedAlarmModeSettingStateDto::unknown();
     match state {
         CoreSettingState::Unknown => {}
         CoreSettingState::Current(value) => {
@@ -8718,6 +8888,9 @@ pub struct MobileEucGarageSettingsDto {
     /// Falcon roll-angle sensitivity, when understood.
     pub roll_angle: Option<MobileRollAngleDto>,
 
+    /// Begode speed-alarm mode, when understood.
+    pub speed_alarm_mode: Option<MobileSpeedAlarmModeDto>,
+
     /// Light state reported by wheel telemetry, when the protocol provides it.
     pub light_state: Option<MobileLightStateDto>,
 
@@ -8746,6 +8919,16 @@ pub struct MobileRollAngleDto {
 
     /// Documented roll-angle sensitivity when the value has a known mapping.
     pub angle: Option<MobileRollAngleKindDto>,
+}
+
+/// Read-only Begode speed-alarm projection for mobile UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileSpeedAlarmModeDto {
+    /// Protocol-native raw speed-alarm mode value.
+    pub raw_mode: Option<u16>,
+
+    /// Documented speed-alarm mode when the value has a known mapping.
+    pub mode: Option<MobileSpeedAlarmModeKindDto>,
 }
 
 /// Bounded read-only settings response for mobile UI.
@@ -9974,6 +10157,7 @@ impl MobileEucGarageSettingsDto {
                 tiltback: None,
                 pedal_mode: None,
                 roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -10006,6 +10190,9 @@ impl MobileEucGarageSettingsDto {
             roll_angle: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
                 .map(begode_roll_angle),
+            speed_alarm_mode: settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                .and_then(|entry| u16::try_from(entry.field.value).ok())
+                .map(begode_speed_alarm_mode),
             light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
                 .and_then(|value| match value & 0x03 {
@@ -10058,6 +10245,15 @@ fn begode_roll_angle(settings_bits: u16) -> MobileRollAngleDto {
         raw_angle: Some(raw_angle),
         angle: CoreRollAngle::from_begode_settings_bits(settings_bits)
             .map(MobileRollAngleKindDto::from),
+    }
+}
+
+fn begode_speed_alarm_mode(settings_bits: u16) -> MobileSpeedAlarmModeDto {
+    let raw_mode = (settings_bits >> 10) & 0x03;
+    MobileSpeedAlarmModeDto {
+        raw_mode: Some(raw_mode),
+        mode: CoreSpeedAlarmMode::from_begode_settings_bits(settings_bits)
+            .map(MobileSpeedAlarmModeKindDto::from),
     }
 }
 
@@ -10460,6 +10656,11 @@ impl AeroBenignControlSession {
         self.lock_settings().roll_angle()
     }
 
+    /// Returns the Rust-owned speed-alarm setting lifecycle state.
+    pub fn speed_alarm_mode_state(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        self.lock_settings().speed_alarm_mode()
+    }
+
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
     pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
         self.lock_settings().acceleration_assist()
@@ -10542,6 +10743,9 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::SetRollAngle(angle) => {
                 Self::SetRollAngle(CoreRollAngle::from(angle).into())
             }
+            MobileCommandDto::SetSpeedAlarmMode(mode) => {
+                Self::SetSpeedAlarmMode(CoreSpeedAlarmMode::from(mode).into())
+            }
             MobileCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -10565,6 +10769,7 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         | CommandKindDto::SetLights
         | CommandKindDto::SetPedalMode
         | CommandKindDto::SetRollAngle
+        | CommandKindDto::SetSpeedAlarmMode
         | CommandKindDto::SetTaillight
         | CommandKindDto::SetRawMotorCurrent => None,
     }
@@ -11888,6 +12093,11 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned roll-angle setting lifecycle state.
     pub fn roll_angle_state(&self) -> MobileRollAngleSettingStateDto {
         self.lock_settings().roll_angle()
+    }
+
+    /// Returns the Rust-owned speed-alarm setting lifecycle state.
+    pub fn speed_alarm_mode_state(&self) -> MobileSpeedAlarmModeSettingStateDto {
+        self.lock_settings().speed_alarm_mode()
     }
 
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
@@ -13368,6 +13578,7 @@ mod tests {
                 tiltback: None,
                 pedal_mode: None,
                 roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13466,6 +13677,7 @@ mod tests {
                     mode: None,
                 }),
                 roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13555,6 +13767,7 @@ mod tests {
                 }),
                 pedal_mode: None,
                 roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13609,6 +13822,32 @@ mod tests {
             Some(MobileRollAngleDto {
                 raw_angle: Some(2),
                 angle: Some(MobileRollAngleKindDto::High),
+            })
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_speed_alarm_mode() {
+        let settings_bits = 1_i64 << 10;
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, settings_bits),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.speed_alarm_mode,
+            Some(MobileSpeedAlarmModeDto {
+                raw_mode: Some(1),
+                mode: Some(MobileSpeedAlarmModeKindDto::StageOneOnly),
             })
         );
     }
@@ -13685,6 +13924,7 @@ mod tests {
                 tiltback: None,
                 pedal_mode: None,
                 roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13707,6 +13947,7 @@ mod tests {
                     tiltback: None,
                     pedal_mode: None,
                     roll_angle: None,
+                    speed_alarm_mode: None,
                     light_state: None,
                     auto_shutdown_seconds: None,
                     charge_mode: None,
@@ -13744,6 +13985,7 @@ mod tests {
                 tiltback: None,
                 pedal_mode: None,
                 roll_angle: None,
+                speed_alarm_mode: None,
                 light_state: None,
                 auto_shutdown_seconds: None,
                 charge_mode: None,
@@ -13911,6 +14153,7 @@ mod tests {
                     tiltback: None,
                     pedal_mode: None,
                     roll_angle: None,
+                    speed_alarm_mode: None,
                     light_state: None,
                     auto_shutdown_seconds: None,
                     charge_mode: None,
@@ -14963,6 +15206,64 @@ mod tests {
         assert_eq!(
             session.roll_angle_state().requested,
             Some(MobileRollAngleKindDto::High)
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_writes_documented_speed_alarm_mode_after_stationary_arm() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetSpeedAlarmMode(
+                MobileSpeedAlarmModeKindDto::StageOneOnly,
+            )),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"u"
+        }));
+        assert_eq!(
+            session.speed_alarm_mode_state().requested,
+            Some(MobileSpeedAlarmModeKindDto::StageOneOnly)
+        );
+    }
+
+    #[test]
+    fn falcon_wrapper_refuses_ambiguous_speed_alarm_off_command() {
+        let session = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetSpeedAlarmMode(
+                MobileSpeedAlarmModeKindDto::Off,
+            )),
+        });
+
+        assert!(matches!(
+            result.error,
+            Some(MobileSessionStepErrorDto {
+                kind: MobileSessionStepErrorKindDto::CommandRefused,
+                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                ..
+            })
+        ));
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
         );
     }
 
