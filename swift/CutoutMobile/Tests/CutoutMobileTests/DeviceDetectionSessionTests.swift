@@ -82,11 +82,11 @@ final class DeviceDetectionSessionTests: XCTestCase {
         )
     }
 
-    func testIdentificationProbeOutcomeDistinguishesNoProbeNeededAndUnsupported() {
+    func testIdentificationProbeOutcomeDistinguishesProbeNeededAndUnsupported() {
         let aeroState = CutoutSessionStateHandle()
         _ = aeroState.observeDiscovery(observation: DiscoveryObservation(
             platformIdentifier: "ios-local-aero",
-            advertisedName: Data("NF2557".utf8),
+            advertisedName: Data("BLE device".utf8),
             advertisedServiceUuids: [0xffe0],
             manufacturerData: [],
             rssiDbm: -48
@@ -96,18 +96,19 @@ final class DeviceDetectionSessionTests: XCTestCase {
         let vescState = CutoutSessionStateHandle()
         _ = vescState.observeDiscovery(observation: DiscoveryObservation(
             platformIdentifier: "ios-local-vesc",
-            advertisedName: Data("Little FOCer".utf8),
+            advertisedName: Data("Controller".utf8),
             advertisedServiceUuids: [0xfff0],
             manufacturerData: [],
             rssiDbm: -48
         ))
         _ = vescState.selectDiscoveredPlatform(platformIdentifier: "ios-local-vesc")
 
-        XCTAssertEqual(
-            DeviceDetectionSession(sessionState: aeroState)
-                .beginIdentificationProbe(at: MonotonicMilliseconds(1_000)),
-            .noProbeNeeded
-        )
+        guard case let .writes(writes) = DeviceDetectionSession(sessionState: aeroState)
+            .beginIdentificationProbe(at: MonotonicMilliseconds(1_000))
+        else {
+            return XCTFail("FFE0 transport evidence should schedule protocol probes")
+        }
+        XCTAssertEqual(writes.count, 3)
         XCTAssertEqual(
             DeviceDetectionSession(sessionState: vescState)
                 .beginIdentificationProbe(at: MonotonicMilliseconds(1_000)),

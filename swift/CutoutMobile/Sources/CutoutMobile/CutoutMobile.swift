@@ -6215,7 +6215,9 @@ public extension DiscoveryObservation {
         self.init(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             advertisedName: advertisement.localName.map { Data($0.utf8) },
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value),
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap { uuid in
+                uuid == .vescNordicUartService ? 0xfff0 : uuid.bluetooth16Value
+            },
             manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummary.init),
             rssiDbm: advertisement.rssiDbm
         )

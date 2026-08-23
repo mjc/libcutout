@@ -1306,7 +1306,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         ) { error in
             XCTAssertEqual(
                 error as? CutoutSessionError,
-                .commandRefused(nil, .unsupportedCommand)
+                .commandRefused(.setLights(.off), .unsupportedCommand)
             )
         }
         XCTAssertTrue(sink.writes.isEmpty)
