@@ -8569,6 +8569,9 @@ mod tests {
                     | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SetRollAngle(_)
                     | DeviceCommand::SetSpeedAlarmMode(_)
+                    | DeviceCommand::SetBegodeMaxSpeed(_)
+                    | DeviceCommand::SetBegodeBeeperVolume(_)
+                    | DeviceCommand::SetBegodeLedMode(_)
                     | DeviceCommand::SetAccelerationAssist(_)
                     | DeviceCommand::SetTaillight(_)
                     | DeviceCommand::SoundHorn
