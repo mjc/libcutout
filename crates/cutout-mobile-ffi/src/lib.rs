@@ -2735,6 +2735,10 @@ impl MobilePedalModeSettingTracker {
             self.state = CoreSettingState::unknown();
         }
 
+        if input.kind == MobileSessionInputKindDto::Tick {
+            self.state.timeout();
+        }
+
         if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
             observe_setting_write(
                 &mut self.state,
@@ -2777,6 +2781,10 @@ impl MobileLightSettingTracker {
     fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
         if input.kind == MobileSessionInputKindDto::LinkDown {
             self.state = CoreSettingState::unknown();
+        }
+
+        if input.kind == MobileSessionInputKindDto::Tick {
+            self.state.timeout();
         }
 
         if let Some(MobileCommandDto::SetLights(requested)) = input.command {
@@ -15578,6 +15586,38 @@ mod tests {
         assert_eq!(state.requested, Some(MobileLightStateDto::On));
         assert_eq!(state.submitted_at_ms, Some(10));
     }
+
+    #[test]
+    fn mobile_light_state_times_out_on_tick() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetLights(MobileLightStateDto::On)),
+        });
+        assert_eq!(
+            session.headlight_state().kind,
+            MobileSettingStateKindDto::Pending
+        );
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Tick,
+            monotonic_ms: ms(1_010),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: None,
+        });
+
+        let state = session.headlight_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
+    }
+
 
     #[test]
     fn euc_settings_capabilities_preserve_validation_state() {
