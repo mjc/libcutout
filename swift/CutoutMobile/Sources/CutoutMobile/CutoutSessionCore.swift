@@ -2611,15 +2611,21 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     }
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last else { return }
-        let sample = MobilePhoneLocationSampleDto(location: location)
-        let monotonicMs = clock.now().rawValue
-        phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
-        do {
-            let decision = try rideMapState.ingestLocation(monotonicMs: monotonicMs, sample: sample)
-            publishRideMapDecision(decision)
-        } catch {
-            publishRideMapError(error)
+        guard locations.isEmpty == false else { return }
+        let callbackMonotonicMs = clock.now().rawValue
+        for (index, location) in locations.enumerated() {
+            let sample = MobilePhoneLocationSampleDto(location: location)
+            let (monotonicMs, overflow) = callbackMonotonicMs.addingReportingOverflow(UInt64(index))
+            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
+            do {
+                let decision = try rideMapState.ingestLocation(
+                    monotonicMs: overflow ? .max : monotonicMs,
+                    sample: sample
+                )
+                publishRideMapDecision(decision)
+            } catch {
+                publishRideMapError(error)
+            }
         }
         publishPhoneLocationSnapshot()
     }

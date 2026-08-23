@@ -144,6 +144,7 @@ pub struct RideRecord {
     state: RideLifecycleState,
     created_at_ms: u64,
     updated_at_ms: u64,
+    duration_ms: u64,
     summary: RideSummary,
     segment_count: u64,
     candidate_vehicle: Option<String>,
@@ -181,6 +182,12 @@ impl RideRecord {
     #[must_use]
     pub const fn updated_at_milliseconds(&self) -> u64 {
         self.updated_at_ms
+    }
+
+    /// Returns the elapsed monotonic duration from ride start to its latest route sample.
+    #[must_use]
+    pub const fn duration_milliseconds(&self) -> u64 {
+        self.duration_ms
     }
 
     /// Returns the Rust-derived summary.
@@ -1401,12 +1408,12 @@ impl RideDatabase {
         })
     }
 
-    /// Enqueues one location for ordered background persistence.
+    /// Persists one location in order with lifecycle transitions on the database worker.
     ///
-    /// The command remains ordered with lifecycle transitions on this worker. The bounded queue
-    /// applies backpressure when the worker is busy so an accepted map sample is never dropped.
-    /// Callers must perform admission against their Rust-owned recording projection before
-    /// enqueueing.
+    /// The bounded command queue applies backpressure while the worker is busy, and this method
+    /// waits for the durable write result so callers never mistake a rejected write for an
+    /// accepted route sample. Callers must perform admission against their Rust-owned recording
+    /// projection before submitting the sample.
     ///
     /// # Errors
     ///
@@ -1418,12 +1425,14 @@ impl RideDatabase {
         segment_id: u64,
         telemetry_state: RouteTelemetryState,
     ) -> Result<(), StorageError> {
-        self.enqueue_blocking(Command::AppendLocationNoReply {
+        self.request(|reply| Command::AppendLocation {
             ride_id,
             sample,
             segment_id,
             telemetry_state,
+            reply,
         })
+        .map(|_| ())
     }
 
     /// Loads the durable summary projection for one ride.
@@ -1687,12 +1696,6 @@ enum Command {
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
     },
-    AppendLocationNoReply {
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
-    },
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
@@ -1946,20 +1949,6 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     segment_id,
                     telemetry_state,
                 ));
-            }
-            Command::AppendLocationNoReply {
-                ride_id,
-                sample,
-                segment_id,
-                telemetry_state,
-            } => {
-                let _ = append_location(
-                    &mut connection,
-                    ride_id,
-                    sample,
-                    segment_id,
-                    telemetry_state,
-                );
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
@@ -3689,7 +3678,17 @@ fn list_rides(
     let mut rides = Vec::new();
     if let Some(cursor) = cursor {
         let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm,
+            "SELECT id, source, state, created_at_ms, updated_at_ms,
+                    CASE
+                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 IS NULL
+                            OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 < created_at_ms
+                            THEN 0
+                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 - created_at_ms
+                    END,
+                    point_count, distance_mm,
                     (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
                     candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
              FROM rides
@@ -3711,7 +3710,17 @@ fn list_rides(
         }
     } else {
         let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm,
+            "SELECT id, source, state, created_at_ms, updated_at_ms,
+                    CASE
+                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 IS NULL
+                            OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 < created_at_ms
+                            THEN 0
+                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 - created_at_ms
+                    END,
+                    point_count, distance_mm,
                     (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
                     candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
              FROM rides WHERE state NOT IN ('draft', 'discarded')
@@ -3765,12 +3774,13 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         state,
         created_at_ms: row.get(3)?,
         updated_at_ms: row.get(4)?,
-        summary: RideSummary::from_stored(row.get(5)?, row.get(6)?),
-        segment_count: row.get(7)?,
-        candidate_vehicle: row.get(8)?,
-        associated_vehicle: row.get(9)?,
-        associated_at_ms: row.get(10)?,
-        last_telemetry_at_ms: row.get(11)?,
+        duration_ms: row.get(5)?,
+        summary: RideSummary::from_stored(row.get(6)?, row.get(7)?),
+        segment_count: row.get(8)?,
+        candidate_vehicle: row.get(9)?,
+        associated_vehicle: row.get(10)?,
+        associated_at_ms: row.get(11)?,
+        last_telemetry_at_ms: row.get(12)?,
     })
 }
 

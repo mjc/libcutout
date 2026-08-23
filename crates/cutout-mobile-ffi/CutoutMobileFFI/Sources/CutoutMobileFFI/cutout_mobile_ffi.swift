@@ -10005,6 +10005,7 @@ public struct MobileRideRecordDto: Equatable, Hashable {
     public var state: MobileRideLifecycleStateDto
     public var createdAtMilliseconds: UInt64
     public var updatedAtMilliseconds: UInt64
+    public var durationMilliseconds: UInt64
     public var summary: MobileRideSummaryDto
     public var segmentCount: UInt64
     public var candidateVehicle: String?
@@ -10014,12 +10015,13 @@ public struct MobileRideRecordDto: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, durationMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
         self.id = id
         self.source = source
         self.state = state
         self.createdAtMilliseconds = createdAtMilliseconds
         self.updatedAtMilliseconds = updatedAtMilliseconds
+        self.durationMilliseconds = durationMilliseconds
         self.summary = summary
         self.segmentCount = segmentCount
         self.candidateVehicle = candidateVehicle
@@ -10049,6 +10051,7 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
                 state: FfiConverterTypeMobileRideLifecycleStateDto.read(from: &buf),
                 createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 updatedAtMilliseconds: FfiConverterUInt64.read(from: &buf),
+                durationMilliseconds: FfiConverterUInt64.read(from: &buf),
                 summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf),
                 segmentCount: FfiConverterUInt64.read(from: &buf),
                 candidateVehicle: FfiConverterOptionString.read(from: &buf),
@@ -10064,6 +10067,7 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
         FfiConverterTypeMobileRideLifecycleStateDto.write(value.state, into: &buf)
         FfiConverterUInt64.write(value.createdAtMilliseconds, into: &buf)
         FfiConverterUInt64.write(value.updatedAtMilliseconds, into: &buf)
+        FfiConverterUInt64.write(value.durationMilliseconds, into: &buf)
         FfiConverterTypeMobileRideSummaryDto.write(value.summary, into: &buf)
         FfiConverterUInt64.write(value.segmentCount, into: &buf)
         FfiConverterOptionString.write(value.candidateVehicle, into: &buf)

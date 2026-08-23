@@ -183,6 +183,65 @@ fn ride_updates_follow_domain_timestamps_without_regressing() {
 }
 
 #[test]
+fn queued_location_reports_worker_rejection() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-location-error-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+
+    assert!(matches!(
+        database.enqueue_location_with_segment_and_telemetry(
+            ride,
+            sample,
+            0,
+            RouteTelemetryState::GpsOnly,
+        ),
+        Err(StorageError::InvalidRideState(RideLifecycleState::Draft))
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_history_duration_is_derived_from_rust_monotonic_state() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-duration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        3_000,
+        1_700_000_003_000,
+        None,
+        LocationSource::Live,
+    );
+    database.append_location(ride, sample).unwrap();
+
+    let page = database
+        .list_rides(None, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(page.rides()[0].duration_milliseconds(), 2_000);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_persists_migrated_mobile_state() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

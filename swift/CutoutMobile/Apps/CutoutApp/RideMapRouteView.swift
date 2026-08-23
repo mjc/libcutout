@@ -111,6 +111,12 @@ struct RideMapRouteView: View {
                     Text(localizedAppText("ride_map.distance", distanceText(for: ride.summary)))
                     Text(localizedAppText("ride_map.points", ride.summary.pointCount))
                     RideMapRouteTruthView(points: model.rideMapHistoryPoints, decision: nil)
+                    if model.rideMapHistoryPointsTruncated {
+                        Text(localizedAppText("ride_map.history_truncated"))
+                            .font(.caption)
+                            .foregroundStyle(PevColors.muted)
+                            .accessibilityIdentifier("ride-map.detail-truncated")
+                    }
                 }
                 .font(.subheadline)
                 .padding(20)
@@ -118,9 +124,14 @@ struct RideMapRouteView: View {
             }
         }
         .task {
-            model.loadRideMapHistory()
             if let initialHistoryID {
-                model.selectRideMapHistory(initialHistoryID)
+                if model.rideMapHistory.contains(where: { $0.rideId == initialHistoryID }) {
+                    model.selectRideMapHistory(initialHistoryID)
+                } else {
+                    model.loadRideMapHistory(selecting: initialHistoryID)
+                }
+            } else if model.rideMapHistory.isEmpty {
+                model.loadRideMapHistory()
             }
         }
         .accessibilityIdentifier("ride-map.detail")
@@ -271,7 +282,11 @@ struct RideMapRouteView: View {
                 }
             }
         }
-        .onAppear { model.loadRideMapHistory() }
+        .onAppear {
+            if model.rideMapHistory.isEmpty {
+                model.loadRideMapHistory()
+            }
+        }
     }
 
     private var summary: some View {

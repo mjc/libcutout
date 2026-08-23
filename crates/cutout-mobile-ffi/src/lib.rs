@@ -3281,6 +3281,7 @@ pub struct MobileRideRecordDto {
     pub state: MobileRideLifecycleStateDto,
     pub created_at_milliseconds: u64,
     pub updated_at_milliseconds: u64,
+    pub duration_milliseconds: u64,
     pub summary: MobileRideSummaryDto,
     pub segment_count: u64,
     pub candidate_vehicle: Option<String>,
@@ -3809,6 +3810,7 @@ impl RideDatabaseHandle {
                             state: ride.state().into(),
                             created_at_milliseconds: ride.created_at_milliseconds(),
                             updated_at_milliseconds: ride.updated_at_milliseconds(),
+                            duration_milliseconds: ride.duration_milliseconds(),
                             summary: MobileRideSummaryDto {
                                 point_count: summary.point_count(),
                                 distance_millimetres: summary.distance_millimetres(),
@@ -4646,7 +4648,8 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let association = state.recorder.observe_vehicle(&platform_identifier, at_ms);
+        let mut staged = state.recorder.clone();
+        let association = staged.observe_vehicle(&platform_identifier, at_ms);
         if association == ride_maps::VehicleAssociation::Associated {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
@@ -4656,12 +4659,13 @@ impl MobileRideMapCore {
                         id,
                         None,
                         Some(platform_identifier.clone()),
-                        state.recorder.associated_at_milliseconds(),
-                        state.recorder.last_telemetry_at_milliseconds(),
+                        staged.associated_at_milliseconds(),
+                        staged.last_telemetry_at_milliseconds(),
                     )
                     .map_err(map_core_error)?;
             }
         }
+        state.recorder = staged;
         Ok(association.into())
     }
 
@@ -4675,7 +4679,8 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let observation = state.recorder.observe_telemetry(at_ms);
+        let mut staged = state.recorder.clone();
+        let observation = staged.observe_telemetry(at_ms);
         if observation == ride_maps::TelemetryObservation::Observed {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
@@ -4683,14 +4688,15 @@ impl MobileRideMapCore {
                 database
                     .update_ride_map_metadata(
                         id,
-                        state.recorder.candidate_vehicle().map(str::to_owned),
-                        state.recorder.associated_vehicle().map(str::to_owned),
-                        state.recorder.associated_at_milliseconds(),
-                        state.recorder.last_telemetry_at_milliseconds(),
+                        staged.candidate_vehicle().map(str::to_owned),
+                        staged.associated_vehicle().map(str::to_owned),
+                        staged.associated_at_milliseconds(),
+                        staged.last_telemetry_at_milliseconds(),
                     )
                     .map_err(map_core_error)?;
             }
         }
+        state.recorder = staged;
         Ok(observation.into())
     }
 
@@ -12813,6 +12819,39 @@ mod tests {
                 .and_then(|snapshot| snapshot.associated_vehicle),
             Some("pev-1".to_owned())
         );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_does_not_claim_association_when_storage_fails() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-association-error-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, Some("pev-1".to_owned()))
+            .expect("recording starts");
+        database.shutdown().expect("database shuts down");
+
+        assert!(matches!(
+            state.observe_vehicle_connection("pev-1".to_owned(), 1_001),
+            Err(MobileRideMapCoreErrorDto::Storage(_))
+        ));
+        assert_eq!(
+            state
+                .current_snapshot()
+                .and_then(|snapshot| snapshot.associated_vehicle),
+            None
+        );
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

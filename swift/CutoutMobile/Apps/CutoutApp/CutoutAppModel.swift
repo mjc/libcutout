@@ -283,20 +283,32 @@ final class CutoutAppModel {
         return true
     }
 
-    func loadRideMapHistory() {
+    func loadRideMapHistory(selecting requestedRideID: String? = nil) {
         do {
-            let page = try core.rideMapStateHandle.storedHistoryPage(cursor: nil, limit: 50)
-            rideMapHistory = page.summaries
+            var page = try core.rideMapStateHandle.storedHistoryPage(cursor: nil, limit: 50)
+            var summaries = page.summaries
+            if let requestedRideID {
+                while summaries.contains(where: { $0.rideId == requestedRideID }) == false,
+                      let cursor = page.nextCursor
+                {
+                    page = try core.rideMapStateHandle.storedHistoryPage(cursor: cursor, limit: 50)
+                    summaries.append(contentsOf: page.summaries)
+                }
+            }
+            rideMapHistory = summaries
             rideMapHistoryCursor = page.nextCursor
             rideMapHistoryCanLoadMore = page.nextCursor != nil
             rideMapError = nil
-            guard let first = rideMapHistory.first else {
+            let selectedID = requestedRideID.flatMap { requestedID in
+                rideMapHistory.first(where: { $0.rideId == requestedID })?.rideId
+            } ?? rideMapHistory.first?.rideId
+            guard let selectedID else {
                 selectedRideMapHistoryID = nil
                 rideMapHistoryPoints = []
                 rideMapHistoryPointsTruncated = false
                 return
             }
-            selectRideMapHistory(first.rideId)
+            selectRideMapHistory(selectedID)
         } catch {
             rideMapError = error as? MobileRideMapError
             rideMapHistory = []

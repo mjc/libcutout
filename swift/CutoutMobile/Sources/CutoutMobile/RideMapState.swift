@@ -249,9 +249,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             summary: MobileRideMapSummaryDto(
                 pointCount: ride.summary.pointCount,
                 distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
-                durationMilliseconds: ride.updatedAtMilliseconds >= ride.createdAtMilliseconds
-                    ? ride.updatedAtMilliseconds - ride.createdAtMilliseconds
-                    : 0
+                durationMilliseconds: ride.durationMilliseconds
             ),
             segmentCount: ride.segmentCount,
             candidateVehicle: ride.candidateVehicle,
