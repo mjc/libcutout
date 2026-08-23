@@ -10,7 +10,7 @@ device is considered fully specced.
 ## Sources Checked
 
 - `eried/eucplanet`
-  - Clone used for audit: `.tmp/protocol-sources/eucplanet`.
+  - Clone used for audit: `.protocol-references/eucplanet`.
   - License: MIT.
   - Relevant files:
     - `docs/protocols/veteran.md`
@@ -22,7 +22,7 @@ device is considered fully specced.
     docs explicitly describe themselves as original prose and MIT-licensed.
 
 - `Wheellog/Wheellog.Android`
-  - Clone used for audit: `.tmp/protocol-sources/Wheellog.Android`.
+  - Clone used for audit: `.protocol-references/Wheellog.Android`.
   - License: GPL-3.0.
   - Relevant files:
     - `app/src/main/java/com/cooper/wheellog/utils/VeteranAdapter.java`
@@ -33,7 +33,7 @@ device is considered fully specced.
     implementation code into this repo.
 
 - `Pickelhaupt/EUC-Dash-ESP32`
-  - Clone used for audit: `.tmp/protocol-sources/EUC-Dash-ESP32`.
+  - Clone used for audit: `.protocol-references/EUC-Dash-ESP32`.
   - License: GPL-3.0.
   - Relevant files:
     - `src/hardware/Gotway.cpp`
