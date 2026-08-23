@@ -3057,6 +3057,131 @@ impl From<ride_maps::LocationAdmission> for MobileRideLocationAdmissionDto {
     }
 }
 
+/// Error returned by the Rust-owned live map recording core.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRideMapErrorDto {
+    /// A live ride is already open.
+    #[error("a ride is already recording")]
+    AlreadyRecording,
+    /// No live ride is open.
+    #[error("no active ride")]
+    NoActiveRide,
+    /// The requested lifecycle event is not valid for the current state.
+    #[error("invalid ride transition")]
+    InvalidTransition,
+    /// The canonical database rejected the operation.
+    #[error("ride map storage failure: {0}")]
+    Storage(String),
+}
+
+/// Telemetry provenance projected onto a live route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapCoreTelemetryStateDto {
+    /// No vehicle telemetry has been associated with the recording.
+    GpsOnly,
+    /// A vehicle is associated, but no fresh telemetry sample is available.
+    AssociatedNoTelemetry,
+    /// A fresh vehicle telemetry sample is available.
+    AssociatedFresh,
+    /// The associated vehicle telemetry has gone stale.
+    AssociatedStale,
+}
+
+/// One Rust-owned live route point.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCorePointDto {
+    /// Stable sequence within the ride.
+    pub sequence: u64,
+    /// Segment sequence within the ride.
+    pub segment_id: u64,
+    /// Latitude in WGS84 decimal degrees.
+    pub latitude_degrees: f64,
+    /// Longitude in WGS84 decimal degrees.
+    pub longitude_degrees: f64,
+    /// Wall-clock Unix timestamp in milliseconds.
+    pub wall_clock_unix_ms: u64,
+    /// Monotonic timestamp in milliseconds.
+    pub monotonic_ms: u64,
+    /// Horizontal accuracy in metres.
+    pub horizontal_accuracy_meters: f64,
+    /// Vehicle telemetry provenance.
+    pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
+}
+
+/// One bounded page of Rust-owned live route points.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCorePointBatchDto {
+    /// Points after the supplied cursor.
+    pub points: Vec<MobileRideMapCorePointDto>,
+    /// Cursor for the next page, when more points remain.
+    pub next_cursor: Option<u64>,
+    /// Whether another page is available.
+    pub has_more: bool,
+}
+
+/// Summary projected for an active map recording.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCoreSummaryDto {
+    /// Number of accepted route points.
+    pub point_count: u64,
+    /// Accumulated route distance in metres.
+    pub distance_meters: f64,
+    /// Elapsed recording duration in milliseconds.
+    pub duration_milliseconds: u64,
+}
+
+/// Snapshot of the Rust-owned live map recording.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCoreSnapshotDto {
+    /// Rust-created ride identifier.
+    pub ride_id: String,
+    /// Current durable lifecycle state.
+    pub state: MobileRideLifecycleStateDto,
+    /// Current route summary.
+    pub summary: MobileRideMapCoreSummaryDto,
+    /// Associated vehicle platform identifier, when available.
+    pub associated_vehicle: Option<String>,
+}
+
+/// Result of associating a connected vehicle with the active recording.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapAssociationDto {
+    /// The connection was associated with the recording.
+    Associated,
+    /// The same connection was already associated.
+    AlreadyAssociated,
+    /// The recording has no candidate vehicle to reconcile.
+    CandidateMissing,
+    /// The connected identity conflicts with the candidate identity.
+    IdentityMismatch,
+    /// The connection timestamp moved backwards.
+    TimestampOutOfOrder,
+    /// No recording is currently open.
+    RideNotOpen,
+}
+
+/// Result of admitting one Core Location sample into the live recording.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapDecisionDto {
+    /// The location was accepted into the canonical route.
+    Accepted {
+        /// The resulting route point.
+        point: MobileRideMapCorePointDto,
+        /// Whether this point starts a new route segment.
+        segment_started: bool,
+    },
+    /// The location was rejected as invalid input.
+    Rejected {
+        /// Stable user-facing reason.
+        reason: String,
+    },
+    /// The location was ignored because the ride is not recording.
+    Ignored {
+        /// Stable user-facing reason.
+        reason: String,
+    },
+}
+
 /// Durable ride summary projection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideSummaryDto {
@@ -3996,6 +4121,457 @@ impl RideDatabaseHandle {
             .clone()
             .shutdown()
             .map_err(map_ride_database_error)
+    }
+}
+
+/// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
+/// delegate queues while the database handle keeps durable lifecycle and route writes in Rust.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapCore {
+    inner: Mutex<MobileRideMapCoreInner>,
+}
+
+#[derive(Debug)]
+struct MobileRideMapCoreInner {
+    database: Option<Arc<RideDatabaseHandle>>,
+    active_ride_id: Option<MobileRideIdDto>,
+    active_state: Option<MobileRideLifecycleStateDto>,
+    active_created_at: u64,
+    candidate_vehicle: Option<String>,
+    active_vehicle: Option<String>,
+    active_points: Vec<MobileRideMapCorePointDto>,
+    last_monotonic: u64,
+}
+
+impl MobileRideMapCoreInner {
+    fn new(database: Option<Arc<RideDatabaseHandle>>) -> Self {
+        let mut state = Self {
+            database,
+            active_ride_id: None,
+            active_state: None,
+            active_created_at: 0,
+            candidate_vehicle: None,
+            active_vehicle: None,
+            active_points: Vec::new(),
+            last_monotonic: 0,
+        };
+        state.restore_active_ride();
+        state
+    }
+
+    fn restore_active_ride(&mut self) {
+        let Some(database) = self.database.as_ref() else {
+            return;
+        };
+        let Ok(page) = database.list_rides(None, 50) else {
+            return;
+        };
+        let Some(ride) = page.rides.into_iter().find(|ride| {
+            matches!(
+                ride.state,
+                MobileRideLifecycleStateDto::Active
+                    | MobileRideLifecycleStateDto::Paused
+                    | MobileRideLifecycleStateDto::Stopped
+            )
+        }) else {
+            return;
+        };
+        self.active_created_at = ride.created_at_milliseconds;
+        self.active_state = Some(ride.state);
+        self.active_ride_id = Some(ride.id.clone());
+        if let Ok(points) = database.route_points(ride.id, None, 4_096) {
+            self.active_points = points
+                .points
+                .into_iter()
+                .map(|point| self.point_from_location(point.location, point.sequence))
+                .collect();
+            self.last_monotonic = self
+                .active_points
+                .last()
+                .map_or(self.active_created_at, |point| point.monotonic_ms);
+        }
+    }
+
+    fn point_from_location(
+        &self,
+        location: MobileRideLocationDto,
+        sequence: u64,
+    ) -> MobileRideMapCorePointDto {
+        MobileRideMapCorePointDto {
+            sequence,
+            segment_id: 0,
+            latitude_degrees: location.latitude_degrees,
+            longitude_degrees: location.longitude_degrees,
+            wall_clock_unix_ms: location.wall_clock_unix_milliseconds,
+            monotonic_ms: location.monotonic_milliseconds,
+            horizontal_accuracy_meters: location
+                .horizontal_accuracy_millimetres
+                .map_or(0.0, |value| f64::from(value) / 1_000.0),
+            telemetry_state: if self.active_vehicle.is_some() {
+                MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry
+            } else {
+                MobileRideMapCoreTelemetryStateDto::GpsOnly
+            },
+        }
+    }
+
+    fn summary(&self) -> MobileRideMapCoreSummaryDto {
+        let persisted = self.active_ride_id.as_ref().and_then(|id| {
+            self.database
+                .as_ref()
+                .and_then(|database| database.summary(id.clone()).ok())
+        });
+        let (point_count, distance_meters) = persisted.map_or_else(
+            || {
+                let samples = self
+                    .active_points
+                    .iter()
+                    .filter_map(|point| {
+                        mobile_ride_location(MobileRideLocationDto {
+                            latitude_degrees: point.latitude_degrees,
+                            longitude_degrees: point.longitude_degrees,
+                            monotonic_milliseconds: point.monotonic_ms,
+                            wall_clock_unix_milliseconds: point.wall_clock_unix_ms,
+                            horizontal_accuracy_millimetres: None,
+                            source: MobileRideSourceDto::Live,
+                        })
+                        .ok()
+                    })
+                    .collect::<Vec<_>>();
+                let summary = ride_maps::RideSummary::from_samples(&samples);
+                (
+                    summary.point_count(),
+                    summary.distance_millimetres() as f64 / 1_000_000.0,
+                )
+            },
+            |summary| {
+                (
+                    summary.point_count,
+                    summary.distance_millimetres as f64 / 1_000.0,
+                )
+            },
+        );
+        MobileRideMapCoreSummaryDto {
+            point_count,
+            distance_meters,
+            duration_milliseconds: self.last_monotonic.saturating_sub(self.active_created_at),
+        }
+    }
+
+    fn snapshot(&self, state: MobileRideLifecycleStateDto) -> MobileRideMapCoreSnapshotDto {
+        MobileRideMapCoreSnapshotDto {
+            ride_id: self
+                .active_ride_id
+                .as_ref()
+                .map_or_else(String::new, |id| id.value.clone()),
+            state,
+            summary: self.summary(),
+            associated_vehicle: self.active_vehicle.clone(),
+        }
+    }
+}
+
+fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
+    match state {
+        MobileRideLifecycleStateDto::Draft => ride_maps::RideLifecycleState::Draft,
+        MobileRideLifecycleStateDto::Active => ride_maps::RideLifecycleState::Active,
+        MobileRideLifecycleStateDto::Paused => ride_maps::RideLifecycleState::Paused,
+        MobileRideLifecycleStateDto::Stopped => ride_maps::RideLifecycleState::Stopped,
+        MobileRideLifecycleStateDto::Interrupted => ride_maps::RideLifecycleState::Interrupted,
+        MobileRideLifecycleStateDto::Discarded => ride_maps::RideLifecycleState::Discarded,
+        MobileRideLifecycleStateDto::Saved => ride_maps::RideLifecycleState::Saved,
+        MobileRideLifecycleStateDto::Imported => ride_maps::RideLifecycleState::Imported,
+    }
+}
+
+fn map_ride_map_error(error: MobileRideDatabaseError) -> MobileRideMapErrorDto {
+    MobileRideMapErrorDto::Storage(error.to_string())
+}
+
+fn map_core_batch(
+    points: &[MobileRideMapCorePointDto],
+    cursor: Option<u64>,
+    limit: u32,
+) -> MobileRideMapCorePointBatchDto {
+    let start = cursor.map_or(0, |cursor| {
+        points
+            .iter()
+            .position(|point| point.sequence > cursor)
+            .unwrap_or(points.len())
+    });
+    let end = start.saturating_add(limit as usize).min(points.len());
+    MobileRideMapCorePointBatchDto {
+        points: points[start..end].to_vec(),
+        next_cursor: (end > start && end < points.len()).then(|| points[end - 1].sequence),
+        has_more: end < points.len(),
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapCore {
+    /// Creates a Rust-owned map state without durable storage, for deterministic UI tests.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(MobileRideMapCoreInner::new(None)),
+        })
+    }
+
+    /// Creates a Rust-owned map state backed by the process-wide ride database.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(MobileRideMapCoreInner::new(Some(database))),
+        })
+    }
+
+    /// Returns the active ride snapshot, if one exists.
+    pub fn current_snapshot(&self) -> Option<MobileRideMapCoreSnapshotDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.active_state.map(|active| state.snapshot(active))
+    }
+
+    /// Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+    pub fn start_gps_only(
+        &self,
+        at_ms: u64,
+        last_connected_vehicle: Option<String>,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if !matches!(
+            state.active_state,
+            None | Some(MobileRideLifecycleStateDto::Saved)
+                | Some(MobileRideLifecycleStateDto::Discarded)
+        ) {
+            return Err(MobileRideMapErrorDto::AlreadyRecording);
+        }
+        let id = if let Some(database) = state.database.as_ref() {
+            let id = database
+                .create_ride(MobileRideSourceDto::Live, at_ms)
+                .map_err(map_core_error)?;
+            database
+                .transition(id.clone(), MobileRideEventDto::Start)
+                .map_err(map_core_error)?;
+            id
+        } else {
+            MobileRideIdDto {
+                value: Uuid::new_v4().to_string(),
+            }
+        };
+        state.active_ride_id = Some(id);
+        state.active_state = Some(MobileRideLifecycleStateDto::Active);
+        state.active_created_at = at_ms;
+        state.candidate_vehicle = last_connected_vehicle;
+        state.active_vehicle = None;
+        state.active_points.clear();
+        state.last_monotonic = at_ms;
+        Ok(state.snapshot(MobileRideLifecycleStateDto::Active))
+    }
+
+    /// Pauses the active ride.
+    pub fn pause(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        self.transition(
+            MobileRideEventDto::Pause,
+            MobileRideLifecycleStateDto::Paused,
+        )
+    }
+
+    /// Resumes the paused ride.
+    pub fn resume(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        self.transition(
+            MobileRideEventDto::Resume,
+            MobileRideLifecycleStateDto::Active,
+        )
+    }
+
+    /// Stops the active or paused ride.
+    pub fn stop(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        self.transition(
+            MobileRideEventDto::Stop,
+            MobileRideLifecycleStateDto::Stopped,
+        )
+    }
+
+    /// Saves a stopped ride and removes it from the active projection.
+    pub fn save(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let snapshot =
+            state.transition_inner(MobileRideEventDto::Save, MobileRideLifecycleStateDto::Saved)?;
+        state.active_ride_id = None;
+        state.active_state = Some(MobileRideLifecycleStateDto::Saved);
+        Ok(snapshot)
+    }
+
+    /// Discards the stopped ride and removes it from the active projection.
+    pub fn discard(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let snapshot = state.transition_inner(
+            MobileRideEventDto::Discard,
+            MobileRideLifecycleStateDto::Discarded,
+        )?;
+        state.active_ride_id = None;
+        state.active_state = Some(MobileRideLifecycleStateDto::Discarded);
+        Ok(snapshot)
+    }
+
+    /// Associates a connected vehicle with the active recording.
+    pub fn observe_vehicle_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+    ) -> Result<MobileRideMapAssociationDto, MobileRideMapErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if !matches!(
+            state.active_state,
+            Some(MobileRideLifecycleStateDto::Active | MobileRideLifecycleStateDto::Paused)
+        ) {
+            return Ok(MobileRideMapAssociationDto::RideNotOpen);
+        }
+        if at_ms < state.last_monotonic {
+            return Ok(MobileRideMapAssociationDto::TimestampOutOfOrder);
+        }
+        if state
+            .active_vehicle
+            .as_deref()
+            .is_some_and(|vehicle| vehicle == platform_identifier)
+        {
+            return Ok(MobileRideMapAssociationDto::AlreadyAssociated);
+        }
+        if state
+            .candidate_vehicle
+            .as_deref()
+            .is_some_and(|vehicle| vehicle != platform_identifier)
+        {
+            return Ok(MobileRideMapAssociationDto::IdentityMismatch);
+        }
+        state.active_vehicle = Some(platform_identifier);
+        state.candidate_vehicle = None;
+        for point in &mut state.active_points {
+            point.telemetry_state = MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry;
+        }
+        Ok(MobileRideMapAssociationDto::Associated)
+    }
+
+    /// Admits one Core Location sample into the active recording.
+    pub fn ingest_location(
+        &self,
+        monotonic_ms: u64,
+        wall_clock_unix_ms: u64,
+        latitude_degrees: f64,
+        longitude_degrees: f64,
+        horizontal_accuracy_meters: f64,
+    ) -> Result<MobileRideMapDecisionDto, MobileRideMapErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(id) = state.active_ride_id.clone() else {
+            return Err(MobileRideMapErrorDto::NoActiveRide);
+        };
+        if state.active_state != Some(MobileRideLifecycleStateDto::Active) {
+            return Ok(MobileRideMapDecisionDto::Ignored {
+                reason: "ride is not recording".to_owned(),
+            });
+        }
+        if monotonic_ms < state.last_monotonic {
+            return Ok(MobileRideMapDecisionDto::Rejected {
+                reason: "timestamp out of order".to_owned(),
+            });
+        }
+        let location = MobileRideLocationDto {
+            latitude_degrees,
+            longitude_degrees,
+            monotonic_milliseconds: monotonic_ms,
+            wall_clock_unix_milliseconds: wall_clock_unix_ms,
+            horizontal_accuracy_millimetres: horizontal_accuracy_meters
+                .is_finite()
+                .then_some(horizontal_accuracy_meters.max(0.0))
+                .map(|value| (value * 1_000.0).min(f64::from(u32::MAX)) as u32),
+            source: MobileRideSourceDto::Live,
+        };
+        if let Some(database) = state.database.as_ref() {
+            match database
+                .append_location(id.clone(), location)
+                .map_err(map_core_error)?
+            {
+                MobileRideLocationAdmissionDto::Accepted => {}
+                MobileRideLocationAdmissionDto::Duplicate => {
+                    return Ok(MobileRideMapDecisionDto::Ignored {
+                        reason: "duplicate location".to_owned(),
+                    });
+                }
+                MobileRideLocationAdmissionDto::OutOfOrder => {
+                    return Ok(MobileRideMapDecisionDto::Rejected {
+                        reason: "timestamp out of order".to_owned(),
+                    });
+                }
+            }
+        }
+        let sequence = state
+            .database
+            .as_ref()
+            .and_then(|database| database.summary(id).ok())
+            .map_or(state.active_points.len() as u64, |summary| {
+                summary.point_count.saturating_sub(1)
+            });
+        let segment_started = state.active_points.is_empty();
+        let point = state.point_from_location(location, sequence);
+        state.active_points.push(point);
+        state.last_monotonic = monotonic_ms;
+        Ok(MobileRideMapDecisionDto::Accepted {
+            point,
+            segment_started,
+        })
+    }
+
+    /// Returns a bounded page of active route points.
+    pub fn points_after(
+        &self,
+        after_cursor: Option<u64>,
+        limit: u32,
+    ) -> MobileRideMapCorePointBatchDto {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        map_core_batch(&state.active_points, after_cursor, limit)
+    }
+
+    fn transition(
+        &self,
+        event: MobileRideEventDto,
+        state: MobileRideLifecycleStateDto,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.transition_inner(event, state)
+    }
+}
+
+impl MobileRideMapCoreInner {
+    fn transition_inner(
+        &mut self,
+        event: MobileRideEventDto,
+        state: MobileRideLifecycleStateDto,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapErrorDto> {
+        let Some(id) = self.active_ride_id.clone() else {
+            return Err(MobileRideMapErrorDto::NoActiveRide);
+        };
+        let Some(current) = self.active_state else {
+            return Err(MobileRideMapErrorDto::NoActiveRide);
+        };
+        map_ride_lifecycle_state(current)
+            .apply(event.into())
+            .map_err(|_| MobileRideMapErrorDto::InvalidTransition)?;
+        if let Some(database) = self.database.as_ref() {
+            database.transition(id, event).map_err(map_core_error)?;
+        }
+        self.active_state = Some(state);
+        Ok(self.snapshot(state))
+    }
+}
+
+fn map_core_error(error: MobileRideDatabaseError) -> MobileRideMapErrorDto {
+    match error {
+        MobileRideDatabaseError::InvalidTransition | MobileRideDatabaseError::InvalidRideState => {
+            MobileRideMapErrorDto::InvalidTransition
+        }
+        other => map_ride_map_error(other),
     }
 }
 
@@ -11807,5 +12383,31 @@ mod tests {
         let _ = fs::remove_dir(managed_path.parent().unwrap());
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_owns_lifecycle_and_vehicle_association() {
+        let state = MobileRideMapCore::new();
+        assert_eq!(
+            state
+                .start_gps_only(1_000, Some("pev-1".to_owned()))
+                .expect("map recording starts")
+                .state,
+            MobileRideLifecycleStateDto::Active
+        );
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-1".to_owned(), 1_001)
+                .expect("connection observation succeeds"),
+            MobileRideMapAssociationDto::Associated
+        );
+        assert_eq!(
+            state.stop().expect("recording stops").state,
+            MobileRideLifecycleStateDto::Stopped
+        );
+        assert_eq!(
+            state.resume().expect_err("stopped rides cannot resume"),
+            MobileRideMapErrorDto::InvalidTransition
+        );
     }
 }
