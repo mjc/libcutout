@@ -459,8 +459,7 @@ final class CutoutAppModel {
             )
         }
         guard didStart else { return false }
-        lastMusicCaptureKey = nil
-        core.updateMusicCaptureObservation(nil)
+        resetMusicCaptureContext()
         refreshMusicTimeline()
         // Music history is deliberately best-effort: a provider or storage
         // failure must never prevent a ride from starting.
@@ -577,10 +576,14 @@ final class CutoutAppModel {
         }
     }
 
-    private func resetActiveMusicHistoryState() {
-        musicHistoryPolicy = .disabled
+    private func resetMusicCaptureContext() {
         lastMusicCaptureKey = nil
         core.updateMusicCaptureObservation(nil)
+    }
+
+    private func resetActiveMusicHistoryState() {
+        musicHistoryPolicy = .disabled
+        resetMusicCaptureContext()
         try? musicCoordinator.setHistoryPolicy(.disabled)
         refreshMusicTimeline()
     }
