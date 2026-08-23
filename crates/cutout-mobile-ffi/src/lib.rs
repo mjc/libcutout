@@ -12343,6 +12343,18 @@ mod ride_map_tests {
                 Some("pev-recovered")
             );
             state
+                .set_music_history_policy(MobileMusicHistoryPolicyDto::OpaqueItem)
+                .expect("music history policy should persist");
+            state
+                .record_music_event(
+                    music_snapshot(),
+                    MobileMusicRideEventKindDto::ItemChanged,
+                    150,
+                    1_700_000_000_150,
+                    4,
+                )
+                .expect("music event should persist");
+            state
                 .ingest_location(100, 1_700_000_000_100, 39.7392, -104.9903, 5.0)
                 .expect("location should be admitted");
             assert_eq!(
@@ -12361,6 +12373,12 @@ mod ride_map_tests {
         assert_eq!(snapshot.ride_id, ride_id);
         assert_eq!(snapshot.state, MobileRideMapStateDto::Recording);
         assert_eq!(snapshot.summary.point_count, 1);
+        let music_events = recovered
+            .current_music_events()
+            .expect("recovered ride has music events");
+        assert_eq!(music_events.len(), 1);
+        assert_eq!(music_events[0].item_identifier.as_deref(), Some("track-1"));
+        assert_eq!(music_events[0].monotonic_at_ms, 150);
         assert_eq!(
             snapshot.associated_vehicle.as_deref(),
             Some("pev-recovered")

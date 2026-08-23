@@ -626,7 +626,8 @@ impl RideRecording {
             return Err("persisted telemetry requires an associated vehicle".to_owned());
         }
 
-        let music_timeline = restore_music_timeline(music_history_policy, music_events)?;
+        let music_timeline =
+            restore_music_timeline(music_history_policy, started_at, music_events)?;
 
         Ok(Self {
             ride_id,
@@ -747,6 +748,9 @@ impl RideRecording {
     ) -> MusicTimelineOutcome {
         if !matches!(self.state, RideState::Recording | RideState::Paused) {
             return MusicTimelineOutcome::RideNotOpen;
+        }
+        if monotonic_at < self.started_at {
+            return MusicTimelineOutcome::OutOfOrder;
         }
         let Some(event) = MusicRideEvent::from_snapshot(
             snapshot,
@@ -999,10 +1003,14 @@ impl RideRecording {
 
 fn restore_music_timeline(
     policy: MusicHistoryPolicy,
+    started_at: MonotonicMilliseconds,
     events: Vec<MusicRideEvent>,
 ) -> Result<MusicTimeline, String> {
     let mut timeline = MusicTimeline::new();
     for event in events {
+        if event.monotonic_at().as_milliseconds() < started_at.as_milliseconds() {
+            return Err("persisted music event predates ride start".to_owned());
+        }
         if timeline.append(event) != MusicTimelineOutcome::Recorded {
             return Err("persisted music events are not strictly ordered".to_owned());
         }
@@ -1133,6 +1141,28 @@ mod tests {
                 .map(cutout_core::MusicIdentifier::as_str),
             Some("track-1")
         );
+    }
+
+    #[test]
+    fn ride_music_history_rejects_event_before_ride_start() {
+        let mut ride = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            None,
+            LocationAdmissionPolicy::default(),
+        );
+        assert!(ride.set_music_history_policy(MusicHistoryPolicy::OpaqueItem));
+
+        assert_eq!(
+            ride.record_music_snapshot(
+                &music_snapshot(),
+                MusicRideEventKind::ItemChanged,
+                MonotonicMilliseconds::new(99),
+                1_700_000_000_099,
+                3,
+            ),
+            MusicTimelineOutcome::OutOfOrder
+        );
+        assert!(ride.music_events().is_empty());
     }
 
     #[test]
