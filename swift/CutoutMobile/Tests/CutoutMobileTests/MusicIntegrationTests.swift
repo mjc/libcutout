@@ -105,67 +105,20 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(MobileMusicHistoryPolicyDto.humanReadable.explanation.contains("title"))
     }
 
-    func testVisualizerMapsPermittedAnalysisToBoundedRgbWithoutAudioCapture() {
-        let analysis = MusicAnalysisFrame(bass: 0.8, mid: 0.4, treble: 0.2, energy: 0.7, beat: 0.9)
-        XCTAssertNotNil(analysis)
-
-        let rgb = MusicVisualizer.rgb(from: analysis)
-
-        XCTAssertEqual(rgb.red, 0.9, accuracy: 0.0001)
-        XCTAssertEqual(rgb.green, 0.63, accuracy: 0.0001)
-        XCTAssertEqual(rgb.blue, 0.36, accuracy: 0.0001)
-        XCTAssertEqual(rgb.brightness, 0.9, accuracy: 0.0001)
-    }
-
-    func testVisualizerRejectsOutOfRangeAnalysisAndFallsBackToSilent() {
-        XCTAssertNil(MusicAnalysisFrame(bass: 1.1, mid: 0, treble: 0, energy: 0, beat: 0))
-        XCTAssertEqual(MusicVisualizer.rgb(from: nil), .silent)
-    }
-
-    func testCoordinatorPublishesTheCurrentVisualizerFrame() {
-        let coordinator = MusicIntegrationCoordinator(rideMapState: MobileRideMapState())
-        let analysis = MusicAnalysisFrame(bass: 0.2, mid: 0.4, treble: 0.6, energy: 0.5, beat: 0.1)
-
-        coordinator.update(snapshot: snapshot(), analysis: analysis)
-
-        XCTAssertEqual(coordinator.visualizationFrame.blue, 0.6, accuracy: 0.0001)
-        XCTAssertEqual(coordinator.visualizationFrame.brightness, 0.5, accuracy: 0.0001)
-    }
-
-    func testProviderObservationFeedsRecordingAndVisualizationTogether() throws {
+    func testProviderObservationFeedsRecordingAndCompactPlayerTogether() throws {
         let rideMap = MobileRideMapState()
         _ = try rideMap.startGpsOnly(atMs: 1, lastConnectedVehicle: nil)
         let coordinator = MusicIntegrationCoordinator(rideMapState: rideMap)
         try coordinator.setHistoryPolicy(.opaqueItem)
-        let analysis = MusicAnalysisFrame(bass: 0.7, mid: 0.3, treble: 0.2, energy: 0.6, beat: 0.4)
 
         let outcome = try coordinator.ingest(
-            observation: MusicProviderObservation(snapshot: snapshot(), analysis: analysis),
+            observation: MusicProviderObservation(snapshot: snapshot()),
             wallClockAtMs: 20,
             clockUncertaintyMs: 1
         )
 
         XCTAssertEqual(outcome, .recorded)
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
-        XCTAssertEqual(coordinator.visualizationFrame.red, 0.7, accuracy: 0.0001)
-    }
-
-    func testCoordinatorDeliversDistinctVisualizationFramesToTheSink() {
-        let sink = RecordingMusicVisualizationSink()
-        let coordinator = MusicIntegrationCoordinator(
-            rideMapState: MobileRideMapState(),
-            visualizationSink: sink
-        )
-        let first = MusicAnalysisFrame(bass: 0.7, mid: 0.3, treble: 0.2, energy: 0.6, beat: 0.4)
-        let second = MusicAnalysisFrame(bass: 0.2, mid: 0.6, treble: 0.4, energy: 0.5, beat: 0.1)
-
-        coordinator.update(snapshot: snapshot(), analysis: first)
-        coordinator.update(snapshot: snapshot(observedAtMs: 20), analysis: first)
-        coordinator.update(snapshot: snapshot(observedAtMs: 30), analysis: second)
-
-        XCTAssertEqual(sink.frames.count, 2)
-        XCTAssertEqual(sink.frames[0].red, 0.7, accuracy: 0.0001)
-        XCTAssertEqual(sink.frames[1].green, 0.6, accuracy: 0.0001)
     }
 
     private func snapshot(
@@ -188,14 +141,5 @@ final class MusicIntegrationTests: XCTestCase {
                 openProvider: false
             )
         )
-    }
-}
-
-@MainActor
-private final class RecordingMusicVisualizationSink: MusicVisualizationSink {
-    private(set) var frames = [MusicRGBFrame]()
-
-    func apply(_ frame: MusicRGBFrame) {
-        frames.append(frame)
     }
 }

@@ -194,10 +194,8 @@ final class CutoutAppModelTests: XCTestCase {
                 openProvider: false
             )
         )
-        let analysis = MusicAnalysisFrame(bass: 0.6, mid: 0.2, treble: 0.1, energy: 0.5, beat: 0.3)
-
         XCTAssertTrue(model.ingestMusicObservation(
-            MusicProviderObservation(snapshot: snapshot, analysis: analysis),
+            MusicProviderObservation(snapshot: snapshot),
             wallClockAtMs: 20,
             clockUncertaintyMs: 1
         ))

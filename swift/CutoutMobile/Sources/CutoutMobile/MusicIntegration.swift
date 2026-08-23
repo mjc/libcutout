@@ -11,13 +11,11 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
     public let capabilities: MobileMusicCapabilitiesDto
-    public let analysis: MusicAnalysisFrame?
 
     public init(
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto,
         item: MobileMusicItemDto? = nil,
-        analysis: MusicAnalysisFrame? = nil,
         capabilities: MobileMusicCapabilitiesDto = .init(
             previous: false,
             play: false,
@@ -30,15 +28,13 @@ public struct MusicNowPlaying: Equatable, Sendable {
         self.state = state
         self.item = item
         self.capabilities = capabilities
-        self.analysis = analysis
     }
 
-    public init(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
+    public init(snapshot: MobileMusicSnapshotDto) {
         self.init(
             provider: snapshot.provider,
             state: snapshot.state,
             item: snapshot.item,
-            analysis: analysis,
             capabilities: snapshot.capabilities
         )
     }
@@ -116,11 +112,9 @@ public extension MobileMusicHistoryPolicyDto {
 /// buffer or artwork payload.
 public struct MusicProviderObservation: Equatable, Sendable {
     public let snapshot: MobileMusicSnapshotDto
-    public let analysis: MusicAnalysisFrame?
 
-    public init(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
+    public init(snapshot: MobileMusicSnapshotDto) {
         self.snapshot = snapshot
-        self.analysis = analysis
     }
 }
 
@@ -129,32 +123,13 @@ public struct MusicProviderObservation: Equatable, Sendable {
 public final class MusicIntegrationCoordinator {
     public private(set) var nowPlaying: MusicNowPlaying?
     private let rideMapState: MobileRideMapState
-    private weak var visualizationSink: (any MusicVisualizationSink)?
-    private var deliveredVisualizationFrame: MusicRGBFrame?
 
-    public init(
-        rideMapState: MobileRideMapState,
-        visualizationSink: (any MusicVisualizationSink)? = nil
-    ) {
+    public init(rideMapState: MobileRideMapState) {
         self.rideMapState = rideMapState
-        self.visualizationSink = visualizationSink
     }
 
-    public func update(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
-        nowPlaying = MusicNowPlaying(snapshot: snapshot, analysis: analysis)
-        deliverVisualizationFrameIfChanged()
-    }
-
-    public var visualizationFrame: MusicRGBFrame {
-        MusicVisualizer.rgb(from: nowPlaying?.analysis)
-    }
-
-    /// Attaches or detaches the RGB destination. Attaching replays the current
-    /// frame once, including a silent frame when analysis is unavailable.
-    public func setVisualizationSink(_ sink: (any MusicVisualizationSink)?) {
-        visualizationSink = sink
-        deliveredVisualizationFrame = nil
-        deliverVisualizationFrameIfChanged()
+    public func update(snapshot: MobileMusicSnapshotDto) {
+        nowPlaying = MusicNowPlaying(snapshot: snapshot)
     }
 
     /// Applies one provider observation and records only a meaningful transition.
@@ -163,12 +138,11 @@ public final class MusicIntegrationCoordinator {
     @discardableResult
     public func ingest(
         snapshot: MobileMusicSnapshotDto,
-        analysis: MusicAnalysisFrame? = nil,
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
         let previous = nowPlaying
-        update(snapshot: snapshot, analysis: analysis)
+        update(snapshot: snapshot)
         guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
             return nil
         }
@@ -182,7 +156,7 @@ public final class MusicIntegrationCoordinator {
     }
 
     /// Applies one provider observation through the same path used by ride
-    /// recording, compact-player state, and visualization.
+    /// recording and compact-player state.
     @discardableResult
     public func ingest(
         observation: MusicProviderObservation,
@@ -191,7 +165,6 @@ public final class MusicIntegrationCoordinator {
     ) throws -> MobileMusicTimelineOutcomeDto? {
         try ingest(
             snapshot: observation.snapshot,
-            analysis: observation.analysis,
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
@@ -206,10 +179,9 @@ public final class MusicIntegrationCoordinator {
         kind: MobileMusicRideEventKindDto,
         monotonicAtMs: UInt64,
         wallClockAtMs: UInt64,
-        clockUncertaintyMs: UInt64,
-        analysis: MusicAnalysisFrame? = nil
+        clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
-        update(snapshot: snapshot, analysis: analysis)
+        update(snapshot: snapshot)
         return try rideMapState.recordMusicEvent(
             snapshot: snapshot,
             kind: kind,
@@ -221,13 +193,6 @@ public final class MusicIntegrationCoordinator {
 
     public var recordedEvents: [MobileMusicRideEventDto] {
         rideMapState.currentMusicEvents() ?? []
-    }
-
-    private func deliverVisualizationFrameIfChanged() {
-        let frame = visualizationFrame
-        guard frame != deliveredVisualizationFrame else { return }
-        deliveredVisualizationFrame = frame
-        visualizationSink?.apply(frame)
     }
 
     private static func transitionKind(
@@ -365,12 +330,6 @@ public struct MusicExpandedPlayer: View {
                     }
                 } header: {
                     Text(nowPlaying.providerName)
-                }
-
-                Section {
-                    MusicVisualizationView(nowPlaying: nowPlaying)
-                } header: {
-                    Text(pevLocalizedText("music.visualization.title"))
                 }
 
                 Section {
