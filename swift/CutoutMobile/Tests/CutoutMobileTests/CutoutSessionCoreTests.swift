@@ -1323,6 +1323,25 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
+    func testUnverifiedEucSettingCommandsAreTypedRefusals() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+        let commands: [DeviceCommand] = [
+            .setAccelerationAssist(.enabled),
+            .setTaillight(.on),
+        ]
+
+        for command in commands {
+            XCTAssertThrowsError(
+                try session.perform(command, at: MonotonicMilliseconds(1))
+            ) { error in
+                XCTAssertEqual(
+                    error as? CutoutSessionError,
+                    .commandRefused(command, .unsupportedCommand)
+                )
+            }
+        }
+    }
+
     func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 

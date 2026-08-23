@@ -1233,6 +1233,19 @@ public enum LightState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum AccelerationAssistState: Equatable, Hashable, Sendable {
+    case disabled
+    case enabled
+
+    fileprivate init(_ dto: MobileAccelerationAssistStateDto) {
+        self = dto == .enabled ? .enabled : .disabled
+    }
+
+    fileprivate var dto: MobileAccelerationAssistStateDto {
+        self == .enabled ? .enabled : .disabled
+    }
+}
+
 public enum SettingStateKind: Equatable, Hashable, Sendable {
     case unknown
     case current
@@ -1413,6 +1426,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestSettings
     case setLights(LightState)
     case setPedalMode(PedalMode.Kind)
+    case setAccelerationAssist(AccelerationAssistState)
+    case setTaillight(LightState)
     case soundHorn
 
     fileprivate init(_ dto: MobileCommandDto) {
@@ -1435,6 +1450,10 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .setLights(LightState(state))
         case .setPedalMode(let mode):
             self = .setPedalMode(PedalMode.Kind(mode))
+        case .setAccelerationAssist(let state):
+            self = .setAccelerationAssist(AccelerationAssistState(state))
+        case .setTaillight(let state):
+            self = .setTaillight(LightState(state))
         case .soundHorn:
             self = .soundHorn
         }
@@ -1460,6 +1479,10 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .setLights(state.dto)
         case .setPedalMode(let mode):
             .setPedalMode(mode.dto)
+        case .setAccelerationAssist(let state):
+            .setAccelerationAssist(state.dto)
+        case .setTaillight(let state):
+            .setTaillight(state.dto)
         case .soundHorn:
             .soundHorn
         }
