@@ -180,14 +180,28 @@ private final class DispatchReconnectCancellation: ConnectionReconnectCancellabl
     }
 }
 
-private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
+final class DispatchQueueReconnectScheduler: ConnectionReconnectScheduling {
+    private let queue: DispatchQueue
+
+    init(queue: DispatchQueue) {
+        self.queue = queue
+    }
+
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
         let workItem = DispatchWorkItem(block: operation)
-        DispatchQueue.main.asyncAfter(
+        queue.asyncAfter(
             deadline: .now() + .milliseconds(Int(delayMilliseconds)),
             execute: workItem
         )
         return DispatchReconnectCancellation(workItem: workItem)
+    }
+}
+
+private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
+    private let scheduler = DispatchQueueReconnectScheduler(queue: .main)
+
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable {
+        scheduler.schedule(after: delayMilliseconds, operation: operation)
     }
 }
 
@@ -211,7 +225,6 @@ enum CoreBluetoothRestorationPolicy {
         return savedPlatformIdentifier
     }
 }
-
 #if DEBUG
 public enum CutoutSessionTestInitialBluetoothState: Sendable {
     case scanning
