@@ -5867,11 +5867,7 @@ mod tests {
 
         let error = dashboard_session_profile_from_summary(&summary)
             .expect_err("unsupported device should not silently fall back");
-        assert!(
-            error
-                .to_string()
-                .contains("dashboard cannot resolve a session profile")
-        );
+        assert!(error.to_string().contains("protocol identity"));
     }
 
     #[test]
