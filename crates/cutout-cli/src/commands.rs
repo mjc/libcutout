@@ -3157,6 +3157,8 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
         CommandKind::SetPedalMode => "set_pedal_mode",
+        CommandKind::SetRollAngle => "set_roll_angle",
+        CommandKind::SetSpeedAlarmMode => "set_speed_alarm_mode",
         CommandKind::SetTaillight => "set_taillight",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
