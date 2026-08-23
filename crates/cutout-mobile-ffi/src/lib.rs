@@ -1176,6 +1176,18 @@ pub struct MobileMelkLightingRestoreStateDto {
     pub brightness: u8,
 }
 
+impl From<RgbLightingRequestedState> for MobileMelkLightingRestoreStateDto {
+    fn from(requested: RgbLightingRequestedState) -> Self {
+        Self {
+            power_on: requested.power() == LightingPowerState::On,
+            red: requested.color().red(),
+            green: requested.color().green(),
+            blue: requested.color().blue(),
+            brightness: requested.brightness().as_percent(),
+        }
+    }
+}
+
 /// Typed result kind for an attempted lighting restore.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileMelkLightingRestoreDecisionKindDto {
@@ -1260,13 +1272,7 @@ impl MobileMelkLightingRestoreMarker {
             RgbLightingRestoreDecision::Restore(requested) => {
                 MobileMelkLightingRestoreDecisionDto {
                     kind: MobileMelkLightingRestoreDecisionKindDto::Restore,
-                    requested: Some(MobileMelkLightingRestoreStateDto {
-                        power_on: requested.power() == LightingPowerState::On,
-                        red: requested.color().red(),
-                        green: requested.color().green(),
-                        blue: requested.color().blue(),
-                        brightness: requested.brightness().as_percent(),
-                    }),
+                    requested: Some(requested.into()),
                 }
             }
         }
