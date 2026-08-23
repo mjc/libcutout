@@ -2239,19 +2239,36 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testBluetoothUnavailableUsesTheTypedRustTerminalReason() async {
+    func testBluetoothUnavailableUsesTheTypedRustTerminalReason() async throws {
+        let suiteName = "CutoutAppModelTests.bluetoothUnavailable.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let fixture = CutoutUITestSessionFixture.vesc
         let driver = SessionDriverSpy(rows: [fixture.candidate.pickerRow])
         let manager = FailingLiveActivityManager(error: nil)
-        let model = CutoutAppModel(core: driver, liveActivityManager: manager)
+        let model = CutoutAppModel(
+            core: driver,
+            rideSessionMarkerStore: RideSessionMarkerStore(defaults: defaults),
+            liveActivityManager: manager
+        )
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: fixture.candidate.platformIdentifier))
+        driver.onDisplayStateChange?(
+            RideDisplayState(
+                telemetry: TelemetrySnapshot(
+                    at: MonotonicMilliseconds(100),
+                    speed: Speed(value: 8_000),
+                    operatingState: .riding
+                )
+            )
+        )
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 20 {
+        for _ in 0 ..< 200 {
             if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
             await Task.yield()
         }
+        XCTAssertEqual(driver.rideSessionStateHandle.rideSessionSnapshot().phase, .active)
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
         for _ in 0 ..< 200 {
