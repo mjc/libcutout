@@ -2812,10 +2812,8 @@ impl MobileLightSettingTracker {
     }
 }
 
-fn observe_setting_tick<Value>(
-    state: &mut CoreSettingState<Value>,
-    kind: MobileSessionInputKindDto,
-) where
+fn observe_setting_tick<Value>(state: &mut CoreSettingState<Value>, kind: MobileSessionInputKindDto)
+where
     Value: Copy + Eq,
 {
     if kind == MobileSessionInputKindDto::Tick {
@@ -15625,6 +15623,43 @@ mod tests {
         assert_eq!(state.requested, Some(MobileLightStateDto::On));
     }
 
+    #[test]
+    fn mobile_pedal_state_times_out_on_tick() {
+        let mut tracker = MobilePedalModeSettingTracker::default();
+        let accepted = MobileSessionStepResultDto {
+            outputs: Vec::new(),
+            error: None,
+        };
+
+        tracker.observe_step(
+            &MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(10),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+            },
+            &accepted,
+        );
+        assert_eq!(tracker.snapshot().kind, MobileSettingStateKindDto::Pending);
+
+        tracker.observe_step(
+            &MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Tick,
+                monotonic_ms: ms(1_010),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: None,
+            },
+            &accepted,
+        );
+
+        let state = tracker.snapshot();
+        assert_eq!(state.kind, MobileSettingStateKindDto::TimedOut);
+        assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
+    }
 
     #[test]
     fn euc_settings_capabilities_preserve_validation_state() {
