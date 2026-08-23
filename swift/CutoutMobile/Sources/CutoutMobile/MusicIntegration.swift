@@ -126,6 +126,18 @@ public struct MusicNowPlaying: Equatable, Sendable {
         }
     }
 
+    /// VoiceOver summary includes meaningful provider failure states without progress ticks.
+    public var accessibilitySummary: String {
+        var components = [providerName, title]
+        if artist != providerName && artist != title {
+            components.append(artist)
+        }
+        if let statusText {
+            components.append(statusText)
+        }
+        return components.joined(separator: ", ")
+    }
+
     public var playPauseCommand: MobileMusicCommandDto? {
         switch state {
         case .playing where capabilities.pause: .pause
@@ -494,7 +506,7 @@ public struct MusicCompactPlayer: View {
         .padding(.vertical, 10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(nowPlaying.providerName), \(nowPlaying.title), \(nowPlaying.artist)")
+        .accessibilityLabel(nowPlaying.accessibilitySummary)
         .sheet(isPresented: $isExpanded) {
             MusicExpandedPlayer(
                 nowPlaying: nowPlaying,

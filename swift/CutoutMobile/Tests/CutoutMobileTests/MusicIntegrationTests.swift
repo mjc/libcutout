@@ -217,6 +217,14 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertTrue(nowPlaying.capabilities.openProvider)
     }
 
+    func testNowPlayingAccessibilitySummaryIncludesProviderFailureState() {
+        let nowPlaying = MusicNowPlaying(
+            snapshot: SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 42)
+        )
+
+        XCTAssertEqual(nowPlaying.accessibilitySummary, "Spotify, Not playing, Unavailable")
+    }
+
     func testNowPlayingRefusesCommandsOutsideProviderCapabilities() {
         let nowPlaying = MusicNowPlaying(
             provider: .appleMusic,
