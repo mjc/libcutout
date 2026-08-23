@@ -35,6 +35,13 @@ extension View {
     }
 }
 
+func lightingPresetSaveEligibility(
+    platformIdentifier: String?,
+    commandStatus: MelkLightingCommandStatus
+) -> Bool {
+    guard let platformIdentifier, !platformIdentifier.isEmpty else { return false }
+    return commandStatus == .confirmed
+}
 struct DevicePickerRouteView: View {
     let model: CutoutAppModel
     let pair: (DevicePickerRow) -> Void
@@ -362,13 +369,18 @@ final class LightingRouteModel {
 
     var presets: [MobileRgbLightingPresetDto] { persistence.presets }
 
-    var canSavePreset: Bool { persistence.platformIdentifier != nil }
+    var canSavePreset: Bool {
+        lightingPresetSaveEligibility(
+            platformIdentifier: persistence.platformIdentifier,
+            commandStatus: commandStatus
+        )
+    }
 
     var canEditMetadata: Bool { persistence.platformIdentifier != nil }
 
     func savePreset(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard canSavePreset, !trimmed.isEmpty else { return }
         try? persistence.addPreset(name: trimmed, requested: requestedState.dto)
     }
 
