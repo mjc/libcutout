@@ -1297,7 +1297,7 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .unverified)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
