@@ -3939,6 +3939,36 @@ mod tests {
     }
 
     #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_music_metadata_rejects_malformed_json_identifier() {
+        let record = PevcapRecordJson {
+            monotonic_ms: 9,
+            direction: PevcapDirectionJson::Inbound,
+            characteristic: [0; 16],
+            service: Some([1; 16]),
+            write_mode: None,
+            link_max_write_len: None,
+            target: None,
+            music: Some(PevcapMusicEventJson {
+                provider: PevcapMusicProviderJson::AppleMusic,
+                track_id: " ".to_owned(),
+                track_position_ms: 0,
+                wall_clock_unix_ms: 1,
+                clock_uncertainty_milliseconds: 0,
+                ride_sequence: None,
+            }),
+            bytes: Bytes::from_static(b""),
+            telemetry: None,
+            phone_location: None,
+        };
+
+        assert!(matches!(
+            record.try_into_record(),
+            Err(PevcapRecordError::InvalidMusicTrackId)
+        ));
+    }
+
+    #[cfg(feature = "serde")]
     fn sample_pevcap_capture() -> PevcapCapture {
         let service = GattChannel::from_bytes([0xFE; 16]);
         let characteristic = GattChannel::from_bytes([0xE1; 16]);

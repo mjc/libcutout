@@ -1973,6 +1973,11 @@ public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
     func recordNotificationWithContext(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data, telemetry: MobileRawTelemetryReadbackDto?, phoneLocation: MobilePhoneLocationSampleDto?)  -> Bool
 
     /**
+     * Records an inbound notification with optional music correlation metadata.
+     */
+    func recordNotificationWithContextAndMusic(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data, telemetry: MobileRawTelemetryReadbackDto?, phoneLocation: MobilePhoneLocationSampleDto?, music: MobilePevcapMusicEventDto?)  -> Bool
+
+    /**
      * Records outbound write-without-response bytes.
      */
     func recordWriteWithoutResponse(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, bytes: Data)  -> Bool
@@ -2173,6 +2178,24 @@ open func recordNotificationWithContext(monotonicMs: MobileMonotonicMillisDto, c
         FfiConverterData.lower(bytes),
         FfiConverterOptionTypeMobileRawTelemetryReadbackDto.lower(telemetry),
         FfiConverterOptionTypeMobilePhoneLocationSampleDto.lower(phoneLocation),$0
+    )
+})
+}
+
+    /**
+     * Records an inbound notification with optional music correlation metadata.
+     */
+open func recordNotificationWithContextAndMusic(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data, telemetry: MobileRawTelemetryReadbackDto?, phoneLocation: MobilePhoneLocationSampleDto?, music: MobilePevcapMusicEventDto?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilepevcapcapturebuilder_record_notification_with_context_and_music(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMonotonicMillisDto_lower(monotonicMs),
+        FfiConverterData.lower(characteristic),
+        FfiConverterData.lower(service),
+        FfiConverterData.lower(bytes),
+        FfiConverterOptionTypeMobileRawTelemetryReadbackDto.lower(telemetry),
+        FfiConverterOptionTypeMobilePhoneLocationSampleDto.lower(phoneLocation),
+        FfiConverterOptionTypeMobilePevcapMusicEventDto.lower(music),$0
     )
 })
 }
@@ -8173,6 +8196,115 @@ public func FfiConverterTypeMobilePedalModeDto_lift(_ buf: RustBuffer) throws ->
 #endif
 public func FfiConverterTypeMobilePedalModeDto_lower(_ value: MobilePedalModeDto) -> RustBuffer {
     return FfiConverterTypeMobilePedalModeDto.lower(value)
+}
+
+
+/**
+ * Music observation attached to a PEVCAP notification.
+ */
+public struct MobilePevcapMusicEventDto: Equatable, Hashable {
+    /**
+     * Provider that supplied the opaque track identifier.
+     */
+    public var provider: MobileMusicProviderDto
+    /**
+     * Opaque provider track identifier.
+     */
+    public var trackId: String
+    /**
+     * Provider-reported position within the track in milliseconds.
+     */
+    public var trackPositionMs: UInt64
+    /**
+     * Wall-clock sample time for the provider observation.
+     */
+    public var wallClockUnixMs: UInt64
+    /**
+     * Clock uncertainty for the wall-clock sample in milliseconds.
+     */
+    public var clockUncertaintyMs: UInt64
+    /**
+     * Optional ride-local sequence number for deterministic correlation.
+     */
+    public var rideSequence: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Provider that supplied the opaque track identifier.
+         */provider: MobileMusicProviderDto,
+        /**
+         * Opaque provider track identifier.
+         */trackId: String,
+        /**
+         * Provider-reported position within the track in milliseconds.
+         */trackPositionMs: UInt64,
+        /**
+         * Wall-clock sample time for the provider observation.
+         */wallClockUnixMs: UInt64,
+        /**
+         * Clock uncertainty for the wall-clock sample in milliseconds.
+         */clockUncertaintyMs: UInt64,
+        /**
+         * Optional ride-local sequence number for deterministic correlation.
+         */rideSequence: UInt64?) {
+        self.provider = provider
+        self.trackId = trackId
+        self.trackPositionMs = trackPositionMs
+        self.wallClockUnixMs = wallClockUnixMs
+        self.clockUncertaintyMs = clockUncertaintyMs
+        self.rideSequence = rideSequence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePevcapMusicEventDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePevcapMusicEventDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePevcapMusicEventDto {
+        return
+            try MobilePevcapMusicEventDto(
+                provider: FfiConverterTypeMobileMusicProviderDto.read(from: &buf),
+                trackId: FfiConverterString.read(from: &buf),
+                trackPositionMs: FfiConverterUInt64.read(from: &buf),
+                wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
+                clockUncertaintyMs: FfiConverterUInt64.read(from: &buf),
+                rideSequence: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePevcapMusicEventDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileMusicProviderDto.write(value.provider, into: &buf)
+        FfiConverterString.write(value.trackId, into: &buf)
+        FfiConverterUInt64.write(value.trackPositionMs, into: &buf)
+        FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)
+        FfiConverterUInt64.write(value.clockUncertaintyMs, into: &buf)
+        FfiConverterOptionUInt64.write(value.rideSequence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapMusicEventDto_lift(_ buf: RustBuffer) throws -> MobilePevcapMusicEventDto {
+    return try FfiConverterTypeMobilePevcapMusicEventDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapMusicEventDto_lower(_ value: MobilePevcapMusicEventDto) -> RustBuffer {
+    return FfiConverterTypeMobilePevcapMusicEventDto.lower(value)
 }
 
 
@@ -19839,6 +19971,30 @@ fileprivate struct FfiConverterOptionTypeMobilePedalModeDto: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobilePevcapMusicEventDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobilePevcapMusicEventDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobilePevcapMusicEventDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobilePevcapMusicEventDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobilePhoneLocationSampleDto: FfiConverterRustBuffer {
     typealias SwiftType = MobilePhoneLocationSampleDto?
 
@@ -21455,6 +21611,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_notification_with_context() != 17954) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_notification_with_context_and_music() != 35497) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_write_without_response() != 15916) {
