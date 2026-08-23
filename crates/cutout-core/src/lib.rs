@@ -217,6 +217,19 @@ pub enum RollAngle {
     High,
 }
 
+impl RollAngle {
+    /// Decodes the documented Begode Live-B roll-angle bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 7) & 0x03 {
+            0 => Some(Self::Low),
+            1 => Some(Self::Medium),
+            2 => Some(Self::High),
+            _ => None,
+        }
+    }
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -8427,6 +8440,7 @@ mod tests {
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
+                    | DeviceCommand::SetRollAngle(_)
                     | DeviceCommand::SetAccelerationAssist(_)
                     | DeviceCommand::SetTaillight(_)
                     | DeviceCommand::SoundHorn
@@ -10125,6 +10139,23 @@ mod tests {
             Some(crate::PedalMode::Hard)
         );
         assert_eq!(crate::PedalMode::from_begode_settings_bits(0x6000), None);
+    }
+
+    #[test]
+    fn begode_roll_angle_settings_bits_use_documented_mapping() {
+        assert_eq!(
+            crate::RollAngle::from_begode_settings_bits(0x0000),
+            Some(crate::RollAngle::Low)
+        );
+        assert_eq!(
+            crate::RollAngle::from_begode_settings_bits(0x0080),
+            Some(crate::RollAngle::Medium)
+        );
+        assert_eq!(
+            crate::RollAngle::from_begode_settings_bits(0x0100),
+            Some(crate::RollAngle::High)
+        );
+        assert_eq!(crate::RollAngle::from_begode_settings_bits(0x0180), None);
     }
 
     #[test]

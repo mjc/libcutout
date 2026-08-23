@@ -10056,12 +10056,8 @@ fn begode_roll_angle(settings_bits: u16) -> MobileRollAngleDto {
     let raw_angle = (settings_bits >> 7) & 0x03;
     MobileRollAngleDto {
         raw_angle: Some(raw_angle),
-        angle: match raw_angle {
-            0 => Some(MobileRollAngleKindDto::Low),
-            1 => Some(MobileRollAngleKindDto::Medium),
-            2 => Some(MobileRollAngleKindDto::High),
-            _ => None,
-        },
+        angle: CoreRollAngle::from_begode_settings_bits(settings_bits)
+            .map(MobileRollAngleKindDto::from),
     }
 }
 
