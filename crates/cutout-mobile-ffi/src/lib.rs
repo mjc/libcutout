@@ -3160,6 +3160,19 @@ pub enum MobileRideMapCoreAssociationDto {
     RideNotOpen,
 }
 
+impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
+    fn from(association: ride_maps::VehicleAssociation) -> Self {
+        match association {
+            ride_maps::VehicleAssociation::Associated => Self::Associated,
+            ride_maps::VehicleAssociation::AlreadyAssociated => Self::AlreadyAssociated,
+            ride_maps::VehicleAssociation::CandidateMissing => Self::CandidateMissing,
+            ride_maps::VehicleAssociation::IdentityMismatch => Self::IdentityMismatch,
+            ride_maps::VehicleAssociation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
+            ride_maps::VehicleAssociation::RideNotOpen => Self::RideNotOpen,
+        }
+    }
+}
+
 /// Result of admitting one Core Location sample into the live recording.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapCoreDecisionDto {
@@ -4422,28 +4435,10 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        Ok(
-            match state.recorder.observe_vehicle(&platform_identifier, at_ms) {
-                ride_maps::VehicleAssociation::Associated => {
-                    MobileRideMapCoreAssociationDto::Associated
-                }
-                ride_maps::VehicleAssociation::AlreadyAssociated => {
-                    MobileRideMapCoreAssociationDto::AlreadyAssociated
-                }
-                ride_maps::VehicleAssociation::CandidateMissing => {
-                    MobileRideMapCoreAssociationDto::CandidateMissing
-                }
-                ride_maps::VehicleAssociation::IdentityMismatch => {
-                    MobileRideMapCoreAssociationDto::IdentityMismatch
-                }
-                ride_maps::VehicleAssociation::TimestampOutOfOrder => {
-                    MobileRideMapCoreAssociationDto::TimestampOutOfOrder
-                }
-                ride_maps::VehicleAssociation::RideNotOpen => {
-                    MobileRideMapCoreAssociationDto::RideNotOpen
-                }
-            },
-        )
+        Ok(state
+            .recorder
+            .observe_vehicle(&platform_identifier, at_ms)
+            .into())
     }
 
     /// Admits one Core Location sample into the active recording.
