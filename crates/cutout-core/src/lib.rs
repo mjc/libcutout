@@ -230,6 +230,33 @@ impl RollAngle {
     }
 }
 
+/// Documented speed-alarm mode for Begode wheels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpeedAlarmMode {
+    /// Both speed alarms are enabled.
+    Both,
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+    /// Speed alarms are disabled.
+    Off,
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl SpeedAlarmMode {
+    /// Decodes the documented Begode Live-B speed-alarm bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 10) & 0x03 {
+            0 => Some(Self::Both),
+            1 => Some(Self::StageOneOnly),
+            2 => Some(Self::Off),
+            3 => Some(Self::PwmTiltback),
+            _ => None,
+        }
+    }
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -263,6 +290,9 @@ pub enum DeviceCommand {
     /// Set roll-angle sensitivity; this command is stationary-only.
     SetRollAngle(RollAngle),
 
+    /// Set the speed-alarm mode; this command is stationary-only.
+    SetSpeedAlarmMode(SpeedAlarmMode),
+
     /// Enable or disable acceleration assist; this command is stationary-only.
     SetAccelerationAssist(AccelerationAssistState),
 
@@ -294,6 +324,7 @@ impl DeviceCommand {
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SetRollAngle(_) => CommandKind::SetRollAngle,
+            Self::SetSpeedAlarmMode(_) => CommandKind::SetSpeedAlarmMode,
             Self::SetAccelerationAssist(_) => CommandKind::SetAccelerationAssist,
             Self::SetTaillight(_) => CommandKind::SetTaillight,
             Self::SoundHorn => CommandKind::SoundHorn,
@@ -370,6 +401,9 @@ pub enum CommandKind {
     /// Set roll-angle sensitivity.
     SetRollAngle,
 
+    /// Set the speed-alarm mode.
+    SetSpeedAlarmMode,
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist,
 
@@ -396,9 +430,10 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::SetPedalMode | Self::SetRollAngle | Self::SetAccelerationAssist => {
-                SafetyClass::StationaryOnly
-            }
+            Self::SetPedalMode
+            | Self::SetRollAngle
+            | Self::SetSpeedAlarmMode
+            | Self::SetAccelerationAssist => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
@@ -8441,6 +8476,7 @@ mod tests {
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SetRollAngle(_)
+                    | DeviceCommand::SetSpeedAlarmMode(_)
                     | DeviceCommand::SetAccelerationAssist(_)
                     | DeviceCommand::SetTaillight(_)
                     | DeviceCommand::SoundHorn
@@ -10156,6 +10192,26 @@ mod tests {
             Some(crate::RollAngle::High)
         );
         assert_eq!(crate::RollAngle::from_begode_settings_bits(0x0180), None);
+    }
+
+    #[test]
+    fn begode_speed_alarm_settings_bits_use_documented_mapping() {
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0000),
+            Some(crate::SpeedAlarmMode::Both)
+        );
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0400),
+            Some(crate::SpeedAlarmMode::StageOneOnly)
+        );
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0800),
+            Some(crate::SpeedAlarmMode::Off)
+        );
+        assert_eq!(
+            crate::SpeedAlarmMode::from_begode_settings_bits(0x0c00),
+            Some(crate::SpeedAlarmMode::PwmTiltback)
+        );
     }
 
     #[test]

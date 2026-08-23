@@ -12,9 +12,9 @@ use crate::{
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
     RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, TelemetryDelta, TelemetrySnapshot, Temperature,
-    TransportAction, TransportWriteLimit, ValueQuality, ValueSource, VerificationStatus, Voltage,
-    WriteMode,
+    SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta, TelemetrySnapshot,
+    Temperature, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
+    VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -232,6 +232,9 @@ pub enum CommandKindDto {
     /// Set Falcon roll-angle sensitivity.
     SetRollAngle,
 
+    /// Set Begode speed-alarm mode.
+    SetSpeedAlarmMode,
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist,
 
@@ -258,6 +261,7 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
             CommandKind::SetRollAngle => Self::SetRollAngle,
+            CommandKind::SetSpeedAlarmMode => Self::SetSpeedAlarmMode,
             CommandKind::SetAccelerationAssist => Self::SetAccelerationAssist,
             CommandKind::SetTaillight => Self::SetTaillight,
             CommandKind::SoundHorn => Self::SoundHorn,
@@ -299,6 +303,9 @@ pub enum DeviceCommandDto {
     /// Set Falcon roll-angle sensitivity.
     SetRollAngle(RollAngleDto),
 
+    /// Set Begode speed-alarm mode.
+    SetSpeedAlarmMode(SpeedAlarmModeDto),
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist(AccelerationAssistStateDto),
 
@@ -328,6 +335,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
+            DeviceCommand::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
             DeviceCommand::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -353,6 +361,7 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
+            DeviceCommandDto::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
             DeviceCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -465,6 +474,41 @@ impl From<RollAngleDto> for RollAngle {
             RollAngleDto::Low => Self::Low,
             RollAngleDto::Medium => Self::Medium,
             RollAngleDto::High => Self::High,
+        }
+    }
+}
+
+/// UniFFI-ready Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpeedAlarmModeDto {
+    /// Both speed alarms are enabled.
+    Both,
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+    /// Speed alarms are disabled.
+    Off,
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl From<SpeedAlarmMode> for SpeedAlarmModeDto {
+    fn from(mode: SpeedAlarmMode) -> Self {
+        match mode {
+            SpeedAlarmMode::Both => Self::Both,
+            SpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmMode::Off => Self::Off,
+            SpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<SpeedAlarmModeDto> for SpeedAlarmMode {
+    fn from(mode: SpeedAlarmModeDto) -> Self {
+        match mode {
+            SpeedAlarmModeDto::Both => Self::Both,
+            SpeedAlarmModeDto::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmModeDto::Off => Self::Off,
+            SpeedAlarmModeDto::PwmTiltback => Self::PwmTiltback,
         }
     }
 }

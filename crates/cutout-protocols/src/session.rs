@@ -1321,6 +1321,7 @@ impl SupportsSettingsWrites for BegodeFalconModel {
     const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
         CommandKind::SetPedalMode,
         CommandKind::SetRollAngle,
+        CommandKind::SetSpeedAlarmMode,
     ]);
 
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
@@ -1439,6 +1440,7 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::SetLights
         | CommandKind::SetPedalMode
         | CommandKind::SetRollAngle
+        | CommandKind::SetSpeedAlarmMode
         | CommandKind::SetTaillight
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
@@ -4156,6 +4158,38 @@ mod tests {
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
                 if bytes.as_slice() == b"<"
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_writes_documented_speed_alarm_mode() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetSpeedAlarmMode(
+                cutout_core::SpeedAlarmMode::StageOneOnly,
+            )),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"u"
         )));
     }
 

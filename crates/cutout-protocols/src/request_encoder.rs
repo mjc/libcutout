@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
     CommandKind, DeviceCommand, LightState, PedalMode, PendingProbe, RequestKey, RequestTarget,
-    RollAngle, VescControllerId, WriteMode, WritePayload,
+    RollAngle, SpeedAlarmMode, VescControllerId, WriteMode, WritePayload,
 };
 
 use crate::{
@@ -92,6 +92,8 @@ impl FalconControlEncoder {
             DeviceCommand::SetRollAngle(RollAngle::Low) => b">".as_slice(),
             DeviceCommand::SetRollAngle(RollAngle::Medium) => b"=".as_slice(),
             DeviceCommand::SetRollAngle(RollAngle::High) => b"<".as_slice(),
+            DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both) => b"o".as_slice(),
+            DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::StageOneOnly) => b"u".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
@@ -236,6 +238,7 @@ impl VescRequestEncoder {
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
             | CommandKind::SetRollAngle
+            | CommandKind::SetSpeedAlarmMode
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
@@ -304,6 +307,7 @@ impl VescCanTarget {
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
             | CommandKind::SetRollAngle
+            | CommandKind::SetSpeedAlarmMode
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
@@ -397,6 +401,26 @@ mod tests {
         assert_eq!(low.mode, WriteMode::WithoutResponse);
         assert_eq!(
             AeroControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low)),
+            None
+        );
+    }
+
+    #[test]
+    fn documented_falcon_speed_alarm_encoders_match_protocol_bytes() {
+        let both =
+            FalconControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both))
+                .expect("Begode both-alarms encoder");
+        let stage_one = FalconControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(
+            SpeedAlarmMode::StageOneOnly,
+        ))
+        .expect("Begode stage-one-only encoder");
+
+        assert_eq!(both.command, CommandKind::SetSpeedAlarmMode);
+        assert_eq!(both.payload.as_slice(), b"o");
+        assert_eq!(stage_one.payload.as_slice(), b"u");
+        assert_eq!(both.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both,)),
             None
         );
     }
