@@ -1306,7 +1306,13 @@ final class CutoutAppUITests: XCTestCase {
         }
         let speed = app.descendants(matching: .any)["ride.hero.speed"]
         XCTAssertTrue(speed.waitForExistence(timeout: 5))
-        XCTAssertFalse((speed.value as? String)?.isEmpty ?? true)
+        let liveSpeed = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                (speed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true
+            },
+            object: speed
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [liveSpeed], timeout: 10), .completed)
 
         XCUIDevice.shared.press(.home)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -1315,8 +1321,13 @@ final class CutoutAppUITests: XCTestCase {
         let stateName = expectation.stateName
         let compactSpeed = springboard.descendants(matching: .any)["Speed"]
         XCTAssertTrue(compactSpeed.waitForExistence(timeout: 5), springboard.debugDescription)
-        XCTAssertTrue(
-            (compactSpeed.value as? String)?.localizedCaseInsensitiveContains(expectation.speed) == true,
+        let compactUpdate = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value CONTAINS[c] %@", expectation.speed),
+            object: compactSpeed
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [compactUpdate], timeout: 12),
+            .completed,
             compactSpeed.debugDescription
         )
         if let compactPwm = expectation.compactPwm {

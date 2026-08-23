@@ -1603,9 +1603,11 @@ final class CutoutAppModel {
         }
         liveActivityRequestID += 1
         let requestID = liveActivityRequestID
+        let atMs = core.now().rawValue
         Task { [weak self, liveActivityCoordinator] in
             await liveActivityCoordinator.appDidEnterBackground(
                 requestID: requestID,
+                atMs: atMs,
                 snapshot: snapshot,
                 captureFlush: { [weak self] in
                     await self?.flushCapture() ?? false
