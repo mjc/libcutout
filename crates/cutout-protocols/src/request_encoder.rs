@@ -436,6 +436,59 @@ mod tests {
     }
 
     #[test]
+    fn falcon_w_settings_encode_as_delayed_ordered_writes() {
+        let max_speed = FalconControlEncoder::encode_settings_sequence(
+            DeviceCommand::SetBegodeMaxSpeed(
+                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
+            ),
+        )
+        .expect("max-speed sequence encodes");
+        assert_eq!(max_speed.command, CommandKind::SetBegodeMaxSpeed);
+        assert_eq!(
+            max_speed
+                .steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![(0, b"W".as_slice()), (100, b"Y".as_slice()), (200, b"3".as_slice()),
+                (200, b"0".as_slice()), (200, b"b".as_slice())]
+        );
+
+        let volume = FalconControlEncoder::encode_settings_sequence(
+            DeviceCommand::SetBegodeBeeperVolume(
+                BegodeBeeperVolume::new(7).expect("volume 7 is encodable"),
+            ),
+        )
+        .expect("beeper sequence encodes");
+        assert_eq!(volume.command, CommandKind::SetBegodeBeeperVolume);
+        assert_eq!(
+            volume
+                .steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![(0, b"W".as_slice()), (100, b"B".as_slice()), (200, b"7".as_slice()),
+                (200, b"b".as_slice())]
+        );
+
+        let led = FalconControlEncoder::encode_settings_sequence(
+            DeviceCommand::SetBegodeLedMode(
+                BegodeLedModeSetting::new(4).expect("LED mode 4 is encodable"),
+            ),
+        )
+        .expect("LED sequence encodes");
+        assert_eq!(led.command, CommandKind::SetBegodeLedMode);
+        assert_eq!(
+            led.steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![(0, b"W".as_slice()), (100, b"M".as_slice()), (200, b"4".as_slice()),
+                (200, b"b".as_slice())]
+        );
+    }
+
+    #[test]
     fn falcon_encoder_uses_expected_request_bytes() {
         let identity = FalconRequestEncoder::encode(FalconProbe::Identity);
         let firmware = FalconRequestEncoder::encode(FalconProbe::FirmwareInfo);
