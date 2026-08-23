@@ -4757,22 +4757,7 @@ public extension ElectricUnicycleModel {
     }
 
     var settingsCapabilities: EucSettingsCapabilities {
-        switch self {
-        case .aero:
-            EucSettingsCapabilities(
-                pedalMode: .unsupported,
-                accelerationAssist: .unsupported,
-                headlight: .supported,
-                taillight: .unsupported
-            )
-        case .falcon:
-            EucSettingsCapabilities(
-                pedalMode: .unsupported,
-                accelerationAssist: .unsupported,
-                headlight: .unverified,
-                taillight: .unsupported
-            )
-        }
+        EucSettingsCapabilities(mobileEucSettingsCapabilities(model: dto))
     }
 
     var dto: DiscoveryElectricUnicycleModel {

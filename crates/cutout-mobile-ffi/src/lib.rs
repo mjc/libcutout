@@ -2158,6 +2158,18 @@ impl MobileEucSettingsCapabilitiesDto {
     }
 }
 
+/// Returns Rust-owned setting capabilities for a detected EUC model.
+#[uniffi::export]
+#[must_use]
+pub const fn mobile_euc_settings_capabilities(
+    model: DiscoveryElectricUnicycleModel,
+) -> MobileEucSettingsCapabilitiesDto {
+    match model {
+        DiscoveryElectricUnicycleModel::Aero => MobileEucSettingsCapabilitiesDto::aero(),
+        DiscoveryElectricUnicycleModel::Falcon => MobileEucSettingsCapabilitiesDto::falcon(),
+    }
+}
+
 /// Lifecycle phase for a typed mobile setting write.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingStateKindDto {
@@ -14869,6 +14881,14 @@ mod tests {
         assert_eq!(
             aero.settings_capabilities().acceleration_assist,
             MobileSettingWriteSupportDto::Unsupported
+        );
+        assert_eq!(
+            mobile_euc_settings_capabilities(DiscoveryElectricUnicycleModel::Aero),
+            aero.settings_capabilities()
+        );
+        assert_eq!(
+            mobile_euc_settings_capabilities(DiscoveryElectricUnicycleModel::Falcon),
+            falcon.settings_capabilities()
         );
     }
 

@@ -717,6 +717,42 @@ final class CutoutAppUITests: XCTestCase {
         try assertRidePublishesDynamicTelemetryAfterRouteMounts(.euc)
     }
 
+    func testEucTuneShowsValidatedControlsAndCapabilityStates() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let tuneTab = app.tabBars.buttons["dashboard.nav.tune"]
+        XCTAssertTrue(tuneTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(tuneTab.isHittable)
+        tuneTab.tap()
+
+        XCTAssertTrue(
+            app.descendants(matching: .any)["settings.screen.eucTune"]
+                .waitForExistence(timeout: 5)
+        )
+
+        let headlight = app.switches["High beam"]
+        XCTAssertTrue(headlight.exists)
+        XCTAssertTrue(headlight.isEnabled)
+
+        XCTAssertEqual(
+            app.descendants(matching: .any)["settings.capability.pedalMode"].label,
+            "Pedal mode, Needs validation"
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["settings.capability.accelerationAssist"].label,
+            "Acceleration assist, Not supported"
+        )
+        XCTAssertEqual(
+            app.descendants(matching: .any)["settings.capability.taillight"].label,
+            "Taillight, Not supported"
+        )
+    }
+
     private func assertRidePublishesDynamicTelemetryAfterRouteMounts(_ family: ConnectedDeviceFamily) throws {
         XCTAssertTrue(pairAvailableDevice(family))
         guard connectedScreen(timeout: 20) != nil else {
