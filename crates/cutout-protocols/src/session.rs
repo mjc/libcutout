@@ -1578,13 +1578,15 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
             self.read_only.handle(input, output);
             return;
         };
-        if command.safety_class() != SafetyClass::BenignControl {
+        if command.safety_class() == SafetyClass::ReadOnly {
             self.read_only.handle(input, output);
             return;
         }
 
         let kind = command.kind();
-        if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+        if command.safety_class() == SafetyClass::BenignControl
+            && M::CONTROL_CAPABILITIES.supports_command_kind(kind)
+        {
             if let Some(encoded) = M::encode_benign_control(command) {
                 output.push(SessionOutput::Transport(TransportAction::Write {
                     channel: M::WRITE_CHANNEL,
@@ -4111,7 +4113,7 @@ mod tests {
 
     #[test]
     fn unverified_acceleration_assist_is_refused_without_writes() {
-        let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
+        let mut session = BenignControlSession::<NosfetAeroModel, false>::default();
         let mut output = Vec::new();
 
         session.handle(
