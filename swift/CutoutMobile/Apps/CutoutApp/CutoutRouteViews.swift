@@ -55,9 +55,13 @@ struct EucRideRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            selectedProvider: model.selectedMusicProvider,
+            isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
             onCommand: model.handleMusicCommand,
             onDismiss: model.dismissMusicPlayer,
+            onRestore: model.restoreMusicPlayer,
+            onSelectProvider: model.selectMusicProvider,
             onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
     }
@@ -142,9 +146,13 @@ struct VescRideRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            selectedProvider: model.selectedMusicProvider,
+            isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
             onCommand: model.handleMusicCommand,
             onDismiss: model.dismissMusicPlayer,
+            onRestore: model.restoreMusicPlayer,
+            onSelectProvider: model.selectMusicProvider,
             onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
     }

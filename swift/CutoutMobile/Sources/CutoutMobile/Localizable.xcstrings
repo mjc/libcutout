@@ -17,9 +17,17 @@
       "comment" : "Spotify provider name shown by the compact player.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Spotify" } } }
     },
+    "music.provider.select" : {
+      "comment" : "Provider selection label in the expanded music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Music provider" } } }
+    },
     "music.open_provider" : {
       "comment" : "Accessibility label for opening the active music provider.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Open music provider" } } }
+    },
+    "music.restore" : {
+      "comment" : "Action that restores the hidden compact music player.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show music player" } } }
     },
     "music.expand" : {
       "comment" : "Accessibility label and title for expanding the compact music player.",

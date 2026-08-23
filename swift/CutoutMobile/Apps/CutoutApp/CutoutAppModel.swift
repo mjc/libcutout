@@ -39,6 +39,8 @@ final class CutoutAppModel {
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
     private(set) var musicNowPlaying: MusicNowPlaying?
+    private(set) var selectedMusicProvider = MobileMusicProviderDto.appleMusic
+    private(set) var isMusicPlayerHidden: Bool
     private(set) var musicHistoryPolicy = MobileMusicHistoryPolicyDto.disabled
     private(set) var isRecordOnlyCapture = false
     private(set) var isFinishingCapture = false
@@ -98,6 +100,7 @@ final class CutoutAppModel {
     private let liveActivityCoordinator: LiveActivityRideLifecycleCoordinator
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
+    private let musicPlayerVisibilityStore: MusicPlayerVisibilityStore
     private let musicCoordinator: MusicIntegrationCoordinator
     private let spotifyMusicProvider = SpotifyProviderAdapter()
 #if canImport(MediaPlayer) && os(iOS)
@@ -128,7 +131,8 @@ final class CutoutAppModel {
             permitsStoredDeviceAutoPairing: permitsStoredDeviceAutoPairing,
             selectedDeviceStore: DevicePickerSelectionStore(),
             rideSessionMarkerStore: RideSessionMarkerStore(),
-            liveActivityManager: LiveActivityRideActivityKitManager()
+            liveActivityManager: LiveActivityRideActivityKitManager(),
+            musicPlayerVisibilityStore: MusicPlayerVisibilityStore()
         )
     }
 
@@ -136,14 +140,16 @@ final class CutoutAppModel {
         core: any CutoutSessionDriving,
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore(),
         rideSessionMarkerStore: RideSessionMarkerStore = RideSessionMarkerStore(),
-        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager()
+        liveActivityManager: any LiveActivityRideLifecycleManaging = LiveActivityRideActivityKitManager(),
+        musicPlayerVisibilityStore: MusicPlayerVisibilityStore = MusicPlayerVisibilityStore()
     ) {
         self.init(
             core: core,
             permitsStoredDeviceAutoPairing: true,
             selectedDeviceStore: selectedDeviceStore,
             rideSessionMarkerStore: rideSessionMarkerStore,
-            liveActivityManager: liveActivityManager
+            liveActivityManager: liveActivityManager,
+            musicPlayerVisibilityStore: musicPlayerVisibilityStore
         )
     }
 
@@ -152,7 +158,8 @@ final class CutoutAppModel {
         permitsStoredDeviceAutoPairing: Bool,
         selectedDeviceStore: DevicePickerSelectionStore,
         rideSessionMarkerStore: RideSessionMarkerStore,
-        liveActivityManager: any LiveActivityRideLifecycleManaging
+        liveActivityManager: any LiveActivityRideLifecycleManaging,
+        musicPlayerVisibilityStore: MusicPlayerVisibilityStore
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
@@ -164,6 +171,8 @@ final class CutoutAppModel {
         )
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
+        self.musicPlayerVisibilityStore = musicPlayerVisibilityStore
+        isMusicPlayerHidden = musicPlayerVisibilityStore.isHidden
         musicCoordinator = MusicIntegrationCoordinator(rideMapState: core.rideMapStateHandle)
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
         restoreRideMapState()
@@ -215,7 +224,7 @@ final class CutoutAppModel {
 
     func handleMusicCommand(_ command: MobileMusicCommandDto) {
 #if canImport(MediaPlayer) && os(iOS)
-        if musicNowPlaying?.provider == .spotify {
+        if (musicNowPlaying?.provider ?? selectedMusicProvider) == .spotify {
             spotifyMusicProvider.perform(command)
         } else {
             appleMusicProvider.perform(command)
@@ -227,20 +236,37 @@ final class CutoutAppModel {
     }
 
     func dismissMusicPlayer() {
+        musicPlayerVisibilityStore.setHidden(true)
+        isMusicPlayerHidden = true
         musicNowPlaying = nil
+    }
+
+    func restoreMusicPlayer() {
+        musicPlayerVisibilityStore.setHidden(false)
+        isMusicPlayerHidden = false
+        musicNowPlaying = musicCoordinator.nowPlaying
+    }
+
+    func selectMusicProvider(_ provider: MobileMusicProviderDto) {
+        selectedMusicProvider = provider
+        if isMusicPlayerHidden == false {
+            refreshMusicSnapshot()
+        }
     }
 
     func refreshMusicSnapshot() {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue
-        let snapshot = if musicNowPlaying?.provider == .spotify {
+        let observation = if selectedMusicProvider == .spotify {
             // Keep the explicit Spotify-unavailable state until App Remote is
             // installed; do not silently replace it with Apple Music data.
-            spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
+            MusicProviderObservation(
+                snapshot: spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
+            )
         } else {
-            appleMusicProvider.snapshot(observedAtMs: observedAtMs)
+            appleMusicProvider.observation(observedAtMs: observedAtMs)
         }
-        _ = ingestMusicObservation(MusicProviderObservation(snapshot: snapshot))
+        _ = ingestMusicObservation(observation)
 #endif
     }
 
@@ -259,10 +285,10 @@ final class CutoutAppModel {
                 wallClockAtMs: wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000),
                 clockUncertaintyMs: clockUncertaintyMs
             )
-            musicNowPlaying = musicCoordinator.nowPlaying
+            musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return true
         } catch {
-            musicNowPlaying = musicCoordinator.nowPlaying
+            musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return false
         }
     }
@@ -286,10 +312,11 @@ final class CutoutAppModel {
     func monitorMusic() async {
 #if canImport(MediaPlayer) && os(iOS)
         guard await appleMusicProvider.requestAuthorization() else {
-            musicCoordinator.update(snapshot: appleMusicProvider.unauthorizedSnapshot(
-                observedAtMs: core.now().rawValue
+            _ = ingestMusicObservation(MusicProviderObservation(
+                snapshot: appleMusicProvider.unauthorizedSnapshot(
+                    observedAtMs: core.now().rawValue
+                )
             ))
-            musicNowPlaying = musicCoordinator.nowPlaying
             return
         }
         appleMusicProvider.startMonitoring { [weak self] in

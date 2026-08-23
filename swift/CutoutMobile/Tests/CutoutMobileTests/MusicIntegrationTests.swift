@@ -1,5 +1,6 @@
 import CutoutMobile
 import CutoutMobileFFI
+import Foundation
 import XCTest
 
 @MainActor
@@ -119,6 +120,49 @@ final class MusicIntegrationTests: XCTestCase {
 
         XCTAssertEqual(outcome, .recorded)
         XCTAssertEqual(coordinator.recordedEvents.count, 1)
+    }
+
+    func testProviderObservationKeepsBoundedArtworkInSwiftOnly() {
+        let artwork = Data([0x01, 0x02, 0x03])
+        let observation = MusicProviderObservation(
+            snapshot: snapshot(),
+            artworkData: artwork
+        )
+
+        XCTAssertEqual(observation.artwork?.data, artwork)
+        XCTAssertEqual(
+            MusicNowPlaying(observation: observation).artwork?.data,
+            artwork
+        )
+    }
+
+    func testProviderObservationRejectsArtworkAboveThePresentationBound() {
+        let oversized = Data(repeating: 0x01, count: MusicArtwork.maxBytes + 1)
+
+        let observation = MusicProviderObservation(
+            snapshot: snapshot(),
+            artworkData: oversized
+        )
+
+        XCTAssertNil(observation.artwork)
+    }
+
+    func testMusicProviderChoicesRemainExplicitlyBounded() {
+        XCTAssertEqual(MobileMusicProviderDto.allCases, [.appleMusic, .spotify])
+        XCTAssertEqual(MobileMusicProviderDto.appleMusic.title, "Apple Music")
+        XCTAssertEqual(MobileMusicProviderDto.spotify.title, "Spotify")
+    }
+
+    func testMusicPlayerVisibilityStorePersistsTheHideChoice() {
+        let defaults = UserDefaults(suiteName: "music-integration-tests")!
+        defaults.removePersistentDomain(forName: "music-integration-tests")
+        let store = MusicPlayerVisibilityStore(defaults: defaults)
+
+        XCTAssertFalse(store.isHidden)
+        store.setHidden(true)
+        XCTAssertTrue(MusicPlayerVisibilityStore(defaults: defaults).isHidden)
+        store.setHidden(false)
+        XCTAssertFalse(MusicPlayerVisibilityStore(defaults: defaults).isHidden)
     }
 
     private func snapshot(

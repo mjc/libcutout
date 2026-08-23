@@ -4,6 +4,54 @@ import SwiftUI
 #if canImport(UIKit) && os(iOS)
 import UIKit
 #endif
+#if canImport(AppKit)
+import AppKit
+#endif
+#if canImport(MusicKit) && os(iOS)
+@preconcurrency import MusicKit
+#endif
+
+/// Presentation-only artwork retained in Swift and bounded before decoding.
+/// Artwork never enters the Rust ride or UniFFI contracts.
+public struct MusicArtwork: Equatable, Sendable {
+    public static let maxBytes = 512 * 1024
+
+    public let data: Data
+
+    public init?(data: Data) {
+        guard data.isEmpty == false, data.count <= Self.maxBytes else { return nil }
+        self.data = data
+    }
+}
+
+public extension MobileMusicProviderDto {
+    static var allCases: [Self] { [.appleMusic, .spotify] }
+
+    var title: String {
+        switch self {
+        case .appleMusic: pevLocalizedText("music.provider.apple_music")
+        case .spotify: pevLocalizedText("music.provider.spotify")
+        }
+    }
+}
+
+/// Persists only the compact-player visibility preference.
+public struct MusicPlayerVisibilityStore {
+    private static let key = "io.cutout.music.compact-player.hidden"
+    private let defaults: UserDefaults
+
+    public init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    public var isHidden: Bool {
+        defaults.bool(forKey: Self.key)
+    }
+
+    public func setHidden(_ hidden: Bool) {
+        defaults.set(hidden, forKey: Self.key)
+    }
+}
 
 /// Provider-neutral music state used by the compact ride/map player.
 public struct MusicNowPlaying: Equatable, Sendable {
@@ -11,11 +59,13 @@ public struct MusicNowPlaying: Equatable, Sendable {
     public let state: MobileMusicPlaybackStateDto
     public let item: MobileMusicItemDto?
     public let capabilities: MobileMusicCapabilitiesDto
+    public let artwork: MusicArtwork?
 
     public init(
         provider: MobileMusicProviderDto,
         state: MobileMusicPlaybackStateDto,
         item: MobileMusicItemDto? = nil,
+        artwork: MusicArtwork? = nil,
         capabilities: MobileMusicCapabilitiesDto = .init(
             previous: false,
             play: false,
@@ -27,16 +77,22 @@ public struct MusicNowPlaying: Equatable, Sendable {
         self.provider = provider
         self.state = state
         self.item = item
+        self.artwork = artwork
         self.capabilities = capabilities
     }
 
-    public init(snapshot: MobileMusicSnapshotDto) {
+    public init(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
         self.init(
             provider: snapshot.provider,
             state: snapshot.state,
             item: snapshot.item,
+            artwork: artwork,
             capabilities: snapshot.capabilities
         )
+    }
+
+    public init(observation: MusicProviderObservation) {
+        self.init(snapshot: observation.snapshot, artwork: observation.artwork)
     }
 
     public var providerName: String {
@@ -112,9 +168,11 @@ public extension MobileMusicHistoryPolicyDto {
 /// payload.
 public struct MusicProviderObservation: Equatable, Sendable {
     public let snapshot: MobileMusicSnapshotDto
+    public let artwork: MusicArtwork?
 
-    public init(snapshot: MobileMusicSnapshotDto) {
+    public init(snapshot: MobileMusicSnapshotDto, artworkData: Data? = nil) {
         self.snapshot = snapshot
+        artwork = artworkData.flatMap(MusicArtwork.init(data:))
     }
 }
 
@@ -128,8 +186,8 @@ public final class MusicIntegrationCoordinator {
         self.rideMapState = rideMapState
     }
 
-    public func update(snapshot: MobileMusicSnapshotDto) {
-        nowPlaying = MusicNowPlaying(snapshot: snapshot)
+    public func update(snapshot: MobileMusicSnapshotDto, artwork: MusicArtwork? = nil) {
+        nowPlaying = MusicNowPlaying(snapshot: snapshot, artwork: artwork)
     }
 
     /// Applies one provider observation and records only a meaningful transition.
@@ -163,8 +221,15 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
-        try ingest(
+        let previous = nowPlaying
+        update(snapshot: observation.snapshot, artwork: observation.artwork)
+        guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
+            return nil
+        }
+        return try rideMapState.recordMusicEvent(
             snapshot: observation.snapshot,
+            kind: kind,
+            monotonicAtMs: observation.snapshot.observedAtMs,
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
@@ -221,30 +286,35 @@ public final class MusicIntegrationCoordinator {
 /// neither artwork bytes nor an audio stream cross the app boundary.
 public struct MusicCompactPlayer: View {
     public let nowPlaying: MusicNowPlaying
+    public let selectedProvider: MobileMusicProviderDto
     public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onDismiss: () -> Void
+    public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
     @State private var isExpanded = false
 
     public init(
         nowPlaying: MusicNowPlaying,
+        selectedProvider: MobileMusicProviderDto = .appleMusic,
         historyPolicy: MobileMusicHistoryPolicyDto = .disabled,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
         onDismiss: @escaping () -> Void = {},
+        onSelectProvider: @escaping (MobileMusicProviderDto) -> Void = { _ in },
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool = { _ in false }
     ) {
         self.nowPlaying = nowPlaying
+        self.selectedProvider = selectedProvider
         self.historyPolicy = historyPolicy
         self.onCommand = onCommand
         self.onDismiss = onDismiss
+        self.onSelectProvider = onSelectProvider
         self.onSetHistoryPolicy = onSetHistoryPolicy
     }
 
     public var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "music.note")
-                .accessibilityHidden(true)
+            artworkView
             VStack(alignment: .leading, spacing: 2) {
                 Text(nowPlaying.title)
                     .lineLimit(1)
@@ -291,27 +361,67 @@ public struct MusicCompactPlayer: View {
         .sheet(isPresented: $isExpanded) {
             MusicExpandedPlayer(
                 nowPlaying: nowPlaying,
+                selectedProvider: selectedProvider,
                 historyPolicy: historyPolicy,
+                onSelectProvider: onSelectProvider,
                 onSetHistoryPolicy: onSetHistoryPolicy
             )
         }
+    }
+
+    @ViewBuilder
+    private var artworkView: some View {
+#if canImport(UIKit) && os(iOS)
+        if let data = nowPlaying.artwork?.data, let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityLabel("Artwork for \(nowPlaying.title)")
+        } else {
+            Image(systemName: "music.note")
+                .accessibilityHidden(true)
+        }
+#elseif canImport(AppKit)
+        if let data = nowPlaying.artwork?.data, let image = NSImage(data: data) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .accessibilityLabel("Artwork for \(nowPlaying.title)")
+        } else {
+            Image(systemName: "music.note")
+                .accessibilityHidden(true)
+        }
+#else
+        Image(systemName: "music.note")
+            .accessibilityHidden(true)
+#endif
     }
 }
 
 public struct MusicExpandedPlayer: View {
     public let nowPlaying: MusicNowPlaying
+    public let selectedProvider: MobileMusicProviderDto
     public let historyPolicy: MobileMusicHistoryPolicyDto
+    public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var selectedPolicy: MobileMusicHistoryPolicyDto
 
     public init(
         nowPlaying: MusicNowPlaying,
+        selectedProvider: MobileMusicProviderDto,
         historyPolicy: MobileMusicHistoryPolicyDto,
+        onSelectProvider: @escaping (MobileMusicProviderDto) -> Void,
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
     ) {
         self.nowPlaying = nowPlaying
+        self.selectedProvider = selectedProvider
         self.historyPolicy = historyPolicy
+        self.onSelectProvider = onSelectProvider
         self.onSetHistoryPolicy = onSetHistoryPolicy
         _selectedPolicy = State(initialValue: historyPolicy)
     }
@@ -330,6 +440,22 @@ public struct MusicExpandedPlayer: View {
                     }
                 } header: {
                     Text(nowPlaying.providerName)
+                }
+
+                Section {
+                    Picker(
+                        pevLocalizedText("music.provider.select"),
+                        selection: Binding(
+                            get: { selectedProvider },
+                            set: { provider in onSelectProvider(provider) }
+                        )
+                    ) {
+                        ForEach(MobileMusicProviderDto.allCases, id: \.self) { provider in
+                            Text(provider.title).tag(provider)
+                        }
+                    }
+                } header: {
+                    Text(pevLocalizedText("music.provider.select"))
                 }
 
                 Section {
@@ -364,9 +490,13 @@ public struct MusicExpandedPlayer: View {
 /// Shared Ride/Map composition for the compact player.
 public struct MusicCompactPlayerInset: ViewModifier {
     public let nowPlaying: MusicNowPlaying?
+    public let selectedProvider: MobileMusicProviderDto
+    public let isHidden: Bool
     public let historyPolicy: MobileMusicHistoryPolicyDto
     public let onCommand: (MobileMusicCommandDto) -> Void
     public let onDismiss: () -> Void
+    public let onRestore: () -> Void
+    public let onSelectProvider: (MobileMusicProviderDto) -> Void
     public let onSetHistoryPolicy: (MobileMusicHistoryPolicyDto) -> Bool
 
     public func body(content: Content) -> some View {
@@ -374,12 +504,23 @@ public struct MusicCompactPlayerInset: ViewModifier {
             if let nowPlaying {
                 MusicCompactPlayer(
                     nowPlaying: nowPlaying,
+                    selectedProvider: selectedProvider,
                     historyPolicy: historyPolicy,
                     onCommand: onCommand,
                     onDismiss: onDismiss,
+                    onSelectProvider: onSelectProvider,
                     onSetHistoryPolicy: onSetHistoryPolicy
                 )
                 .padding(.horizontal, 12)
+            } else if isHidden {
+                Button(action: onRestore) {
+                    Label(
+                        pevLocalizedText("music.restore"),
+                        systemImage: "music.note"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("music.restore")
             }
         }
     }
@@ -388,16 +529,24 @@ public struct MusicCompactPlayerInset: ViewModifier {
 public extension View {
     func musicCompactPlayer(
         nowPlaying: MusicNowPlaying?,
+        selectedProvider: MobileMusicProviderDto,
+        isHidden: Bool,
         historyPolicy: MobileMusicHistoryPolicyDto,
         onCommand: @escaping (MobileMusicCommandDto) -> Void,
         onDismiss: @escaping () -> Void,
+        onRestore: @escaping () -> Void,
+        onSelectProvider: @escaping (MobileMusicProviderDto) -> Void,
         onSetHistoryPolicy: @escaping (MobileMusicHistoryPolicyDto) -> Bool
     ) -> some View {
         modifier(MusicCompactPlayerInset(
             nowPlaying: nowPlaying,
+            selectedProvider: selectedProvider,
+            isHidden: isHidden,
             historyPolicy: historyPolicy,
             onCommand: onCommand,
             onDismiss: onDismiss,
+            onRestore: onRestore,
+            onSelectProvider: onSelectProvider,
             onSetHistoryPolicy: onSetHistoryPolicy
         ))
     }
@@ -406,12 +555,17 @@ public extension View {
 #if canImport(MediaPlayer) && os(iOS)
 import MediaPlayer
 
-/// Apple Music's system-player bridge. It exposes transport and bounded metadata
-/// only; iOS does not provide a system PCM tap for another app's playback.
+/// Apple Music's system-player bridge. MusicKit owns transport; MediaPlayer is
+/// retained only for the system now-playing metadata/artwork surface. iOS does
+/// not provide a system PCM tap for another app's playback.
 @MainActor
 public final class AppleMusicProviderAdapter {
     public static let providerURL = URL(string: "https://music.apple.com/")!
+    private static let artworkSize = CGSize(width: 256, height: 256)
     private let player = MPMusicPlayerController.systemMusicPlayer
+#if canImport(MusicKit) && os(iOS)
+    private let systemPlayer = SystemMusicPlayer.shared
+#endif
     private var notificationTokens = [NSObjectProtocol]()
 
     public init() {}
@@ -470,10 +624,30 @@ public final class AppleMusicProviderAdapter {
     @MainActor
     public func perform(_ command: MobileMusicCommandDto) {
         switch command {
-        case .previous: player.skipToPreviousItem()
-        case .play: player.play()
-        case .pause: player.pause()
-        case .next: player.skipToNextItem()
+        case .previous:
+#if canImport(MusicKit) && os(iOS)
+            Task { try? await systemPlayer.skipToPreviousEntry() }
+#else
+            player.skipToPreviousItem()
+#endif
+        case .play:
+#if canImport(MusicKit) && os(iOS)
+            Task { try? await systemPlayer.play() }
+#else
+            player.play()
+#endif
+        case .pause:
+#if canImport(MusicKit) && os(iOS)
+            systemPlayer.pause()
+#else
+            player.pause()
+#endif
+        case .next:
+#if canImport(MusicKit) && os(iOS)
+            Task { try? await systemPlayer.skipToNextEntry() }
+#else
+            player.skipToNextItem()
+#endif
         case .openProvider:
 #if canImport(UIKit) && os(iOS)
             UIApplication.shared.open(Self.providerURL)
@@ -516,6 +690,29 @@ public final class AppleMusicProviderAdapter {
                 openProvider: true
             )
         )
+    }
+
+    /// Returns the same bounded provider snapshot plus permitted artwork for
+    /// SwiftUI. The artwork bytes never enter the Rust ride contract.
+    public func observation(observedAtMs: UInt64) -> MusicProviderObservation {
+        MusicProviderObservation(
+            snapshot: snapshot(observedAtMs: observedAtMs),
+            artworkData: artworkData()
+        )
+    }
+
+    private func artworkData() -> Data? {
+#if canImport(UIKit) && os(iOS)
+        guard
+            let artwork = player.nowPlayingItem?.artwork,
+            let image = artwork.image(at: Self.artworkSize)
+        else {
+            return nil
+        }
+        return image.jpegData(compressionQuality: 0.8)
+#else
+        nil
+#endif
     }
 }
 #endif

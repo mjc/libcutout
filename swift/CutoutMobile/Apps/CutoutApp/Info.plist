@@ -26,6 +26,8 @@
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CutOut uses Bluetooth to read live vehicle telemetry.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>CutOut uses Apple Music metadata and transport controls while you ride.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>CutOut records ride location, altitude, speed, and direction with vehicle telemetry.</string>
 	<key>NSLocationAlwaysUsageDescription</key>

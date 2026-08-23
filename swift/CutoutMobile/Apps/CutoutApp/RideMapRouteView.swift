@@ -60,14 +60,15 @@ struct RideMapRouteView: View {
         }
         .musicCompactPlayer(
             nowPlaying: model.musicNowPlaying,
+            selectedProvider: model.selectedMusicProvider,
+            isHidden: model.isMusicPlayerHidden,
             historyPolicy: model.musicHistoryPolicy,
             onCommand: model.handleMusicCommand,
             onDismiss: model.dismissMusicPlayer,
+            onRestore: model.restoreMusicPlayer,
+            onSelectProvider: model.selectMusicProvider,
             onSetHistoryPolicy: model.setMusicHistoryPolicy
         )
-        .task {
-            await model.monitorMusic()
-        }
     }
 
     private var liveContent: some View {

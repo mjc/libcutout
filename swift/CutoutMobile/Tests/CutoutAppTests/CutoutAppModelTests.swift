@@ -204,6 +204,42 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicPlayerHidePersistsAndCanBeRestoredWithoutTouchingRideState() {
+        let driver = SessionDriverSpy(rows: [])
+        let defaults = UserDefaults(suiteName: "cutout-app-music-visibility-tests")!
+        defaults.removePersistentDomain(forName: "cutout-app-music-visibility-tests")
+        let model = CutoutAppModel(
+            core: driver,
+            musicPlayerVisibilityStore: MusicPlayerVisibilityStore(defaults: defaults)
+        )
+
+        XCTAssertFalse(model.isMusicPlayerHidden)
+        XCTAssertTrue(model.startGpsOnlyRide())
+        model.dismissMusicPlayer()
+        XCTAssertTrue(model.isMusicPlayerHidden)
+        XCTAssertNil(model.musicNowPlaying)
+        XCTAssertTrue(model.isRideMapRecording)
+
+        model.restoreMusicPlayer()
+        XCTAssertFalse(model.isMusicPlayerHidden)
+        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertTrue(MusicPlayerVisibilityStore(defaults: defaults).isHidden == false)
+    }
+
+    @MainActor
+    func testMusicProviderSelectionIsExplicitAndDoesNotChangeRideLifecycle() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.selectedMusicProvider, .appleMusic)
+        model.selectMusicProvider(.spotify)
+
+        XCTAssertEqual(model.selectedMusicProvider, .spotify)
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertNil(model.rideMapError)
+    }
+
+    @MainActor
     func testForgetMusicHistoryPreservesTheActiveRideAndClearsItsEvents() throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
