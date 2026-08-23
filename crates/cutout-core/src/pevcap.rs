@@ -839,7 +839,7 @@ impl PevcapHeader {
     ///
     /// # Errors
     ///
-    /// Returns [`PevcapHeaderError::TooManyAdvertisedServices`] when the
+    /// Returns [`PevcapHeaderError::TooManyItems`] when the
     /// observed service list exceeds the format bound, or similarly for GATT
     /// fingerprints and annotations.
     #[allow(clippy::too_many_arguments)]
