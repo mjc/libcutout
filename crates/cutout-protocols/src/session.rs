@@ -1398,8 +1398,10 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestFirmwareInfo
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
+        | CommandKind::SetAccelerationAssist
         | CommandKind::SetLights
         | CommandKind::SetPedalMode
+        | CommandKind::SetTaillight
         | CommandKind::SoundHorn
         | CommandKind::SetRawMotorCurrent => None,
     }
@@ -4083,6 +4085,52 @@ mod tests {
                 if refusal.command == CommandKind::SetLights
                     && refusal.reason == ControlRefusalReason::UnsupportedCommand
         )));
+    }
+
+    #[test]
+    fn unverified_taillight_control_is_refused_without_writes() {
+        let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetTaillight(cutout_core::LightState::On)),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: CommandKind::SetTaillight,
+                    safety_class: SafetyClass::BenignControl,
+                    reason: ControlRefusalReason::UnsupportedCommand,
+                }
+            ))]
+        );
+    }
+
+    #[test]
+    fn unverified_acceleration_assist_is_refused_without_writes() {
+        let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
+        let mut output = Vec::new();
+
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetAccelerationAssist(
+                cutout_core::AccelerationAssistState::Enabled,
+            )),
+            &mut output,
+        );
+
+        assert_eq!(
+            output,
+            vec![SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: CommandKind::SetAccelerationAssist,
+                    safety_class: SafetyClass::StationaryOnly,
+                    reason: ControlRefusalReason::UnsupportedCommand,
+                }
+            ))]
+        );
     }
 
     #[test]

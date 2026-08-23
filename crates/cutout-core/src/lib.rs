@@ -234,6 +234,12 @@ pub enum DeviceCommand {
     /// Set pedal stiffness; this command is stationary-only.
     SetPedalMode(PedalMode),
 
+    /// Enable or disable acceleration assist; this command is stationary-only.
+    SetAccelerationAssist(AccelerationAssistState),
+
+    /// Set the taillight state independently of the existing light control.
+    SetTaillight(LightState),
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -258,6 +264,8 @@ impl DeviceCommand {
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
+            Self::SetAccelerationAssist(_) => CommandKind::SetAccelerationAssist,
+            Self::SetTaillight(_) => CommandKind::SetTaillight,
             Self::SoundHorn => CommandKind::SoundHorn,
             Self::SetRawMotorCurrent { .. } => CommandKind::SetRawMotorCurrent,
         }
@@ -287,6 +295,16 @@ pub enum LightState {
 
     /// Lights on.
     On,
+}
+
+/// User-facing acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccelerationAssistState {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
 }
 
 /// Stable command discriminator, excluding command payload values.
@@ -319,6 +337,12 @@ pub enum CommandKind {
     /// Set pedal stiffness.
     SetPedalMode,
 
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist,
+
+    /// Set the taillight state.
+    SetTaillight,
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -338,8 +362,8 @@ impl CommandKind {
             | Self::RequestDiagnostics
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
-            Self::SetLights | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::SetPedalMode => SafetyClass::StationaryOnly,
+            Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
+            Self::SetPedalMode | Self::SetAccelerationAssist => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
     }
@@ -7797,11 +7821,10 @@ mod tests {
         Angle, BatteryCurrent, BatteryLevel, Capacity, CellVoltage, ControlRefusalReason, Current,
         DeviceCommand, DeviceEvent, Distance, Duration, DutyCycle, Energy, FootpadTelemetry,
         GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
-        PeakCurrent, PhaseCurrent, Power, ProtocolSession, SeriesCount, SessionInput,
-        SessionOutput, SettingState, SettingValue, SettingValueSource, Speed, TelemetryDelta,
-        SETTING_WRITE_CONFIRMATION_TIMEOUT,
-        TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
-        ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
+        PeakCurrent, PhaseCurrent, Power, ProtocolSession, SETTING_WRITE_CONFIRMATION_TIMEOUT,
+        SeriesCount, SessionInput, SessionOutput, SettingState, SettingValue, SettingValueSource,
+        Speed, TelemetryDelta, TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason,
+        ValueQuality, ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
     use core::mem::size_of;
     use proptest::prelude::*;
@@ -8356,6 +8379,8 @@ mod tests {
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
+                    | DeviceCommand::SetAccelerationAssist(_)
+                    | DeviceCommand::SetTaillight(_)
                     | DeviceCommand::SoundHorn
                     | DeviceCommand::SetRawMotorCurrent { .. },
                 ) => {}
@@ -10000,6 +10025,24 @@ mod tests {
         assert_eq!(horn.kind(), crate::CommandKind::SoundHorn);
         assert_eq!(lights.safety_class(), crate::SafetyClass::BenignControl);
         assert_eq!(horn.safety_class(), crate::SafetyClass::BenignControl);
+    }
+
+    #[test]
+    fn remaining_euc_setting_intents_are_typed_and_safety_classified() {
+        let acceleration =
+            DeviceCommand::SetAccelerationAssist(crate::AccelerationAssistState::Enabled);
+        let taillight = DeviceCommand::SetTaillight(LightState::On);
+
+        assert_eq!(
+            acceleration.kind(),
+            crate::CommandKind::SetAccelerationAssist
+        );
+        assert_eq!(
+            acceleration.safety_class(),
+            crate::SafetyClass::StationaryOnly
+        );
+        assert_eq!(taillight.kind(), crate::CommandKind::SetTaillight);
+        assert_eq!(taillight.safety_class(), crate::SafetyClass::BenignControl);
     }
 
     #[test]

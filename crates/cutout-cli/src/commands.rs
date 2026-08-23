@@ -2095,7 +2095,9 @@ fn selected_session_resolution_for_target(
 }
 
 fn auto_session_resolution() -> Result<SessionResolution> {
-    bail!("auto session resolution requires protocol identity evidence; advertised BLE names are display-only")
+    bail!(
+        "auto session resolution requires protocol identity evidence; advertised BLE names are display-only"
+    )
 }
 
 #[cfg(test)]
@@ -3152,8 +3154,10 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestDiagnostics => "request_diagnostics",
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
+        CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
         CommandKind::SetPedalMode => "set_pedal_mode",
+        CommandKind::SetTaillight => "set_taillight",
         CommandKind::SoundHorn => "sound_horn",
         CommandKind::SetRawMotorCurrent => "set_raw_motor_current",
     }

@@ -1,6 +1,6 @@
 use arrayvec::ArrayVec;
 use cutout_core::{
-    CommandKind, DeviceCommand, LightState, PendingProbe, PedalMode, RequestKey, RequestTarget,
+    CommandKind, DeviceCommand, LightState, PedalMode, PendingProbe, RequestKey, RequestTarget,
     VescControllerId, WriteMode, WritePayload,
 };
 
@@ -229,8 +229,10 @@ impl VescRequestEncoder {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
+            | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };
@@ -294,8 +296,10 @@ impl VescCanTarget {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
+            | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
         };

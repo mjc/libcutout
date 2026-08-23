@@ -48,20 +48,19 @@ use cutout_core::{
     NotificationEvidenceDto, NotificationIngestOutcomeDto,
     ParserDiagnosticCountDto, ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto,
     ParserFrameLenDto, ParserGapEvidenceDto, PayloadBodyLenDto, PedalMode as CorePedalMode,
-    PevcapHeader, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
-    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
-    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
-    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
-    RideOperatingModeDto, RideOperatingStateDto,
+    PevcapEncoding as CorePevcapEncoding, PevcapHeader, PevcapPhoneLocation, PevcapRecord,
+    PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
+    ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
+    RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
+    ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
     RideSessionLifecycle as CoreRideSessionLifecycle, RideSessionMarker as CoreRideSessionMarker,
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
-    RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
-    SessionOutputDto, SettingState as CoreSettingState,
-    SETTING_WRITE_CONFIRMATION_TIMEOUT,
+    RideStopReasonDto, RideWarningDto, SETTING_WRITE_CONFIRMATION_TIMEOUT, SemanticEventCountDto,
+    SeriesCount, SessionInputDto, SessionOutputDto, SettingState as CoreSettingState,
     SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
     SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
@@ -10130,8 +10129,10 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
-        CommandKindDto::SetLights
+        CommandKindDto::SetAccelerationAssist
+        | CommandKindDto::SetLights
         | CommandKindDto::SetPedalMode
+        | CommandKindDto::SetTaillight
         | CommandKindDto::SetRawMotorCurrent => None,
     }
 }
@@ -14371,10 +14372,12 @@ mod tests {
                 ..
             })
         ));
-        assert!(result
-            .outputs
-            .iter()
-            .all(|output| output.kind != MobileSessionOutputKindDto::Write));
+        assert!(
+            result
+                .outputs
+                .iter()
+                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+        );
     }
 
     #[test]

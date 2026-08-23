@@ -1,15 +1,14 @@
 use crate::{
-    Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
-    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BmsPackCurrents, ChargeMode,
-    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
+    AccelerationAssistState, Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind,
+    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
+    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
+    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
+    DiagnosticSeverity, Distance, DutyCycle, FaultCode, FaultHistoryAvailability,
+    FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    PedalMode,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
+    ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
     RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, SafetyClass,
     SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
@@ -230,6 +229,12 @@ pub enum CommandKindDto {
     /// Set pedal stiffness.
     SetPedalMode,
 
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist,
+
+    /// Set the taillight state.
+    SetTaillight,
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -249,6 +254,8 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestSettings => Self::RequestSettings,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
+            CommandKind::SetAccelerationAssist => Self::SetAccelerationAssist,
+            CommandKind::SetTaillight => Self::SetTaillight,
             CommandKind::SoundHorn => Self::SoundHorn,
             CommandKind::SetRawMotorCurrent => Self::SetRawMotorCurrent,
         }
@@ -285,6 +292,12 @@ pub enum DeviceCommandDto {
     /// Set pedal stiffness.
     SetPedalMode(PedalModeDto),
 
+    /// Enable or disable acceleration assist.
+    SetAccelerationAssist(AccelerationAssistStateDto),
+
+    /// Set the taillight state.
+    SetTaillight(LightStateDto),
+
     /// Sound a device horn or alert.
     SoundHorn,
 
@@ -307,6 +320,10 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommand::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            DeviceCommand::SetTaillight(state) => Self::SetTaillight(state.into()),
             DeviceCommand::SoundHorn => Self::SoundHorn,
             DeviceCommand::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
                 current: current.as_milliamps(),
@@ -327,6 +344,10 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
+            DeviceCommandDto::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            DeviceCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
             DeviceCommandDto::SoundHorn => Self::SoundHorn,
             DeviceCommandDto::SetRawMotorCurrent { current } => Self::SetRawMotorCurrent {
                 current: PhaseCurrent::from_milliamps(current),
@@ -343,6 +364,34 @@ pub enum LightStateDto {
 
     /// Lights on.
     On,
+}
+
+/// UniFFI-ready acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AccelerationAssistStateDto {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
+}
+
+impl From<AccelerationAssistState> for AccelerationAssistStateDto {
+    fn from(state: AccelerationAssistState) -> Self {
+        match state {
+            AccelerationAssistState::Disabled => Self::Disabled,
+            AccelerationAssistState::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<AccelerationAssistStateDto> for AccelerationAssistState {
+    fn from(state: AccelerationAssistStateDto) -> Self {
+        match state {
+            AccelerationAssistStateDto::Disabled => Self::Disabled,
+            AccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
 }
 
 /// UniFFI-ready pedal stiffness mode.
