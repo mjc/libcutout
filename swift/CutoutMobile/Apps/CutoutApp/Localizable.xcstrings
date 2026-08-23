@@ -53,6 +53,10 @@
       "comment" : "Shown when wheel telemetry confirms the requested headlight state.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry." } } }
     },
+    "settings.headlight.confirmed_ago" : {
+      "comment" : "Shown when wheel telemetry confirmed the requested headlight state, with elapsed whole seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed by wheel telemetry %llds ago." } } }
+    },
     "settings.high_beam.title" : {
       "comment" : "Label for a wheel protocol that controls the high beam.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High beam" } } }
@@ -116,6 +120,10 @@
     "settings.state.confirmed" : {
       "comment" : "Status for a setting command confirmed by the device.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed" } } }
+    },
+    "settings.state.confirmed_ago" : {
+      "comment" : "Status for a setting command confirmed by the device, with elapsed whole seconds.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed %llds ago" } } }
     },
     "settings.state.refused" : {
       "comment" : "Status for a setting command refused before transport.",

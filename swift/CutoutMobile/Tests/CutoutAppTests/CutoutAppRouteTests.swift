@@ -80,6 +80,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
         XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
         XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed_ago", Int64(2)), "Confirmed 2s ago")
         XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
         XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Timed out")
         XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
@@ -97,6 +98,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(
             localizedAppText("settings.headlight.confirmed"),
             "Confirmed by wheel telemetry."
+        )
+        XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed_ago", Int64(2)),
+            "Confirmed by wheel telemetry 2s ago."
         )
         XCTAssertEqual(
             localizedAppText("settings.high_beam.sent_unconfirmed"),
@@ -160,8 +165,13 @@ final class CutoutAppRouteTests: XCTestCase {
             "Refused"
         )
         XCTAssertEqual(
-            EucSettingCapabilityPresentation.statusText(support: .supported, state: .confirmed),
-            "Confirmed"
+            EucSettingCapabilityPresentation.statusText(
+                support: .supported,
+                state: .confirmed,
+                confirmedAt: MonotonicMilliseconds(1_000),
+                now: MonotonicMilliseconds(3_999)
+            ),
+            "Confirmed 2s ago"
         )
         XCTAssertEqual(
             EucSettingCapabilityPresentation.statusText(support: .supported, state: .timedOut),

@@ -173,19 +173,25 @@ struct EucTuneRouteView: View {
                             id: "pedalMode",
                             title: localizedAppText("settings.pedal_mode.title"),
                             support: capabilities.pedalMode,
-                            state: model.pedalModeState?.kind
+                            state: model.pedalModeState?.kind,
+                            confirmedAt: model.pedalModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
                             id: "accelerationAssist",
                             title: localizedAppText("settings.acceleration_assist.title"),
                             support: capabilities.accelerationAssist,
-                            state: model.accelerationAssistState?.kind
+                            state: model.accelerationAssistState?.kind,
+                            confirmedAt: model.accelerationAssistState?.confirmedAt,
+                            now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
                             id: "taillight",
                             title: localizedAppText("settings.taillight.title"),
                             support: capabilities.taillight,
-                            state: model.taillightState?.kind
+                            state: model.taillightState?.kind,
+                            confirmedAt: model.taillightState?.confirmedAt,
+                            now: model.currentMonotonicTime
                         )
                     } header: {
                         Text(localizedAppText("settings.capabilities.title"))
@@ -268,12 +274,19 @@ private struct EucSettingCapabilityRow: View {
     let title: String
     let support: SettingWriteSupport
     let state: SettingStateKind?
+    let confirmedAt: MonotonicMilliseconds?
+    let now: MonotonicMilliseconds
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
-            Text(EucSettingCapabilityPresentation.statusText(support: support, state: state))
+            Text(EucSettingCapabilityPresentation.statusText(
+                support: support,
+                state: state,
+                confirmedAt: confirmedAt,
+                now: now
+            ))
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
@@ -283,20 +296,31 @@ private struct EucSettingCapabilityRow: View {
 }
 
 enum EucSettingCapabilityPresentation {
-    static func statusText(support: SettingWriteSupport, state: SettingStateKind?) -> String {
+    static func statusText(
+        support: SettingWriteSupport,
+        state: SettingStateKind?,
+        confirmedAt: MonotonicMilliseconds? = nil,
+        now: MonotonicMilliseconds? = nil
+    ) -> String {
         switch state {
         case .pending:
-            localizedAppText("settings.state.pending")
+            return localizedAppText("settings.state.pending")
         case .confirmed:
-            localizedAppText("settings.state.confirmed")
+            if let confirmedAt, let now {
+                return localizedAppText(
+                    "settings.state.confirmed_ago",
+                    Int64(now.elapsed(since: confirmedAt).rawValue / 1_000)
+                )
+            }
+            return localizedAppText("settings.state.confirmed")
         case .refused:
-            localizedAppText("settings.state.refused")
+            return localizedAppText("settings.state.refused")
         case .timedOut:
-            localizedAppText("settings.state.timed_out")
+            return localizedAppText("settings.state.timed_out")
         case .failed:
-            localizedAppText("settings.state.failed")
+            return localizedAppText("settings.state.failed")
         case .unknown, .current, nil:
-            supportText(support)
+            return supportText(support)
         }
     }
 

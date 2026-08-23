@@ -213,11 +213,12 @@ final class CutoutAppModelTests: XCTestCase {
             source: .liveReadback,
             confirmedAt: MonotonicMilliseconds(7)
         )
+        driver.nowValue = 2_006
         let model = CutoutAppModel(core: driver)
 
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .confirmed)
-        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry 1s ago.")
     }
 
     @MainActor
@@ -255,7 +256,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
         XCTAssertEqual(model.headlightCommandStatus, .confirmed)
         XCTAssertTrue(model.headlightOn)
-        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry.")
+        XCTAssertEqual(model.headlightStatusText, "Confirmed by wheel telemetry 0s ago.")
 
         XCTAssertEqual(model.setHeadlight(false), .accepted)
         XCTAssertTrue(model.headlightOn)

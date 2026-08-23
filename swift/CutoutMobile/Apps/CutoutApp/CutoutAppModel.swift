@@ -329,7 +329,14 @@ final class CutoutAppModel {
         case .timedOut:
             localizedAppText("settings.headlight.timed_out")
         case .confirmed:
-            localizedAppText("settings.headlight.confirmed")
+            if let confirmedAt = effectiveHeadlightState?.confirmedAt {
+                localizedAppText(
+                    "settings.headlight.confirmed_ago",
+                    Int64(currentMonotonicTime.elapsed(since: confirmedAt).rawValue / 1_000)
+                )
+            } else {
+                localizedAppText("settings.headlight.confirmed")
+            }
         case .sentWithoutConfirmation:
             localizedAppText("settings.high_beam.sent_unconfirmed")
         }
