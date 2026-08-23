@@ -77,7 +77,7 @@ impl LocationSample {
         if self == previous {
             return LocationAdmission::Duplicate;
         }
-        if self.monotonic_milliseconds < previous.monotonic_milliseconds {
+        if self.monotonic_milliseconds <= previous.monotonic_milliseconds {
             return LocationAdmission::OutOfOrder;
         }
         LocationAdmission::Accepted
@@ -93,4 +93,8 @@ pub enum LocationAdmission {
     Duplicate,
     /// The sample would move time backwards.
     OutOfOrder,
+    /// The sample's horizontal accuracy exceeds the Rust admission threshold.
+    AccuracyTooLow,
+    /// The sample implies an impossible travel speed for a live phone fix.
+    UnrealisticJump,
 }

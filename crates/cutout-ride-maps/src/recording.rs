@@ -3,18 +3,86 @@ use crate::{
     distance_between_millimetres,
 };
 
+const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
+const MAX_GAP_MILLISECONDS: u64 = 30_000;
+const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
+/// Maximum age of telemetry that qualifies a route point as fresh.
+pub const TELEMETRY_FRESHNESS_MILLISECONDS: u64 = 2_000;
+
 /// One accepted route sample with its Rust-owned segment identity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RideMapPoint {
     sample: LocationSample,
     segment_id: u64,
+    telemetry_state: RouteTelemetryState,
+}
+
+/// Provenance of the vehicle telemetry associated with one route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RouteTelemetryState {
+    /// The point was recorded before a vehicle was associated.
+    GpsOnly,
+    /// A vehicle was associated but no telemetry sample was observed.
+    AssociatedNoTelemetry,
+    /// A fresh telemetry sample was observed for the point.
+    AssociatedFresh,
+    /// The latest telemetry sample was stale for the point.
+    AssociatedStale,
+}
+
+impl RouteTelemetryState {
+    /// Returns the stable SQLite representation.
+    #[must_use]
+    pub const fn storage_value(self) -> i64 {
+        match self {
+            Self::GpsOnly => 0,
+            Self::AssociatedNoTelemetry => 1,
+            Self::AssociatedFresh => 2,
+            Self::AssociatedStale => 3,
+        }
+    }
+
+    /// Decodes the stable SQLite representation.
+    #[must_use]
+    pub const fn from_storage(value: i64) -> Option<Self> {
+        match value {
+            0 => Some(Self::GpsOnly),
+            1 => Some(Self::AssociatedNoTelemetry),
+            2 => Some(Self::AssociatedFresh),
+            3 => Some(Self::AssociatedStale),
+            _ => None,
+        }
+    }
+}
+
+/// Result of observing one confirmed telemetry timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TelemetryObservation {
+    /// The timestamp became the newest telemetry evidence.
+    Observed,
+    /// The timestamp was already observed.
+    AlreadyObserved,
+    /// The ride has no confirmed vehicle association.
+    NotAssociated,
+    /// The timestamp moved backwards.
+    TimestampOutOfOrder,
+    /// The ride is not open for telemetry.
+    RideNotOpen,
 }
 
 impl RideMapPoint {
     /// Creates a segmented route point.
     #[must_use]
-    pub const fn new(sample: LocationSample, segment_id: u64) -> Self {
-        Self { sample, segment_id }
+    pub const fn new(
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+    ) -> Self {
+        Self {
+            sample,
+            segment_id,
+            telemetry_state,
+        }
     }
 
     /// Returns the canonical location sample.
@@ -27,6 +95,12 @@ impl RideMapPoint {
     #[must_use]
     pub const fn segment_id(self) -> u64 {
         self.segment_id
+    }
+
+    /// Returns the Rust-owned telemetry provenance.
+    #[must_use]
+    pub const fn telemetry_state(self) -> RouteTelemetryState {
+        self.telemetry_state
     }
 }
 
@@ -54,6 +128,8 @@ pub struct RideMapRecorder {
     created_at_milliseconds: u64,
     candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
+    associated_at_milliseconds: Option<u64>,
+    last_telemetry_at_milliseconds: Option<u64>,
     points: Vec<RideMapPoint>,
     summary: RideSummary,
     segment_id: u64,
@@ -76,6 +152,8 @@ impl RideMapRecorder {
             created_at_milliseconds: 0,
             candidate_vehicle: None,
             associated_vehicle: None,
+            associated_at_milliseconds: None,
+            last_telemetry_at_milliseconds: None,
             points: Vec::new(),
             summary: RideSummary::from_stored(0, 0),
             segment_id: 0,
@@ -91,6 +169,28 @@ impl RideMapRecorder {
         created_at_milliseconds: u64,
         points: Vec<RideMapPoint>,
     ) -> Self {
+        Self::restored_with_metadata(
+            state,
+            created_at_milliseconds,
+            None,
+            None,
+            None,
+            None,
+            points,
+        )
+    }
+
+    /// Restores a projection with persisted association and telemetry metadata.
+    #[must_use]
+    pub fn restored_with_metadata(
+        state: RideLifecycleState,
+        created_at_milliseconds: u64,
+        candidate_vehicle: Option<String>,
+        associated_vehicle: Option<String>,
+        associated_at_milliseconds: Option<u64>,
+        last_telemetry_at_milliseconds: Option<u64>,
+        points: Vec<RideMapPoint>,
+    ) -> Self {
         let point_count = points.len() as u64;
         let distance_millimetres = points
             .windows(2)
@@ -100,8 +200,10 @@ impl RideMapRecorder {
         Self {
             state: Some(state),
             created_at_milliseconds,
-            candidate_vehicle: None,
-            associated_vehicle: None,
+            candidate_vehicle,
+            associated_vehicle,
+            associated_at_milliseconds,
+            last_telemetry_at_milliseconds,
             last_monotonic_milliseconds: points.last().map_or(created_at_milliseconds, |point| {
                 point.sample().monotonic_milliseconds()
             }),
@@ -122,6 +224,24 @@ impl RideMapRecorder {
     #[must_use]
     pub fn associated_vehicle(&self) -> Option<&str> {
         self.associated_vehicle.as_deref()
+    }
+
+    /// Returns the candidate identity retained for automatic association.
+    #[must_use]
+    pub fn candidate_vehicle(&self) -> Option<&str> {
+        self.candidate_vehicle.as_deref()
+    }
+
+    /// Returns the monotonic association timestamp.
+    #[must_use]
+    pub const fn associated_at_milliseconds(&self) -> Option<u64> {
+        self.associated_at_milliseconds
+    }
+
+    /// Returns the newest observed telemetry timestamp.
+    #[must_use]
+    pub const fn last_telemetry_at_milliseconds(&self) -> Option<u64> {
+        self.last_telemetry_at_milliseconds
     }
 
     /// Returns the current segment identity for the next accepted point.
@@ -170,6 +290,8 @@ impl RideMapRecorder {
         self.last_monotonic_milliseconds = at_milliseconds;
         self.candidate_vehicle = candidate_vehicle;
         self.associated_vehicle = None;
+        self.associated_at_milliseconds = None;
+        self.last_telemetry_at_milliseconds = None;
         self.points.clear();
         self.summary = RideSummary::from_stored(0, 0);
         self.segment_id = 0;
@@ -214,31 +336,115 @@ impl RideMapRecorder {
         if at_milliseconds < self.last_monotonic_milliseconds {
             return VehicleAssociation::TimestampOutOfOrder;
         }
-        if self.associated_vehicle.as_deref() == Some(platform_identifier) {
-            return VehicleAssociation::AlreadyAssociated;
+        if let Some(associated) = self.associated_vehicle.as_deref() {
+            return if associated == platform_identifier {
+                VehicleAssociation::AlreadyAssociated
+            } else {
+                VehicleAssociation::IdentityMismatch
+            };
         }
-        if self
-            .candidate_vehicle
-            .as_deref()
-            .is_some_and(|candidate| candidate != platform_identifier)
-        {
+        let Some(candidate) = self.candidate_vehicle.as_deref() else {
+            return VehicleAssociation::CandidateMissing;
+        };
+        if candidate != platform_identifier {
             return VehicleAssociation::IdentityMismatch;
         }
         self.associated_vehicle = Some(platform_identifier.to_owned());
         self.candidate_vehicle = None;
+        self.associated_at_milliseconds = Some(at_milliseconds);
         VehicleAssociation::Associated
+    }
+
+    /// Records confirmed vehicle telemetry without backfilling prior points.
+    #[must_use]
+    pub fn observe_telemetry(&mut self, at_milliseconds: u64) -> TelemetryObservation {
+        if !matches!(
+            self.state,
+            Some(RideLifecycleState::Active | RideLifecycleState::Paused)
+        ) {
+            return TelemetryObservation::RideNotOpen;
+        }
+        let Some(associated_at) = self.associated_at_milliseconds else {
+            return TelemetryObservation::NotAssociated;
+        };
+        if at_milliseconds < associated_at || at_milliseconds < self.created_at_milliseconds {
+            return TelemetryObservation::TimestampOutOfOrder;
+        }
+        if self.last_telemetry_at_milliseconds == Some(at_milliseconds) {
+            return TelemetryObservation::AlreadyObserved;
+        }
+        if self
+            .last_telemetry_at_milliseconds
+            .is_some_and(|previous| at_milliseconds < previous)
+        {
+            return TelemetryObservation::TimestampOutOfOrder;
+        }
+        self.last_telemetry_at_milliseconds = Some(at_milliseconds);
+        TelemetryObservation::Observed
+    }
+
+    /// Returns the telemetry provenance for a point at the supplied monotonic time.
+    #[must_use]
+    pub fn telemetry_state_at(&self, at_milliseconds: u64) -> RouteTelemetryState {
+        if self.associated_vehicle.is_none() {
+            return RouteTelemetryState::GpsOnly;
+        }
+        let Some(last) = self.last_telemetry_at_milliseconds else {
+            return RouteTelemetryState::AssociatedNoTelemetry;
+        };
+        if at_milliseconds < last {
+            return RouteTelemetryState::AssociatedNoTelemetry;
+        }
+        if at_milliseconds.saturating_sub(last) > TELEMETRY_FRESHNESS_MILLISECONDS {
+            RouteTelemetryState::AssociatedStale
+        } else {
+            RouteTelemetryState::AssociatedFresh
+        }
     }
 
     /// Checks a candidate sample against the latest accepted sample.
     #[must_use]
     pub fn check_sample(&self, sample: &LocationSample) -> LocationAdmission {
         let previous = self.points.last().map(|point| point.sample());
-        sample.admission(previous.as_ref())
+        if sample
+            .horizontal_accuracy_millimetres()
+            .is_some_and(|accuracy| accuracy > MAX_HORIZONTAL_ACCURACY_MILLIMETRES)
+        {
+            return LocationAdmission::AccuracyTooLow;
+        }
+        let admission = sample.admission(previous.as_ref());
+        if admission != LocationAdmission::Accepted {
+            return admission;
+        }
+        let Some(previous) = previous else {
+            return LocationAdmission::Accepted;
+        };
+        let elapsed = sample
+            .monotonic_milliseconds()
+            .saturating_sub(previous.monotonic_milliseconds());
+        if elapsed <= MAX_GAP_MILLISECONDS {
+            let distance = distance_between_millimetres(previous, *sample);
+            if u128::from(distance) * 1_000
+                > u128::from(MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND) * u128::from(elapsed)
+            {
+                return LocationAdmission::UnrealisticJump;
+            }
+        }
+        LocationAdmission::Accepted
     }
 
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
-        let segment_started = self.segment_started;
+        let gap_started = self.points.last().is_some_and(|previous| {
+            sample
+                .monotonic_milliseconds()
+                .saturating_sub(previous.sample().monotonic_milliseconds())
+                > MAX_GAP_MILLISECONDS
+        });
+        let segment_started = self.segment_started || gap_started;
+        if gap_started {
+            self.segment_id = self.segment_id.saturating_add(1);
+        }
         let distance = if segment_started {
             0
         } else {
@@ -251,7 +457,11 @@ impl RideMapRecorder {
             self.summary.distance_millimetres().saturating_add(distance),
         );
         self.last_monotonic_milliseconds = sample.monotonic_milliseconds();
-        self.points.push(RideMapPoint::new(sample, self.segment_id));
+        self.points.push(RideMapPoint::new(
+            sample,
+            self.segment_id,
+            self.telemetry_state_at(sample.monotonic_milliseconds()),
+        ));
         self.segment_started = false;
         segment_started
     }
@@ -346,5 +556,17 @@ mod tests {
             recorder.check_sample(&changed),
             LocationAdmission::OutOfOrder
         );
+    }
+
+    #[test]
+    fn long_location_gap_starts_a_new_segment_without_false_distance() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(1_000, None).expect("starts");
+        recorder.record_sample(sample(1_001, 40.0));
+        let second = sample(40_000, 40.001);
+        assert_eq!(recorder.check_sample(&second), LocationAdmission::Accepted);
+        assert!(recorder.record_sample(second));
+        assert_eq!(recorder.current_segment_id(), 1);
+        assert_eq!(recorder.summary().distance_millimetres(), 0);
     }
 }
