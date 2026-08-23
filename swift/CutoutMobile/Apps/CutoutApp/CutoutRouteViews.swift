@@ -143,6 +143,15 @@ struct EucTuneRouteView: View {
                     if model.speedAlarmModeControlAvailable {
                         EucSpeedAlarmModeControl(model: model)
                     }
+                    if model.begodeMaxSpeedControlAvailable {
+                        EucBegodeMaxSpeedControl(model: model)
+                    }
+                    if model.begodeBeeperVolumeControlAvailable {
+                        EucBegodeBeeperVolumeControl(model: model)
+                    }
+                    if model.begodeLedModeControlAvailable {
+                        EucBegodeLedModeControl(model: model)
+                    }
                 } header: {
                     Text(localizedAppText("settings.lights.title"))
                 } footer: {
@@ -156,6 +165,15 @@ struct EucTuneRouteView: View {
                         }
                         if model.speedAlarmModeControlAvailable {
                             Text(localizedAppText("settings.speed_alarm_mode.footer"))
+                        }
+                        if model.begodeMaxSpeedControlAvailable {
+                            Text(localizedAppText("settings.begode_max_speed.footer"))
+                        }
+                        if model.begodeBeeperVolumeControlAvailable {
+                            Text(localizedAppText("settings.begode_beeper_volume.footer"))
+                        }
+                        if model.begodeLedModeControlAvailable {
+                            Text(localizedAppText("settings.begode_led_mode.footer"))
                         }
                     }
                 }
@@ -237,6 +255,30 @@ struct EucTuneRouteView: View {
                             support: capabilities.speedAlarmMode,
                             state: model.speedAlarmModeState?.kind,
                             confirmedAt: model.speedAlarmModeState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "begodeMaxSpeed",
+                            title: localizedAppText("settings.begode_max_speed.title"),
+                            support: capabilities.begodeMaxSpeed,
+                            state: nil,
+                            confirmedAt: nil,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "begodeBeeperVolume",
+                            title: localizedAppText("settings.begode_beeper_volume.title"),
+                            support: capabilities.begodeBeeperVolume,
+                            state: nil,
+                            confirmedAt: nil,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "begodeLedMode",
+                            title: localizedAppText("settings.begode_led_mode.title"),
+                            support: capabilities.begodeLedMode,
+                            state: nil,
+                            confirmedAt: nil,
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
@@ -363,6 +405,78 @@ private struct EucSpeedAlarmModeControl: View {
 
     private var readbackMode: SpeedAlarmMode.Kind? {
         model.settingsReadback?.eucGarageSettings.speedAlarmMode.value?.documentedKind
+    }
+}
+
+private struct EucBegodeMaxSpeedControl: View {
+    let model: CutoutAppModel
+    @State private var selectedSpeed = 30
+
+    var body: some View {
+        Stepper(
+            value: Binding(
+                get: { selectedSpeed },
+                set: { newValue in
+                    selectedSpeed = newValue
+                    if let speed = BegodeMaxSpeed(kilometresPerHour: UInt8(newValue)) {
+                        _ = model.setBegodeMaxSpeed(speed)
+                    }
+                }
+            ),
+            in: 0...99
+        ) {
+            Text("\(localizedAppText("settings.begode_max_speed.title")): \(selectedSpeed) km/h")
+        }
+        .disabled(model.phase != .live)
+        .accessibilityIdentifier("settings.control.begodeMaxSpeed")
+    }
+}
+
+private struct EucBegodeBeeperVolumeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedVolume = 5
+
+    var body: some View {
+        Picker(localizedAppText("settings.begode_beeper_volume.title"), selection: Binding(
+            get: { selectedVolume },
+            set: { newValue in
+                selectedVolume = newValue
+                if let volume = BegodeBeeperVolume(level: UInt8(newValue)) {
+                    _ = model.setBegodeBeeperVolume(volume)
+                }
+            }
+        )) {
+            ForEach(1...9, id: \.self) { value in
+                Text("\(value)").tag(value)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityIdentifier("settings.control.begodeBeeperVolume")
+    }
+}
+
+private struct EucBegodeLedModeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedMode = 0
+
+    var body: some View {
+        Picker(localizedAppText("settings.begode_led_mode.title"), selection: Binding(
+            get: { selectedMode },
+            set: { newValue in
+                selectedMode = newValue
+                if let mode = BegodeLedMode(mode: UInt8(newValue)) {
+                    _ = model.setBegodeLedMode(mode)
+                }
+            }
+        )) {
+            ForEach(0...9, id: \.self) { value in
+                Text("\(value)").tag(value)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityIdentifier("settings.control.begodeLedMode")
     }
 }
 

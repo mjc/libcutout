@@ -203,6 +203,27 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testBegodeWSettingWritesUseTheSupportedCapabilities() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        let speed = BegodeMaxSpeed(kilometresPerHour: 30)!
+        let volume = BegodeBeeperVolume(level: 7)!
+        let ledMode = BegodeLedMode(mode: 4)!
+
+        XCTAssertTrue(model.begodeMaxSpeedControlAvailable)
+        XCTAssertTrue(model.begodeBeeperVolumeControlAvailable)
+        XCTAssertTrue(model.begodeLedModeControlAvailable)
+        XCTAssertEqual(model.setBegodeMaxSpeed(speed), .accepted)
+        XCTAssertEqual(model.setBegodeBeeperVolume(volume), .accepted)
+        XCTAssertEqual(model.setBegodeLedMode(ledMode), .accepted)
+        XCTAssertEqual(driver.begodeMaxSpeeds, [speed])
+        XCTAssertEqual(driver.begodeBeeperVolumes, [volume])
+        XCTAssertEqual(driver.begodeLedModes, [ledMode])
+    }
+
+    @MainActor
     func testPedalModeStateIsExposedThroughTheSettingsDriver() {
         let driver = SessionDriverSpy(rows: [])
         driver.pedalModeState = PedalModeSettingState(
@@ -2962,6 +2983,9 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var pedalModes = [PedalMode.Kind]()
     private(set) var rollAngles = [RollAngle.Kind]()
     private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
+    private(set) var begodeMaxSpeeds = [BegodeMaxSpeed]()
+    private(set) var begodeBeeperVolumes = [BegodeBeeperVolume]()
+    private(set) var begodeLedModes = [BegodeLedMode]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: SettingCommandResult = .accepted
     var pedalModeCommandResult: SettingCommandResult = .accepted
@@ -3049,6 +3073,20 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
         speedAlarmModes.append(mode)
+        return .accepted
+    }
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        begodeMaxSpeeds.append(speed)
+        return .accepted
+    }
+
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        begodeBeeperVolumes.append(volume)
+        return .accepted
+    }
+
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        begodeLedModes.append(mode)
         return .accepted
     }
     func now() -> MonotonicMilliseconds {

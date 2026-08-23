@@ -211,6 +211,18 @@ final class CutoutAppModel {
         core.settingsCapabilities?.speedAlarmMode == .supported
     }
 
+    var begodeMaxSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.begodeMaxSpeed == .supported
+    }
+
+    var begodeBeeperVolumeControlAvailable: Bool {
+        core.settingsCapabilities?.begodeBeeperVolume == .supported
+    }
+
+    var begodeLedModeControlAvailable: Bool {
+        core.settingsCapabilities?.begodeLedMode == .supported
+    }
+
     var accelerationAssistState: AccelerationAssistSettingState? {
         core.accelerationAssistState
     }
@@ -1373,6 +1385,24 @@ final class CutoutAppModel {
     func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
         guard speedAlarmModeControlAvailable else { return .failed }
         return core.setSpeedAlarmMode(mode)
+    }
+
+    @discardableResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        guard begodeMaxSpeedControlAvailable else { return .failed }
+        return core.setBegodeMaxSpeed(speed)
+    }
+
+    @discardableResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        guard begodeBeeperVolumeControlAvailable else { return .failed }
+        return core.setBegodeBeeperVolume(volume)
+    }
+
+    @discardableResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        guard begodeLedModeControlAvailable else { return .failed }
+        return core.setBegodeLedMode(mode)
     }
 
     private func applyHeadlightSubmission(

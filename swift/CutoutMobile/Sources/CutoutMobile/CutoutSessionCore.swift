@@ -694,68 +694,54 @@ public final class CutoutSessionCore: NSObject {
 
     @discardableResult
     public func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
-        onBleQueue {
-            guard phase == .live, let liveOwner else { return .failed }
-            guard liveOwner.armSettingsWrites(at: clock.now()) else {
-                return .refused(.missingArm)
-            }
-            do {
-                try liveOwner.handleCommand(.setPedalMode(mode), at: clock.now())
-                return .accepted
-            } catch let error as CutoutSessionError {
-                record("set_pedal_mode_error=\(error)")
-                if case let .commandRefused(_, reason) = error {
-                    return .refused(reason)
-                }
-                return .failed
-            } catch {
-                record("set_pedal_mode_error=\(error)")
-                return .failed
-            }
-        }
+        setStationarySetting("set_pedal_mode", command: .setPedalMode(mode))
     }
 
     @discardableResult
     public func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
-        onBleQueue {
-            guard phase == .live, let liveOwner else { return .failed }
-            guard liveOwner.armSettingsWrites(at: clock.now()) else {
-                return .refused(.missingArm)
-            }
-            do {
-                try liveOwner.handleCommand(.setRollAngle(angle), at: clock.now())
-                return .accepted
-            } catch let error as CutoutSessionError {
-                record("set_roll_angle_error=\(error)")
-                if case let .commandRefused(_, reason) = error {
-                    return .refused(reason)
-                }
-                return .failed
-            } catch {
-                record("set_roll_angle_error=\(error)")
-                return .failed
-            }
-        }
+        setStationarySetting("set_roll_angle", command: .setRollAngle(angle))
     }
 
     @discardableResult
     public func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        setStationarySetting("set_speed_alarm_mode", command: .setSpeedAlarmMode(mode))
+    }
+
+    @discardableResult
+    public func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        setStationarySetting("set_begode_max_speed", command: .setBegodeMaxSpeed(speed))
+    }
+
+    @discardableResult
+    public func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        setStationarySetting("set_begode_beeper_volume", command: .setBegodeBeeperVolume(volume))
+    }
+
+    @discardableResult
+    public func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        setStationarySetting("set_begode_led_mode", command: .setBegodeLedMode(mode))
+    }
+
+    private func setStationarySetting(
+        _ name: String,
+        command: DeviceCommand
+    ) -> SettingCommandResult {
         onBleQueue {
             guard phase == .live, let liveOwner else { return .failed }
             guard liveOwner.armSettingsWrites(at: clock.now()) else {
                 return .refused(.missingArm)
             }
             do {
-                try liveOwner.handleCommand(.setSpeedAlarmMode(mode), at: clock.now())
+                try liveOwner.handleCommand(command, at: clock.now())
                 return .accepted
             } catch let error as CutoutSessionError {
-                record("set_speed_alarm_mode_error=\(error)")
+                record("\(name)_error=\(error)")
                 if case let .commandRefused(_, reason) = error {
                     return .refused(reason)
                 }
                 return .failed
             } catch {
-                record("set_speed_alarm_mode_error=\(error)")
+                record("\(name)_error=\(error)")
                 return .failed
             }
         }

@@ -40,6 +40,9 @@ protocol CutoutSessionDriving: AnyObject {
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
     func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

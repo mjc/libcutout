@@ -221,6 +221,30 @@
       "comment" : "PWM tiltback speed alarm readback value.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM tiltback" } } }
     },
+    "settings.begode_max_speed.title" : {
+      "comment" : "Label for the Begode max-speed write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Max speed" } } }
+    },
+    "settings.begode_max_speed.footer" : {
+      "comment" : "Safety guidance for the Begode max-speed write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.begode_beeper_volume.title" : {
+      "comment" : "Label for the Begode beeper-volume write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Beeper volume" } } }
+    },
+    "settings.begode_beeper_volume.footer" : {
+      "comment" : "Safety guidance for the Begode beeper-volume write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.begode_led_mode.title" : {
+      "comment" : "Label for the Begode LED-mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "LED mode" } } }
+    },
+    "settings.begode_led_mode.footer" : {
+      "comment" : "Safety guidance for the Begode LED-mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
     "settings.acceleration_assist.title" : {
       "comment" : "Label for the EUC acceleration assist setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Acceleration assist" } } }
