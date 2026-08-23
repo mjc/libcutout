@@ -27,7 +27,7 @@ struct MelkLightingTargetPolicy: Equatable, Sendable {
 }
 
 /// Failure while matching an observed standalone MELK controller to its typed profile.
-enum MelkLightingValidationError: Error, Equatable, Sendable {
+enum MelkLightingProtocolError: Error, Equatable, Sendable {
     case missingService
     case missingWriteCharacteristic
     case missingNotificationCharacteristic
@@ -42,7 +42,7 @@ public enum MelkLightingCommandStatus: Equatable, Sendable {
     case unconfirmed
 }
 
-/// Small state tracker used by the live validator; a write never self-confirms.
+/// Small state tracker used by the live lighting session; a write never self-confirms.
 struct MelkLightingCommandEvidence: Equatable, Sendable {
     private(set) var status: MelkLightingCommandStatus = .idle
 
@@ -84,7 +84,7 @@ struct MelkLightingWritePlan: Equatable, Sendable {
 ///
 /// Rust selects the profile and emits command bytes. This type only validates the observed GATT
 /// roles and adapts those typed writes to the existing CoreBluetooth operation sink.
-struct MelkLightingValidationHarness: Sendable {
+struct MelkLightingCommandProfile: Sendable {
     static let service = BluetoothUuid.bluetooth16(0xfff0)
     static let write = BluetoothUuid.bluetooth16(0xfff3)
     static let notify = BluetoothUuid.bluetooth16(0xfff4)
@@ -98,17 +98,17 @@ struct MelkLightingValidationHarness: Sendable {
         inventory: CoreBluetoothGattInventory
     ) throws {
         guard let serviceInventory = inventory.services.first(where: { $0.uuid == Self.service }) else {
-            throw MelkLightingValidationError.missingService
+            throw MelkLightingProtocolError.missingService
         }
         guard let writeCharacteristic = serviceInventory.characteristics.first(where: {
             $0.uuid == Self.write && $0.properties.contains(.writeWithoutResponse)
         }) else {
-            throw MelkLightingValidationError.missingWriteCharacteristic
+            throw MelkLightingProtocolError.missingWriteCharacteristic
         }
         guard let notifyCharacteristic = serviceInventory.characteristics.first(where: {
             $0.uuid == Self.notify && ($0.properties.contains(.notify) || $0.properties.contains(.indicate))
         }) else {
-            throw MelkLightingValidationError.missingNotificationCharacteristic
+            throw MelkLightingProtocolError.missingNotificationCharacteristic
         }
 
         do {
@@ -122,7 +122,7 @@ struct MelkLightingValidationHarness: Sendable {
                 )
             )
         } catch {
-            throw MelkLightingValidationError.profileRejected
+            throw MelkLightingProtocolError.profileRejected
         }
         subscription = .subscribe(channel: notifyCharacteristic.uuid)
     }
@@ -157,7 +157,7 @@ struct MelkLightingValidationHarness: Sendable {
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 
-/// Connection state for the independent standalone MELK validator.
+/// Connection state for the independent standalone MELK lighting session.
 public enum MelkLightingPeripheralState: Equatable, Sendable {
     case idle
     case scanning
@@ -183,7 +183,7 @@ public extension MelkLightingPeripheralState {
 
 /// A secondary CoreBluetooth connection for validating MELK without replacing a ride session.
 ///
-/// The validator owns its own central manager, so it can remain connected while the primary
+/// The lighting session owns its own central manager, so it can remain connected while the primary
 /// EUC/VESC central connection continues to receive telemetry. A command starts as `requested`
 /// and is never marked successful by a write callback; the caller must explicitly record
 /// confirmation or lack of confirmation.
@@ -193,7 +193,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private var central: CBCentralManager?
     private var peripheral: CBPeripheral?
     private var advertisedName: String?
-    private var harness: MelkLightingValidationHarness?
+    private var harness: MelkLightingCommandProfile?
     private var sink: CoreBluetoothPeripheralOperationSink?
     private var targetPolicy = MelkLightingTargetPolicy(preferredPlatformIdentifier: nil)
     private var reconnectEnabled = true
@@ -205,13 +205,13 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public private(set) var peripheralIdentifier: String?
     private var commandEvidence = MelkLightingCommandEvidence()
 
-    /// Called on the validator's CoreBluetooth queue.
+    /// Called on the lighting session's CoreBluetooth queue.
     public var onStateChange: ((MelkLightingPeripheralState) -> Void)?
 
-    /// Called on the validator's CoreBluetooth queue for raw FFF4 notification bytes.
+    /// Called on the lighting session's CoreBluetooth queue for raw FFF4 notification bytes.
     public var onNotification: ((Data) -> Void)?
 
-    /// Called on the validator's CoreBluetooth queue for bounded diagnostic records.
+    /// Called on the lighting session's CoreBluetooth queue for bounded diagnostic records.
     public var onRecord: ((String) -> Void)?
 
     public init(queue: DispatchQueue = DispatchQueue(label: "io.cutout.melk-lighting")) {
@@ -492,7 +492,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
                 return
             }
             do {
-                let candidate = try MelkLightingValidationHarness(
+                let candidate = try MelkLightingCommandProfile(
                     name: name,
                     inventory: CoreBluetoothGattInventory(services: peripheral.services ?? [])
                 )
@@ -514,7 +514,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         error: Error?
     ) {
         onQueue {
-            guard characteristic.uuid == MelkLightingValidationHarness.notify.coreBluetoothUuid else {
+            guard characteristic.uuid == MelkLightingCommandProfile.notify.coreBluetoothUuid else {
                 return
             }
             guard error == nil, characteristic.isNotifying else {
@@ -532,7 +532,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         error: Error?
     ) {
         onQueue {
-            guard error == nil, characteristic.uuid == MelkLightingValidationHarness.notify.coreBluetoothUuid,
+            guard error == nil, characteristic.uuid == MelkLightingCommandProfile.notify.coreBluetoothUuid,
                   let value = characteristic.value else { return }
             onNotification?(value)
             record("notification=\(value.count) bytes")
