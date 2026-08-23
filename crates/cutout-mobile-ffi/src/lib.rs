@@ -6198,7 +6198,7 @@ impl MobilePevcapCaptureBuilder {
                 };
                 Some(music)
             }
-            None => self.music_context(),
+            None => self.take_music_context(),
         };
         if let Some(music) = music {
             record = record.with_music(music);
@@ -6208,11 +6208,11 @@ impl MobilePevcapCaptureBuilder {
 }
 
 impl MobilePevcapCaptureBuilder {
-    fn music_context(&self) -> Option<PevcapMusicEvent> {
+    fn take_music_context(&self) -> Option<PevcapMusicEvent> {
         self.music_context
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clone()
+            .take()
     }
 
     fn metadata(&self) -> CaptureMetadata {
@@ -11435,7 +11435,6 @@ mod tests {
             None,
             None,
         ));
-        assert!(builder.set_music_context(None));
         assert!(builder.record_notification_with_context(
             ms(43),
             vec![0; 16],
