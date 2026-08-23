@@ -226,6 +226,10 @@ enum StoreCommand {
         event: MusicRideEvent,
         reply: mpsc::Sender<Result<(), RideMapStoreError>>,
     },
+    MusicHistoryDelete {
+        ride_id: Uuid,
+        reply: mpsc::Sender<Result<(), RideMapStoreError>>,
+    },
     Save {
         recording: Box<RideRecording>,
         reply: mpsc::Sender<Result<(), RideMapStoreError>>,
@@ -459,6 +463,28 @@ impl RideMapStore {
             params![ride_id.to_string(), policy_name(policy)],
         )?;
         insert_music_event(&transaction, ride_id, sequence, event)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Removes music metadata from one ride while preserving its route and
+    /// lifecycle record.
+    ///
+    /// # Errors
+    ///
+    /// Returns `RideMapStoreError` when the transaction cannot be committed.
+    pub fn delete_music_history(&mut self, ride_id: Uuid) -> Result<(), RideMapStoreError> {
+        let transaction = self.connection.transaction()?;
+        transaction.execute(
+            "UPDATE ride_map_ride
+             SET music_history_policy = 'disabled'
+             WHERE ride_id = ?1",
+            params![ride_id.to_string()],
+        )?;
+        transaction.execute(
+            "DELETE FROM ride_music_event WHERE ride_id = ?1",
+            params![ride_id.to_string()],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -768,6 +794,17 @@ impl RideMapDatabase {
         receiver.recv().map_err(worker_closed)?
     }
 
+    /// Removes one ride's music metadata without deleting the ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns storage or worker-shutdown errors.
+    pub fn delete_music_history(&self, ride_id: Uuid) -> Result<(), RideMapStoreError> {
+        let (reply, receiver) = mpsc::channel();
+        self.send(StoreCommand::MusicHistoryDelete { ride_id, reply })?;
+        receiver.recv().map_err(worker_closed)?
+    }
+
     /// Deletes one discarded recording through the single worker.
     ///
     /// # Errors
@@ -894,6 +931,9 @@ fn run_worker(
             } => {
                 let result = store.save_music_event(ride_id, policy, sequence, &event);
                 let _ = reply.send(result);
+            }
+            StoreCommand::MusicHistoryDelete { ride_id, reply } => {
+                let _ = reply.send(store.delete_music_history(ride_id));
             }
             StoreCommand::Save { recording, reply } => {
                 let _ = reply.send(store.save_recording(&recording));

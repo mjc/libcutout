@@ -391,6 +391,23 @@ final class CutoutAppModel {
         }
     }
 
+    @discardableResult
+    func deleteMusicHistory(rideID: String) -> Bool {
+        do {
+            try core.rideMapStateHandle.deleteMusicHistory(rideId: rideID)
+            if selectedRideMapHistoryID == rideID {
+                selectedRideMapHistoryID = nil
+                rideMapHistoryPoints = []
+                rideMapHistoryPointsTruncated = false
+            }
+            rideMapError = nil
+            return true
+        } catch {
+            rideMapError = error as? MobileRideMapError
+            return false
+        }
+    }
+
     private func collectRideMapPoints(
         _ fetch: (UInt64, UInt32) throws -> MobileRideMapPointBatchDto?
     ) rethrows -> ([MobileRideMapPointDto], Bool)? {

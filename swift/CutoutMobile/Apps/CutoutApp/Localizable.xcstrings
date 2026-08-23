@@ -641,6 +641,14 @@
       "comment" : "Generic cancellation action used by confirmation dialogs.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
     },
+    "music.history.forget" : {
+      "comment" : "Destructive action that removes music metadata without deleting a ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget music history" } } }
+    },
+    "music.history.forget_confirm_title" : {
+      "comment" : "Confirmation title before removing music metadata from a saved ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Forget music history for this ride?" } } }
+    },
     "ride_map.associated_vehicle" : {
       "comment" : "Ride-map summary label for the confirmed vehicle identity.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vehicle: %@" } } }

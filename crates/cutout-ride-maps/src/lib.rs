@@ -730,6 +730,12 @@ impl RideRecording {
         true
     }
 
+    /// Forgets all music metadata without changing the ride lifecycle.
+    pub fn forget_music_history(&mut self) {
+        self.music_history_policy = MusicHistoryPolicy::Disabled;
+        self.music_timeline = MusicTimeline::new();
+    }
+
     /// Records one provider transition after applying the ride policy.
     pub fn record_music_snapshot(
         &mut self,
@@ -1164,6 +1170,45 @@ mod tests {
             recovered.music_events()[0].kind(),
             MusicRideEventKind::ItemChanged
         );
+    }
+
+    #[test]
+    fn ride_music_history_can_be_forgotten_without_deleting_the_ride() {
+        let mut store = RideMapStore::open_in_memory().expect("store opens");
+        let mut ride = RideRecording::start_gps_only(
+            MonotonicMilliseconds::new(100),
+            None,
+            LocationAdmissionPolicy::default(),
+        );
+        assert!(ride.set_music_history_policy(MusicHistoryPolicy::HumanReadable));
+        let snapshot = music_snapshot();
+        assert_eq!(
+            ride.record_music_snapshot(
+                &snapshot,
+                MusicRideEventKind::ItemChanged,
+                MonotonicMilliseconds::new(200),
+                1_700_000_000_200,
+                3,
+            ),
+            MusicTimelineOutcome::Recorded
+        );
+        let ride_id = ride.ride_id();
+        store.save_recording(&ride).expect("recording saves");
+
+        store
+            .delete_music_history(ride_id)
+            .expect("music history deletes");
+
+        let recovered = store
+            .recover_open_recording()
+            .expect("recovery succeeds")
+            .expect("ride remains present");
+        assert_eq!(recovered.ride_id(), ride_id);
+        assert_eq!(
+            recovered.music_history_policy(),
+            MusicHistoryPolicy::Disabled
+        );
+        assert!(recovered.music_events().is_empty());
     }
 
     #[test]

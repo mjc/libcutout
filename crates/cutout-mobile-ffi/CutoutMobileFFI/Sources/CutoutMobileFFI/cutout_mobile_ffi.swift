@@ -2432,6 +2432,17 @@ public protocol MobileRideMapStateProtocol: AnyObject, Sendable {
     func currentSnapshot()  -> MobileRideMapSnapshotDto?
 
     /**
+     * Forgets persisted music metadata for one ride without deleting its
+     * route or lifecycle record.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::Storage`] when the ride identity or
+     * canonical store operation is invalid.
+     */
+    func deleteMusicHistory(rideId: String) throws
+
+    /**
      * Explicitly discards a stopped ride and removes its stored history.
      *
      * # Errors
@@ -2678,6 +2689,23 @@ open func currentSnapshot() -> MobileRideMapSnapshotDto?  {
             self.uniffiCloneHandle(),$0
     )
 })
+}
+
+    /**
+     * Forgets persisted music metadata for one ride without deleting its
+     * route or lifecycle record.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapError::Storage`] when the ride identity or
+     * canonical store operation is invalid.
+     */
+open func deleteMusicHistory(rideId: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideMapError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapstate_delete_music_history(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(rideId),$0
+    )
+}
 }
 
     /**
@@ -21426,6 +21454,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_current_snapshot() != 30528) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_delete_music_history() != 37606) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapstate_discard() != 60098) {

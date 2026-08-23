@@ -3764,6 +3764,32 @@ impl MobileRideMapState {
         self.persist_metadata_or_restore(current, previous)
     }
 
+    /// Forgets persisted music metadata for one ride without deleting its
+    /// route or lifecycle record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapError::Storage`] when the ride identity or
+    /// canonical store operation is invalid.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn delete_music_history(&self, ride_id: String) -> Result<(), MobileRideMapError> {
+        let ride_id = Uuid::parse_str(&ride_id)
+            .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+        {
+            let mut store = self.lock_store();
+            if let Some(store) = store.as_mut() {
+                store
+                    .delete_music_history(ride_id)
+                    .map_err(|error| MobileRideMapError::Storage(error.to_string()))?;
+            }
+        }
+        let mut ride = self.lock_ride();
+        if let Some(current) = ride.as_mut().filter(|current| current.ride_id() == ride_id) {
+            current.forget_music_history();
+        }
+        Ok(())
+    }
+
     /// Records one provider transition in the Rust-owned ride timeline.
     ///
     /// The provider observation is validated before any ride mutation. Raw
@@ -11878,6 +11904,27 @@ mod ride_map_tests {
         assert_eq!(events[0].item_identifier.as_deref(), Some("track-1"));
         assert_eq!(events[0].title, None);
         assert_eq!(events[0].artist, None);
+
+        let ride_id = state
+            .current_snapshot()
+            .expect("ride remains present")
+            .ride_id;
+        state
+            .delete_music_history(ride_id.clone())
+            .expect("music history should be forgotten");
+        assert!(
+            state
+                .current_music_events()
+                .expect("active ride still exists")
+                .is_empty()
+        );
+        assert_eq!(
+            state
+                .current_snapshot()
+                .expect("ride remains present")
+                .ride_id,
+            ride_id
+        );
     }
 
     #[test]

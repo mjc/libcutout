@@ -19,6 +19,7 @@ struct RideMapRouteView: View {
     @State private var mode = Mode.live
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isDiscardConfirmationPresented = false
+    @State private var isForgetMusicHistoryConfirmationPresented = false
     @State private var followsLatestPoint = true
     @State private var isApplyingCamera = false
 
@@ -202,7 +203,25 @@ struct RideMapRouteView: View {
                         .padding(.horizontal, 20)
                         .accessibilityIdentifier("ride-map.history-truncated")
                 }
+                if model.selectedRideMapHistoryID != nil {
+                    Button(localizedAppText("music.history.forget"), role: .destructive) {
+                        isForgetMusicHistoryConfirmationPresented = true
+                    }
+                    .accessibilityIdentifier("ride-map.forget-music-history")
+                }
             }
+        }
+        .confirmationDialog(
+            localizedAppText("music.history.forget_confirm_title"),
+            isPresented: $isForgetMusicHistoryConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(localizedAppText("music.history.forget"), role: .destructive) {
+                if let rideID = model.selectedRideMapHistoryID {
+                    _ = model.deleteMusicHistory(rideID: rideID)
+                }
+            }
+            Button(localizedAppText("common.cancel"), role: .cancel) {}
         }
         .onAppear { model.loadRideMapHistory() }
     }
