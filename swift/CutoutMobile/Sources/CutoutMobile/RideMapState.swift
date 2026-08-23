@@ -228,22 +228,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
         do {
             let page = try database.listRides(cursor: cursor, limit: limit)
-            let summaries = page.rides.map { ride in
-                MobileRideMapHistorySummaryDto(
-                    rideId: ride.id.value,
-                    state: mapState(ride.state),
-                    summary: MobileRideMapSummaryDto(
-                        pointCount: ride.summary.pointCount,
-                        distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
-                        durationMilliseconds: ride.updatedAtMilliseconds >= ride.createdAtMilliseconds
-                            ? ride.updatedAtMilliseconds - ride.createdAtMilliseconds
-                            : 0
-                    ),
-                    segmentCount: ride.segmentCount,
-                    candidateVehicle: ride.candidateVehicle,
-                    associatedVehicle: ride.associatedVehicle
-                )
-            }
+            let summaries = page.rides.map(mapHistorySummary)
             return MobileRideMapHistoryPageDto(
                 summaries: summaries,
                 nextCursor: page.nextCursor
@@ -251,6 +236,23 @@ public final class MobileRideMapState: @unchecked Sendable {
         } catch {
             throw map(error)
         }
+    }
+
+    private func mapHistorySummary(_ ride: MobileRideRecordDto) -> MobileRideMapHistorySummaryDto {
+        MobileRideMapHistorySummaryDto(
+            rideId: ride.id.value,
+            state: mapState(ride.state),
+            summary: MobileRideMapSummaryDto(
+                pointCount: ride.summary.pointCount,
+                distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
+                durationMilliseconds: ride.updatedAtMilliseconds >= ride.createdAtMilliseconds
+                    ? ride.updatedAtMilliseconds - ride.createdAtMilliseconds
+                    : 0
+            ),
+            segmentCount: ride.segmentCount,
+            candidateVehicle: ride.candidateVehicle,
+            associatedVehicle: ride.associatedVehicle
+        )
     }
 
     public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
