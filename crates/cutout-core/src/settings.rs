@@ -1,6 +1,9 @@
 //! Shared state for typed settings writes.
 
-use crate::{ControlRefusalReason, MonotonicTimestamp};
+use crate::{ControlRefusalReason, Duration, MonotonicTimestamp};
+
+/// Maximum time to await matching readback for a settings write.
+pub const SETTING_WRITE_CONFIRMATION_TIMEOUT: Duration = Duration::from_seconds(2);
 
 /// Provenance for a setting value held by the state reducer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -185,7 +188,7 @@ where
     pub fn timeout_if_elapsed(
         &mut self,
         now: MonotonicTimestamp,
-        timeout: crate::Duration,
+        timeout: Duration,
     ) -> bool {
         let Self::Pending { submitted_at, .. } = *self else {
             return false;

@@ -61,6 +61,7 @@ use cutout_core::{
     RideSessionMarkerError as CoreRideSessionMarkerError, RideSessionPhase as CoreRideSessionPhase,
     RideStopReasonDto, RideWarningDto, SemanticEventCountDto, SeriesCount, SessionInputDto,
     SessionOutputDto, SettingState as CoreSettingState,
+    SETTING_WRITE_CONFIRMATION_TIMEOUT,
     SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
     SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
@@ -2820,7 +2821,7 @@ fn observe_setting_tick<Value>(
     Value: Copy + Eq,
 {
     if kind == MobileSessionInputKindDto::Tick {
-        state.timeout_if_elapsed(now, CoreDuration::from_seconds(2));
+        state.timeout_if_elapsed(now, SETTING_WRITE_CONFIRMATION_TIMEOUT);
     }
 }
 

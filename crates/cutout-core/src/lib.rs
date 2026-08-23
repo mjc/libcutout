@@ -7799,6 +7799,7 @@ mod tests {
         GattChannel, LightState, LinkInfo, Measured, MonotonicTimestamp, ParallelCount,
         PeakCurrent, PhaseCurrent, Power, ProtocolSession, SeriesCount, SessionInput,
         SessionOutput, SettingState, SettingValue, SettingValueSource, Speed, TelemetryDelta,
+        SETTING_WRITE_CONFIRMATION_TIMEOUT,
         TelemetrySnapshot, Temperature, TransportAction, UnsupportedReason, ValueQuality,
         ValueSource, VerificationStatus, Voltage, WriteMode, WritePayload,
     };
@@ -7889,7 +7890,7 @@ mod tests {
     fn setting_state_timeout_waits_for_deadline() {
         let mut state = SettingState::<LightState>::unknown();
         state.submit(LightState::On, ms(10));
-        let timeout = Duration::from_seconds(2);
+        let timeout = SETTING_WRITE_CONFIRMATION_TIMEOUT;
 
         assert!(!state.timeout_if_elapsed(ms(2_009), timeout));
         assert!(matches!(state, SettingState::Pending { .. }));
