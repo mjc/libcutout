@@ -16,6 +16,32 @@ func shouldAutoStartLightingSession(platformIdentifier: String?) -> Bool {
     guard let platformIdentifier else { return false }
     return !platformIdentifier.isEmpty
 }
+func lightingColorSelection(
+    red: UInt8,
+    green: UInt8,
+    blue: UInt8
+) -> (hue: Double, saturation: Double) {
+    let red = Double(red) / 255
+    let green = Double(green) / 255
+    let blue = Double(blue) / 255
+    let maximum = max(red, green, blue)
+    let minimum = min(red, green, blue)
+    let delta = maximum - minimum
+    guard delta > 0, maximum > 0 else {
+        return (hue: 0, saturation: 0)
+    }
+
+    let hue: Double
+    if maximum == red {
+        hue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6) / 6
+    } else if maximum == green {
+        hue = ((blue - red) / delta + 2) / 6
+    } else {
+        hue = ((red - green) / delta + 4) / 6
+    }
+    return (hue: hue < 0 ? hue + 1 : hue, saturation: delta / maximum)
+}
+
 
 struct DevicePickerRouteView: View {
     let model: CutoutAppModel
@@ -692,6 +718,7 @@ struct LightingRouteView: View {
                         Button {
                             brightness = Double(preset.requested.brightness)
                             model.applyPreset(preset)
+                            updateColorSelection()
                         } label: {
                             HStack {
                                 Text(preset.name)
@@ -794,25 +821,13 @@ struct LightingRouteView: View {
     }
 
     private func updateColorSelection() {
-        let red = Double(model.requestedRed) / 255
-        let green = Double(model.requestedGreen) / 255
-        let blue = Double(model.requestedBlue) / 255
-        let maximum = max(red, green, blue)
-        let minimum = min(red, green, blue)
-        let delta = maximum - minimum
-        saturation = maximum == 0 ? 0 : delta / maximum
-        guard delta > 0 else {
-            hue = 0
-            return
-        }
-        if maximum == red {
-            hue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6) / 6
-        } else if maximum == green {
-            hue = ((blue - red) / delta + 2) / 6
-        } else {
-            hue = ((red - green) / delta + 4) / 6
-        }
-        if hue < 0 { hue += 1 }
+        let selection = lightingColorSelection(
+            red: model.requestedRed,
+            green: model.requestedGreen,
+            blue: model.requestedBlue
+        )
+        hue = selection.hue
+        saturation = selection.saturation
     }
 }
 

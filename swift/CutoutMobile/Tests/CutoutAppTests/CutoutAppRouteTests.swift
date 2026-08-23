@@ -124,6 +124,20 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(shouldAutoStartLightingSession(platformIdentifier: ""))
     }
 
+    func testLightingColorSelectionKeepsPrimaryAndNeutralColorsStable() {
+        let red = lightingColorSelection(red: 255, green: 0, blue: 0)
+        XCTAssertEqual(red.hue, 0, accuracy: 0.0001)
+        XCTAssertEqual(red.saturation, 1, accuracy: 0.0001)
+
+        let cyan = lightingColorSelection(red: 0, green: 255, blue: 255)
+        XCTAssertEqual(cyan.hue, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(cyan.saturation, 1, accuracy: 0.0001)
+
+        let white = lightingColorSelection(red: 255, green: 255, blue: 255)
+        XCTAssertEqual(white.hue, 0, accuracy: 0.0001)
+        XCTAssertEqual(white.saturation, 0, accuracy: 0.0001)
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))
