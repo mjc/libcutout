@@ -41,8 +41,10 @@ use cutout_core::{
     PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily,
     ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto,
     RawTelemetryReadback, RawTelemetryReadbackDto, ReadOnlyOutputPayload,
-    ReservedPayloadEvidenceDto, RgbColor, RgbLightingCommand, RideOperatingModeDto,
-    RideOperatingStateDto, RideSessionAppPresence as CoreRideSessionAppPresence,
+    ReservedPayloadEvidenceDto, RgbColor, RgbLightingCommand, RgbLightingRequestedState,
+    RgbLightingRestoreDecision, RgbLightingRestoreMarker as CoreRgbLightingRestoreMarker,
+    RideOperatingModeDto, RideOperatingStateDto,
+    RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
     RideSessionIdentity as CoreRideSessionIdentity, RideSessionInput as CoreRideSessionInput,
@@ -1155,6 +1157,122 @@ pub enum MobileMelkLightingError {
     InvalidBrightness,
 }
 
+/// Complete solid-lighting state stored for an explicit restore.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingRestoreStateDto {
+    /// Whether the controller was requested on.
+    pub power_on: bool,
+
+    /// Requested red channel.
+    pub red: u8,
+
+    /// Requested green channel.
+    pub green: u8,
+
+    /// Requested blue channel.
+    pub blue: u8,
+
+    /// Requested brightness percentage.
+    pub brightness: u8,
+}
+
+/// Typed result kind for an attempted lighting restore.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileMelkLightingRestoreDecisionKindDto {
+    /// Restore was disabled by the user.
+    Disabled,
+
+    /// `CoreBluetooth` restored a different platform identity.
+    DifferentAccessory,
+
+    /// The remembered state may be restored.
+    Restore,
+}
+
+/// Result of reconciling a persisted lighting marker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMelkLightingRestoreDecisionDto {
+    /// Typed decision kind.
+    pub kind: MobileMelkLightingRestoreDecisionKindDto,
+
+    /// Requested state when `kind` is `Restore`.
+    pub requested: Option<MobileMelkLightingRestoreStateDto>,
+}
+
+/// Rust-owned marker for one selected MELK accessory and its confirmed state.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileMelkLightingRestoreMarker {
+    marker: CoreRgbLightingRestoreMarker,
+}
+
+#[uniffi::export]
+impl MobileMelkLightingRestoreMarker {
+    /// Creates a marker from a confirmed, bounded requested state.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidBrightness` when the requested brightness is outside the
+    /// protocol's percentage range.
+    #[uniffi::constructor]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn new(
+        platform_identifier: String,
+        requested: MobileMelkLightingRestoreStateDto,
+    ) -> Result<Arc<Self>, MobileMelkLightingError> {
+        let brightness = LightingBrightness::try_from_percent(requested.brightness)
+            .map_err(|_| MobileMelkLightingError::InvalidBrightness)?;
+        let requested = RgbLightingRequestedState::new(
+            if requested.power_on {
+                LightingPowerState::On
+            } else {
+                LightingPowerState::Off
+            },
+            RgbColor::new(requested.red, requested.green, requested.blue),
+            brightness,
+        );
+        Ok(Arc::new(Self {
+            marker: CoreRgbLightingRestoreMarker::new(platform_identifier, requested),
+        }))
+    }
+
+    /// Reconciles a marker with a restored platform identity and opt-in flag.
+    #[must_use]
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI exports owned inputs")]
+    pub fn recover(
+        &self,
+        restored_platform_identifier: String,
+        restore_enabled: bool,
+    ) -> MobileMelkLightingRestoreDecisionDto {
+        match self
+            .marker
+            .recover(&restored_platform_identifier, restore_enabled)
+        {
+            RgbLightingRestoreDecision::Disabled => MobileMelkLightingRestoreDecisionDto {
+                kind: MobileMelkLightingRestoreDecisionKindDto::Disabled,
+                requested: None,
+            },
+            RgbLightingRestoreDecision::DifferentAccessory => {
+                MobileMelkLightingRestoreDecisionDto {
+                    kind: MobileMelkLightingRestoreDecisionKindDto::DifferentAccessory,
+                    requested: None,
+                }
+            }
+            RgbLightingRestoreDecision::Restore(requested) => {
+                MobileMelkLightingRestoreDecisionDto {
+                    kind: MobileMelkLightingRestoreDecisionKindDto::Restore,
+                    requested: Some(MobileMelkLightingRestoreStateDto {
+                        power_on: requested.power() == LightingPowerState::On,
+                        red: requested.color().red(),
+                        green: requested.color().green(),
+                        blue: requested.color().blue(),
+                        brightness: requested.brightness().as_percent(),
+                    }),
+                }
+            }
+        }
+    }
+}
+
 /// Rust-owned candidate profile for an observed `MELK-OC21` controller.
 #[derive(Debug, uniffi::Object)]
 pub struct MobileMelkLightingProfile;
@@ -1229,7 +1347,8 @@ impl MobileMelkLightingProfile {
 mod melk_lighting_tests {
     use super::{
         MobileMelkLightingError, MobileMelkLightingGattEvidence, MobileMelkLightingProfile,
-        MobileMelkLightingWriteModeDto,
+        MobileMelkLightingRestoreDecisionKindDto, MobileMelkLightingRestoreMarker,
+        MobileMelkLightingRestoreStateDto, MobileMelkLightingWriteModeDto,
     };
     use cutout_protocols::{MELK_NOTIFY_CHANNEL, MELK_WRITE_CHANNEL};
 
@@ -1295,6 +1414,45 @@ mod melk_lighting_tests {
         assert_eq!(
             profile.set_brightness(101),
             Err(MobileMelkLightingError::InvalidBrightness)
+        );
+    }
+
+    #[test]
+    fn restore_marker_requires_opt_in_and_same_platform_identity() {
+        let marker = MobileMelkLightingRestoreMarker::new(
+            "melk-1".to_owned(),
+            MobileMelkLightingRestoreStateDto {
+                power_on: true,
+                red: 1,
+                green: 2,
+                blue: 3,
+                brightness: 42,
+            },
+        )
+        .expect("bounded restore state should be accepted");
+
+        assert_eq!(
+            marker.recover("melk-1".to_owned(), false).kind,
+            MobileMelkLightingRestoreDecisionKindDto::Disabled
+        );
+        assert_eq!(
+            marker.recover("melk-2".to_owned(), true).kind,
+            MobileMelkLightingRestoreDecisionKindDto::DifferentAccessory
+        );
+        let decision = marker.recover("melk-1".to_owned(), true);
+        assert_eq!(
+            decision.kind,
+            MobileMelkLightingRestoreDecisionKindDto::Restore
+        );
+        assert_eq!(
+            decision.requested,
+            Some(MobileMelkLightingRestoreStateDto {
+                power_on: true,
+                red: 1,
+                green: 2,
+                blue: 3,
+                brightness: 42,
+            })
         );
     }
 }

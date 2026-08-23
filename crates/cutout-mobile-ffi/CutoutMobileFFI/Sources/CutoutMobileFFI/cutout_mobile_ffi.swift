@@ -2115,6 +2115,153 @@ public func FfiConverterTypeMobileMelkLightingProfile_lower(_ value: MobileMelkL
 
 
 /**
+ * Rust-owned marker for one selected MELK accessory and its confirmed state.
+ */
+public protocol MobileMelkLightingRestoreMarkerProtocol: AnyObject, Sendable {
+
+    /**
+     * Reconciles a marker with a restored platform identity and opt-in flag.
+     */
+    func recover(restoredPlatformIdentifier: String, restoreEnabled: Bool)  -> MobileMelkLightingRestoreDecisionDto
+
+}
+/**
+ * Rust-owned marker for one selected MELK accessory and its confirmed state.
+ */
+open class MobileMelkLightingRestoreMarker: MobileMelkLightingRestoreMarkerProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilemelklightingrestoremarker(self.handle, $0) }
+    }
+    /**
+     * Creates a marker from a confirmed, bounded requested state.
+     *
+     * # Errors
+     *
+     * Returns `InvalidBrightness` when the requested brightness is outside the
+     * protocol's percentage range.
+     */
+public convenience init(platformIdentifier: String, requested: MobileMelkLightingRestoreStateDto)throws  {
+    let handle =
+        try rustCallWithError(FfiConverterTypeMobileMelkLightingError_lift) {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilemelklightingrestoremarker_new(
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterTypeMobileMelkLightingRestoreStateDto_lower(requested),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilemelklightingrestoremarker(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Reconciles a marker with a restored platform identity and opt-in flag.
+     */
+open func recover(restoredPlatformIdentifier: String, restoreEnabled: Bool) -> MobileMelkLightingRestoreDecisionDto  {
+    return try!  FfiConverterTypeMobileMelkLightingRestoreDecisionDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilemelklightingrestoremarker_recover(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(restoredPlatformIdentifier),
+        FfiConverterBool.lower(restoreEnabled),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreMarker: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileMelkLightingRestoreMarker
+
+    public static func lift(_ handle: UInt64) throws -> MobileMelkLightingRestoreMarker {
+        return MobileMelkLightingRestoreMarker(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileMelkLightingRestoreMarker) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreMarker {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreMarker, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreMarker_lift(_ handle: UInt64) throws -> MobileMelkLightingRestoreMarker {
+    return try FfiConverterTypeMobileMelkLightingRestoreMarker.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreMarker_lower(_ value: MobileMelkLightingRestoreMarker) -> UInt64 {
+    return FfiConverterTypeMobileMelkLightingRestoreMarker.lower(value)
+}
+
+
+
+
+
+
+/**
  * Mobile-facing builder for a PEVCAP capture export.
  */
 public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
@@ -6458,6 +6605,174 @@ public func FfiConverterTypeMobileMelkLightingGattEvidence_lift(_ buf: RustBuffe
 #endif
 public func FfiConverterTypeMobileMelkLightingGattEvidence_lower(_ value: MobileMelkLightingGattEvidence) -> RustBuffer {
     return FfiConverterTypeMobileMelkLightingGattEvidence.lower(value)
+}
+
+
+/**
+ * Result of reconciling a persisted lighting marker.
+ */
+public struct MobileMelkLightingRestoreDecisionDto: Equatable, Hashable {
+    /**
+     * Typed decision kind.
+     */
+    public var kind: MobileMelkLightingRestoreDecisionKindDto
+    /**
+     * Requested state when `kind` is `Restore`.
+     */
+    public var requested: MobileMelkLightingRestoreStateDto?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Typed decision kind.
+         */kind: MobileMelkLightingRestoreDecisionKindDto,
+        /**
+         * Requested state when `kind` is `Restore`.
+         */requested: MobileMelkLightingRestoreStateDto?) {
+        self.kind = kind
+        self.requested = requested
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingRestoreDecisionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreDecisionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreDecisionDto {
+        return
+            try MobileMelkLightingRestoreDecisionDto(
+                kind: FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.read(from: &buf),
+                requested: FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreDecisionDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.write(value.kind, into: &buf)
+        FfiConverterOptionTypeMobileMelkLightingRestoreStateDto.write(value.requested, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingRestoreDecisionDto {
+    return try FfiConverterTypeMobileMelkLightingRestoreDecisionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionDto_lower(_ value: MobileMelkLightingRestoreDecisionDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingRestoreDecisionDto.lower(value)
+}
+
+
+/**
+ * Complete solid-lighting state stored for an explicit restore.
+ */
+public struct MobileMelkLightingRestoreStateDto: Equatable, Hashable {
+    /**
+     * Whether the controller was requested on.
+     */
+    public var powerOn: Bool
+    /**
+     * Requested red channel.
+     */
+    public var red: UInt8
+    /**
+     * Requested green channel.
+     */
+    public var green: UInt8
+    /**
+     * Requested blue channel.
+     */
+    public var blue: UInt8
+    /**
+     * Requested brightness percentage.
+     */
+    public var brightness: UInt8
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Whether the controller was requested on.
+         */powerOn: Bool,
+        /**
+         * Requested red channel.
+         */red: UInt8,
+        /**
+         * Requested green channel.
+         */green: UInt8,
+        /**
+         * Requested blue channel.
+         */blue: UInt8,
+        /**
+         * Requested brightness percentage.
+         */brightness: UInt8) {
+        self.powerOn = powerOn
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.brightness = brightness
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingRestoreStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreStateDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreStateDto {
+        return
+            try MobileMelkLightingRestoreStateDto(
+                powerOn: FfiConverterBool.read(from: &buf),
+                red: FfiConverterUInt8.read(from: &buf),
+                green: FfiConverterUInt8.read(from: &buf),
+                blue: FfiConverterUInt8.read(from: &buf),
+                brightness: FfiConverterUInt8.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreStateDto, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.powerOn, into: &buf)
+        FfiConverterUInt8.write(value.red, into: &buf)
+        FfiConverterUInt8.write(value.green, into: &buf)
+        FfiConverterUInt8.write(value.blue, into: &buf)
+        FfiConverterUInt8.write(value.brightness, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreStateDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingRestoreStateDto {
+    return try FfiConverterTypeMobileMelkLightingRestoreStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreStateDto_lower(_ value: MobileMelkLightingRestoreStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingRestoreStateDto.lower(value)
 }
 
 
@@ -13347,6 +13662,92 @@ public func FfiConverterTypeMobileMelkLightingError_lower(_ value: MobileMelkLig
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Typed result kind for an attempted lighting restore.
+ */
+
+public enum MobileMelkLightingRestoreDecisionKindDto: Equatable, Hashable {
+
+    /**
+     * Restore was disabled by the user.
+     */
+    case disabled
+    /**
+     * `CoreBluetooth` restored a different platform identity.
+     */
+    case differentAccessory
+    /**
+     * The remembered state may be restored.
+     */
+    case restore
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMelkLightingRestoreDecisionKindDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingRestoreDecisionKindDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMelkLightingRestoreDecisionKindDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .disabled
+
+        case 2: return .differentAccessory
+
+        case 3: return .restore
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileMelkLightingRestoreDecisionKindDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .disabled:
+            writeInt(&buf, Int32(1))
+
+
+        case .differentAccessory:
+            writeInt(&buf, Int32(2))
+
+
+        case .restore:
+            writeInt(&buf, Int32(3))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto_lift(_ buf: RustBuffer) throws -> MobileMelkLightingRestoreDecisionKindDto {
+    return try FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto_lower(_ value: MobileMelkLightingRestoreDecisionKindDto) -> RustBuffer {
+    return FfiConverterTypeMobileMelkLightingRestoreDecisionKindDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * GATT write mode for a standalone MELK lighting command.
  */
 
@@ -17133,6 +17534,30 @@ fileprivate struct FfiConverterOptionTypeMobileIgnoredNotificationEvidenceDto: F
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileMelkLightingRestoreStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMelkLightingRestoreStateDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMelkLightingRestoreStateDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMelkLightingRestoreStateDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileMonotonicMillisDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileMonotonicMillisDto?
 
@@ -18754,6 +19179,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingprofile_set_solid_color() != 10213) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilemelklightingrestoremarker_recover() != 2627) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_add_advertised_service() != 1575) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -18827,6 +19255,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilemelklightingprofile_new() != 6018) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilemelklightingrestoremarker_new() != 31811) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilepevcapcapturebuilder_new() != 58179) {

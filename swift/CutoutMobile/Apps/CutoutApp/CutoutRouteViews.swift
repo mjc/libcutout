@@ -1,4 +1,5 @@
 import CutoutMobile
+import CutoutMobileFFI
 import Foundation
 import Observation
 import SwiftUI
@@ -144,22 +145,64 @@ struct VescDebugRouteView: View {
 @MainActor
 @Observable
 final class LightingRouteModel {
+    private struct SolidState {
+        var powerOn: Bool
+        var red: UInt8
+        var green: UInt8
+        var blue: UInt8
+        var brightness: UInt8
+    }
+
+    private enum RestoreKeys {
+        static let enabled = "lighting.restore.enabled"
+        static let platformIdentifier = "lighting.restore.platformIdentifier"
+        static let powerOn = "lighting.restore.powerOn"
+        static let red = "lighting.restore.red"
+        static let green = "lighting.restore.green"
+        static let blue = "lighting.restore.blue"
+        static let brightness = "lighting.restore.brightness"
+    }
+
     private let session = MelkLightingPeripheralSession()
+    private let defaults = UserDefaults.standard
 
     private(set) var connectionState: MelkLightingPeripheralState = .idle
     private(set) var peripheralName: String?
+    private(set) var peripheralIdentifier: String?
     private(set) var commandStatus: MelkLightingCommandStatus = .idle
+    private(set) var restoreEnabled: Bool
     private(set) var records: [MelkValidationLogEntry] = []
     private(set) var notificationCount = 0
     private var isRunning = false
+    private var requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
+    private var restoreMarker: MobileMelkLightingRestoreMarker?
+    private var restoreAttempted = false
 
     init() {
+        restoreEnabled = defaults.bool(forKey: RestoreKeys.enabled)
+        if let platformIdentifier = defaults.string(forKey: RestoreKeys.platformIdentifier) {
+            restoreMarker = try? MobileMelkLightingRestoreMarker(
+                platformIdentifier: platformIdentifier,
+                requested: MobileMelkLightingRestoreStateDto(
+                    powerOn: defaults.bool(forKey: RestoreKeys.powerOn),
+                    red: UInt8(clamping: defaults.integer(forKey: RestoreKeys.red)),
+                    green: UInt8(clamping: defaults.integer(forKey: RestoreKeys.green)),
+                    blue: UInt8(clamping: defaults.integer(forKey: RestoreKeys.blue)),
+                    brightness: UInt8(clamping: defaults.integer(forKey: RestoreKeys.brightness))
+                )
+            )
+        }
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
                 if state == .scanning {
                     self?.peripheralName = nil
+                    self?.peripheralIdentifier = nil
+                    self?.restoreAttempted = false
                 }
                 self?.connectionState = state
+                if state == .ready {
+                    self?.restoreIfEligible()
+                }
             }
         }
         session.onRecord = { [weak self] record in
@@ -188,22 +231,40 @@ final class LightingRouteModel {
 
     func setPower(_ on: Bool) {
         guard session.setPower(on) else { return }
+        requestedState.powerOn = on
         commandStatus = .requested
     }
 
     func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
         guard session.setSolidColor(red: red, green: green, blue: blue) else { return }
+        requestedState.red = red
+        requestedState.green = green
+        requestedState.blue = blue
         commandStatus = .requested
     }
 
     func setBrightness(_ percentage: UInt8) {
         guard (try? session.setBrightness(percentage)) == true else { return }
+        requestedState.brightness = percentage
         commandStatus = .requested
     }
 
     func markConfirmed() {
         session.markLastCommandConfirmed()
         commandStatus = .confirmed
+        guard let peripheralIdentifier else { return }
+        restoreMarker = try? MobileMelkLightingRestoreMarker(
+            platformIdentifier: peripheralIdentifier,
+            requested: MobileMelkLightingRestoreStateDto(
+                powerOn: requestedState.powerOn,
+                red: requestedState.red,
+                green: requestedState.green,
+                blue: requestedState.blue,
+                brightness: requestedState.brightness
+            )
+        )
+        persistRestoreMarker()
+        restoreAttempted = true
     }
 
     func markUnconfirmed() {
@@ -212,6 +273,14 @@ final class LightingRouteModel {
     }
 
     var isReady: Bool { connectionState == .ready }
+
+    func setRestoreEnabled(_ enabled: Bool) {
+        restoreEnabled = enabled
+        defaults.set(enabled, forKey: RestoreKeys.enabled)
+        if enabled {
+            restoreIfEligible()
+        }
+    }
 
     var canReconnect: Bool {
         switch connectionState {
@@ -223,9 +292,12 @@ final class LightingRouteModel {
     }
 
     private func append(_ record: String) {
-        if record.hasPrefix("candidate=") {
-            let candidate = record.dropFirst("candidate=".count)
-            peripheralName = String(candidate.split(separator: " rssi=", maxSplits: 1).first ?? candidate)
+        if record.hasPrefix("candidate=") || record.hasPrefix("restore=melk") {
+            updateIdentity(from: record)
+            if record.hasPrefix("candidate=") {
+                let candidate = record.dropFirst("candidate=".count)
+                peripheralName = String(candidate.split(separator: " id=", maxSplits: 1).first ?? candidate)
+            }
             records = Array((records + [MelkValidationLogEntry(text: record)]).suffix(12))
         } else if record.hasPrefix("notification=") {
             notificationCount += 1
@@ -235,6 +307,56 @@ final class LightingRouteModel {
         } else {
             records = Array((records + [MelkValidationLogEntry(text: record)]).suffix(12))
         }
+    }
+
+    private func updateIdentity(from record: String) {
+        guard let identifier = record.split(separator: "id=", maxSplits: 1).last?
+            .split(separator: " rssi=", maxSplits: 1).first else {
+            return
+        }
+        peripheralIdentifier = String(identifier)
+    }
+
+    private func persistRestoreMarker() {
+        guard restoreMarker != nil, let identifier = peripheralIdentifier else {
+            return
+        }
+        defaults.set(identifier, forKey: RestoreKeys.platformIdentifier)
+        defaults.set(requestedState.powerOn, forKey: RestoreKeys.powerOn)
+        defaults.set(Int(requestedState.red), forKey: RestoreKeys.red)
+        defaults.set(Int(requestedState.green), forKey: RestoreKeys.green)
+        defaults.set(Int(requestedState.blue), forKey: RestoreKeys.blue)
+        defaults.set(Int(requestedState.brightness), forKey: RestoreKeys.brightness)
+    }
+
+    private func restoreIfEligible() {
+        guard restoreEnabled, !restoreAttempted,
+              let restoreMarker,
+              let peripheralIdentifier else {
+            return
+        }
+        restoreAttempted = true
+        let decision = restoreMarker.recover(
+            restoredPlatformIdentifier: peripheralIdentifier,
+            restoreEnabled: true
+        )
+        guard decision.kind == .restore, let requested = decision.requested else {
+            return
+        }
+        guard session.setPower(requested.powerOn),
+              session.setSolidColor(red: requested.red, green: requested.green, blue: requested.blue),
+              (try? session.setBrightness(requested.brightness)) == true else {
+            return
+        }
+        requestedState = SolidState(
+            powerOn: requested.powerOn,
+            red: requested.red,
+            green: requested.green,
+            blue: requested.blue,
+            brightness: requested.brightness
+        )
+        commandStatus = .requested
+        records = Array((records + [MelkValidationLogEntry(text: "restore=requested")]).suffix(12))
     }
 }
 
@@ -287,6 +409,17 @@ struct LightingRouteView: View {
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("lighting.reconnect")
                 }
+                Toggle(
+                    "Restore last confirmed state",
+                    isOn: Binding(
+                        get: { model.restoreEnabled },
+                        set: { model.setRestoreEnabled($0) }
+                    )
+                )
+                .accessibilityIdentifier("lighting.restore-toggle")
+                Text("Restore is attempted only after the same verified accessory reconnects.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
     }
