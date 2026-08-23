@@ -459,6 +459,8 @@ final class CutoutAppModel {
             )
         }
         guard didStart else { return false }
+        lastMusicCaptureKey = nil
+        core.updateMusicCaptureObservation(nil)
         refreshMusicTimeline()
         // Music history is deliberately best-effort: a provider or storage
         // failure must never prevent a ride from starting.

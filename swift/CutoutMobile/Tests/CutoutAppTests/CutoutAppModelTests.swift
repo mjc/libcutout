@@ -247,6 +247,57 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(driver.lastMusicCaptureObservation?.trackPositionMs, 0)
         XCTAssertEqual(driver.lastMusicCaptureObservation?.wallClockUnixMs, 20)
     }
+    @MainActor
+    func testNewRideRefreshesMusicCaptureContextForTheSameTrack() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertTrue(model.startGpsOnlyRide())
+
+        let first = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session-1",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            positionMilliseconds: 0,
+            durationMilliseconds: 60_000,
+            observedAtMs: 10,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: true,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: false
+            )
+        )
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: first),
+            wallClockAtMs: 20,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.wallClockUnixMs, 20)
+
+        XCTAssertTrue(model.stopRideMap())
+        XCTAssertTrue(model.startGpsOnlyRide())
+
+        let next = MobileMusicSnapshotDto(
+            provider: first.provider,
+            sessionId: first.sessionId,
+            state: first.state,
+            item: first.item,
+            positionMilliseconds: first.positionMilliseconds,
+            durationMilliseconds: first.durationMilliseconds,
+            observedAtMs: 20,
+            capabilities: first.capabilities
+        )
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: next),
+            wallClockAtMs: 40,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.wallClockUnixMs, 40)
+    }
+
 
     @MainActor
     func testProgressOnlyMusicObservationDoesNotReplacePevcapContext() {
