@@ -14,14 +14,15 @@ final class RideMapStateTests: XCTestCase {
             horizontalAccuracyMeters: 4
         )
         XCTAssertEqual(try state.observeVehicleConnection(platformIdentifier: "pev-1", atMs: 200), .associated)
-        XCTAssertEqual(try state.stop().state, .stopped)
-        _ = try state.save()
+        let stopped = try state.stop()
+        XCTAssertEqual(stopped.state, .stopped)
 
         guard case let .accepted(point, _) = decision else {
             return XCTFail("expected the location to be admitted")
         }
         XCTAssertEqual(point.sequence, 0)
-        XCTAssertEqual(state.currentSnapshot()?.summary.pointCount, 1)
+        XCTAssertEqual(stopped.summary.pointCount, 1)
         XCTAssertEqual(state.pointsAfter(afterCursor: 0, limit: 10)?.points.count, 1)
+        XCTAssertEqual(try state.save().state, .saved)
     }
 }
