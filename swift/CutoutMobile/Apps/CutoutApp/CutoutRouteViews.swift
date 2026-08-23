@@ -206,10 +206,12 @@ final class LightingRouteModel {
         }
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
+                if state.resetsRestoreEligibility {
+                    self?.restoreAttempted = false
+                }
                 if state == .scanning {
                     self?.peripheralName = nil
                     self?.peripheralIdentifier = nil
-                    self?.restoreAttempted = false
                 }
                 self?.connectionState = state
                 if state == .ready {
@@ -217,7 +219,6 @@ final class LightingRouteModel {
                     self?.persistence.setConnection(.ready)
                     self?.restoreIfEligible()
                 } else if state == .disconnected {
-                    self?.restoreAttempted = false
                     self?.persistence.setConnection(.disconnected)
                 }
             }

@@ -169,6 +169,18 @@ public enum MelkLightingPeripheralState: Equatable, Sendable {
     case failed(String)
 }
 
+public extension MelkLightingPeripheralState {
+    /// Returns whether a state transition invalidates a one-shot restore attempt.
+    var resetsRestoreEligibility: Bool {
+        switch self {
+        case .scanning, .connecting, .retrying, .disconnected, .failed:
+            true
+        case .idle, .discovering, .ready:
+            false
+        }
+    }
+}
+
 /// A secondary CoreBluetooth connection for validating MELK without replacing a ride session.
 ///
 /// The validator owns its own central manager, so it can remain connected while the primary
