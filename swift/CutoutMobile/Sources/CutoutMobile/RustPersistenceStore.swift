@@ -26,7 +26,7 @@ enum RustPersistenceStore {
                     .protectionKey: FileProtectionType.completeUntilFirstUserAuthentication
                 ]
             )
-            let database = try RideDatabaseHandle.open(path: databaseURL.path)
+            let database = try openRideDatabase(path: databaseURL.path)
             do {
                 var values = URLResourceValues()
                 values.isExcludedFromBackup = true

@@ -2437,6 +2437,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func backupTo(path: String) throws
 
     /**
+     * Returns the bounded startup recovery state captured while acquiring this service.
+     */
+    func bootstrapSnapshot()  -> MobileBootstrapSnapshotDto
+
+    /**
      * Returns runtime `SQLite` capabilities.
      */
     func capabilities() throws  -> MobileSqliteCapabilitiesDto
@@ -2450,6 +2455,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Clears the selected platform-local device identifier.
      */
     func clearSelectedDevice() throws
+
+    /**
+     * Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+     */
+    func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMilliseconds: UInt64) throws  -> MobilePevcapImportReceiptDto
 
     /**
      * Stores and spatially indexes one charging/food map point.
@@ -2472,18 +2482,28 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func exportRideJson(id: MobileRideIdDto, path: String) throws
 
     /**
-     * Streams a PEVCAP artifact into a Rust-owned imported ride.
-     *
-     * # Errors
-     *
-     * Returns a stable database error when the path, encoding, or artifact is invalid.
+     * Lists one bounded page of ride history in stable newest-first order.
      */
-    func importPevcap(path: String, encoding: MobilePevcapEncodingDto, createdAtMilliseconds: UInt64) throws  -> MobilePevcapImportReceiptDto
+    func listRides(cursor: MobileRideCursorDto?, limit: UInt32) throws  -> MobileRidePageDto
 
     /**
      * Queries indexed map points intersecting a WGS84 bounding box.
      */
-    func mapPointsInBounds(minimumLatitudeDegrees: Double, maximumLatitudeDegrees: Double, minimumLongitudeDegrees: Double, maximumLongitudeDegrees: Double) throws  -> [MobileMapPointDto]
+    func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32) throws  -> MobileMapPointPageDto
+
+    /**
+     * Validates a PEVCAP artifact and returns bounded facts for explicit confirmation.
+     *
+     * # Errors
+     *
+     * Returns a stable database error when the path, encoding, replay, or limits are invalid.
+     */
+    func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto) throws  -> MobilePevcapImportPreviewDto
+
+    /**
+     * Rebuilds all derived spatial indexes from their canonical tables.
+     */
+    func rebuildSpatialIndexes() throws
 
     /**
      * Removes a learned voltage-sag model.
@@ -2494,6 +2514,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Loads opaque Rust-owned ride-session marker bytes.
      */
     func rideSessionMarker() throws  -> Data?
+
+    /**
+     * Loads one bounded page of canonical route points in stable sequence order.
+     */
+    func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32) throws  -> MobileRoutePointPageDto
 
     /**
      * Stores opaque Rust-owned ride-session marker bytes.
@@ -2537,7 +2562,7 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     /**
      * Queries indexed trail segments intersecting a WGS84 bounding box.
      */
-    func trailSegmentsInBounds(minimumLatitudeDegrees: Double, maximumLatitudeDegrees: Double, minimumLongitudeDegrees: Double, maximumLongitudeDegrees: Double) throws  -> [MobileTrailSegmentDto]
+    func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailSegmentCursorDto?, limit: UInt32) throws  -> MobileTrailSegmentPageDto
 
     /**
      * Applies a lifecycle event to a Rust-created ride.
@@ -2604,17 +2629,6 @@ open class RideDatabaseHandle: RideDatabaseHandleProtocol, @unchecked Sendable {
     }
 
 
-    /**
-     * Opens the process-wide Rust-owned ride database.
-     */
-public static func `open`(path: String)throws  -> RideDatabaseHandle  {
-    return try  FfiConverterTypeRideDatabaseHandle_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
-    uniffi_cutout_mobile_ffi_fn_constructor_ridedatabasehandle_open(
-        FfiConverterString.lower(path),$0
-    )
-})
-}
-
 
 
     /**
@@ -2656,6 +2670,17 @@ open func backupTo(path: String)throws   {try rustCallWithError(FfiConverterType
 }
 
     /**
+     * Returns the bounded startup recovery state captured while acquiring this service.
+     */
+open func bootstrapSnapshot() -> MobileBootstrapSnapshotDto  {
+    return try!  FfiConverterTypeMobileBootstrapSnapshotDto_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_bootstrap_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
      * Returns runtime `SQLite` capabilities.
      */
 open func capabilities()throws  -> MobileSqliteCapabilitiesDto  {
@@ -2684,6 +2709,19 @@ open func clearSelectedDevice()throws   {try rustCallWithError(FfiConverterTypeM
             self.uniffiCloneHandle(),$0
     )
 }
+}
+
+    /**
+     * Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+     */
+open func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMilliseconds: UInt64)throws  -> MobilePevcapImportReceiptDto  {
+    return try  FfiConverterTypeMobilePevcapImportReceiptDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_confirm_pevcap_import(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobilePevcapImportPreviewDto_lower(preview),
+        FfiConverterUInt64.lower(createdAtMilliseconds),$0
+    )
+})
 }
 
     /**
@@ -2737,19 +2775,14 @@ open func exportRideJson(id: MobileRideIdDto, path: String)throws   {try rustCal
 }
 
     /**
-     * Streams a PEVCAP artifact into a Rust-owned imported ride.
-     *
-     * # Errors
-     *
-     * Returns a stable database error when the path, encoding, or artifact is invalid.
+     * Lists one bounded page of ride history in stable newest-first order.
      */
-open func importPevcap(path: String, encoding: MobilePevcapEncodingDto, createdAtMilliseconds: UInt64)throws  -> MobilePevcapImportReceiptDto  {
-    return try  FfiConverterTypeMobilePevcapImportReceiptDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
-    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_import_pevcap(
+open func listRides(cursor: MobileRideCursorDto?, limit: UInt32)throws  -> MobileRidePageDto  {
+    return try  FfiConverterTypeMobileRidePageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_list_rides(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(path),
-        FfiConverterTypeMobilePevcapEncodingDto_lower(encoding),
-        FfiConverterUInt64.lower(createdAtMilliseconds),$0
+        FfiConverterOptionTypeMobileRideCursorDto.lower(cursor),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
 }
@@ -2757,16 +2790,42 @@ open func importPevcap(path: String, encoding: MobilePevcapEncodingDto, createdA
     /**
      * Queries indexed map points intersecting a WGS84 bounding box.
      */
-open func mapPointsInBounds(minimumLatitudeDegrees: Double, maximumLatitudeDegrees: Double, minimumLongitudeDegrees: Double, maximumLongitudeDegrees: Double)throws  -> [MobileMapPointDto]  {
-    return try  FfiConverterSequenceTypeMobileMapPointDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+open func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32)throws  -> MobileMapPointPageDto  {
+    return try  FfiConverterTypeMobileMapPointPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_map_points_in_bounds(
             self.uniffiCloneHandle(),
-        FfiConverterDouble.lower(minimumLatitudeDegrees),
-        FfiConverterDouble.lower(maximumLatitudeDegrees),
-        FfiConverterDouble.lower(minimumLongitudeDegrees),
-        FfiConverterDouble.lower(maximumLongitudeDegrees),$0
+        FfiConverterTypeMobileGeoBoundsDto_lower(bounds),
+        FfiConverterOptionTypeMobileMapPointCursorDto.lower(cursor),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
+}
+
+    /**
+     * Validates a PEVCAP artifact and returns bounded facts for explicit confirmation.
+     *
+     * # Errors
+     *
+     * Returns a stable database error when the path, encoding, replay, or limits are invalid.
+     */
+open func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto)throws  -> MobilePevcapImportPreviewDto  {
+    return try  FfiConverterTypeMobilePevcapImportPreviewDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_preflight_pevcap(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(path),
+        FfiConverterTypeMobilePevcapEncodingDto_lower(encoding),$0
+    )
+})
+}
+
+    /**
+     * Rebuilds all derived spatial indexes from their canonical tables.
+     */
+open func rebuildSpatialIndexes()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_rebuild_spatial_indexes(
+            self.uniffiCloneHandle(),$0
+    )
+}
 }
 
     /**
@@ -2787,6 +2846,20 @@ open func rideSessionMarker()throws  -> Data?  {
     return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_ride_session_marker(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Loads one bounded page of canonical route points in stable sequence order.
+     */
+open func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32)throws  -> MobileRoutePointPageDto  {
+    return try  FfiConverterTypeMobileRoutePointPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_route_points(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(rideId),
+        FfiConverterOptionTypeMobileRoutePointCursorDto.lower(cursor),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
 }
@@ -2878,14 +2951,13 @@ open func summary(id: MobileRideIdDto)throws  -> MobileRideSummaryDto  {
     /**
      * Queries indexed trail segments intersecting a WGS84 bounding box.
      */
-open func trailSegmentsInBounds(minimumLatitudeDegrees: Double, maximumLatitudeDegrees: Double, minimumLongitudeDegrees: Double, maximumLongitudeDegrees: Double)throws  -> [MobileTrailSegmentDto]  {
-    return try  FfiConverterSequenceTypeMobileTrailSegmentDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+open func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailSegmentCursorDto?, limit: UInt32)throws  -> MobileTrailSegmentPageDto  {
+    return try  FfiConverterTypeMobileTrailSegmentPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_trail_segments_in_bounds(
             self.uniffiCloneHandle(),
-        FfiConverterDouble.lower(minimumLatitudeDegrees),
-        FfiConverterDouble.lower(maximumLatitudeDegrees),
-        FfiConverterDouble.lower(minimumLongitudeDegrees),
-        FfiConverterDouble.lower(maximumLongitudeDegrees),$0
+        FfiConverterTypeMobileGeoBoundsDto_lower(bounds),
+        FfiConverterOptionTypeMobileTrailSegmentCursorDto.lower(cursor),
+        FfiConverterUInt32.lower(limit),$0
     )
 })
 }
@@ -5212,6 +5284,59 @@ public func FfiConverterTypeMobileBmsTopologyDto_lower(_ value: MobileBmsTopolog
 
 
 /**
+ * Bounded startup state produced by Rust after recovering interrupted rides.
+ */
+public struct MobileBootstrapSnapshotDto: Equatable, Hashable {
+    public var recoveredRides: [MobileRideIdDto]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(recoveredRides: [MobileRideIdDto]) {
+        self.recoveredRides = recoveredRides
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileBootstrapSnapshotDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileBootstrapSnapshotDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileBootstrapSnapshotDto {
+        return
+            try MobileBootstrapSnapshotDto(
+                recoveredRides: FfiConverterSequenceTypeMobileRideIdDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileBootstrapSnapshotDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRideIdDto.write(value.recoveredRides, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileBootstrapSnapshotDto_lift(_ buf: RustBuffer) throws -> MobileBootstrapSnapshotDto {
+    return try FfiConverterTypeMobileBootstrapSnapshotDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileBootstrapSnapshotDto_lower(_ value: MobileBootstrapSnapshotDto) -> RustBuffer {
+    return FfiConverterTypeMobileBootstrapSnapshotDto.lower(value)
+}
+
+
+/**
  * Rust-owned status for the bounded capture writer queue.
  */
 public struct MobileCaptureWriterStatusDto: Equatable, Hashable {
@@ -6558,6 +6683,72 @@ public func FfiConverterTypeMobileGattFingerprintDto_lower(_ value: MobileGattFi
 
 
 /**
+ * Validated WGS84 viewport bounds. A minimum longitude greater than the maximum crosses the
+ * antimeridian.
+ */
+public struct MobileGeoBoundsDto: Equatable, Hashable {
+    public var minimumLatitudeDegrees: Double
+    public var maximumLatitudeDegrees: Double
+    public var minimumLongitudeDegrees: Double
+    public var maximumLongitudeDegrees: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(minimumLatitudeDegrees: Double, maximumLatitudeDegrees: Double, minimumLongitudeDegrees: Double, maximumLongitudeDegrees: Double) {
+        self.minimumLatitudeDegrees = minimumLatitudeDegrees
+        self.maximumLatitudeDegrees = maximumLatitudeDegrees
+        self.minimumLongitudeDegrees = minimumLongitudeDegrees
+        self.maximumLongitudeDegrees = maximumLongitudeDegrees
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileGeoBoundsDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileGeoBoundsDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileGeoBoundsDto {
+        return
+            try MobileGeoBoundsDto(
+                minimumLatitudeDegrees: FfiConverterDouble.read(from: &buf),
+                maximumLatitudeDegrees: FfiConverterDouble.read(from: &buf),
+                minimumLongitudeDegrees: FfiConverterDouble.read(from: &buf),
+                maximumLongitudeDegrees: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileGeoBoundsDto, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.minimumLatitudeDegrees, into: &buf)
+        FfiConverterDouble.write(value.maximumLatitudeDegrees, into: &buf)
+        FfiConverterDouble.write(value.minimumLongitudeDegrees, into: &buf)
+        FfiConverterDouble.write(value.maximumLongitudeDegrees, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileGeoBoundsDto_lift(_ buf: RustBuffer) throws -> MobileGeoBoundsDto {
+    return try FfiConverterTypeMobileGeoBoundsDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileGeoBoundsDto_lower(_ value: MobileGeoBoundsDto) -> RustBuffer {
+    return FfiConverterTypeMobileGeoBoundsDto.lower(value)
+}
+
+
+/**
  * One Rust-authorized, bounded identification query write.
  */
 public struct MobileIdentificationProbeWriteDto: Equatable, Hashable {
@@ -6805,6 +6996,59 @@ public func FfiConverterTypeMobileMapCoordinateDto_lower(_ value: MobileMapCoord
 
 
 /**
+ * Stable cursor for a subsequent map-point page.
+ */
+public struct MobileMapPointCursorDto: Equatable, Hashable {
+    public var id: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: UInt64) {
+        self.id = id
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMapPointCursorDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMapPointCursorDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMapPointCursorDto {
+        return
+            try MobileMapPointCursorDto(
+                id: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMapPointCursorDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.id, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMapPointCursorDto_lift(_ buf: RustBuffer) throws -> MobileMapPointCursorDto {
+    return try FfiConverterTypeMobileMapPointCursorDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMapPointCursorDto_lower(_ value: MobileMapPointCursorDto) -> RustBuffer {
+    return FfiConverterTypeMobileMapPointCursorDto.lower(value)
+}
+
+
+/**
  * One indexed charging/food map point.
  */
 public struct MobileMapPointDto: Equatable, Hashable {
@@ -6880,6 +7124,63 @@ public func FfiConverterTypeMobileMapPointDto_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeMobileMapPointDto_lower(_ value: MobileMapPointDto) -> RustBuffer {
     return FfiConverterTypeMobileMapPointDto.lower(value)
+}
+
+
+/**
+ * One bounded page of indexed map points.
+ */
+public struct MobileMapPointPageDto: Equatable, Hashable {
+    public var points: [MobileMapPointDto]
+    public var nextCursor: MobileMapPointCursorDto?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(points: [MobileMapPointDto], nextCursor: MobileMapPointCursorDto?) {
+        self.points = points
+        self.nextCursor = nextCursor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileMapPointPageDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileMapPointPageDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMapPointPageDto {
+        return
+            try MobileMapPointPageDto(
+                points: FfiConverterSequenceTypeMobileMapPointDto.read(from: &buf),
+                nextCursor: FfiConverterOptionTypeMobileMapPointCursorDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileMapPointPageDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileMapPointDto.write(value.points, into: &buf)
+        FfiConverterOptionTypeMobileMapPointCursorDto.write(value.nextCursor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMapPointPageDto_lift(_ buf: RustBuffer) throws -> MobileMapPointPageDto {
+    return try FfiConverterTypeMobileMapPointPageDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileMapPointPageDto_lower(_ value: MobileMapPointPageDto) -> RustBuffer {
+    return FfiConverterTypeMobileMapPointPageDto.lower(value)
 }
 
 
@@ -7822,17 +8123,110 @@ public func FfiConverterTypeMobilePedalModeDto_lower(_ value: MobilePedalModeDto
 
 
 /**
+ * Bounded PEVCAP facts presented before explicit confirmation.
+ */
+public struct MobilePevcapImportPreviewDto: Equatable, Hashable {
+    public var sourcePath: String
+    public var encoding: MobilePevcapEncodingDto
+    public var artifactDigest: String
+    public var artifactSize: UInt64
+    public var recordCount: UInt64
+    public var locationCount: UInt64
+    public var durationMilliseconds: UInt64
+    public var outcome: MobilePevcapImportOutcomeDto
+    public var warnings: [MobilePevcapImportWarningDto]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sourcePath: String, encoding: MobilePevcapEncodingDto, artifactDigest: String, artifactSize: UInt64, recordCount: UInt64, locationCount: UInt64, durationMilliseconds: UInt64, outcome: MobilePevcapImportOutcomeDto, warnings: [MobilePevcapImportWarningDto]) {
+        self.sourcePath = sourcePath
+        self.encoding = encoding
+        self.artifactDigest = artifactDigest
+        self.artifactSize = artifactSize
+        self.recordCount = recordCount
+        self.locationCount = locationCount
+        self.durationMilliseconds = durationMilliseconds
+        self.outcome = outcome
+        self.warnings = warnings
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePevcapImportPreviewDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePevcapImportPreviewDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePevcapImportPreviewDto {
+        return
+            try MobilePevcapImportPreviewDto(
+                sourcePath: FfiConverterString.read(from: &buf),
+                encoding: FfiConverterTypeMobilePevcapEncodingDto.read(from: &buf),
+                artifactDigest: FfiConverterString.read(from: &buf),
+                artifactSize: FfiConverterUInt64.read(from: &buf),
+                recordCount: FfiConverterUInt64.read(from: &buf),
+                locationCount: FfiConverterUInt64.read(from: &buf),
+                durationMilliseconds: FfiConverterUInt64.read(from: &buf),
+                outcome: FfiConverterTypeMobilePevcapImportOutcomeDto.read(from: &buf),
+                warnings: FfiConverterSequenceTypeMobilePevcapImportWarningDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobilePevcapImportPreviewDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sourcePath, into: &buf)
+        FfiConverterTypeMobilePevcapEncodingDto.write(value.encoding, into: &buf)
+        FfiConverterString.write(value.artifactDigest, into: &buf)
+        FfiConverterUInt64.write(value.artifactSize, into: &buf)
+        FfiConverterUInt64.write(value.recordCount, into: &buf)
+        FfiConverterUInt64.write(value.locationCount, into: &buf)
+        FfiConverterUInt64.write(value.durationMilliseconds, into: &buf)
+        FfiConverterTypeMobilePevcapImportOutcomeDto.write(value.outcome, into: &buf)
+        FfiConverterSequenceTypeMobilePevcapImportWarningDto.write(value.warnings, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapImportPreviewDto_lift(_ buf: RustBuffer) throws -> MobilePevcapImportPreviewDto {
+    return try FfiConverterTypeMobilePevcapImportPreviewDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapImportPreviewDto_lower(_ value: MobilePevcapImportPreviewDto) -> RustBuffer {
+    return FfiConverterTypeMobilePevcapImportPreviewDto.lower(value)
+}
+
+
+/**
  * Durable result of importing one PEVCAP artifact.
  */
 public struct MobilePevcapImportReceiptDto: Equatable, Hashable {
     /**
-     * Rust-created ride UUID.
+     * Rust-created ride UUID, when route locations were present.
      */
-    public var rideId: MobileRideIdDto
+    public var rideId: MobileRideIdDto?
     /**
      * SHA-256 digest of the source artifact.
      */
     public var artifactDigest: String
+    /**
+     * Immutable application-managed artifact path.
+     */
+    public var managedArtifactPath: String
+    /**
+     * Whether confirmation produced a ride and capture or only a capture.
+     */
+    public var outcome: MobilePevcapImportOutcomeDto
     /**
      * Number of transport records read.
      */
@@ -7850,11 +8244,17 @@ public struct MobilePevcapImportReceiptDto: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
-         * Rust-created ride UUID.
-         */rideId: MobileRideIdDto,
+         * Rust-created ride UUID, when route locations were present.
+         */rideId: MobileRideIdDto?,
         /**
          * SHA-256 digest of the source artifact.
          */artifactDigest: String,
+        /**
+         * Immutable application-managed artifact path.
+         */managedArtifactPath: String,
+        /**
+         * Whether confirmation produced a ride and capture or only a capture.
+         */outcome: MobilePevcapImportOutcomeDto,
         /**
          * Number of transport records read.
          */recordCount: UInt64,
@@ -7866,6 +8266,8 @@ public struct MobilePevcapImportReceiptDto: Equatable, Hashable {
          */duplicate: Bool) {
         self.rideId = rideId
         self.artifactDigest = artifactDigest
+        self.managedArtifactPath = managedArtifactPath
+        self.outcome = outcome
         self.recordCount = recordCount
         self.locationCount = locationCount
         self.duplicate = duplicate
@@ -7887,8 +8289,10 @@ public struct FfiConverterTypeMobilePevcapImportReceiptDto: FfiConverterRustBuff
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePevcapImportReceiptDto {
         return
             try MobilePevcapImportReceiptDto(
-                rideId: FfiConverterTypeMobileRideIdDto.read(from: &buf),
+                rideId: FfiConverterOptionTypeMobileRideIdDto.read(from: &buf),
                 artifactDigest: FfiConverterString.read(from: &buf),
+                managedArtifactPath: FfiConverterString.read(from: &buf),
+                outcome: FfiConverterTypeMobilePevcapImportOutcomeDto.read(from: &buf),
                 recordCount: FfiConverterUInt64.read(from: &buf),
                 locationCount: FfiConverterUInt64.read(from: &buf),
                 duplicate: FfiConverterBool.read(from: &buf)
@@ -7896,8 +8300,10 @@ public struct FfiConverterTypeMobilePevcapImportReceiptDto: FfiConverterRustBuff
     }
 
     public static func write(_ value: MobilePevcapImportReceiptDto, into buf: inout [UInt8]) {
-        FfiConverterTypeMobileRideIdDto.write(value.rideId, into: &buf)
+        FfiConverterOptionTypeMobileRideIdDto.write(value.rideId, into: &buf)
         FfiConverterString.write(value.artifactDigest, into: &buf)
+        FfiConverterString.write(value.managedArtifactPath, into: &buf)
+        FfiConverterTypeMobilePevcapImportOutcomeDto.write(value.outcome, into: &buf)
         FfiConverterUInt64.write(value.recordCount, into: &buf)
         FfiConverterUInt64.write(value.locationCount, into: &buf)
         FfiConverterBool.write(value.duplicate, into: &buf)
@@ -8428,6 +8834,63 @@ public func FfiConverterTypeMobileResolvedIdentityDto_lower(_ value: MobileResol
 
 
 /**
+ * Stable cursor for a subsequent ride-history page.
+ */
+public struct MobileRideCursorDto: Equatable, Hashable {
+    public var createdAtMilliseconds: UInt64
+    public var rideId: MobileRideIdDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(createdAtMilliseconds: UInt64, rideId: MobileRideIdDto) {
+        self.createdAtMilliseconds = createdAtMilliseconds
+        self.rideId = rideId
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideCursorDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideCursorDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideCursorDto {
+        return
+            try MobileRideCursorDto(
+                createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
+                rideId: FfiConverterTypeMobileRideIdDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideCursorDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.createdAtMilliseconds, into: &buf)
+        FfiConverterTypeMobileRideIdDto.write(value.rideId, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideCursorDto_lift(_ buf: RustBuffer) throws -> MobileRideCursorDto {
+    return try FfiConverterTypeMobileRideCursorDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideCursorDto_lower(_ value: MobileRideCursorDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideCursorDto.lower(value)
+}
+
+
+/**
  * Stable ride identifier returned by Rust.
  */
 public struct MobileRideIdDto: Equatable, Hashable {
@@ -8592,6 +9055,136 @@ public func FfiConverterTypeMobileRideLocationDto_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeMobileRideLocationDto_lower(_ value: MobileRideLocationDto) -> RustBuffer {
     return FfiConverterTypeMobileRideLocationDto.lower(value)
+}
+
+
+/**
+ * One bounded page of ride-history projections.
+ */
+public struct MobileRidePageDto: Equatable, Hashable {
+    public var rides: [MobileRideRecordDto]
+    public var nextCursor: MobileRideCursorDto?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rides: [MobileRideRecordDto], nextCursor: MobileRideCursorDto?) {
+        self.rides = rides
+        self.nextCursor = nextCursor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRidePageDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRidePageDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRidePageDto {
+        return
+            try MobileRidePageDto(
+                rides: FfiConverterSequenceTypeMobileRideRecordDto.read(from: &buf),
+                nextCursor: FfiConverterOptionTypeMobileRideCursorDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRidePageDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRideRecordDto.write(value.rides, into: &buf)
+        FfiConverterOptionTypeMobileRideCursorDto.write(value.nextCursor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRidePageDto_lift(_ buf: RustBuffer) throws -> MobileRidePageDto {
+    return try FfiConverterTypeMobileRidePageDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRidePageDto_lower(_ value: MobileRidePageDto) -> RustBuffer {
+    return FfiConverterTypeMobileRidePageDto.lower(value)
+}
+
+
+/**
+ * One bounded ride-history projection.
+ */
+public struct MobileRideRecordDto: Equatable, Hashable {
+    public var id: MobileRideIdDto
+    public var source: MobileRideSourceDto
+    public var state: MobileRideLifecycleStateDto
+    public var createdAtMilliseconds: UInt64
+    public var updatedAtMilliseconds: UInt64
+    public var summary: MobileRideSummaryDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto) {
+        self.id = id
+        self.source = source
+        self.state = state
+        self.createdAtMilliseconds = createdAtMilliseconds
+        self.updatedAtMilliseconds = updatedAtMilliseconds
+        self.summary = summary
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideRecordDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideRecordDto {
+        return
+            try MobileRideRecordDto(
+                id: FfiConverterTypeMobileRideIdDto.read(from: &buf),
+                source: FfiConverterTypeMobileRideSourceDto.read(from: &buf),
+                state: FfiConverterTypeMobileRideLifecycleStateDto.read(from: &buf),
+                createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
+                updatedAtMilliseconds: FfiConverterUInt64.read(from: &buf),
+                summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideRecordDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRideIdDto.write(value.id, into: &buf)
+        FfiConverterTypeMobileRideSourceDto.write(value.source, into: &buf)
+        FfiConverterTypeMobileRideLifecycleStateDto.write(value.state, into: &buf)
+        FfiConverterUInt64.write(value.createdAtMilliseconds, into: &buf)
+        FfiConverterUInt64.write(value.updatedAtMilliseconds, into: &buf)
+        FfiConverterTypeMobileRideSummaryDto.write(value.summary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideRecordDto_lift(_ buf: RustBuffer) throws -> MobileRideRecordDto {
+    return try FfiConverterTypeMobileRideRecordDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideRecordDto_lower(_ value: MobileRideRecordDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideRecordDto.lower(value)
 }
 
 
@@ -8908,6 +9501,173 @@ public func FfiConverterTypeMobileRideSummaryDto_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeMobileRideSummaryDto_lower(_ value: MobileRideSummaryDto) -> RustBuffer {
     return FfiConverterTypeMobileRideSummaryDto.lower(value)
+}
+
+
+/**
+ * Stable cursor for a subsequent route-point page.
+ */
+public struct MobileRoutePointCursorDto: Equatable, Hashable {
+    public var sequence: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sequence: UInt64) {
+        self.sequence = sequence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRoutePointCursorDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRoutePointCursorDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRoutePointCursorDto {
+        return
+            try MobileRoutePointCursorDto(
+                sequence: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRoutePointCursorDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRoutePointCursorDto_lift(_ buf: RustBuffer) throws -> MobileRoutePointCursorDto {
+    return try FfiConverterTypeMobileRoutePointCursorDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRoutePointCursorDto_lower(_ value: MobileRoutePointCursorDto) -> RustBuffer {
+    return FfiConverterTypeMobileRoutePointCursorDto.lower(value)
+}
+
+
+/**
+ * One canonical route point with its stable ride sequence.
+ */
+public struct MobileRoutePointDto: Equatable, Hashable {
+    public var sequence: UInt64
+    public var location: MobileRideLocationDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sequence: UInt64, location: MobileRideLocationDto) {
+        self.sequence = sequence
+        self.location = location
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRoutePointDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRoutePointDto {
+        return
+            try MobileRoutePointDto(
+                sequence: FfiConverterUInt64.read(from: &buf),
+                location: FfiConverterTypeMobileRideLocationDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRoutePointDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterTypeMobileRideLocationDto.write(value.location, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRoutePointDto_lift(_ buf: RustBuffer) throws -> MobileRoutePointDto {
+    return try FfiConverterTypeMobileRoutePointDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRoutePointDto_lower(_ value: MobileRoutePointDto) -> RustBuffer {
+    return FfiConverterTypeMobileRoutePointDto.lower(value)
+}
+
+
+/**
+ * One bounded page of canonical route points.
+ */
+public struct MobileRoutePointPageDto: Equatable, Hashable {
+    public var points: [MobileRoutePointDto]
+    public var nextCursor: MobileRoutePointCursorDto?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(points: [MobileRoutePointDto], nextCursor: MobileRoutePointCursorDto?) {
+        self.points = points
+        self.nextCursor = nextCursor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRoutePointPageDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRoutePointPageDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRoutePointPageDto {
+        return
+            try MobileRoutePointPageDto(
+                points: FfiConverterSequenceTypeMobileRoutePointDto.read(from: &buf),
+                nextCursor: FfiConverterOptionTypeMobileRoutePointCursorDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRoutePointPageDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRoutePointDto.write(value.points, into: &buf)
+        FfiConverterOptionTypeMobileRoutePointCursorDto.write(value.nextCursor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRoutePointPageDto_lift(_ buf: RustBuffer) throws -> MobileRoutePointPageDto {
+    return try FfiConverterTypeMobileRoutePointPageDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRoutePointPageDto_lower(_ value: MobileRoutePointPageDto) -> RustBuffer {
+    return FfiConverterTypeMobileRoutePointPageDto.lower(value)
 }
 
 
@@ -9992,6 +10752,63 @@ public func FfiConverterTypeMobileTrailIdDto_lower(_ value: MobileTrailIdDto) ->
 
 
 /**
+ * Stable cursor for a subsequent trail-segment page.
+ */
+public struct MobileTrailSegmentCursorDto: Equatable, Hashable {
+    public var trailId: MobileTrailIdDto
+    public var sequence: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(trailId: MobileTrailIdDto, sequence: UInt32) {
+        self.trailId = trailId
+        self.sequence = sequence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTrailSegmentCursorDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTrailSegmentCursorDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTrailSegmentCursorDto {
+        return
+            try MobileTrailSegmentCursorDto(
+                trailId: FfiConverterTypeMobileTrailIdDto.read(from: &buf),
+                sequence: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTrailSegmentCursorDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileTrailIdDto.write(value.trailId, into: &buf)
+        FfiConverterUInt32.write(value.sequence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTrailSegmentCursorDto_lift(_ buf: RustBuffer) throws -> MobileTrailSegmentCursorDto {
+    return try FfiConverterTypeMobileTrailSegmentCursorDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTrailSegmentCursorDto_lower(_ value: MobileTrailSegmentCursorDto) -> RustBuffer {
+    return FfiConverterTypeMobileTrailSegmentCursorDto.lower(value)
+}
+
+
+/**
  * One indexed trail segment.
  */
 public struct MobileTrailSegmentDto: Equatable, Hashable {
@@ -10077,6 +10894,63 @@ public func FfiConverterTypeMobileTrailSegmentDto_lift(_ buf: RustBuffer) throws
 #endif
 public func FfiConverterTypeMobileTrailSegmentDto_lower(_ value: MobileTrailSegmentDto) -> RustBuffer {
     return FfiConverterTypeMobileTrailSegmentDto.lower(value)
+}
+
+
+/**
+ * One bounded page of indexed trail segments.
+ */
+public struct MobileTrailSegmentPageDto: Equatable, Hashable {
+    public var segments: [MobileTrailSegmentDto]
+    public var nextCursor: MobileTrailSegmentCursorDto?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(segments: [MobileTrailSegmentDto], nextCursor: MobileTrailSegmentCursorDto?) {
+        self.segments = segments
+        self.nextCursor = nextCursor
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileTrailSegmentPageDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileTrailSegmentPageDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTrailSegmentPageDto {
+        return
+            try MobileTrailSegmentPageDto(
+                segments: FfiConverterSequenceTypeMobileTrailSegmentDto.read(from: &buf),
+                nextCursor: FfiConverterOptionTypeMobileTrailSegmentCursorDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileTrailSegmentPageDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileTrailSegmentDto.write(value.segments, into: &buf)
+        FfiConverterOptionTypeMobileTrailSegmentCursorDto.write(value.nextCursor, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTrailSegmentPageDto_lift(_ buf: RustBuffer) throws -> MobileTrailSegmentPageDto {
+    return try FfiConverterTypeMobileTrailSegmentPageDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileTrailSegmentPageDto_lower(_ value: MobileTrailSegmentPageDto) -> RustBuffer {
+    return FfiConverterTypeMobileTrailSegmentPageDto.lower(value)
 }
 
 
@@ -14552,6 +15426,148 @@ public func FfiConverterTypeMobilePevcapEncodingDto_lower(_ value: MobilePevcapE
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Durable outcome selected by PEVCAP preflight.
+ */
+
+public enum MobilePevcapImportOutcomeDto: Equatable, Hashable {
+
+    /**
+     * Confirmation produces a canonical ride and a managed capture.
+     */
+    case rideAndCapture
+    /**
+     * Confirmation produces only a managed capture because no route locations exist.
+     */
+    case captureOnly
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePevcapImportOutcomeDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePevcapImportOutcomeDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobilePevcapImportOutcomeDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePevcapImportOutcomeDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .rideAndCapture
+
+        case 2: return .captureOnly
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobilePevcapImportOutcomeDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .rideAndCapture:
+            writeInt(&buf, Int32(1))
+
+
+        case .captureOnly:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapImportOutcomeDto_lift(_ buf: RustBuffer) throws -> MobilePevcapImportOutcomeDto {
+    return try FfiConverterTypeMobilePevcapImportOutcomeDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapImportOutcomeDto_lower(_ value: MobilePevcapImportOutcomeDto) -> RustBuffer {
+    return FfiConverterTypeMobilePevcapImportOutcomeDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Non-fatal PEVCAP preflight warning.
+ */
+
+public enum MobilePevcapImportWarningDto: Equatable, Hashable {
+
+    /**
+     * No phone route locations were present.
+     */
+    case noRouteLocations
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobilePevcapImportWarningDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobilePevcapImportWarningDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobilePevcapImportWarningDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobilePevcapImportWarningDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .noRouteLocations
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobilePevcapImportWarningDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .noRouteLocations:
+            writeInt(&buf, Int32(1))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapImportWarningDto_lift(_ buf: RustBuffer) throws -> MobilePevcapImportWarningDto {
+    return try FfiConverterTypeMobilePevcapImportWarningDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobilePevcapImportWarningDto_lower(_ value: MobilePevcapImportWarningDto) -> RustBuffer {
+    return FfiConverterTypeMobilePevcapImportWarningDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Mobile protocol-family identifier.
  */
 
@@ -14746,6 +15762,34 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case UnsupportedSchemaVersion
     /**
+     * The file is `SQLite` but belongs to another application.
+     */
+    case InvalidDatabaseIdentity
+    /**
+     * The database failed `SQLite`'s integrity check.
+     */
+    case IntegrityCheckFailed
+    /**
+     * A growing query was not bounded by a supported limit.
+     */
+    case InvalidQueryLimit
+    /**
+     * Geographic query bounds were non-finite, out of range, or reversed.
+     */
+    case InvalidGeographicBounds
+    /**
+     * PEVCAP preflight rejected an artifact that exceeded a hard resource limit.
+     */
+    case PevcapLimitExceeded
+    /**
+     * The PEVCAP source changed after the preview was presented.
+     */
+    case PevcapPreviewChanged
+    /**
+     * Another confirmation for the same artifact is already active.
+     */
+    case PevcapImportInProgress
+    /**
      * A coordinate failed WGS84 validation.
      */
     case InvalidCoordinate
@@ -14806,13 +15850,20 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
         case 2: return .AlreadyOpenForDifferentPath
         case 3: return .InvalidIdentifier
         case 4: return .UnsupportedSchemaVersion
-        case 5: return .InvalidCoordinate
-        case 6: return .NotFound
-        case 7: return .InvalidTransition
-        case 8: return .InvalidRideState
-        case 9: return .QueueFull
-        case 10: return .WorkerStopped
-        case 11: return .StorageFailure
+        case 5: return .InvalidDatabaseIdentity
+        case 6: return .IntegrityCheckFailed
+        case 7: return .InvalidQueryLimit
+        case 8: return .InvalidGeographicBounds
+        case 9: return .PevcapLimitExceeded
+        case 10: return .PevcapPreviewChanged
+        case 11: return .PevcapImportInProgress
+        case 12: return .InvalidCoordinate
+        case 13: return .NotFound
+        case 14: return .InvalidTransition
+        case 15: return .InvalidRideState
+        case 16: return .QueueFull
+        case 17: return .WorkerStopped
+        case 18: return .StorageFailure
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -14841,32 +15892,60 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(4))
 
 
-        case .InvalidCoordinate:
+        case .InvalidDatabaseIdentity:
             writeInt(&buf, Int32(5))
 
 
-        case .NotFound:
+        case .IntegrityCheckFailed:
             writeInt(&buf, Int32(6))
 
 
-        case .InvalidTransition:
+        case .InvalidQueryLimit:
             writeInt(&buf, Int32(7))
 
 
-        case .InvalidRideState:
+        case .InvalidGeographicBounds:
             writeInt(&buf, Int32(8))
 
 
-        case .QueueFull:
+        case .PevcapLimitExceeded:
             writeInt(&buf, Int32(9))
 
 
-        case .WorkerStopped:
+        case .PevcapPreviewChanged:
             writeInt(&buf, Int32(10))
 
 
-        case .StorageFailure:
+        case .PevcapImportInProgress:
             writeInt(&buf, Int32(11))
+
+
+        case .InvalidCoordinate:
+            writeInt(&buf, Int32(12))
+
+
+        case .NotFound:
+            writeInt(&buf, Int32(13))
+
+
+        case .InvalidTransition:
+            writeInt(&buf, Int32(14))
+
+
+        case .InvalidRideState:
+            writeInt(&buf, Int32(15))
+
+
+        case .QueueFull:
+            writeInt(&buf, Int32(16))
+
+
+        case .WorkerStopped:
+            writeInt(&buf, Int32(17))
+
+
+        case .StorageFailure:
+            writeInt(&buf, Int32(18))
 
         }
     }
@@ -18564,6 +19643,30 @@ fileprivate struct FfiConverterOptionTypeMobileIgnoredNotificationEvidenceDto: F
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileMapPointCursorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileMapPointCursorDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileMapPointCursorDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileMapPointCursorDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileMonotonicMillisDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileMonotonicMillisDto?
 
@@ -18804,6 +19907,54 @@ fileprivate struct FfiConverterOptionTypeMobileReservedPayloadEvidenceDto: FfiCo
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRideCursorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideCursorDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideCursorDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideCursorDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileRideIdDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideIdDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideIdDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideIdDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileRideSessionIdentityDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileRideSessionIdentityDto?
 
@@ -18820,6 +19971,30 @@ fileprivate struct FfiConverterOptionTypeMobileRideSessionIdentityDto: FfiConver
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileRideSessionIdentityDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileRoutePointCursorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRoutePointCursorDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRoutePointCursorDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRoutePointCursorDto.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -18892,6 +20067,30 @@ fileprivate struct FfiConverterOptionTypeMobileSettingsReadbackDto: FfiConverter
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileSettingsReadbackDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileTrailSegmentCursorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileTrailSegmentCursorDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileTrailSegmentCursorDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileTrailSegmentCursorDto.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -19799,6 +20998,81 @@ fileprivate struct FfiConverterSequenceTypeMobileRawFloatFieldValueDto: FfiConve
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileRideIdDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideIdDto]
+
+    public static func write(_ value: [MobileRideIdDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideIdDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideIdDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideIdDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideIdDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideRecordDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideRecordDto]
+
+    public static func write(_ value: [MobileRideRecordDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideRecordDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideRecordDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideRecordDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideRecordDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRoutePointDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRoutePointDto]
+
+    public static func write(_ value: [MobileRoutePointDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRoutePointDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRoutePointDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRoutePointDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRoutePointDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileSessionOutputDto: FfiConverterRustBuffer {
     typealias SwiftType = [MobileSessionOutputDto]
 
@@ -19945,6 +21219,31 @@ fileprivate struct FfiConverterSequenceTypeMobilePendingProbeDto: FfiConverterRu
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobilePevcapImportWarningDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobilePevcapImportWarningDto]
+
+    public static func write(_ value: [MobilePevcapImportWarningDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobilePevcapImportWarningDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobilePevcapImportWarningDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobilePevcapImportWarningDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobilePevcapImportWarningDto.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
  * Ambiguous picker candidate that requires user confirmation before routing.
  */
@@ -20048,6 +21347,20 @@ public func mobileManualDiscoveryCandidate() -> DiscoveryCandidate  {
     )
 })
 }
+/**
+ * Acquires the process-wide Rust-owned ride database service for `path`.
+ *
+ * # Errors
+ *
+ * Returns a stable database error when the path cannot be acquired, migrated, or validated.
+ */
+public func openRideDatabase(path: String)throws  -> RideDatabaseHandle  {
+    return try  FfiConverterTypeRideDatabaseHandle_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_func_open_ride_database(
+        FfiConverterString.lower(path),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -20089,6 +21402,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_func_mobile_manual_discovery_candidate() != 20646) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_func_open_ride_database() != 48750) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_aeroreadonlysession_current_snapshot() != 43283) {
@@ -20280,6 +21596,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_backup_to() != 57522) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_bootstrap_snapshot() != 32370) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_capabilities() != 29297) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -20287,6 +21606,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_selected_device() != 43108) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_confirm_pevcap_import() != 34418) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 37425) {
@@ -20301,16 +21623,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 3509) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_import_pevcap() != 29505) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 47097) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 21185) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 46828) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_preflight_pevcap() != 64663) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_rebuild_spatial_indexes() != 44741) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_remove_voltage_sag_model() != 48306) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_ride_session_marker() != 13432) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_route_points() != 34785) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_ride_session_marker() != 45915) {
@@ -20334,7 +21665,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_summary() != 63249) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_trail_segments_in_bounds() != 27184) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_trail_segments_in_bounds() != 59585) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 62540) {
@@ -20374,9 +21705,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilephonelocationstate_new() != 19112) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cutout_mobile_ffi_checksum_constructor_ridedatabasehandle_open() != 63409) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_vescreadonlysession_new() != 39732) {
