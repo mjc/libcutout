@@ -16,13 +16,13 @@ final class CutoutAppModelTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        try? RideSessionMarkerStore().clear()
-        try? DevicePickerSelectionStore().clear()
+        XCTAssertNoThrow(try RideSessionMarkerStore().clear())
+        XCTAssertNoThrow(try DevicePickerSelectionStore().clear())
     }
 
     override func tearDown() {
-        try? RideSessionMarkerStore().clear()
-        try? DevicePickerSelectionStore().clear()
+        XCTAssertNoThrow(try RideSessionMarkerStore().clear())
+        XCTAssertNoThrow(try DevicePickerSelectionStore().clear())
         super.tearDown()
     }
 

@@ -21,7 +21,7 @@ final class DevicePickerSelectionStoreTests: XCTestCase {
         store.save(platformIdentifier: "   ")
         XCTAssertEqual(store.platformIdentifier, "ios-local-falcon")
 
-        try? store.clear()
+        XCTAssertNoThrow(try store.clear())
         XCTAssertNil(store.platformIdentifier)
     }
 }

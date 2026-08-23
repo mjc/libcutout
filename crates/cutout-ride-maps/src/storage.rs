@@ -329,6 +329,17 @@ impl RideDatabase {
     pub fn open(path: &Path) -> Result<Self, StorageError> {
         let canonical_path = canonical_database_path(path)?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
+        if owner
+            .as_ref()
+            .and_then(|entry| entry.join.as_ref())
+            .is_some_and(JoinHandle::is_finished)
+        {
+            if let Some(mut stale) = owner.take() {
+                if let Some(join) = stale.join.take() {
+                    let _ = join.join();
+                }
+            }
+        }
         if let Some(existing) = owner.as_ref() {
             if existing.path != canonical_path {
                 return Err(StorageError::AlreadyOpenForDifferentPath);

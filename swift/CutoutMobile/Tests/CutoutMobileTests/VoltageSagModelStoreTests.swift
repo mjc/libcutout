@@ -34,7 +34,7 @@ final class VoltageSagModelStoreTests: XCTestCase {
         let prefixKey = "io.cutout.voltage-sag.v1."
         defaults.set("sentinel", forKey: prefixKey)
 
-        try? store.remove(for: "")
+        XCTAssertNoThrow(try store.remove(for: ""))
 
         XCTAssertEqual(defaults.string(forKey: prefixKey), "sentinel")
     }
