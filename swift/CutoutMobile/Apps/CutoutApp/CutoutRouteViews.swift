@@ -551,7 +551,7 @@ struct MelkValidationRouteView: View {
                 rideCard
                 commandControls
                 evidenceControls
-                recordsCard
+                testCoverageCard
             }
             .padding()
         }
@@ -619,17 +619,17 @@ struct MelkValidationRouteView: View {
         }
     }
 
-    private var recordsCard: some View {
-        GroupBox("Validation log") {
+    private var testCoverageCard: some View {
+        GroupBox("Branch-added tests") {
             VStack(alignment: .leading, spacing: 6) {
-                Text("FFF4 notifications: \(lighting.notificationCount)")
-                .font(.footnote.monospaced())
-                ForEach(lighting.records) { record in
-                    Text(record.text)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                }
+                Text("Core RGB model: preserves all channels, bounds brightness, keeps commands typed, and gates restore on opt-in plus the same accessory identity.")
+                Text("MELK protocol: verifies ELK-BLEDOM frame encoding, exact MELK-OC21 and GATT matching, and FFF3 write/FFF4 confirmation policy.")
+                Text("Mobile FFI: checks typed GATT evidence, exported payloads, invalid brightness, and restore DTO decisions.")
+                Text("CoreBluetooth harness: covers standalone scanning, explicit command evidence, typed writes/subscription, and observed identity roles.")
+                Text("Ride navigation: covers Lighting tab routing, selection, shortcuts, localization, and unavailable-tab behavior for EUC and VESC.")
             }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
     }
 
