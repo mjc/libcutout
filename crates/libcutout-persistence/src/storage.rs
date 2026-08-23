@@ -4,7 +4,7 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RideLifecycleState,
-    RideSummary, TransitionError, distance_between_millimetres,
+    RideSummary, TransitionError,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -21,6 +21,11 @@ use std::{
 };
 use thiserror::Error;
 use uuid::Uuid;
+
+mod ride_write;
+use ride_write::{
+    LocationWriteDecision, LocationWriteMode, RideWriteState, wall_clock_now_milliseconds,
+};
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
 const CURRENT_SCHEMA_VERSION: i64 = 5;
@@ -765,6 +770,9 @@ pub enum StorageError {
     /// Another confirmation for the same artifact is already being committed.
     #[error("PEVCAP artifact import is already in progress")]
     PevcapImportInProgress,
+    /// The host wall clock is earlier than the Unix epoch.
+    #[error("system wall clock is earlier than the Unix epoch")]
+    SystemClock(#[from] std::time::SystemTimeError),
     /// The requested spatial `SQLite` extension is unavailable.
     #[error("SQLite R*Tree capability is unavailable")]
     SpatialCapabilityUnavailable,
@@ -1244,9 +1252,11 @@ impl RideDatabase {
         ride_id: RideId,
         event: RideEvent,
     ) -> Result<RideLifecycleState, StorageError> {
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
         self.request(move |reply| Command::Transition {
             ride_id,
             event,
+            occurred_at_ms,
             reply,
         })
     }
@@ -1370,12 +1380,6 @@ enum PevcapBegin {
 struct ManagedArtifact {
     path: PathBuf,
     created: bool,
-}
-
-#[derive(Clone, Copy)]
-enum LocationWriteMode {
-    Live,
-    PevcapImport,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1503,6 +1507,7 @@ enum Command {
     Transition {
         ride_id: RideId,
         event: RideEvent,
+        occurred_at_ms: u64,
         reply: Reply<RideLifecycleState>,
     },
     AppendLocation {
@@ -1727,9 +1732,10 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             Command::Transition {
                 ride_id,
                 event,
+                occurred_at_ms,
                 reply,
             } => {
-                let _ = reply.send(transition_ride(&connection, ride_id, event));
+                let _ = reply.send(transition_ride(&connection, ride_id, event, occurred_at_ms));
             }
             Command::AppendLocation {
                 ride_id,
@@ -2974,7 +2980,7 @@ fn finish_pevcap_import(
         return Err(StorageError::PevcapImportInProgress);
     }
     if let Some(ride_id) = ride_id {
-        transition_ride(&transaction, ride_id, RideEvent::Import)?;
+        transition_ride(&transaction, ride_id, RideEvent::Import, imported_at_ms)?;
     }
     transaction.execute(
         "INSERT INTO pevcap_imports
@@ -3153,23 +3159,19 @@ fn transition_ride(
     connection: &Connection,
     ride_id: RideId,
     event: RideEvent,
+    occurred_at_ms: u64,
 ) -> Result<RideLifecycleState, StorageError> {
-    let (state, _source): (String, String) = connection
-        .query_row(
-            "SELECT state, source FROM rides WHERE id = ?1",
-            params![ride_id.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?
-        .ok_or(StorageError::NotFound)?;
-    let current = state_from_db(&state)?;
-    let next = current.apply(event)?;
+    let write_state = load_ride_write_state(connection, ride_id)?;
+    let update = write_state.transition(event, occurred_at_ms)?;
     connection.execute(
-        "UPDATE rides SET state = ?2,
-         updated_at_ms = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = ?1",
-        params![ride_id.uuid().to_string(), state_to_db(next)],
+        "UPDATE rides SET state = ?2, updated_at_ms = ?3 WHERE id = ?1",
+        params![
+            ride_id.uuid().to_string(),
+            state_to_db(update.lifecycle()),
+            update.updated_at_milliseconds()
+        ],
     )?;
-    Ok(next)
+    Ok(update.lifecycle())
 }
 
 fn append_location(
@@ -3190,32 +3192,7 @@ fn append_location_in_transaction(
     sample: LocationSample,
     mode: LocationWriteMode,
 ) -> Result<LocationAdmission, StorageError> {
-    let (state, source): (String, String) = connection
-        .query_row(
-            "SELECT state, source FROM rides WHERE id = ?1",
-            params![ride_id.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?
-        .ok_or(StorageError::NotFound)?;
-    let state = state_from_db(&state)?;
-    let source = ride_source_from_db(&source)?;
-    let accepts = match mode {
-        LocationWriteMode::Live => {
-            source == RideSource::Live
-                && matches!(
-                    state,
-                    RideLifecycleState::Active | RideLifecycleState::Paused
-                )
-        }
-        LocationWriteMode::PevcapImport => {
-            source == RideSource::PevcapImport && state == RideLifecycleState::Draft
-        }
-    };
-    if !accepts {
-        return Err(StorageError::InvalidRideState(state));
-    }
-
+    let write_state = load_ride_write_state(connection, ride_id)?;
     let previous = connection
         .query_row(
             "SELECT sequence, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source
@@ -3252,14 +3229,25 @@ fn append_location_in_transaction(
             },
         )
         .optional()?;
-    let Some((previous_sequence, previous_sample)) = previous else {
-        insert_location(connection, ride_id, 0, sample, 0)?;
-        return Ok(LocationAdmission::Accepted);
-    };
-    match sample.admission(Some(&previous_sample)) {
-        LocationAdmission::Accepted => {
-            let distance = distance_between_millimetres(previous_sample, sample);
-            match insert_location(connection, ride_id, previous_sequence + 1, sample, distance) {
+    let decision = write_state
+        .decide_location(previous.map(|(_, sample)| sample), sample, mode)
+        .map_err(StorageError::InvalidRideState)?;
+    match decision {
+        LocationWriteDecision::Accepted {
+            distance_millimetres,
+            updated_at_ms,
+        } => {
+            let sequence = previous
+                .map(|(sequence, _)| sequence + 1)
+                .unwrap_or_default();
+            match insert_location(
+                connection,
+                ride_id,
+                sequence,
+                sample,
+                distance_millimetres,
+                updated_at_ms,
+            ) {
                 Ok(()) => Ok(LocationAdmission::Accepted),
                 Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
                     if error.code == rusqlite::ErrorCode::ConstraintViolation =>
@@ -3269,8 +3257,27 @@ fn append_location_in_transaction(
                 Err(error) => Err(error),
             }
         }
-        admission => Ok(admission),
+        LocationWriteDecision::Rejected(admission) => Ok(admission),
     }
+}
+
+fn load_ride_write_state(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<RideWriteState, StorageError> {
+    let (source, lifecycle, updated_at_ms): (String, String, u64) = connection
+        .query_row(
+            "SELECT source, state, updated_at_ms FROM rides WHERE id = ?1",
+            params![ride_id.uuid().to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?
+        .ok_or(StorageError::NotFound)?;
+    Ok(RideWriteState::new(
+        ride_source_from_db(&source)?,
+        state_from_db(&lifecycle)?,
+        updated_at_ms,
+    ))
 }
 
 fn insert_location(
@@ -3279,6 +3286,7 @@ fn insert_location(
     sequence: i64,
     sample: LocationSample,
     distance_millimetres: u64,
+    updated_at_ms: u64,
 ) -> Result<(), StorageError> {
     connection.execute(
         "INSERT INTO ride_points
@@ -3297,8 +3305,12 @@ fn insert_location(
     )?;
     connection.execute(
         "UPDATE rides SET point_count = point_count + 1, distance_mm = distance_mm + ?2,
-         updated_at_ms = CAST(strftime('%s', 'now') AS INTEGER) * 1000 WHERE id = ?1",
-        params![ride_id.uuid().to_string(), distance_millimetres],
+         updated_at_ms = ?3 WHERE id = ?1",
+        params![
+            ride_id.uuid().to_string(),
+            distance_millimetres,
+            updated_at_ms
+        ],
     )?;
     Ok(())
 }

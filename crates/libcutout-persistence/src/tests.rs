@@ -143,6 +143,44 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
 }
 
 #[test]
+fn ride_updates_follow_domain_timestamps_without_regressing() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-domain-time-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let created_at_ms = 10_000_000_000_000;
+    let sample_at_ms = created_at_ms + 1_000;
+    let ride = database
+        .create_ride(RideSource::Live, created_at_ms)
+        .unwrap();
+
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_000,
+        sample_at_ms,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+    database.transition(ride, RideEvent::Stop).unwrap();
+    database.transition(ride, RideEvent::Save).unwrap();
+
+    let page = database
+        .list_rides(None, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(page.rides()[0].updated_at_milliseconds(), sample_at_ms);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_persists_migrated_mobile_state() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

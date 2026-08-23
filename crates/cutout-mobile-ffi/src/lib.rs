@@ -3396,6 +3396,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         | persistence::StorageError::InvalidStoredValue { .. }
         | persistence::StorageError::InvalidSqliteVersion(_)
         | persistence::StorageError::PevcapImport(_)
+        | persistence::StorageError::SystemClock(_)
         | persistence::StorageError::SpatialCapabilityUnavailable
         | persistence::StorageError::SpatialSchemaInitialization(_) => {
             MobileRideDatabaseError::StorageFailure
