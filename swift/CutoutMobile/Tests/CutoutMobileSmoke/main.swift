@@ -60,7 +60,7 @@ struct CutoutMobilePackageSmoke {
 
         let advertisement = CoreBluetoothAdvertisement(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier("falcon-001"),
-            localName: "Begode Falcon",
+            localName: "device-001",
             advertisedServiceUuids: [BluetoothUuid.bluetooth16(0xffe0)]
         )
         precondition(advertisement.modelHint == .unknown)

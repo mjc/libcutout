@@ -251,23 +251,23 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-aero"),
-                localName: "NOSFET Aero",
+                localName: "device-ffe0",
                 advertisedServiceUuids: [.bluetooth16(0xFFE0)]
             )
         )
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-unknown"),
-                localName: "Little FOCer",
+                localName: "device-fff0",
                 advertisedServiceUuids: [.bluetooth16(0xFFF0)]
             )
         )
 
         XCTAssertEqual(core.scanState.status, .scanning)
-        XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertEqual(core.scanState.rows.map(\.title), ["device-ffe0", "device-fff0"])
         XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [nil, .vescOnewheel])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Little FOCer"])
-        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["NOSFET Aero"])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["device-fff0"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
         XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
@@ -612,20 +612,20 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-                localName: "Begode Falcon",
+                localName: "device-ffe0",
                 advertisedServiceUuids: []
             )
         )
         core.observeAdvertisement(
             CoreBluetoothAdvertisement(
                 peripheralIdentifier: CoreBluetoothPeripheralIdentifier("ios-local-falcon"),
-                localName: "Begode Falcon",
+                localName: "device-ffe0",
                 advertisedServiceUuids: [.bluetooth16(0xFFE0)]
             )
         )
 
         XCTAssertEqual(core.scanState.rows.map(\.id), ["ios-local-falcon"])
-        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["Begode Falcon"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["device-ffe0"])
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {

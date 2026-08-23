@@ -19,7 +19,7 @@ private final class CutoutLiveValidator {
     private let core = CutoutSessionCore()
     private var records: [String] = []
     private var candidateRecordCount = 0
-    private var didRequestPairing = false
+    private var didRequestProbe = false
     private(set) var didValidate = false
 
     init(timeout: TimeInterval) {
@@ -31,7 +31,7 @@ private final class CutoutLiveValidator {
             self?.appendDiagnostic("phase=\(phase)")
         }
         core.onScanStateChange = { [weak self] state in
-            self?.pairFirstSupportedCandidate(from: state)
+            self?.probeFirstCandidate(from: state)
         }
     }
 
@@ -68,8 +68,8 @@ private final class CutoutLiveValidator {
         core.protocolIdentityCandidate?.support.electricUnicycleModel == .aero
     }
 
-    private func pairFirstSupportedCandidate(from state: DevicePickerScanState) {
-        guard !didRequestPairing else {
+    private func probeFirstCandidate(from state: DevicePickerScanState) {
+        guard !didRequestProbe else {
             return
         }
 
@@ -79,7 +79,7 @@ private final class CutoutLiveValidator {
             return
         }
 
-        didRequestPairing = true
+        didRequestProbe = true
         let didProbe = core.probe(platformIdentifier: row.id)
         appendDiagnostic("auto_probe=\(didProbe) id=\(row.id) title=\(row.title)")
     }
