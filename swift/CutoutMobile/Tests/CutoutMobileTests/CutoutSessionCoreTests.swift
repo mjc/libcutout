@@ -1266,6 +1266,27 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(sink.writes, [Data("SetLightON".utf8)])
     }
 
+    func testEucLiveOwnerTimesOutPendingHeadlightOnTick() throws {
+        let sink = RecordingOperationSink()
+        let owner = CoreBluetoothLiveSessionOwner(
+            session: try .electricUnicycle(model: .aero),
+            advertisement: CoreBluetoothAdvertisement(
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("headlight-timeout-test"),
+                localName: ElectricUnicycleModel.aero.displayName,
+                advertisedServiceUuids: []
+            ),
+            writeLimit: TransportWriteLimitBytes(20),
+            operationSink: sink
+        )
+
+        _ = try owner.handleCommand(.setLights(.on), at: MonotonicMilliseconds(1))
+        XCTAssertEqual(owner.headlightState?.kind, .pending)
+
+        _ = try owner.handleTick(at: MonotonicMilliseconds(2_010))
+
+        XCTAssertEqual(owner.headlightState?.kind, .timedOut)
+    }
+
     func testUnverifiedFalconHeadlightCommandDoesNotReachOperationSink() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
