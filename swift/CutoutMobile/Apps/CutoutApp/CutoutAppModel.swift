@@ -114,6 +114,7 @@ final class CutoutAppModel {
     private var restorationMarkerAtLaunch: Data?
     private var rideMapHistoryCursor: MobileRideCursorDto?
     private var rideMapHistoryTask: Task<Void, Never>?
+    private var rideMapRestoreTask: Task<Void, Never>?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -216,17 +217,30 @@ final class CutoutAppModel {
     }
 
     private func restoreRideMapState() {
-        rideMapSnapshot = core.rideMapStateHandle.currentSnapshot()
+        let state = core.rideMapStateHandle
+        rideMapSnapshot = state.currentSnapshot()
         guard rideMapSnapshot != nil else { return }
-        do {
-            guard let (points, truncated) = try collectRideMapPoints({ cursor, limit in
-                try core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: limit)
-            }) else { return }
-            rideMapPoints = points
-            rideMapLivePointsTruncated = truncated
-        } catch {
-            rideMapError = error as? MobileRideMapError
-            rideMapPoints = []
+        rideMapRestoreTask?.cancel()
+        let batchLimit = Self.rideMapPointBatchLimit
+        let previewLimit = Self.rideMapPreviewPointLimit
+        rideMapRestoreTask = Task { [weak self] in
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try Self.collectRideMapPoints(
+                        state: state,
+                        batchLimit: batchLimit,
+                        previewLimit: previewLimit
+                    )
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                guard let result else { return }
+                self.rideMapPoints = result.0
+                self.rideMapLivePointsTruncated = result.1
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapError = error as? MobileRideMapError
+                self.rideMapPoints = []
+            }
         }
     }
 
@@ -411,23 +425,25 @@ final class CutoutAppModel {
         }
     }
 
-    private func collectRideMapPoints(
-        _ fetch: (UInt64?, UInt32) throws -> MobileRideMapPointBatchDto?
-    ) rethrows -> ([MobileRideMapPointDto], Bool)? {
+    private nonisolated static func collectRideMapPoints(
+        state: MobileRideMapState,
+        batchLimit: UInt32,
+        previewLimit: Int
+    ) throws -> ([MobileRideMapPointDto], Bool)? {
         var points = [MobileRideMapPointDto]()
         var cursor: UInt64?
         repeat {
-            guard let batch = try fetch(cursor, Self.rideMapPointBatchLimit) else {
+            guard let batch = try state.pointsAfter(afterCursor: cursor, limit: batchLimit) else {
                 return nil
             }
-            let remaining = Self.rideMapPreviewPointLimit - points.count
+            let remaining = previewLimit - points.count
             if batch.points.count > remaining {
                 points.append(contentsOf: batch.points.prefix(remaining))
                 return (points, true)
             }
             points.append(contentsOf: batch.points)
             cursor = batch.nextCursor
-            if points.count == Self.rideMapPreviewPointLimit {
+            if points.count == previewLimit {
                 return (points, batch.hasMore)
             }
             if batch.hasMore == false {

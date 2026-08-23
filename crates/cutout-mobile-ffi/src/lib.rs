@@ -3561,7 +3561,10 @@ pub enum MobileRideDatabaseError {
     StorageFailure,
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "matches and consumes the storage error enum"
+)]
 fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
         persistence::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
@@ -3752,10 +3755,6 @@ pub fn open_ride_database(
 }
 
 #[uniffi::export]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI methods intentionally accept owned boundary DTOs and strings"
-)]
 impl RideDatabaseHandle {
     /// Returns the stable identity of the process-wide database service.
     #[must_use]
@@ -3841,6 +3840,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn route_points(
         &self,
         ride_id: MobileRideIdDto,
@@ -3896,6 +3896,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a stable database error when the path, encoding, replay, or limits are invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary path strings"
+    )]
     pub fn preflight_pevcap(
         &self,
         path: String,
@@ -3912,6 +3916,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the preview changed or the import cannot be committed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns the confirmation DTO"
+    )]
     pub fn confirm_pevcap_import(
         &self,
         preview: MobilePevcapImportPreviewDto,
@@ -3935,6 +3943,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the trail cannot be stored or indexed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn create_trail(&self, name: String) -> Result<MobileTrailIdDto, MobileRideDatabaseError> {
         self.inner
             .create_trail(&name)
@@ -3949,6 +3961,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the trail or spatial index rejects the segment.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn append_trail_segment(
         &self,
         trail_id: MobileTrailIdDto,
@@ -4015,6 +4028,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the point or spatial index rejects the value.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn create_map_point(
         &self,
         name: String,
@@ -4078,6 +4095,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the destination or worker cannot complete the backup.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary path strings"
+    )]
     pub fn backup_to(&self, path: String) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .backup_to(Path::new(&path))
@@ -4089,6 +4110,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the ride, destination, or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary DTOs and paths"
+    )]
     pub fn export_ride_json(
         &self,
         id: MobileRideIdDto,
@@ -4116,6 +4141,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the identifier or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn save_selected_device(
         &self,
         platform_identifier: String,
@@ -4142,6 +4171,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the identity or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn voltage_sag_model(
         &self,
         device_identity: String,
@@ -4164,6 +4197,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the model, identity, or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn save_voltage_sag_model(
         &self,
         device_identity: String,
@@ -4189,6 +4226,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the identity or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn remove_voltage_sag_model(
         &self,
         device_identity: String,
@@ -4214,6 +4255,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the marker or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns opaque boundary bytes"
+    )]
     pub fn save_ride_session_marker(&self, marker: Vec<u8>) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .save_ride_session_marker(&marker)
@@ -4254,6 +4299,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the metadata or worker rejects the update.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary DTOs and strings"
+    )]
     pub fn update_ride_map_metadata(
         &self,
         id: MobileRideIdDto,
@@ -4279,6 +4328,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the transition or worker rejects the event.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn transition(
         &self,
         id: MobileRideIdDto,
@@ -4296,6 +4346,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the sample, ride, or worker rejects the append.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn append_location(
         &self,
         id: MobileRideIdDto,
@@ -4309,6 +4360,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the sample, ride, or worker rejects the append.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn append_location_with_segment(
         &self,
         id: MobileRideIdDto,
@@ -4328,6 +4380,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the sample, ride, or worker rejects the append.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn append_location_with_segment_and_telemetry(
         &self,
         id: MobileRideIdDto,
@@ -4353,6 +4406,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the durable append is rejected by the worker.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn enqueue_location_with_segment_and_telemetry(
         &self,
         id: MobileRideIdDto,
@@ -4377,6 +4431,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the ride or worker cannot provide its summary.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn summary(
         &self,
         id: MobileRideIdDto,
