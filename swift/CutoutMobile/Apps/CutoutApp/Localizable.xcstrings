@@ -109,6 +109,26 @@
       "comment" : "Status for a setting without a validated command.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not supported" } } }
     },
+    "settings.state.pending" : {
+      "comment" : "Status for a setting command awaiting completion.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pending" } } }
+    },
+    "settings.state.confirmed" : {
+      "comment" : "Status for a setting command confirmed by the device.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Confirmed" } } }
+    },
+    "settings.state.refused" : {
+      "comment" : "Status for a setting command refused before transport.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Refused" } } }
+    },
+    "settings.state.timed_out" : {
+      "comment" : "Status for a setting command that was not confirmed in time.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Timed out" } } }
+    },
+    "settings.state.failed" : {
+      "comment" : "Status for a setting command that failed.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } } }
+    },
     "settings.pedal_mode.title" : {
       "comment" : "Label for the EUC pedal mode setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } }

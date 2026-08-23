@@ -172,17 +172,20 @@ struct EucTuneRouteView: View {
                         EucSettingCapabilityRow(
                             id: "pedalMode",
                             title: localizedAppText("settings.pedal_mode.title"),
-                            support: capabilities.pedalMode
+                            support: capabilities.pedalMode,
+                            state: model.pedalModeState?.kind
                         )
                         EucSettingCapabilityRow(
                             id: "accelerationAssist",
                             title: localizedAppText("settings.acceleration_assist.title"),
-                            support: capabilities.accelerationAssist
+                            support: capabilities.accelerationAssist,
+                            state: model.accelerationAssistState?.kind
                         )
                         EucSettingCapabilityRow(
                             id: "taillight",
                             title: localizedAppText("settings.taillight.title"),
-                            support: capabilities.taillight
+                            support: capabilities.taillight,
+                            state: model.taillightState?.kind
                         )
                     } header: {
                         Text(localizedAppText("settings.capabilities.title"))
@@ -264,19 +267,40 @@ private struct EucSettingCapabilityRow: View {
     let id: String
     let title: String
     let support: SettingWriteSupport
+    let state: SettingStateKind?
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
-            Text(statusText)
+            Text(EucSettingCapabilityPresentation.statusText(support: support, state: state))
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("settings.capability.\(id)")
     }
 
-    private var statusText: String {
+}
+
+enum EucSettingCapabilityPresentation {
+    static func statusText(support: SettingWriteSupport, state: SettingStateKind?) -> String {
+        switch state {
+        case .pending:
+            localizedAppText("settings.state.pending")
+        case .confirmed:
+            localizedAppText("settings.state.confirmed")
+        case .refused:
+            localizedAppText("settings.state.refused")
+        case .timedOut:
+            localizedAppText("settings.state.timed_out")
+        case .failed:
+            localizedAppText("settings.state.failed")
+        case .unknown, .current, nil:
+            supportText(support)
+        }
+    }
+
+    private static func supportText(_ support: SettingWriteSupport) -> String {
         switch support {
         case .supported:
             localizedAppText("settings.capabilities.supported")

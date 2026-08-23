@@ -78,6 +78,11 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("settings.capabilities.title"), "Other settings")
         XCTAssertEqual(localizedAppText("settings.capabilities.unverified"), "Needs validation")
         XCTAssertEqual(localizedAppText("settings.capabilities.unsupported"), "Not supported")
+        XCTAssertEqual(localizedAppText("settings.state.pending"), "Pending")
+        XCTAssertEqual(localizedAppText("settings.state.confirmed"), "Confirmed")
+        XCTAssertEqual(localizedAppText("settings.state.refused"), "Refused")
+        XCTAssertEqual(localizedAppText("settings.state.timed_out"), "Timed out")
+        XCTAssertEqual(localizedAppText("settings.state.failed"), "Failed")
         XCTAssertEqual(localizedAppText("settings.pedal_mode.title"), "Pedal mode")
         XCTAssertEqual(localizedAppText("settings.acceleration_assist.title"), "Acceleration assist")
         XCTAssertEqual(localizedAppText("settings.taillight.title"), "Taillight")
@@ -141,6 +146,37 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(
             EucSettingReadbackPresentation.pedalMode(.unsupported),
+            "Not supported"
+        )
+    }
+
+    func testSettingCapabilityPresentationPrefersLifecycleStatusWhenActionable() {
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .pending),
+            "Pending"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: .refused),
+            "Refused"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .confirmed),
+            "Confirmed"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .timedOut),
+            "Timed out"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .supported, state: .failed),
+            "Failed"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unverified, state: .unknown),
+            "Needs validation"
+        )
+        XCTAssertEqual(
+            EucSettingCapabilityPresentation.statusText(support: .unsupported, state: nil),
             "Not supported"
         )
     }
