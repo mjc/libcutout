@@ -263,8 +263,7 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
-        guard accepts(snapshot) else { return nil }
-        remember(snapshot)
+        guard accept(snapshot) else { return nil }
         let previous = nowPlaying
         update(snapshot: snapshot, artwork: artwork)
         guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
@@ -307,7 +306,7 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         update(snapshot: snapshot)
-        remember(snapshot)
+        _ = accept(snapshot)
         return try rideMapState.recordMusicEvent(
             snapshot: snapshot,
             kind: kind,
@@ -321,15 +320,14 @@ public final class MusicIntegrationCoordinator {
         rideMapState.currentMusicEvents() ?? []
     }
 
-    private func accepts(_ snapshot: MobileMusicSnapshotDto) -> Bool {
+    private func accept(_ snapshot: MobileMusicSnapshotDto) -> Bool {
         guard let lastObservedAtMs = lastObservedAtByProvider[snapshot.provider] else {
+            lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
             return true
         }
-        return snapshot.observedAtMs > lastObservedAtMs
-    }
-
-    private func remember(_ snapshot: MobileMusicSnapshotDto) {
+        guard snapshot.observedAtMs > lastObservedAtMs else { return false }
         lastObservedAtByProvider[snapshot.provider] = snapshot.observedAtMs
+        return true
     }
 
     private static func transitionKind(
