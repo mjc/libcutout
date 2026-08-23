@@ -243,6 +243,13 @@ final class CutoutAppModel {
     func handleMusicCommand(_ command: MobileMusicCommandDto) -> MusicCommandOutcome {
         guard let nowPlaying = musicNowPlaying else { return .unavailable }
         guard nowPlaying.supports(command) else { return .refused }
+        return dispatchMusicCommand(command, for: nowPlaying)
+    }
+
+    private func dispatchMusicCommand(
+        _ command: MobileMusicCommandDto,
+        for nowPlaying: MusicNowPlaying
+    ) -> MusicCommandOutcome {
 #if canImport(MediaPlayer) && os(iOS)
         let didDispatch: Bool
         if nowPlaying.provider == .spotify {
@@ -257,6 +264,7 @@ final class CutoutAppModel {
         return .unavailable
 #endif
     }
+
 
     func dismissMusicPlayer() {
         musicPlayerVisibilityStore.setHidden(true)
