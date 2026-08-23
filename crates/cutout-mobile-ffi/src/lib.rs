@@ -2931,6 +2931,15 @@ impl From<MobileRideSourceDto> for persistence::RideSource {
     }
 }
 
+impl From<persistence::RideSource> for MobileRideSourceDto {
+    fn from(source: persistence::RideSource) -> Self {
+        match source {
+            persistence::RideSource::Live => Self::Live,
+            persistence::RideSource::PevcapImport => Self::PevcapImport,
+        }
+    }
+}
+
 /// Lifecycle state of a canonical ride.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileRideLifecycleStateDto {
@@ -3057,6 +3066,57 @@ pub struct MobileRideSummaryDto {
     pub distance_millimetres: u64,
 }
 
+/// Stable cursor for a subsequent ride-history page.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideCursorDto {
+    pub created_at_milliseconds: u64,
+    pub ride_id: MobileRideIdDto,
+}
+
+/// One bounded ride-history projection.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideRecordDto {
+    pub id: MobileRideIdDto,
+    pub source: MobileRideSourceDto,
+    pub state: MobileRideLifecycleStateDto,
+    pub created_at_milliseconds: u64,
+    pub updated_at_milliseconds: u64,
+    pub summary: MobileRideSummaryDto,
+}
+
+/// One bounded page of ride-history projections.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRidePageDto {
+    pub rides: Vec<MobileRideRecordDto>,
+    pub next_cursor: Option<MobileRideCursorDto>,
+}
+
+/// Stable cursor for a subsequent route-point page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRoutePointCursorDto {
+    pub sequence: u64,
+}
+
+/// One canonical route point with its stable ride sequence.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRoutePointDto {
+    pub sequence: u64,
+    pub location: MobileRideLocationDto,
+}
+
+/// One bounded page of canonical route points.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRoutePointPageDto {
+    pub points: Vec<MobileRoutePointDto>,
+    pub next_cursor: Option<MobileRoutePointCursorDto>,
+}
+
+/// Bounded startup state produced by Rust after recovering interrupted rides.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileBootstrapSnapshotDto {
+    pub recovered_rides: Vec<MobileRideIdDto>,
+}
+
 /// Runtime `SQLite` capabilities observed by Rust.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileSqliteCapabilitiesDto {
@@ -3134,6 +3194,30 @@ pub struct MobileTrailSegmentDto {
     pub end: MobileMapCoordinateDto,
 }
 
+/// Validated WGS84 viewport bounds. A minimum longitude greater than the maximum crosses the
+/// antimeridian.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileGeoBoundsDto {
+    pub minimum_latitude_degrees: f64,
+    pub maximum_latitude_degrees: f64,
+    pub minimum_longitude_degrees: f64,
+    pub maximum_longitude_degrees: f64,
+}
+
+/// Stable cursor for a subsequent trail-segment page.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileTrailSegmentCursorDto {
+    pub trail_id: MobileTrailIdDto,
+    pub sequence: u32,
+}
+
+/// One bounded page of indexed trail segments.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileTrailSegmentPageDto {
+    pub segments: Vec<MobileTrailSegmentDto>,
+    pub next_cursor: Option<MobileTrailSegmentCursorDto>,
+}
+
 /// One indexed charging/food map point.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileMapPointDto {
@@ -3143,6 +3227,19 @@ pub struct MobileMapPointDto {
     pub name: String,
     /// Point coordinate.
     pub coordinate: MobileMapCoordinateDto,
+}
+
+/// Stable cursor for a subsequent map-point page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileMapPointCursorDto {
+    pub id: u64,
+}
+
+/// One bounded page of indexed map points.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileMapPointPageDto {
+    pub points: Vec<MobileMapPointDto>,
+    pub next_cursor: Option<MobileMapPointCursorDto>,
 }
 
 /// Stable error categories for the Rust-owned ride database boundary.
@@ -3160,6 +3257,18 @@ pub enum MobileRideDatabaseError {
     /// The database schema is newer than this build supports.
     #[error("unsupported database schema")]
     UnsupportedSchemaVersion,
+    /// The file is `SQLite` but belongs to another application.
+    #[error("invalid Cutout database identity")]
+    InvalidDatabaseIdentity,
+    /// The database failed `SQLite`'s integrity check.
+    #[error("database integrity check failed")]
+    IntegrityCheckFailed,
+    /// A growing query was not bounded by a supported limit.
+    #[error("invalid query limit")]
+    InvalidQueryLimit,
+    /// Geographic query bounds were non-finite, out of range, or reversed.
+    #[error("invalid geographic bounds")]
+    InvalidGeographicBounds,
     /// A coordinate failed WGS84 validation.
     #[error("invalid coordinate")]
     InvalidCoordinate,
@@ -3192,6 +3301,18 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::UnsupportedSchemaVersion(_) => {
             MobileRideDatabaseError::UnsupportedSchemaVersion
+        }
+        persistence::StorageError::InvalidDatabaseIdentity => {
+            MobileRideDatabaseError::InvalidDatabaseIdentity
+        }
+        persistence::StorageError::IntegrityCheckFailed(_) => {
+            MobileRideDatabaseError::IntegrityCheckFailed
+        }
+        persistence::StorageError::InvalidQueryLimit(_) => {
+            MobileRideDatabaseError::InvalidQueryLimit
+        }
+        persistence::StorageError::InvalidGeographicBounds => {
+            MobileRideDatabaseError::InvalidGeographicBounds
         }
         persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
         persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
@@ -3242,6 +3363,22 @@ fn mobile_map_coordinate_dto(coordinate: ride_maps::Coordinate) -> MobileMapCoor
     }
 }
 
+fn mobile_geo_bounds(
+    bounds: MobileGeoBoundsDto,
+) -> Result<persistence::GeoBounds, MobileRideDatabaseError> {
+    persistence::GeoBounds::new(
+        bounds.minimum_latitude_degrees,
+        bounds.maximum_latitude_degrees,
+        bounds.minimum_longitude_degrees,
+        bounds.maximum_longitude_degrees,
+    )
+    .map_err(map_ride_database_error)
+}
+
+fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
+    persistence::QueryLimit::new(value).map_err(map_ride_database_error)
+}
+
 fn mobile_ride_location(
     location: MobileRideLocationDto,
 ) -> Result<ride_maps::LocationSample, MobileRideDatabaseError> {
@@ -3260,10 +3397,39 @@ fn mobile_ride_location(
     ))
 }
 
+fn mobile_ride_location_dto(location: ride_maps::LocationSample) -> MobileRideLocationDto {
+    MobileRideLocationDto {
+        latitude_degrees: location.coordinate().latitude_degrees(),
+        longitude_degrees: location.coordinate().longitude_degrees(),
+        monotonic_milliseconds: location.monotonic_milliseconds(),
+        wall_clock_unix_milliseconds: location.wall_clock_unix_milliseconds(),
+        horizontal_accuracy_millimetres: location.horizontal_accuracy_millimetres(),
+        source: match location.source() {
+            ride_maps::LocationSource::Live => MobileRideSourceDto::Live,
+            ride_maps::LocationSource::PevcapImport => MobileRideSourceDto::PevcapImport,
+        },
+    }
+}
+
 /// Rust-owned synchronous ride database handle for mobile clients.
 #[derive(Debug, uniffi::Object)]
 pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
+}
+
+/// Acquires the process-wide Rust-owned ride database service for `path`.
+///
+/// # Errors
+///
+/// Returns a stable database error when the path cannot be acquired, migrated, or validated.
+#[uniffi::export]
+#[allow(clippy::needless_pass_by_value)]
+pub fn open_ride_database(
+    path: String,
+) -> Result<Arc<RideDatabaseHandle>, MobileRideDatabaseError> {
+    persistence::RideDatabase::open(Path::new(&path))
+        .map(|inner| Arc::new(RideDatabaseHandle { inner }))
+        .map_err(map_ride_database_error)
 }
 
 #[uniffi::export]
@@ -3273,17 +3439,99 @@ pub struct RideDatabaseHandle {
     clippy::needless_pass_by_value
 )]
 impl RideDatabaseHandle {
-    /// Opens the process-wide Rust-owned ride database.
-    #[uniffi::constructor]
-    pub fn open(path: String) -> Result<Arc<Self>, MobileRideDatabaseError> {
-        persistence::RideDatabase::open(Path::new(&path))
-            .map(|inner| Arc::new(Self { inner }))
-            .map_err(map_ride_database_error)
-    }
-
     /// Returns the stable identity of the process-wide database service.
     pub fn service_id(&self) -> String {
         self.inner.service_id().to_string()
+    }
+
+    /// Returns the bounded startup recovery state captured while acquiring this service.
+    pub fn bootstrap_snapshot(&self) -> MobileBootstrapSnapshotDto {
+        MobileBootstrapSnapshotDto {
+            recovered_rides: self
+                .inner
+                .bootstrap()
+                .recovered_rides()
+                .iter()
+                .map(|id| MobileRideIdDto {
+                    value: id.uuid().to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Lists one bounded page of ride history in stable newest-first order.
+    pub fn list_rides(
+        &self,
+        cursor: Option<MobileRideCursorDto>,
+        limit: u32,
+    ) -> Result<MobileRidePageDto, MobileRideDatabaseError> {
+        let cursor = cursor
+            .map(|cursor| {
+                parse_mobile_ride_id(&cursor.ride_id).map(|ride_id| {
+                    persistence::RideCursor::new(cursor.created_at_milliseconds, ride_id)
+                })
+            })
+            .transpose()?;
+        let limit = mobile_query_limit(limit)?;
+        self.inner
+            .list_rides(cursor, limit)
+            .map(|page| MobileRidePageDto {
+                rides: page
+                    .rides()
+                    .iter()
+                    .map(|ride| {
+                        let summary = ride.summary();
+                        MobileRideRecordDto {
+                            id: MobileRideIdDto {
+                                value: ride.id().uuid().to_string(),
+                            },
+                            source: ride.source().into(),
+                            state: ride.state().into(),
+                            created_at_milliseconds: ride.created_at_milliseconds(),
+                            updated_at_milliseconds: ride.updated_at_milliseconds(),
+                            summary: MobileRideSummaryDto {
+                                point_count: summary.point_count(),
+                                distance_millimetres: summary.distance_millimetres(),
+                            },
+                        }
+                    })
+                    .collect(),
+                next_cursor: page.next_cursor().map(|cursor| MobileRideCursorDto {
+                    created_at_milliseconds: cursor.created_at_milliseconds(),
+                    ride_id: MobileRideIdDto {
+                        value: cursor.ride_id().uuid().to_string(),
+                    },
+                }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Loads one bounded page of canonical route points in stable sequence order.
+    pub fn route_points(
+        &self,
+        ride_id: MobileRideIdDto,
+        cursor: Option<MobileRoutePointCursorDto>,
+        limit: u32,
+    ) -> Result<MobileRoutePointPageDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        let cursor = cursor.map(|cursor| persistence::RoutePointCursor::new(cursor.sequence));
+        let limit = mobile_query_limit(limit)?;
+        self.inner
+            .route_points(ride_id, cursor, limit)
+            .map(|page| MobileRoutePointPageDto {
+                points: page
+                    .points()
+                    .iter()
+                    .map(|point| MobileRoutePointDto {
+                        sequence: point.sequence(),
+                        location: mobile_ride_location_dto(point.sample()),
+                    })
+                    .collect(),
+                next_cursor: page.next_cursor().map(|cursor| MobileRoutePointCursorDto {
+                    sequence: cursor.sequence(),
+                }),
+            })
+            .map_err(map_ride_database_error)
     }
 
     /// Returns runtime `SQLite` capabilities.
@@ -3357,21 +3605,24 @@ impl RideDatabaseHandle {
     /// Queries indexed trail segments intersecting a WGS84 bounding box.
     pub fn trail_segments_in_bounds(
         &self,
-        minimum_latitude_degrees: f64,
-        maximum_latitude_degrees: f64,
-        minimum_longitude_degrees: f64,
-        maximum_longitude_degrees: f64,
-    ) -> Result<Vec<MobileTrailSegmentDto>, MobileRideDatabaseError> {
+        bounds: MobileGeoBoundsDto,
+        cursor: Option<MobileTrailSegmentCursorDto>,
+        limit: u32,
+    ) -> Result<MobileTrailSegmentPageDto, MobileRideDatabaseError> {
+        let bounds = mobile_geo_bounds(bounds)?;
+        let cursor = cursor
+            .map(|cursor| {
+                parse_mobile_trail_id(&cursor.trail_id)
+                    .map(|trail_id| persistence::TrailSegmentCursor::new(trail_id, cursor.sequence))
+            })
+            .transpose()?;
+        let limit = mobile_query_limit(limit)?;
         self.inner
-            .trail_segments_in_bounds(
-                minimum_latitude_degrees,
-                maximum_latitude_degrees,
-                minimum_longitude_degrees,
-                maximum_longitude_degrees,
-            )
-            .map(|segments| {
-                segments
-                    .into_iter()
+            .trail_segments_in_bounds(bounds, cursor, limit)
+            .map(|page| MobileTrailSegmentPageDto {
+                segments: page
+                    .segments()
+                    .iter()
                     .map(|segment| MobileTrailSegmentDto {
                         trail_id: MobileTrailIdDto {
                             value: segment.trail_id.uuid().to_string(),
@@ -3380,7 +3631,15 @@ impl RideDatabaseHandle {
                         start: mobile_map_coordinate_dto(segment.start),
                         end: mobile_map_coordinate_dto(segment.end),
                     })
-                    .collect()
+                    .collect(),
+                next_cursor: page
+                    .next_cursor()
+                    .map(|cursor| MobileTrailSegmentCursorDto {
+                        trail_id: MobileTrailIdDto {
+                            value: cursor.trail_id().uuid().to_string(),
+                        },
+                        sequence: cursor.sequence(),
+                    }),
             })
             .map_err(map_ride_database_error)
     }
@@ -3394,34 +3653,45 @@ impl RideDatabaseHandle {
         let coordinate = mobile_map_coordinate(coordinate)?;
         self.inner
             .create_map_point(&name, coordinate)
+            .map(persistence::MapPointId::get)
             .map_err(map_ride_database_error)
     }
 
     /// Queries indexed map points intersecting a WGS84 bounding box.
     pub fn map_points_in_bounds(
         &self,
-        minimum_latitude_degrees: f64,
-        maximum_latitude_degrees: f64,
-        minimum_longitude_degrees: f64,
-        maximum_longitude_degrees: f64,
-    ) -> Result<Vec<MobileMapPointDto>, MobileRideDatabaseError> {
+        bounds: MobileGeoBoundsDto,
+        cursor: Option<MobileMapPointCursorDto>,
+        limit: u32,
+    ) -> Result<MobileMapPointPageDto, MobileRideDatabaseError> {
+        let bounds = mobile_geo_bounds(bounds)?;
+        let cursor = cursor.map(|cursor| {
+            persistence::MapPointCursor::new(persistence::MapPointId::from_u64(cursor.id))
+        });
+        let limit = mobile_query_limit(limit)?;
         self.inner
-            .map_points_in_bounds(
-                minimum_latitude_degrees,
-                maximum_latitude_degrees,
-                minimum_longitude_degrees,
-                maximum_longitude_degrees,
-            )
-            .map(|points| {
-                points
-                    .into_iter()
+            .map_points_in_bounds(bounds, cursor, limit)
+            .map(|page| MobileMapPointPageDto {
+                points: page
+                    .points()
+                    .iter()
                     .map(|point| MobileMapPointDto {
-                        id: point.id,
-                        name: point.name,
+                        id: point.id.get(),
+                        name: point.name.clone(),
                         coordinate: mobile_map_coordinate_dto(point.coordinate),
                     })
-                    .collect()
+                    .collect(),
+                next_cursor: page.next_cursor().map(|cursor| MobileMapPointCursorDto {
+                    id: cursor.id().get(),
+                }),
             })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Rebuilds all derived spatial indexes from their canonical tables.
+    pub fn rebuild_spatial_indexes(&self) -> Result<(), MobileRideDatabaseError> {
+        self.inner
+            .rebuild_spatial_indexes()
             .map_err(map_ride_database_error)
     }
 
@@ -11306,5 +11576,55 @@ mod tests {
         let result = update(30_000);
         let estimate = result.estimate.expect("stable samples produce an estimate");
         assert_eq!(estimate.voltage_sag, None);
+    }
+
+    #[test]
+    fn spatial_pages_round_trip_mobile_cursors_and_antimeridian_bounds() {
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-spatial-{}-{}.sqlite3",
+            std::process::id(),
+            thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("mobile database opens");
+        database
+            .create_map_point(
+                "east".into(),
+                MobileMapCoordinateDto {
+                    latitude_degrees: 0.0,
+                    longitude_degrees: 179.5,
+                },
+            )
+            .expect("east point is stored");
+        database
+            .create_map_point(
+                "west".into(),
+                MobileMapCoordinateDto {
+                    latitude_degrees: 0.0,
+                    longitude_degrees: -179.5,
+                },
+            )
+            .expect("west point is stored");
+
+        let bounds = MobileGeoBoundsDto {
+            minimum_latitude_degrees: -1.0,
+            maximum_latitude_degrees: 1.0,
+            minimum_longitude_degrees: 179.0,
+            maximum_longitude_degrees: -179.0,
+        };
+        let first = database
+            .map_points_in_bounds(bounds, None, 1)
+            .expect("first page is returned");
+        assert_eq!(first.points.len(), 1);
+        let second = database
+            .map_points_in_bounds(bounds, first.next_cursor, 1)
+            .expect("cursor returns the second page");
+        assert_eq!(second.points.len(), 1);
+        assert_ne!(first.points[0].id, second.points[0].id);
+        assert!(second.next_cursor.is_none());
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 }

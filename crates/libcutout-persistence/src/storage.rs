@@ -20,7 +20,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 
@@ -101,6 +101,29 @@ pub struct RideCursor {
     ride_id: RideId,
 }
 
+impl RideCursor {
+    /// Restores a cursor returned by a previous query page.
+    #[must_use]
+    pub const fn new(created_at_milliseconds: u64, ride_id: RideId) -> Self {
+        Self {
+            created_at_ms: created_at_milliseconds,
+            ride_id,
+        }
+    }
+
+    /// Returns the creation-time component.
+    #[must_use]
+    pub const fn created_at_milliseconds(self) -> u64 {
+        self.created_at_ms
+    }
+
+    /// Returns the ride-identifier component.
+    #[must_use]
+    pub const fn ride_id(self) -> RideId {
+        self.ride_id
+    }
+}
+
 /// Bounded ride-history projection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RideRecord {
@@ -174,6 +197,20 @@ impl RidePage {
 /// Stable cursor for ascending route-point pagination.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RoutePointCursor(u64);
+
+impl RoutePointCursor {
+    /// Restores a cursor returned by a previous query page.
+    #[must_use]
+    pub const fn new(sequence: u64) -> Self {
+        Self(sequence)
+    }
+
+    /// Returns the sequence component.
+    #[must_use]
+    pub const fn sequence(self) -> u64 {
+        self.0
+    }
+}
 
 /// One canonical route point with its stable ride sequence.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -366,11 +403,159 @@ pub struct TrailSegment {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MapPoint {
     /// Stable point identifier.
-    pub id: u64,
+    pub id: MapPointId,
     /// User-visible name.
     pub name: String,
     /// Point coordinate.
     pub coordinate: Coordinate,
+}
+
+/// Stable identifier for a stored map point.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct MapPointId(u64);
+
+impl MapPointId {
+    /// Restores an identifier returned by a previous query page.
+    #[must_use]
+    pub const fn from_u64(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the integer representation used at the mobile boundary.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+/// Validated fixed-point WGS84 query bounds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GeoBounds {
+    minimum_latitude: i32,
+    maximum_latitude: i32,
+    minimum_longitude: i32,
+    maximum_longitude: i32,
+}
+
+impl GeoBounds {
+    /// Validates geographic bounds. A minimum longitude greater than the maximum denotes an
+    /// antimeridian-crossing viewport.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::InvalidGeographicBounds`] for non-finite, out-of-range, or reversed
+    /// latitude bounds.
+    pub fn new(
+        minimum_latitude_degrees: f64,
+        maximum_latitude_degrees: f64,
+        minimum_longitude_degrees: f64,
+        maximum_longitude_degrees: f64,
+    ) -> Result<Self, StorageError> {
+        let minimum = Coordinate::from_degrees(minimum_latitude_degrees, minimum_longitude_degrees)
+            .map_err(|_| StorageError::InvalidGeographicBounds)?;
+        let maximum = Coordinate::from_degrees(maximum_latitude_degrees, maximum_longitude_degrees)
+            .map_err(|_| StorageError::InvalidGeographicBounds)?;
+        if minimum.latitude().as_i32() > maximum.latitude().as_i32() {
+            return Err(StorageError::InvalidGeographicBounds);
+        }
+        Ok(Self {
+            minimum_latitude: minimum.latitude().as_i32(),
+            maximum_latitude: maximum.latitude().as_i32(),
+            minimum_longitude: minimum.longitude().as_i32(),
+            maximum_longitude: maximum.longitude().as_i32(),
+        })
+    }
+
+    const fn crosses_antimeridian(self) -> bool {
+        self.minimum_longitude > self.maximum_longitude
+    }
+}
+
+/// Stable cursor for trail-segment pagination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrailSegmentCursor {
+    trail_id: TrailId,
+    sequence: u32,
+}
+
+impl TrailSegmentCursor {
+    /// Restores a cursor returned by a previous query page.
+    #[must_use]
+    pub const fn new(trail_id: TrailId, sequence: u32) -> Self {
+        Self { trail_id, sequence }
+    }
+
+    /// Returns the trail identifier component.
+    #[must_use]
+    pub const fn trail_id(self) -> TrailId {
+        self.trail_id
+    }
+
+    /// Returns the segment sequence component.
+    #[must_use]
+    pub const fn sequence(self) -> u32 {
+        self.sequence
+    }
+}
+
+/// One bounded page of trail-segment projections.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TrailSegmentPage {
+    segments: Vec<TrailSegment>,
+    next_cursor: Option<TrailSegmentCursor>,
+}
+
+impl TrailSegmentPage {
+    /// Returns the page in stable trail-identifier/sequence order.
+    #[must_use]
+    pub fn segments(&self) -> &[TrailSegment] {
+        &self.segments
+    }
+
+    /// Returns the next stable page cursor, when more candidates exist.
+    #[must_use]
+    pub const fn next_cursor(&self) -> Option<TrailSegmentCursor> {
+        self.next_cursor
+    }
+}
+
+/// Stable cursor for map-point pagination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MapPointCursor(MapPointId);
+
+impl MapPointCursor {
+    /// Restores a cursor returned by a previous query page.
+    #[must_use]
+    pub const fn new(id: MapPointId) -> Self {
+        Self(id)
+    }
+
+    /// Returns the point identifier component.
+    #[must_use]
+    pub const fn id(self) -> MapPointId {
+        self.0
+    }
+}
+
+/// One bounded page of map-point projections.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MapPointPage {
+    points: Vec<MapPoint>,
+    next_cursor: Option<MapPointCursor>,
+}
+
+impl MapPointPage {
+    /// Returns the page in stable identifier order.
+    #[must_use]
+    pub fn points(&self) -> &[MapPoint] {
+        &self.points
+    }
+
+    /// Returns the next stable page cursor, when more candidates exist.
+    #[must_use]
+    pub const fn next_cursor(&self) -> Option<MapPointCursor> {
+        self.next_cursor
+    }
 }
 
 impl SqliteCapabilities {
@@ -420,6 +605,9 @@ pub enum StorageError {
     /// A growing query was not bounded by a supported limit.
     #[error("invalid query limit {0}; expected 1..={MAX_QUERY_LIMIT}")]
     InvalidQueryLimit(u32),
+    /// Geographic bounds were non-finite, out of range, or had reversed latitudes.
+    #[error("invalid geographic bounds")]
+    InvalidGeographicBounds,
     /// A persisted value could not be decoded.
     #[error("invalid stored {field}: {value}")]
     InvalidStoredValue {
@@ -770,16 +958,14 @@ impl RideDatabase {
     /// Returns [`StorageError`] when spatial indexing is unavailable or the worker fails.
     pub fn trail_segments_in_bounds(
         &self,
-        minimum_latitude_degrees: f64,
-        maximum_latitude_degrees: f64,
-        minimum_longitude_degrees: f64,
-        maximum_longitude_degrees: f64,
-    ) -> Result<Vec<TrailSegment>, StorageError> {
+        bounds: GeoBounds,
+        cursor: Option<TrailSegmentCursor>,
+        limit: QueryLimit,
+    ) -> Result<TrailSegmentPage, StorageError> {
         self.request(move |reply| Command::TrailSegmentsInBounds {
-            minimum_latitude_degrees,
-            maximum_latitude_degrees,
-            minimum_longitude_degrees,
-            maximum_longitude_degrees,
+            bounds,
+            cursor,
+            limit,
             reply,
         })
     }
@@ -793,7 +979,7 @@ impl RideDatabase {
         &self,
         name: &str,
         coordinate: Coordinate,
-    ) -> Result<u64, StorageError> {
+    ) -> Result<MapPointId, StorageError> {
         self.request(move |reply| Command::CreateMapPoint {
             name: name.to_owned(),
             coordinate,
@@ -808,18 +994,25 @@ impl RideDatabase {
     /// Returns [`StorageError`] when spatial indexing is unavailable or the worker fails.
     pub fn map_points_in_bounds(
         &self,
-        minimum_latitude_degrees: f64,
-        maximum_latitude_degrees: f64,
-        minimum_longitude_degrees: f64,
-        maximum_longitude_degrees: f64,
-    ) -> Result<Vec<MapPoint>, StorageError> {
+        bounds: GeoBounds,
+        cursor: Option<MapPointCursor>,
+        limit: QueryLimit,
+    ) -> Result<MapPointPage, StorageError> {
         self.request(move |reply| Command::MapPointsInBounds {
-            minimum_latitude_degrees,
-            maximum_latitude_degrees,
-            minimum_longitude_degrees,
-            maximum_longitude_degrees,
+            bounds,
+            cursor,
+            limit,
             reply,
         })
+    }
+
+    /// Rebuilds every derived spatial index from canonical fixed-point rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when `RTree` is unavailable or rebuilding cannot commit atomically.
+    pub fn rebuild_spatial_indexes(&self) -> Result<(), StorageError> {
+        self.request(|reply| Command::RebuildSpatialIndexes { reply })
     }
 
     /// Writes a consistent `SQLite` backup to a caller-selected file.
@@ -1036,23 +1229,24 @@ enum Command {
         reply: Reply<()>,
     },
     TrailSegmentsInBounds {
-        minimum_latitude_degrees: f64,
-        maximum_latitude_degrees: f64,
-        minimum_longitude_degrees: f64,
-        maximum_longitude_degrees: f64,
-        reply: Reply<Vec<TrailSegment>>,
+        bounds: GeoBounds,
+        cursor: Option<TrailSegmentCursor>,
+        limit: QueryLimit,
+        reply: Reply<TrailSegmentPage>,
     },
     CreateMapPoint {
         name: String,
         coordinate: Coordinate,
-        reply: Reply<u64>,
+        reply: Reply<MapPointId>,
     },
     MapPointsInBounds {
-        minimum_latitude_degrees: f64,
-        maximum_latitude_degrees: f64,
-        minimum_longitude_degrees: f64,
-        maximum_longitude_degrees: f64,
-        reply: Reply<Vec<MapPoint>>,
+        bounds: GeoBounds,
+        cursor: Option<MapPointCursor>,
+        limit: QueryLimit,
+        reply: Reply<MapPointPage>,
+    },
+    RebuildSpatialIndexes {
+        reply: Reply<()>,
     },
     Backup {
         destination: PathBuf,
@@ -1186,19 +1380,17 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 ));
             }
             Command::TrailSegmentsInBounds {
-                minimum_latitude_degrees,
-                maximum_latitude_degrees,
-                minimum_longitude_degrees,
-                maximum_longitude_degrees,
+                bounds,
+                cursor,
+                limit,
                 reply,
             } => {
                 let _ = reply.send(trail_segments_in_bounds(
                     &connection,
                     &mut spatial_schema,
-                    minimum_latitude_degrees,
-                    maximum_latitude_degrees,
-                    minimum_longitude_degrees,
-                    maximum_longitude_degrees,
+                    bounds,
+                    cursor,
+                    limit,
                 ));
             }
             Command::CreateMapPoint {
@@ -1214,19 +1406,23 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 ));
             }
             Command::MapPointsInBounds {
-                minimum_latitude_degrees,
-                maximum_latitude_degrees,
-                minimum_longitude_degrees,
-                maximum_longitude_degrees,
+                bounds,
+                cursor,
+                limit,
                 reply,
             } => {
                 let _ = reply.send(map_points_in_bounds(
                     &connection,
                     &mut spatial_schema,
-                    minimum_latitude_degrees,
-                    maximum_latitude_degrees,
-                    minimum_longitude_degrees,
-                    maximum_longitude_degrees,
+                    bounds,
+                    cursor,
+                    limit,
+                ));
+            }
+            Command::RebuildSpatialIndexes { reply } => {
+                let _ = reply.send(rebuild_spatial_indexes(
+                    &mut connection,
+                    &mut spatial_schema,
                 ));
             }
             Command::Backup { destination, reply } => {
@@ -1320,6 +1516,9 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
     if quick_check != "ok" {
         return Err(StorageError::IntegrityCheckFailed(quick_check));
     }
+    if !sqlite_capabilities(connection)?.has_rtree() {
+        return Err(StorageError::SpatialCapabilityUnavailable);
+    }
     migrate(connection)?;
     verify_current_schema(connection)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
@@ -1357,7 +1556,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                 PRAGMA user_version = 4;
+                 PRAGMA user_version = 5;
                  COMMIT;",
             )?;
         }
@@ -1409,6 +1608,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             migrate(connection)?;
         }
         3 => migrate_v3_to_current(connection)?,
+        4 => migrate_v4_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -1476,6 +1676,30 @@ fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
             artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
             ride_id TEXT REFERENCES rides(id) ON DELETE CASCADE
         );
+        CREATE TABLE trails (
+            id TEXT PRIMARY KEY NOT NULL,
+            name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512)
+        );
+        CREATE TABLE trail_segments (
+            id INTEGER PRIMARY KEY,
+            trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            start_lat_e7 INTEGER NOT NULL CHECK (start_lat_e7 BETWEEN -900000000 AND 900000000),
+            start_lon_e7 INTEGER NOT NULL CHECK (start_lon_e7 BETWEEN -1800000000 AND 1800000000),
+            end_lat_e7 INTEGER NOT NULL CHECK (end_lat_e7 BETWEEN -900000000 AND 900000000),
+            end_lon_e7 INTEGER NOT NULL CHECK (end_lon_e7 BETWEEN -1800000000 AND 1800000000),
+            UNIQUE (trail_id, sequence)
+        );
+        CREATE VIRTUAL TABLE trail_segments_rtree
+            USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+        CREATE TABLE map_points (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
+            latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
+            longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000)
+        );
+        CREATE VIRTUAL TABLE map_points_rtree
+            USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
         ",
     )?;
     Ok(())
@@ -1495,9 +1719,33 @@ fn verify_legacy_schema(connection: &Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type IN ('table', 'view') AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(StorageError::from)
+}
+
 fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
+    let has_spatial = table_exists(connection, "trails")?
+        && table_exists(connection, "trail_segments")?
+        && table_exists(connection, "map_points")?;
     let transaction = connection.transaction()?;
+    if has_spatial {
+        transaction.execute_batch(
+            "
+            DROP TABLE IF EXISTS trail_segments_rtree;
+            DROP TABLE IF EXISTS map_points_rtree;
+            ALTER TABLE trail_segments RENAME TO trail_segments_legacy;
+            ALTER TABLE trails RENAME TO trails_legacy;
+            ALTER TABLE map_points RENAME TO map_points_legacy;
+            ",
+        )?;
+    }
     transaction.execute_batch(
         "
         ALTER TABLE pevcap_imports RENAME TO pevcap_imports_legacy;
@@ -1509,6 +1757,28 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         ",
     )?;
     create_current_schema(&transaction)?;
+    if has_spatial {
+        transaction.execute_batch(
+            "
+            INSERT INTO trails SELECT * FROM trails_legacy;
+            INSERT INTO trail_segments
+                (id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
+            SELECT id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7
+            FROM trail_segments_legacy;
+            INSERT INTO map_points SELECT * FROM map_points_legacy;
+            INSERT INTO trail_segments_rtree
+            SELECT id,
+                   min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
+                   min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
+            FROM trail_segments;
+            INSERT INTO map_points_rtree
+            SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+            DROP TABLE trail_segments_legacy;
+            DROP TABLE trails_legacy;
+            DROP TABLE map_points_legacy;
+            ",
+        )?;
+    }
     transaction.execute_batch(
         "
         INSERT INTO rides SELECT * FROM rides_legacy;
@@ -1529,7 +1799,70 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-        PRAGMA user_version = 4;
+        PRAGMA user_version = 5;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn migrate_v4_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let has_spatial = table_exists(connection, "trails")?
+        && table_exists(connection, "trail_segments")?
+        && table_exists(connection, "map_points")?;
+    let transaction = connection.transaction()?;
+    if has_spatial {
+        transaction.execute_batch(
+            "
+            DROP TABLE IF EXISTS trail_segments_rtree;
+            DROP TABLE IF EXISTS map_points_rtree;
+            CREATE VIRTUAL TABLE trail_segments_rtree
+                USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+            CREATE VIRTUAL TABLE map_points_rtree
+                USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+            ",
+        )?;
+    } else {
+        transaction.execute_batch(
+            "
+            CREATE TABLE trails (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512)
+            );
+            CREATE TABLE trail_segments (
+                id INTEGER PRIMARY KEY,
+                trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+                sequence INTEGER NOT NULL CHECK (sequence >= 0),
+                start_lat_e7 INTEGER NOT NULL CHECK (start_lat_e7 BETWEEN -900000000 AND 900000000),
+                start_lon_e7 INTEGER NOT NULL CHECK (start_lon_e7 BETWEEN -1800000000 AND 1800000000),
+                end_lat_e7 INTEGER NOT NULL CHECK (end_lat_e7 BETWEEN -900000000 AND 900000000),
+                end_lon_e7 INTEGER NOT NULL CHECK (end_lon_e7 BETWEEN -1800000000 AND 1800000000),
+                UNIQUE (trail_id, sequence)
+            );
+            CREATE VIRTUAL TABLE trail_segments_rtree
+                USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+            CREATE TABLE map_points (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
+                latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
+                longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000)
+            );
+            CREATE VIRTUAL TABLE map_points_rtree
+                USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+            ",
+        )?;
+    }
+    transaction.execute_batch(
+        "
+        INSERT INTO trail_segments_rtree
+        SELECT id,
+               min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
+               min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
+        FROM trail_segments;
+        INSERT INTO map_points_rtree
+        SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+        PRAGMA user_version = 5;
         ",
     )?;
     transaction.commit()?;
@@ -1550,6 +1883,11 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
         "ride_session_marker",
         "pevcap_imports",
         "pevcap_import_work",
+        "trails",
+        "trail_segments",
+        "trail_segments_rtree",
+        "map_points",
+        "map_points_rtree",
     ] {
         let exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
@@ -1689,37 +2027,18 @@ fn ensure_spatial_schema(
         *state = SpatialSchemaState::Unavailable;
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
-    if let Err(error) = connection.execute_batch(
-        "
-        CREATE TABLE IF NOT EXISTS trails (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS trail_segments (
-            id INTEGER PRIMARY KEY,
-            trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
-            sequence INTEGER NOT NULL,
-            start_lat_e7 INTEGER NOT NULL,
-            start_lon_e7 INTEGER NOT NULL,
-            end_lat_e7 INTEGER NOT NULL,
-            end_lon_e7 INTEGER NOT NULL,
-            UNIQUE (trail_id, sequence)
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS trail_segments_rtree
-            USING rtree(id, min_lat, max_lat, min_lon, max_lon);
-        CREATE TABLE IF NOT EXISTS map_points (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL,
-            latitude_e7 INTEGER NOT NULL,
-            longitude_e7 INTEGER NOT NULL
-        );
-        CREATE VIRTUAL TABLE IF NOT EXISTS map_points_rtree
-            USING rtree(id, min_lat, max_lat, min_lon, max_lon);
-        ",
-    ) {
-        let message = error.to_string();
-        *state = SpatialSchemaState::Failed(message);
-        return Err(error.into());
+    for table in [
+        "trails",
+        "trail_segments",
+        "trail_segments_rtree",
+        "map_points",
+        "map_points_rtree",
+    ] {
+        if !table_exists(connection, table)? {
+            let message = format!("missing migrated table {table}");
+            *state = SpatialSchemaState::Failed(message.clone());
+            return Err(StorageError::SpatialSchemaInitialization(message));
+        }
     }
     *state = SpatialSchemaState::Ready;
     Ok(())
@@ -1778,12 +2097,13 @@ fn append_trail_segment(
         ],
     )?;
     let segment_id = transaction.last_insert_rowid();
-    let min_lat = start.latitude_degrees().min(end.latitude_degrees());
-    let max_lat = start.latitude_degrees().max(end.latitude_degrees());
-    let min_lon = start.longitude_degrees().min(end.longitude_degrees());
-    let max_lon = start.longitude_degrees().max(end.longitude_degrees());
+    let min_lat = start.latitude().as_i32().min(end.latitude().as_i32());
+    let max_lat = start.latitude().as_i32().max(end.latitude().as_i32());
+    let min_lon = start.longitude().as_i32().min(end.longitude().as_i32());
+    let max_lon = start.longitude().as_i32().max(end.longitude().as_i32());
     transaction.execute(
-        "INSERT INTO trail_segments_rtree (id, min_lat, max_lat, min_lon, max_lon)
+        "INSERT INTO trail_segments_rtree
+            (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![segment_id, min_lat, max_lat, min_lon, max_lon],
     )?;
@@ -1794,53 +2114,79 @@ fn append_trail_segment(
 fn trail_segments_in_bounds(
     connection: &Connection,
     state: &mut SpatialSchemaState,
-    minimum_latitude_degrees: f64,
-    maximum_latitude_degrees: f64,
-    minimum_longitude_degrees: f64,
-    maximum_longitude_degrees: f64,
-) -> Result<Vec<TrailSegment>, StorageError> {
+    bounds: GeoBounds,
+    cursor: Option<TrailSegmentCursor>,
+    limit: QueryLimit,
+) -> Result<TrailSegmentPage, StorageError> {
     ensure_spatial_schema(connection, state)?;
     let mut statement = connection.prepare(
         "SELECT s.trail_id, s.sequence, s.start_lat_e7, s.start_lon_e7,
                 s.end_lat_e7, s.end_lon_e7
          FROM trail_segments_rtree r
          JOIN trail_segments s ON s.id = r.id
-         WHERE r.max_lat >= ?1 AND r.min_lat <= ?2
-           AND r.max_lon >= ?3 AND r.min_lon <= ?4
-         ORDER BY s.trail_id, s.sequence",
+         WHERE r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
+           AND ((?5 = 0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4)
+             OR (?5 = 1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
+           AND (?6 IS NULL OR s.trail_id > ?6 OR (s.trail_id = ?6 AND s.sequence > ?7))
+         ORDER BY s.trail_id, s.sequence
+         LIMIT ?8",
     )?;
+    let cursor_trail = cursor.map(|cursor| cursor.trail_id.uuid().to_string());
+    let cursor_sequence = cursor.map(|cursor| cursor.sequence);
     let rows = statement.query_map(
         params![
-            minimum_latitude_degrees,
-            maximum_latitude_degrees,
-            minimum_longitude_degrees,
-            maximum_longitude_degrees,
+            bounds.minimum_latitude,
+            bounds.maximum_latitude,
+            bounds.minimum_longitude,
+            bounds.maximum_longitude,
+            bounds.crosses_antimeridian(),
+            cursor_trail,
+            cursor_sequence,
+            i64::from(limit.get()) + 1,
         ],
-        |row| {
-            let trail_id = Uuid::parse_str(row.get::<_, String>(0)?.as_str()).map_err(|_| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    0,
-                    rusqlite::types::Type::Text,
-                    Box::new(StorageError::InvalidStoredValue {
-                        field: "trail identifier",
-                        value: "invalid UUID".to_owned(),
-                    }),
-                )
-            })?;
-            let start = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
-                .map_err(|_| rusqlite::Error::InvalidQuery)?;
-            let end = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?)
-                .map_err(|_| rusqlite::Error::InvalidQuery)?;
-            Ok(TrailSegment {
-                trail_id: TrailId::from_uuid(trail_id),
-                sequence: row.get(1)?,
-                start,
-                end,
-            })
-        },
+        trail_segment_from_row,
     )?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(StorageError::from)
+    let mut segments = rows.collect::<Result<Vec<_>, _>>()?;
+    let has_more = segments.len() > limit.get() as usize;
+    if has_more {
+        segments.pop();
+    }
+    let next_cursor =
+        has_more
+            .then(|| segments.last())
+            .flatten()
+            .map(|segment| TrailSegmentCursor {
+                trail_id: segment.trail_id,
+                sequence: segment.sequence,
+            });
+    Ok(TrailSegmentPage {
+        segments,
+        next_cursor,
+    })
+}
+
+fn trail_segment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrailSegment> {
+    let value: String = row.get(0)?;
+    let trail_id = Uuid::parse_str(&value).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(StorageError::InvalidStoredValue {
+                field: "trail identifier",
+                value,
+            }),
+        )
+    })?;
+    let start = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    let end = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?)
+        .map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok(TrailSegment {
+        trail_id: TrailId::from_uuid(trail_id),
+        sequence: row.get(1)?,
+        start,
+        end,
+    })
 }
 
 fn create_map_point(
@@ -1848,7 +2194,7 @@ fn create_map_point(
     state: &mut SpatialSchemaState,
     name: &str,
     coordinate: Coordinate,
-) -> Result<u64, StorageError> {
+) -> Result<MapPointId, StorageError> {
     if name.trim().is_empty() {
         return Err(StorageError::InvalidStoredValue {
             field: "map point name",
@@ -1867,56 +2213,106 @@ fn create_map_point(
     )?;
     let id = transaction.last_insert_rowid();
     transaction.execute(
-        "INSERT INTO map_points_rtree (id, min_lat, max_lat, min_lon, max_lon)
+        "INSERT INTO map_points_rtree
+            (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?2, ?3, ?3)",
         params![
             id,
-            coordinate.latitude_degrees(),
-            coordinate.longitude_degrees()
+            coordinate.latitude().as_i32(),
+            coordinate.longitude().as_i32()
         ],
     )?;
     transaction.commit()?;
-    u64::try_from(id).map_err(|_| StorageError::InvalidStoredValue {
-        field: "map point identifier",
-        value: id.to_string(),
-    })
+    u64::try_from(id)
+        .map(MapPointId)
+        .map_err(|_| StorageError::InvalidStoredValue {
+            field: "map point identifier",
+            value: id.to_string(),
+        })
 }
 
 fn map_points_in_bounds(
     connection: &Connection,
     state: &mut SpatialSchemaState,
-    minimum_latitude_degrees: f64,
-    maximum_latitude_degrees: f64,
-    minimum_longitude_degrees: f64,
-    maximum_longitude_degrees: f64,
-) -> Result<Vec<MapPoint>, StorageError> {
+    bounds: GeoBounds,
+    cursor: Option<MapPointCursor>,
+    limit: QueryLimit,
+) -> Result<MapPointPage, StorageError> {
     ensure_spatial_schema(connection, state)?;
     let mut statement = connection.prepare(
         "SELECT p.id, p.name, p.latitude_e7, p.longitude_e7
          FROM map_points_rtree r JOIN map_points p ON p.id = r.id
-         WHERE r.max_lat >= ?1 AND r.min_lat <= ?2
-           AND r.max_lon >= ?3 AND r.min_lon <= ?4
-         ORDER BY p.id",
+         WHERE r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
+           AND ((?5 = 0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4)
+             OR (?5 = 1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
+           AND p.id > ?6
+         ORDER BY p.id
+         LIMIT ?7",
     )?;
+    let after = cursor
+        .map(|cursor| i64::try_from(cursor.0.get()))
+        .transpose()
+        .map_err(|_| StorageError::InvalidStoredValue {
+            field: "map point cursor",
+            value: "out of range".to_owned(),
+        })?
+        .unwrap_or(0);
     let rows = statement.query_map(
         params![
-            minimum_latitude_degrees,
-            maximum_latitude_degrees,
-            minimum_longitude_degrees,
-            maximum_longitude_degrees,
+            bounds.minimum_latitude,
+            bounds.maximum_latitude,
+            bounds.minimum_longitude,
+            bounds.maximum_longitude,
+            bounds.crosses_antimeridian(),
+            after,
+            i64::from(limit.get()) + 1,
         ],
         |row| {
             let coordinate = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             Ok(MapPoint {
-                id: row.get(0)?,
+                id: MapPointId(row.get(0)?),
                 name: row.get(1)?,
                 coordinate,
             })
         },
     )?;
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(StorageError::from)
+    let mut points = rows.collect::<Result<Vec<_>, _>>()?;
+    let has_more = points.len() > limit.get() as usize;
+    if has_more {
+        points.pop();
+    }
+    let next_cursor = has_more
+        .then(|| points.last())
+        .flatten()
+        .map(|point| MapPointCursor(point.id));
+    Ok(MapPointPage {
+        points,
+        next_cursor,
+    })
+}
+
+fn rebuild_spatial_indexes(
+    connection: &mut Connection,
+    state: &mut SpatialSchemaState,
+) -> Result<(), StorageError> {
+    ensure_spatial_schema(connection, state)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "
+        DELETE FROM trail_segments_rtree;
+        INSERT INTO trail_segments_rtree
+        SELECT id,
+               min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
+               min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
+        FROM trail_segments;
+        DELETE FROM map_points_rtree;
+        INSERT INTO map_points_rtree
+        SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn artifact_digest(path: &Path) -> Result<String, StorageError> {

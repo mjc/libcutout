@@ -9,7 +9,7 @@ use rusqlite::Connection;
 
 use cutout_ride_maps::RideLifecycleState;
 
-use super::{QueryLimit, RideDatabase, RideSource, StorageError, VoltageSagModelRecord};
+use super::{GeoBounds, QueryLimit, RideDatabase, RideSource, StorageError, VoltageSagModelRecord};
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -327,7 +327,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 4);
+        assert_eq!(current_version, 5);
         let pevcap_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pevcap_imports'",
@@ -400,19 +400,25 @@ fn database_indexes_trails_and_map_points_with_rtree() {
     let start = Coordinate::from_degrees(40.0, -105.0).unwrap();
     let end = Coordinate::from_degrees(40.001, -105.001).unwrap();
     database.append_trail_segment(trail, 0, start, end).unwrap();
-    assert_eq!(
-        database
-            .trail_segments_in_bounds(39.9, 40.1, -105.1, -104.9)
-            .unwrap()
-            .len(),
-        1
-    );
+    let bounds = GeoBounds::new(39.9, 40.1, -105.1, -104.9).unwrap();
+    let segments = database
+        .trail_segments_in_bounds(bounds, None, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(segments.segments().len(), 1);
     let point = database.create_map_point("Charge", start).unwrap();
     let points = database
-        .map_points_in_bounds(39.9, 40.1, -105.1, -104.9)
+        .map_points_in_bounds(bounds, None, QueryLimit::new(1).unwrap())
         .unwrap();
-    assert_eq!(points.len(), 1);
-    assert_eq!(points[0].id, point);
+    assert_eq!(points.points().len(), 1);
+    assert_eq!(points.points()[0].id, point);
+    database.rebuild_spatial_indexes().unwrap();
+    assert_eq!(
+        database
+            .map_points_in_bounds(bounds, None, QueryLimit::new(1).unwrap())
+            .unwrap()
+            .points(),
+        points.points()
+    );
     let backup_path = std::env::temp_dir().join(format!(
         "libcutout-persistence-backup-{}.sqlite",
         uuid::Uuid::new_v4()
@@ -434,6 +440,54 @@ fn database_indexes_trails_and_map_points_with_rtree() {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(backup_path);
     let _ = std::fs::remove_file(export_path);
+}
+
+#[test]
+fn spatial_queries_validate_page_and_cross_the_antimeridian() {
+    let _guard = test_guard();
+    assert!(matches!(
+        GeoBounds::new(f64::NAN, 1.0, 2.0, 3.0),
+        Err(StorageError::InvalidGeographicBounds)
+    ));
+    assert!(matches!(
+        GeoBounds::new(2.0, 1.0, 2.0, 3.0),
+        Err(StorageError::InvalidGeographicBounds)
+    ));
+
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-antimeridian-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    if !database.capabilities().unwrap().has_rtree() {
+        database.shutdown().unwrap();
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    for (name, longitude) in [("west", -179.5), ("east", 179.5), ("outside", 0.0)] {
+        database
+            .create_map_point(name, Coordinate::from_degrees(0.0, longitude).unwrap())
+            .unwrap();
+    }
+    let bounds = GeoBounds::new(-1.0, 1.0, 179.0, -179.0).unwrap();
+    let first = database
+        .map_points_in_bounds(bounds, None, QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(first.points().len(), 1);
+    assert!(first.next_cursor().is_some());
+    let second = database
+        .map_points_in_bounds(bounds, first.next_cursor(), QueryLimit::new(1).unwrap())
+        .unwrap();
+    assert_eq!(second.points().len(), 1);
+    assert!(second.next_cursor().is_none());
+    let mut names = [
+        first.points()[0].name.as_str(),
+        second.points()[0].name.as_str(),
+    ];
+    names.sort_unstable();
+    assert_eq!(names, ["east", "west"]);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
