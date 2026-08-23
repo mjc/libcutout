@@ -291,14 +291,14 @@ final class CutoutAppModel {
         clockUncertaintyMs: UInt64 = 1_000
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
-        updateMusicCaptureObservation(
-            from: observation,
-            wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
-        )
         do {
             _ = try musicCoordinator.ingest(
                 observation: observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+            updateMusicCaptureObservationIfCurrent(
+                observation,
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
@@ -306,10 +306,28 @@ final class CutoutAppModel {
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return true
         } catch {
+            updateMusicCaptureObservationIfCurrent(
+                observation,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
             refreshMusicTimeline()
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return false
         }
+    }
+
+    private func updateMusicCaptureObservationIfCurrent(
+        _ observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) {
+        guard musicCoordinator.nowPlaying == MusicNowPlaying(observation: observation) else { return }
+        updateMusicCaptureObservation(
+            from: observation,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
     }
 
     private func updateMusicCaptureObservation(

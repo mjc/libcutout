@@ -299,6 +299,56 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStaleMusicObservationDoesNotReplacePevcapContext() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertTrue(model.startGpsOnlyRide())
+
+        let first = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session-1",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            positionMilliseconds: 0,
+            durationMilliseconds: 60_000,
+            observedAtMs: 20,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: true,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: false
+            )
+        )
+        let stale = MobileMusicSnapshotDto(
+            provider: first.provider,
+            sessionId: first.sessionId,
+            state: .paused,
+            item: MobileMusicItemDto(identifier: "track-2", title: "Stale", artist: "Artist"),
+            positionMilliseconds: 0,
+            durationMilliseconds: 60_000,
+            observedAtMs: 10,
+            capabilities: first.capabilities
+        )
+
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: first),
+            wallClockAtMs: 30,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: stale),
+            wallClockAtMs: 40,
+            clockUncertaintyMs: 1
+        ))
+
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.trackId, "track-1")
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.wallClockUnixMs, 30)
+        XCTAssertEqual(model.musicNowPlaying?.item?.identifier, "track-1")
+    }
+
+    @MainActor
     func testMusicCaptureObservationClearsWhenHistoryDisabled() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
