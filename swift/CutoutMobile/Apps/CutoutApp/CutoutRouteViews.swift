@@ -194,6 +194,7 @@ final class LightingRouteModel {
     private var isRunning = false
     private var requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
     private var restoreAttempted = false
+    private var lastColorPreviewAt: TimeInterval = 0
 
     init() {
         persistence = LightingAccessoryPersistence()
@@ -269,6 +270,17 @@ final class LightingRouteModel {
         requestedState.green = green
         requestedState.blue = blue
         updatePersistedRequestedState()
+        commandStatus = .requested
+    }
+
+    func previewSolidColor(red: UInt8, green: UInt8, blue: UInt8) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastColorPreviewAt >= 1.0 / 30.0 else { return }
+        guard session.setSolidColor(red: red, green: green, blue: blue) else { return }
+        lastColorPreviewAt = now
+        requestedState.red = red
+        requestedState.green = green
+        requestedState.blue = blue
         commandStatus = .requested
     }
 
@@ -430,6 +442,7 @@ struct LightingRouteView: View {
     @State private var saturation = 1.0
     @State private var presetName = ""
     @State private var showsPairing = false
+    @FocusState private var isPresetNameFocused: Bool
 
     private var controlsEnabled: Bool { model.isReady }
 
@@ -451,6 +464,9 @@ struct LightingRouteView: View {
             .padding(.vertical, 16)
         }
         .background(PevColors.pageBackground.ignoresSafeArea())
+        .simultaneousGesture(TapGesture().onEnded {
+            isPresetNameFocused = false
+        })
         .task {
             model.start()
             brightness = Double(model.requestedBrightness)
@@ -558,9 +574,13 @@ struct LightingRouteView: View {
                     .accessibilityLabel("Set white")
                     .accessibilityIdentifier("lighting.color-picker.reset")
                 }
-                LightingColorWheel(hue: $hue, saturation: $saturation) { red, green, blue in
+                LightingColorWheel(hue: $hue, saturation: $saturation) { red, green, blue, isFinal in
                     guard controlsEnabled else { return }
-                    model.setSolidColor(red: red, green: green, blue: blue)
+                    if isFinal {
+                        model.setSolidColor(red: red, green: green, blue: blue)
+                    } else {
+                        model.previewSolidColor(red: red, green: green, blue: blue)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .opacity(controlsEnabled ? 1 : 0.45)
@@ -662,6 +682,9 @@ struct LightingRouteView: View {
                 HStack {
                     TextField("Preset name", text: $presetName)
                         .textFieldStyle(.roundedBorder)
+                        .focused($isPresetNameFocused)
+                        .submitLabel(.done)
+                        .onSubmit { isPresetNameFocused = false }
                     Button("Save") {
                         model.savePreset(named: presetName)
                         presetName = ""
@@ -768,7 +791,7 @@ struct LightingRouteView: View {
 private struct LightingColorWheel: View {
     @Binding var hue: Double
     @Binding var saturation: Double
-    let onCommit: (UInt8, UInt8, UInt8) -> Void
+    let onUpdate: (UInt8, UInt8, UInt8, Bool) -> Void
 
     var body: some View {
         GeometryReader { proxy in
@@ -809,9 +832,9 @@ private struct LightingColorWheel: View {
             .frame(width: size, height: size)
             .contentShape(Circle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                update(at: value.location, in: size, commit: false)
+                update(at: value.location, in: size, isFinal: false)
             }.onEnded { value in
-                update(at: value.location, in: size, commit: true)
+                update(at: value.location, in: size, isFinal: true)
             })
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Solid color")
@@ -824,7 +847,7 @@ private struct LightingColorWheel: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func update(at location: CGPoint, in size: CGFloat, commit: Bool) {
+    private func update(at location: CGPoint, in size: CGFloat, isFinal: Bool) {
         let center = CGPoint(x: size / 2, y: size / 2)
         let dx = location.x - center.x
         let dy = location.y - center.y
@@ -834,10 +857,8 @@ private struct LightingColorWheel: View {
         var angle = atan2(dy, dx) / (2 * .pi)
         if angle < 0 { angle += 1 }
         hue = angle
-        if commit {
-            let rgb = Self.rgb(hue: hue, saturation: saturation)
-            onCommit(rgb.red, rgb.green, rgb.blue)
-        }
+        let rgb = Self.rgb(hue: hue, saturation: saturation)
+        onUpdate(rgb.red, rgb.green, rgb.blue, isFinal)
     }
 
     private static func rgb(hue: Double, saturation: Double) -> (red: UInt8, green: UInt8, blue: UInt8) {
