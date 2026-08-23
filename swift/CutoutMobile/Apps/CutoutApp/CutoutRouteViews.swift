@@ -155,7 +155,10 @@ struct EucTuneRouteView: View {
                         EucSettingReadbackRow(
                             id: "pedalMode",
                             title: localizedAppText("settings.pedal_mode.title"),
-                            value: EucSettingReadbackPresentation.pedalMode(settings.pedalMode)
+                            value: EucSettingReadbackPresentation.pedalMode(
+                                model.pedalModeState,
+                                fallback: settings.pedalMode
+                            )
                         )
                     } header: {
                         Text(localizedAppText("settings.readback.title"))
@@ -217,6 +220,16 @@ enum EucSettingReadbackPresentation {
         }
         let readout = SpeedReadout(millimetersPerSecond: value.value)
         return "\(readout.displayValue) \(readout.displayUnit)"
+    }
+
+    static func pedalMode(
+        _ state: PedalModeSettingState?,
+        fallback readback: ReadbackValue<PedalMode>
+    ) -> String {
+        if let current = state?.current {
+            return current.displayName
+        }
+        return pedalMode(readback)
     }
 
     static func pedalMode(_ readback: ReadbackValue<PedalMode>) -> String {

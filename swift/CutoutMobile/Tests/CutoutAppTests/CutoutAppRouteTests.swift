@@ -129,6 +129,13 @@ final class CutoutAppRouteTests: XCTestCase {
             "Medium"
         )
         XCTAssertEqual(
+            EucSettingReadbackPresentation.pedalMode(
+                PedalModeSettingState(kind: .current, current: .hard),
+                fallback: .available(.documented(.soft))
+            ),
+            "Hard"
+        )
+        XCTAssertEqual(
             EucSettingReadbackPresentation.speed(.unavailable),
             "Unavailable"
         )
