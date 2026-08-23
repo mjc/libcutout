@@ -77,6 +77,41 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.recordedEvents.map(\.kind), [.itemChanged, .pause])
     }
 
+    func testProviderFailureDoesNotBecomeItemChanged() throws {
+        let rideMap = MobileRideMapState()
+        _ = try rideMap.startGpsOnly(atMs: 1, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMap)
+        try coordinator.setHistoryPolicy(.opaqueItem)
+
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: snapshot(state: .playing, observedAtMs: 10),
+                wallClockAtMs: 20,
+                clockUncertaintyMs: 1
+            ),
+            .recorded
+        )
+        XCTAssertEqual(
+            try coordinator.ingest(
+                snapshot: SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 20),
+                wallClockAtMs: 30,
+                clockUncertaintyMs: 1
+            ),
+            .recorded
+        )
+        XCTAssertNil(
+            try coordinator.ingest(
+                snapshot: SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 30),
+                wallClockAtMs: 40,
+                clockUncertaintyMs: 1
+            )
+        )
+        XCTAssertEqual(
+            coordinator.recordedEvents.map(\.kind),
+            [.itemChanged, .providerDisconnected]
+        )
+    }
+
     func testSpotifyAdapterIsExplicitlyMetadataOnlyUntilAppRemoteIsProven() {
         let snapshot = SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 42)
 

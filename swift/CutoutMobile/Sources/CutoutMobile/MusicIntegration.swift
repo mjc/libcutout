@@ -323,6 +323,11 @@ public final class MusicIntegrationCoordinator {
     ) -> MobileMusicRideEventKindDto? {
         guard let current else { return .providerDisconnected }
         guard let previous else { return current.item == nil ? nil : .itemChanged }
+        if Self.isProviderFailure(current.state) {
+            return Self.isProviderFailure(previous.state)
+                ? nil
+                : .providerDisconnected
+        }
         if previous.provider != current.provider || previous.item?.identifier != current.item?.identifier {
             return .itemChanged
         }
@@ -331,10 +336,17 @@ public final class MusicIntegrationCoordinator {
             return MobileMusicRideEventKindDto.play
         case (_, .paused) where previous.state != .paused:
             return MobileMusicRideEventKindDto.pause
-        case (_, .disconnected) where previous.state != .disconnected:
-            return MobileMusicRideEventKindDto.providerDisconnected
         default:
             return nil
+        }
+    }
+
+    private static func isProviderFailure(_ state: MobileMusicPlaybackStateDto) -> Bool {
+        switch state {
+        case .unauthorized, .unavailable, .disconnected, .stale:
+            true
+        default:
+            false
         }
     }
 }
