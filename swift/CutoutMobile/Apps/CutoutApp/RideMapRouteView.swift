@@ -10,33 +10,53 @@ struct RideMapRouteView: View {
         case history
     }
 
-    private struct SegmentPath: Identifiable {
-        let id: UInt64
-        let coordinates: [CLLocationCoordinate2D]
-    }
-
     let model: CutoutAppModel
+    private let openHistory: ((String) -> Void)?
+    private let closeDetail: (() -> Void)?
+    private let initialHistoryID: String?
+    private let detailOnly: Bool
+    @Environment(\.dismiss) private var dismiss
     @State private var mode = Mode.live
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isDiscardConfirmationPresented = false
     @State private var followsLatestPoint = true
     @State private var isApplyingCamera = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker(localizedAppText("navigation.section.map"), selection: $mode) {
-                Text(localizedAppText("ride_map.mode.live")).tag(Mode.live)
-                Text(localizedAppText("ride_map.mode.history")).tag(Mode.history)
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .accessibilityIdentifier("ride-map.mode-picker")
+    init(
+        model: CutoutAppModel,
+        _ openHistory: ((String) -> Void)? = nil,
+        initialHistoryID: String? = nil,
+        detailOnly: Bool = false,
+        closeDetail: (() -> Void)? = nil
+    ) {
+        self.model = model
+        self.openHistory = openHistory
+        self.closeDetail = closeDetail
+        self.initialHistoryID = initialHistoryID
+        self.detailOnly = detailOnly
+        _mode = State(initialValue: initialHistoryID == nil ? .live : .history)
+    }
 
-            if mode == .live {
-                liveContent
+    var body: some View {
+        @Bindable var model = model
+        VStack(spacing: 0) {
+            if detailOnly {
+                historyDetailContent
             } else {
-                historyContent
+                Picker(localizedAppText("navigation.section.map"), selection: $mode) {
+                    Text(localizedAppText("ride_map.mode.live")).tag(Mode.live)
+                    Text(localizedAppText("ride_map.mode.history")).tag(Mode.history)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+                .accessibilityIdentifier("ride-map.mode-picker")
+
+                if mode == .live {
+                    liveContent
+                } else {
+                    historyContent
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -57,6 +77,53 @@ struct RideMapRouteView: View {
             }
             Button(localizedAppText("common.cancel"), role: .cancel) {}
         }
+    }
+
+    private var historyDetailContent: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    if let closeDetail {
+                        closeDetail()
+                    } else {
+                        dismiss()
+                    }
+                } label: {
+                    Label(
+                        localizedAppText("ride_map.detail_back"),
+                        systemImage: "chevron.left"
+                    )
+                }
+                .buttonStyle(.bordered)
+                Spacer()
+                Text(localizedAppText("ride_map.detail_title"))
+                    .font(.headline)
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            routeMap
+                .frame(minHeight: 260, maxHeight: .infinity)
+
+            if let ride = model.rideMapHistory.first(where: { $0.rideId == initialHistoryID }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(localizedAppText("ride_map.distance", distanceText(for: ride.summary)))
+                    Text(localizedAppText("ride_map.points", ride.summary.pointCount))
+                    RideMapRouteTruthView(points: model.rideMapHistoryPoints, decision: nil)
+                }
+                .font(.subheadline)
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .task {
+            model.loadRideMapHistory()
+            if let initialHistoryID {
+                model.selectRideMapHistory(initialHistoryID)
+            }
+        }
+        .accessibilityIdentifier("ride-map.detail")
     }
 
     private var liveContent: some View {
@@ -101,6 +168,11 @@ struct RideMapRouteView: View {
                     .foregroundStyle(PevColors.muted)
                     .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
 
+                RideMapRouteTruthView(
+                    points: visiblePoints,
+                    decision: mode == .live ? model.rideMapLastDecision : nil
+                )
+
                 if model.rideMapLivePointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated"))
                         .font(.caption)
@@ -121,28 +193,12 @@ struct RideMapRouteView: View {
     }
 
     private var routeMap: some View {
-        Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
-            ForEach(segmentPaths) { segment in
-                MapPolyline(coordinates: segment.coordinates)
-                    .stroke(.blue, lineWidth: 4)
-            }
-            if let first = visiblePoints.first {
-                Marker(localizedAppText("ride_map.start_marker"), coordinate: coordinate(for: first))
-                    .tint(.green)
-            }
-            if let last = visiblePoints.last, visiblePoints.count > 1 {
-                Marker(localizedAppText("ride_map.current_marker"), coordinate: coordinate(for: last))
-                    .tint(.blue)
-            }
-        }
-        .mapStyle(.standard)
-        .onMapCameraChange(frequency: .onEnd) { _ in
-            if isApplyingCamera == false {
-                followsLatestPoint = false
-            }
-        }
-        .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
-        .accessibilityIdentifier("ride-map.map")
+        RideMapCanvasView(
+            points: visiblePoints,
+            mapPosition: $mapPosition,
+            isApplyingCamera: $isApplyingCamera,
+            cameraDidChange: { followsLatestPoint = false }
+        )
     }
 
     private var historyContent: some View {
@@ -166,7 +222,7 @@ struct RideMapRouteView: View {
                 .background(PevColors.pageBackground)
                 .accessibilityIdentifier("ride-map.history-recording-banner")
             }
-            if model.rideMapHistory.isEmpty {
+            if model.filteredRideMapHistory.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.largeTitle)
@@ -178,6 +234,13 @@ struct RideMapRouteView: View {
                     Text(localizedAppText("ride_map.map_alternative"))
                         .font(.subheadline)
                         .foregroundStyle(PevColors.muted)
+                    if model.rideMapHistoryCanLoadMore {
+                        Button(localizedAppText("ride_map.history_load_more")) {
+                            model.loadMoreRideMapHistory()
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("ride-map.history-load-more")
+                    }
                 }
                 .padding(24)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -186,26 +249,19 @@ struct RideMapRouteView: View {
             } else {
                 routeMap
                     .frame(minHeight: 260, maxHeight: .infinity)
-                List(model.rideMapHistory, id: \.rideId) { ride in
-                    Button {
-                        model.selectRideMapHistory(ride.rideId)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(ride.rideId)
-                                .font(.headline)
-                            Text(localizedAppText("ride_map.distance", distanceText(for: ride.summary)))
-                            Text(localizedAppText("ride_map.points", ride.summary.pointCount))
-                            if let vehicle = ride.associatedVehicle {
-                                Text(localizedAppText("ride_map.associated_vehicle", vehicle))
-                            } else if let candidate = ride.candidateVehicle {
-                                Text(localizedAppText("ride_map.candidate_vehicle", candidate))
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
-                }
-                .frame(maxHeight: 240)
+                RideMapHistoryListView(
+                    rides: model.filteredRideMapHistory,
+                    searchText: Binding(
+                        get: { model.rideMapHistorySearchText },
+                        set: { model.rideMapHistorySearchText = $0 }
+                    ),
+                    canLoadMore: model.rideMapHistoryCanLoadMore,
+                    select: { rideID in
+                        model.selectRideMapHistory(rideID)
+                        openHistory?(rideID)
+                    },
+                    loadMore: { model.loadMoreRideMapHistory() }
+                )
                 if model.rideMapHistoryPointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated"))
                         .font(.caption)
@@ -260,19 +316,6 @@ struct RideMapRouteView: View {
             localizedAppText("ride_map.location_restricted")
         case .storageUnavailable:
             localizedAppText("ride_map.persistence_unavailable")
-        }
-    }
-
-    private var segmentPaths: [SegmentPath] {
-        let points = visiblePoints
-        let grouped = Dictionary(grouping: points, by: \.segmentId)
-        return grouped.keys.sorted().compactMap { segmentID in
-            guard let points = grouped[segmentID] else { return nil }
-            let coordinates = points.sorted { $0.sequence < $1.sequence }.map {
-                CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
-            }
-            guard !coordinates.isEmpty else { return nil }
-            return SegmentPath(id: segmentID, coordinates: coordinates)
         }
     }
 
@@ -347,6 +390,181 @@ struct RideMapRouteView: View {
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
         Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
             .formatted(.measurement(width: .abbreviated, usage: .road))
+    }
+}
+
+private struct RideMapCanvasView: View {
+    private struct SegmentPath: Identifiable {
+        let id: UInt64
+        let coordinates: [CLLocationCoordinate2D]
+    }
+
+    let points: [MobileRideMapPointDto]
+    @Binding var mapPosition: MapCameraPosition
+    @Binding var isApplyingCamera: Bool
+    let cameraDidChange: () -> Void
+
+    var body: some View {
+        Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
+            ForEach(segmentPaths) { segment in
+                MapPolyline(coordinates: segment.coordinates)
+                    .stroke(.blue, lineWidth: 4)
+            }
+            if let first = points.first {
+                Marker(
+                    localizedAppText("ride_map.start_marker"),
+                    coordinate: coordinate(for: first)
+                )
+                .tint(.green)
+            }
+            if let last = points.last, points.count > 1 {
+                Marker(
+                    localizedAppText("ride_map.current_marker"),
+                    coordinate: coordinate(for: last)
+                )
+                .tint(.blue)
+            }
+        }
+        .mapStyle(.standard)
+        .onMapCameraChange(frequency: .onEnd) { _ in
+            if isApplyingCamera == false {
+                cameraDidChange()
+            }
+        }
+        .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
+        .accessibilityIdentifier("ride-map.map")
+    }
+
+    private var segmentPaths: [SegmentPath] {
+        let grouped = Dictionary(grouping: points, by: \.segmentId)
+        return grouped.keys.sorted().compactMap { segmentID in
+            guard let points = grouped[segmentID] else { return nil }
+            let coordinates = points.sorted { $0.sequence < $1.sequence }.map {
+                CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
+            }
+            guard !coordinates.isEmpty else { return nil }
+            return SegmentPath(id: segmentID, coordinates: coordinates)
+        }
+    }
+
+    private func coordinate(for point: MobileRideMapPointDto) -> CLLocationCoordinate2D {
+        CLLocationCoordinate2D(latitude: point.latitudeDegrees, longitude: point.longitudeDegrees)
+    }
+}
+
+private struct RideMapHistoryListView: View {
+    let rides: [MobileRideMapHistorySummaryDto]
+    @Binding var searchText: String
+    let canLoadMore: Bool
+    let select: (String) -> Void
+    let loadMore: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            List(rides, id: \.rideId) { ride in
+                Button {
+                    select(ride.rideId)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(ride.rideId)
+                            .font(.headline)
+                        Text(localizedAppText("ride_map.distance", distanceText(for: ride.summary)))
+                        Text(localizedAppText("ride_map.points", ride.summary.pointCount))
+                        if let vehicle = ride.associatedVehicle {
+                            Text(localizedAppText("ride_map.associated_vehicle", vehicle))
+                        } else if let candidate = ride.candidateVehicle {
+                            Text(localizedAppText("ride_map.candidate_vehicle", candidate))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
+            }
+            .frame(maxHeight: 240)
+            .searchable(text: $searchText)
+            if canLoadMore {
+                Button(localizedAppText("ride_map.history_load_more"), action: loadMore)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("ride-map.history-load-more")
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
+        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
+            .formatted(.measurement(width: .abbreviated, usage: .road))
+    }
+}
+
+private struct RideMapRouteTruthView: View {
+    let points: [MobileRideMapPointDto]
+    let decision: MobileRideMapDecisionDto?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(localizedAppText("ride_map.route_truth", segmentCount, telemetryText))
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+                .accessibilityIdentifier("ride-map.route-truth")
+            if let decisionText {
+                Label(decisionText, systemImage: decisionSystemImage)
+                    .font(.caption)
+                    .foregroundStyle(decisionIsAccepted ? .green : .orange)
+                    .accessibilityIdentifier("ride-map.last-decision")
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var segmentCount: UInt64 {
+        UInt64(Set(points.map(\.segmentId)).count)
+    }
+
+    private var telemetryText: String {
+        guard let state = points.last?.telemetryState else {
+            return localizedAppText("ride_map.telemetry.gps_only")
+        }
+        switch state {
+        case .gpsOnly:
+            return localizedAppText("ride_map.telemetry.gps_only")
+        case .associatedNoTelemetry:
+            return localizedAppText("ride_map.telemetry.no_telemetry")
+        case .associatedFresh:
+            return localizedAppText("ride_map.telemetry.fresh")
+        case .associatedStale:
+            return localizedAppText("ride_map.telemetry.stale")
+        }
+    }
+
+    private var decisionText: String? {
+        guard let decision else { return nil }
+        switch decision {
+        case .accepted:
+            return nil
+        case let .rejected(reason), let .ignored(reason):
+            switch reason {
+            case .rideNotRecording:
+                return localizedAppText("ride_map.decision.ride_not_recording")
+            case .duplicateLocation:
+                return localizedAppText("ride_map.decision.duplicate")
+            case .timestampOutOfOrder:
+                return localizedAppText("ride_map.decision.out_of_order")
+            case .accuracyTooLow:
+                return localizedAppText("ride_map.decision.accuracy")
+            case .unrealisticJump:
+                return localizedAppText("ride_map.decision.jump")
+            }
+        }
+    }
+
+    private var decisionIsAccepted: Bool {
+        if case .accepted? = decision { return true }
+        return false
+    }
+
+    private var decisionSystemImage: String {
+        decisionIsAccepted ? "checkmark.circle" : "exclamationmark.triangle"
     }
 }
 

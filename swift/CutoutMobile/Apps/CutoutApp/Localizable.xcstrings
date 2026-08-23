@@ -729,13 +729,65 @@
       "comment" : "History route warning when the bounded UI point preview is incomplete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }
     },
+    "ride_map.history_load_more" : {
+      "comment" : "History pagination control that loads the next durable page.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load more rides" } } }
+    },
     "ride_map.live_route_truncated" : {
       "comment" : "Live route warning when the in-memory map preview keeps only its bounded tail.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the newest 4,096 points; the full route remains stored." } } }
     },
+    "ride_map.decision.ride_not_recording" : {
+      "comment" : "Route truth status when a location update arrives outside active recording.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location ignored because the ride is not recording." } } }
+    },
+    "ride_map.decision.duplicate" : {
+      "comment" : "Route truth status for a duplicate location update.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Duplicate location ignored." } } }
+    },
+    "ride_map.decision.out_of_order" : {
+      "comment" : "Route truth status for an out-of-order location update.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location rejected because its timestamp moved backward." } } }
+    },
+    "ride_map.decision.accuracy" : {
+      "comment" : "Route truth status for a low-accuracy location update.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location rejected because accuracy is too low." } } }
+    },
+    "ride_map.decision.jump" : {
+      "comment" : "Route truth status for an impossible location jump.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location rejected because the jump is unrealistic." } } }
+    },
+    "ride_map.telemetry.gps_only" : {
+      "comment" : "Route truth status when no vehicle is associated.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS only" } } }
+    },
+    "ride_map.telemetry.no_telemetry" : {
+      "comment" : "Route truth status when a vehicle is associated but telemetry has not arrived.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vehicle associated; telemetry not observed" } } }
+    },
+    "ride_map.telemetry.fresh" : {
+      "comment" : "Route truth status for fresh vehicle telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Fresh vehicle telemetry" } } }
+    },
+    "ride_map.telemetry.stale" : {
+      "comment" : "Route truth status for stale vehicle telemetry.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stale vehicle telemetry" } } }
+    },
+    "ride_map.route_truth" : {
+      "comment" : "Route truth summary showing segmentation and telemetry provenance.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Segments: %lld · %@" } } }
+    },
     "ride_map.history_recording_continues" : {
       "comment" : "Persistent history-mode status while the Rust-owned ride recording continues in the background.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording continues" } } }
+    },
+    "ride_map.detail_title" : {
+      "comment" : "Title for a typed historical ride detail destination.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride detail" } } }
+    },
+    "ride_map.detail_back" : {
+      "comment" : "Navigation control returning from historical ride detail.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } } }
     },
     "ride_map.pause" : {
       "comment" : "Ride-map control that pauses the active recording.",

@@ -113,11 +113,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture || destination == .rideMap {
+        if destination == .capture || destination == .rideMap || isRideMapDetail(destination) {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
-                routedContent(for: destination)
+            routedContent(for: destination)
             }
             .accessibilityFocused($focusedRoute, equals: destination)
         } else {
@@ -143,6 +143,11 @@ struct ContentView: View {
             tabs
 #endif
         }
+    }
+
+    private func isRideMapDetail(_ destination: CutoutAppRoute) -> Bool {
+        if case .rideMapDetail = destination { return true }
+        return false
     }
 
     private func connectedDestination(for destination: CutoutAppRoute) -> some View {
@@ -181,7 +186,16 @@ struct ContentView: View {
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .rideMap:
-            RideMapRouteView(model: model)
+            RideMapRouteView(model: model) { rideID in
+                navigate(to: .rideMapDetail(rideID: rideID))
+            }
+        case let .rideMapDetail(rideID):
+            RideMapRouteView(
+                model: model,
+                initialHistoryID: rideID,
+                detailOnly: true,
+                closeDetail: { navigate(to: .rideMap) }
+            )
         case .devicePicker:
             EmptyView()
         }
@@ -197,7 +211,7 @@ struct ContentView: View {
             localizedAppText("navigation.section.debug")
         case .capture:
             localizedAppText("navigation.section.capture")
-        case .rideMap:
+        case .rideMap, .rideMapDetail:
             localizedAppText("navigation.section.map")
         case .devicePicker:
             localizedAppText("navigation.section.ride")

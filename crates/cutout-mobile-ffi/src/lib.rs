@@ -3221,6 +3221,21 @@ impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
 }
 
 /// Result of admitting one Core Location sample into the live recording.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapDecisionReasonDto {
+    /// The ride is paused, stopped, or otherwise not recording.
+    RideNotRecording,
+    /// The sample repeats the latest accepted location.
+    DuplicateLocation,
+    /// The sample timestamp is not newer than the latest accepted sample.
+    TimestampOutOfOrder,
+    /// The reported horizontal accuracy exceeds the admission threshold.
+    AccuracyTooLow,
+    /// The sample implies an impossible travel speed.
+    UnrealisticJump,
+}
+
+/// Result of admitting one Core Location sample into the live recording.
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum MobileRideMapCoreDecisionDto {
     /// The location was accepted into the canonical route.
@@ -3232,13 +3247,13 @@ pub enum MobileRideMapCoreDecisionDto {
     },
     /// The location was rejected as invalid input.
     Rejected {
-        /// Stable user-facing reason.
-        reason: String,
+        /// Stable admission reason.
+        reason: MobileRideMapDecisionReasonDto,
     },
     /// The location was ignored because the ride is not recording.
     Ignored {
-        /// Stable user-facing reason.
-        reason: String,
+        /// Stable admission reason.
+        reason: MobileRideMapDecisionReasonDto,
     },
 }
 
@@ -3737,6 +3752,8 @@ pub fn open_ride_database(
 
 #[uniffi::export]
 #[allow(
+    // UniFFI exposes a broad database surface whose error contracts are documented on the
+    // stable error type and the individual Rust methods that are map-specific below.
     clippy::missing_errors_doc,
     clippy::must_use_candidate,
     clippy::needless_pass_by_value
@@ -4479,7 +4496,6 @@ fn empty_map_point_batch() -> MobileRideMapCorePointBatchDto {
 }
 
 #[uniffi::export]
-#[allow(clippy::missing_errors_doc)]
 impl MobileRideMapCore {
     /// Creates a Rust-owned map state without durable storage, for deterministic UI tests.
     #[uniffi::constructor]
@@ -4510,6 +4526,10 @@ impl MobileRideMapCore {
     }
 
     /// Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when another ride is open or durable storage rejects creation.
     pub fn start_gps_only(
         &self,
         at_ms: u64,
@@ -4555,21 +4575,37 @@ impl MobileRideMapCore {
     }
 
     /// Pauses the active ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active ride exists or the lifecycle transition is invalid.
     pub fn pause(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.transition(MobileRideEventDto::Pause)
     }
 
     /// Resumes the paused ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no paused ride exists or durable storage rejects the transition.
     pub fn resume(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.transition(MobileRideEventDto::Resume)
     }
 
     /// Stops the active or paused ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no open ride exists or durable storage rejects the transition.
     pub fn stop(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         self.transition(MobileRideEventDto::Stop)
     }
 
     /// Saves a stopped ride and removes it from the active projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no stopped ride exists or durable storage rejects the transition.
     pub fn save(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let snapshot = state.transition_inner(MobileRideEventDto::Save)?;
@@ -4578,6 +4614,10 @@ impl MobileRideMapCore {
     }
 
     /// Discards the stopped ride and removes it from the active projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no stopped ride exists or durable storage rejects the transition.
     pub fn discard(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let snapshot = state.transition_inner(MobileRideEventDto::Discard)?;
@@ -4586,6 +4626,10 @@ impl MobileRideMapCore {
     }
 
     /// Associates a connected vehicle with the active recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable association metadata cannot be persisted.
     #[allow(clippy::needless_pass_by_value)]
     pub fn observe_vehicle_connection(
         &self,
@@ -4613,6 +4657,10 @@ impl MobileRideMapCore {
     }
 
     /// Records a confirmed vehicle telemetry timestamp without backfilling route points.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable telemetry metadata cannot be persisted.
     pub fn observe_telemetry(
         &self,
         at_ms: u64,
@@ -4638,6 +4686,11 @@ impl MobileRideMapCore {
     }
 
     /// Admits one Core Location sample into the active recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there is no active ride, the location is invalid, or durable
+    /// persistence rejects the sample.
     pub fn ingest_location(
         &self,
         monotonic_ms: u64,
@@ -4652,7 +4705,7 @@ impl MobileRideMapCore {
         };
         if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
             return Ok(MobileRideMapCoreDecisionDto::Ignored {
-                reason: "ride is not recording".to_owned(),
+                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
             });
         }
         let location = MobileRideLocationDto {
@@ -4673,22 +4726,22 @@ impl MobileRideMapCore {
         match state.recorder.check_sample(&sample) {
             ride_maps::LocationAdmission::Duplicate => {
                 return Ok(MobileRideMapCoreDecisionDto::Ignored {
-                    reason: "duplicate location".to_owned(),
+                    reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
                 });
             }
             ride_maps::LocationAdmission::OutOfOrder => {
                 return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                    reason: "timestamp out of order".to_owned(),
+                    reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
                 });
             }
             ride_maps::LocationAdmission::AccuracyTooLow => {
                 return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                    reason: "horizontal accuracy too low".to_owned(),
+                    reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
                 });
             }
             ride_maps::LocationAdmission::UnrealisticJump => {
                 return Ok(MobileRideMapCoreDecisionDto::Rejected {
-                    reason: "location jump is unrealistic".to_owned(),
+                    reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
                 });
             }
             ride_maps::LocationAdmission::Accepted => {}
@@ -4724,6 +4777,10 @@ impl MobileRideMapCore {
     ///
     /// Durable recordings are paged directly from `SQLite` so the bridge never materializes the
     /// complete route just to answer a preview request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable route paging fails.
     pub fn points_after(
         &self,
         after_cursor: Option<u64>,

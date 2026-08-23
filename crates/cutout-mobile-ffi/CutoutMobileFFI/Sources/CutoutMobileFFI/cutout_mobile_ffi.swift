@@ -2429,26 +2429,47 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
 
     /**
      * Discards the stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
      */
     func discard() throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Admits one Core Location sample into the active recording.
+     *
+     * # Errors
+     *
+     * Returns an error when there is no active ride, the location is invalid, or durable
+     * persistence rejects the sample.
      */
     func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double) throws  -> MobileRideMapCoreDecisionDto
 
     /**
      * Records a confirmed vehicle telemetry timestamp without backfilling route points.
+     *
+     * # Errors
+     *
+     * Returns an error when durable telemetry metadata cannot be persisted.
      */
     func observeTelemetry(atMs: UInt64) throws  -> MobileRideMapTelemetryObservationDto
 
     /**
      * Associates a connected vehicle with the active recording.
+     *
+     * # Errors
+     *
+     * Returns an error when durable association metadata cannot be persisted.
      */
     func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreAssociationDto
 
     /**
      * Pauses the active ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
     func pause() throws  -> MobileRideMapCoreSnapshotDto
 
@@ -2457,26 +2478,46 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Durable recordings are paged directly from `SQLite` so the bridge never materializes the
      * complete route just to answer a preview request.
+     *
+     * # Errors
+     *
+     * Returns an error when durable route paging fails.
      */
     func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws  -> MobileRideMapCorePointBatchDto
 
     /**
      * Resumes the paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
     func resume() throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Saves a stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
      */
     func save() throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+     *
+     * # Errors
+     *
+     * Returns an error when another ride is open or durable storage rejects creation.
      */
     func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Stops the active or paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
      */
     func stop() throws  -> MobileRideMapCoreSnapshotDto
 
@@ -2572,6 +2613,10 @@ open func currentSnapshot() -> MobileRideMapCoreSnapshotDto?  {
 
     /**
      * Discards the stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
      */
 open func discard()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2583,6 +2628,11 @@ open func discard()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Admits one Core Location sample into the active recording.
+     *
+     * # Errors
+     *
+     * Returns an error when there is no active ride, the location is invalid, or durable
+     * persistence rejects the sample.
      */
 open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double)throws  -> MobileRideMapCoreDecisionDto  {
     return try  FfiConverterTypeMobileRideMapCoreDecisionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2599,6 +2649,10 @@ open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeD
 
     /**
      * Records a confirmed vehicle telemetry timestamp without backfilling route points.
+     *
+     * # Errors
+     *
+     * Returns an error when durable telemetry metadata cannot be persisted.
      */
 open func observeTelemetry(atMs: UInt64)throws  -> MobileRideMapTelemetryObservationDto  {
     return try  FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2611,6 +2665,10 @@ open func observeTelemetry(atMs: UInt64)throws  -> MobileRideMapTelemetryObserva
 
     /**
      * Associates a connected vehicle with the active recording.
+     *
+     * # Errors
+     *
+     * Returns an error when durable association metadata cannot be persisted.
      */
 open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapCoreAssociationDto  {
     return try  FfiConverterTypeMobileRideMapCoreAssociationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2624,6 +2682,10 @@ open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)thro
 
     /**
      * Pauses the active ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
 open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2638,6 +2700,10 @@ open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
      *
      * Durable recordings are paged directly from `SQLite` so the bridge never materializes the
      * complete route just to answer a preview request.
+     *
+     * # Errors
+     *
+     * Returns an error when durable route paging fails.
      */
 open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideMapCorePointBatchDto  {
     return try  FfiConverterTypeMobileRideMapCorePointBatchDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2651,6 +2717,10 @@ open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideM
 
     /**
      * Resumes the paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
 open func resume()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2662,6 +2732,10 @@ open func resume()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Saves a stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
      */
 open func save()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2673,6 +2747,10 @@ open func save()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+     *
+     * # Errors
+     *
+     * Returns an error when another ride is open or durable storage rejects creation.
      */
 open func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2686,6 +2764,10 @@ open func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?)throws  -> Mo
 
     /**
      * Stops the active or paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
      */
 open func stop()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -17295,16 +17377,16 @@ public enum MobileRideMapCoreDecisionDto: Equatable, Hashable {
      */
     case rejected(
         /**
-         * Stable user-facing reason.
-         */reason: String
+         * Stable admission reason.
+         */reason: MobileRideMapDecisionReasonDto
     )
     /**
      * The location was ignored because the ride is not recording.
      */
     case ignored(
         /**
-         * Stable user-facing reason.
-         */reason: String
+         * Stable admission reason.
+         */reason: MobileRideMapDecisionReasonDto
     )
 
 
@@ -17330,10 +17412,10 @@ public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuff
         case 1: return .accepted(point: try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf), segmentStarted: try FfiConverterBool.read(from: &buf)
         )
 
-        case 2: return .rejected(reason: try FfiConverterString.read(from: &buf)
+        case 2: return .rejected(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
         )
 
-        case 3: return .ignored(reason: try FfiConverterString.read(from: &buf)
+        case 3: return .ignored(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -17352,12 +17434,12 @@ public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuff
 
         case let .rejected(reason):
             writeInt(&buf, Int32(2))
-            FfiConverterString.write(reason, into: &buf)
+            FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
 
 
         case let .ignored(reason):
             writeInt(&buf, Int32(3))
-            FfiConverterString.write(reason, into: &buf)
+            FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
 
         }
     }
@@ -17588,6 +17670,112 @@ public func FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lift(_ buf: RustB
 #endif
 public func FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lower(_ value: MobileRideMapCoreTelemetryStateDto) -> RustBuffer {
     return FfiConverterTypeMobileRideMapCoreTelemetryStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Result of admitting one Core Location sample into the live recording.
+ */
+
+public enum MobileRideMapDecisionReasonDto: Equatable, Hashable {
+
+    /**
+     * The ride is paused, stopped, or otherwise not recording.
+     */
+    case rideNotRecording
+    /**
+     * The sample repeats the latest accepted location.
+     */
+    case duplicateLocation
+    /**
+     * The sample timestamp is not newer than the latest accepted sample.
+     */
+    case timestampOutOfOrder
+    /**
+     * The reported horizontal accuracy exceeds the admission threshold.
+     */
+    case accuracyTooLow
+    /**
+     * The sample implies an impossible travel speed.
+     */
+    case unrealisticJump
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapDecisionReasonDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapDecisionReasonDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapDecisionReasonDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapDecisionReasonDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .rideNotRecording
+
+        case 2: return .duplicateLocation
+
+        case 3: return .timestampOutOfOrder
+
+        case 4: return .accuracyTooLow
+
+        case 5: return .unrealisticJump
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapDecisionReasonDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .rideNotRecording:
+            writeInt(&buf, Int32(1))
+
+
+        case .duplicateLocation:
+            writeInt(&buf, Int32(2))
+
+
+        case .timestampOutOfOrder:
+            writeInt(&buf, Int32(3))
+
+
+        case .accuracyTooLow:
+            writeInt(&buf, Int32(4))
+
+
+        case .unrealisticJump:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapDecisionReasonDto_lift(_ buf: RustBuffer) throws -> MobileRideMapDecisionReasonDto {
+    return try FfiConverterTypeMobileRideMapDecisionReasonDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapDecisionReasonDto_lower(_ value: MobileRideMapDecisionReasonDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapDecisionReasonDto.lower(value)
 }
 
 
@@ -23012,34 +23200,34 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_current_snapshot() != 8028) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_discard() != 48117) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_discard() != 21602) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 57280) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 25961) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_telemetry() != 44430) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_telemetry() != 27964) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_vehicle_connection() != 10545) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_vehicle_connection() != 22849) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 48725) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 1853) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 30733) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 26059) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_save() != 24251) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_save() != 34044) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_start_gps_only() != 45711) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_start_gps_only() != 59010) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 30949) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 50377) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 46770) {

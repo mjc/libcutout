@@ -33,6 +33,8 @@ final class CutoutAppModel {
     private(set) var rideMapPoints = [MobileRideMapPointDto]()
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
+    private(set) var rideMapHistoryCanLoadMore = false
+    var rideMapHistorySearchText = ""
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var selectedRideMapHistoryID: String?
@@ -110,6 +112,7 @@ final class CutoutAppModel {
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
+    private var rideMapHistoryCursor: MobileRideCursorDto?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -282,7 +285,10 @@ final class CutoutAppModel {
 
     func loadRideMapHistory() {
         do {
-            rideMapHistory = try core.rideMapStateHandle.storedSummaries(limit: 50)
+            let page = try core.rideMapStateHandle.storedHistoryPage(cursor: nil, limit: 50)
+            rideMapHistory = page.summaries
+            rideMapHistoryCursor = page.nextCursor
+            rideMapHistoryCanLoadMore = page.nextCursor != nil
             rideMapError = nil
             guard let first = rideMapHistory.first else {
                 selectedRideMapHistoryID = nil
@@ -294,9 +300,37 @@ final class CutoutAppModel {
         } catch {
             rideMapError = error as? MobileRideMapError
             rideMapHistory = []
+            rideMapHistoryCursor = nil
+            rideMapHistoryCanLoadMore = false
             selectedRideMapHistoryID = nil
             rideMapHistoryPoints = []
             rideMapHistoryPointsTruncated = false
+        }
+    }
+
+    func loadMoreRideMapHistory() {
+        guard rideMapHistoryCanLoadMore else { return }
+        do {
+            let page = try core.rideMapStateHandle.storedHistoryPage(
+                cursor: rideMapHistoryCursor,
+                limit: 50
+            )
+            rideMapHistory.append(contentsOf: page.summaries)
+            rideMapHistoryCursor = page.nextCursor
+            rideMapHistoryCanLoadMore = page.nextCursor != nil
+            rideMapError = nil
+        } catch {
+            rideMapError = error as? MobileRideMapError
+        }
+    }
+
+    var filteredRideMapHistory: [MobileRideMapHistorySummaryDto] {
+        let query = rideMapHistorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return rideMapHistory }
+        return rideMapHistory.filter { ride in
+            ride.rideId.localizedCaseInsensitiveContains(query)
+                || ride.associatedVehicle?.localizedCaseInsensitiveContains(query) == true
+                || ride.candidateVehicle?.localizedCaseInsensitiveContains(query) == true
         }
     }
 

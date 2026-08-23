@@ -2,6 +2,61 @@ import XCTest
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testMapStateReportsTypedAdmissionReasons() throws {
+        let state = MobileRideMapState()
+
+        XCTAssertThrowsError(
+            try state.ingestLocation(
+                monotonicMs: 1,
+                wallClockUnixMs: 1_700_000_000_001,
+                latitudeDegrees: 39.7392,
+                longitudeDegrees: -104.9903,
+                horizontalAccuracyMeters: 4
+            )
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .NoActiveRide)
+        }
+
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 4
+        )
+        XCTAssertEqual(
+            try state.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7392,
+                longitudeDegrees: -104.9903,
+                horizontalAccuracyMeters: 4
+            ),
+            .ignored(reason: .duplicateLocation)
+        )
+        XCTAssertEqual(
+            try state.ingestLocation(
+                monotonicMs: 99,
+                wallClockUnixMs: 1_700_000_000_099,
+                latitudeDegrees: 39.7393,
+                longitudeDegrees: -104.9902,
+                horizontalAccuracyMeters: 4
+            ),
+            .rejected(reason: .timestampOutOfOrder)
+        )
+        XCTAssertEqual(
+            try state.ingestLocation(
+                monotonicMs: 102,
+                wallClockUnixMs: 1_700_000_000_102,
+                latitudeDegrees: 39.7393,
+                longitudeDegrees: -104.9902,
+                horizontalAccuracyMeters: 100_001
+            ),
+            .rejected(reason: .accuracyTooLow)
+        )
+    }
+
     func testMapStateKeepsLifecycleAndRouteProjectionTyped() throws {
         let state = MobileRideMapState()
 

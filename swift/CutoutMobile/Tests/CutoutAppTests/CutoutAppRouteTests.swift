@@ -136,6 +136,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .vescDebug), [.vescDebug])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .capture), [.capture])
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .rideMap), [.rideMap])
+        XCTAssertEqual(
+            CutoutAppRoute.navigationPath(for: .rideMapDetail(rideID: "ride-1")),
+            [.rideMapDetail(rideID: "ride-1")]
+        )
     }
 
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {

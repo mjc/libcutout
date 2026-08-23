@@ -80,6 +80,11 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable {
     public var associatedVehicle: String?
 }
 
+public struct MobileRideMapHistoryPageDto: Equatable, Hashable {
+    public var summaries: [MobileRideMapHistorySummaryDto]
+    public var nextCursor: MobileRideCursorDto?
+}
+
 public enum MobileRideMapAssociationDto: Equatable, Hashable {
     case associated
     case alreadyAssociated
@@ -89,10 +94,18 @@ public enum MobileRideMapAssociationDto: Equatable, Hashable {
     case rideNotOpen
 }
 
+public enum MobileRideMapDecisionReason: Equatable, Hashable {
+    case rideNotRecording
+    case duplicateLocation
+    case timestampOutOfOrder
+    case accuracyTooLow
+    case unrealisticJump
+}
+
 public enum MobileRideMapDecisionDto: Equatable, Hashable {
     case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
-    case rejected(reason: String)
-    case ignored(reason: String)
+    case rejected(reason: MobileRideMapDecisionReason)
+    case ignored(reason: MobileRideMapDecisionReason)
 }
 
 /// Swift keeps only presentation DTOs and the canonical history handle. Rust owns all active
@@ -203,23 +216,38 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func storedSummaries(limit: UInt32) throws -> [MobileRideMapHistorySummaryDto] {
-        guard let database else { return [] }
+        try storedHistoryPage(cursor: nil, limit: limit).summaries
+    }
+
+    public func storedHistoryPage(
+        cursor: MobileRideCursorDto?,
+        limit: UInt32
+    ) throws -> MobileRideMapHistoryPageDto {
+        guard let database else {
+            return MobileRideMapHistoryPageDto(summaries: [], nextCursor: nil)
+        }
         do {
-            let page = try database.listRides(cursor: nil, limit: limit)
-            return page.rides.map { ride in
+            let page = try database.listRides(cursor: cursor, limit: limit)
+            let summaries = page.rides.map { ride in
                 MobileRideMapHistorySummaryDto(
                     rideId: ride.id.value,
                     state: mapState(ride.state),
                     summary: MobileRideMapSummaryDto(
                         pointCount: ride.summary.pointCount,
                         distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
-                        durationMilliseconds: ride.updatedAtMilliseconds - ride.createdAtMilliseconds
+                        durationMilliseconds: ride.updatedAtMilliseconds >= ride.createdAtMilliseconds
+                            ? ride.updatedAtMilliseconds - ride.createdAtMilliseconds
+                            : 0
                     ),
                     segmentCount: ride.segmentCount,
                     candidateVehicle: ride.candidateVehicle,
                     associatedVehicle: ride.associatedVehicle
                 )
             }
+            return MobileRideMapHistoryPageDto(
+                summaries: summaries,
+                nextCursor: page.nextCursor
+            )
         } catch {
             throw map(error)
         }
@@ -277,9 +305,19 @@ public final class MobileRideMapState: @unchecked Sendable {
         case let .accepted(point, segmentStarted):
             return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
         case let .rejected(reason):
-            return .rejected(reason: reason)
+            return .rejected(reason: map(reason))
         case let .ignored(reason):
-            return .ignored(reason: reason)
+            return .ignored(reason: map(reason))
+        }
+    }
+
+    private func map(_ reason: CutoutMobileFFI.MobileRideMapDecisionReasonDto) -> MobileRideMapDecisionReason {
+        switch reason {
+        case .rideNotRecording: return .rideNotRecording
+        case .duplicateLocation: return .duplicateLocation
+        case .timestampOutOfOrder: return .timestampOutOfOrder
+        case .accuracyTooLow: return .accuracyTooLow
+        case .unrealisticJump: return .unrealisticJump
         }
     }
 
