@@ -5,6 +5,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable {
     case AlreadyRecording
     case NoActiveRide
     case InvalidTransition
+    case InvalidLocation
     case Storage(String)
 }
 
@@ -21,6 +22,14 @@ public enum MobileRideMapTelemetryStateDto: Equatable, Hashable {
     case associatedNoTelemetry
     case associatedFresh
     case associatedStale
+}
+
+public enum MobileRideMapTelemetryObservation: Equatable, Hashable {
+    case observed
+    case alreadyObserved
+    case notAssociated
+    case timestampOutOfOrder
+    case rideNotOpen
 }
 
 public struct MobileRideMapSummaryDto: Equatable, Hashable {
@@ -134,6 +143,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
+        do {
+            return map(try core.observeTelemetry(atMs: atMs))
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func ingestLocation(
         monotonicMs: UInt64,
         wallClockUnixMs: UInt64,
@@ -154,8 +171,12 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func pointsAfter(afterCursor: UInt64?, limit: UInt32) -> MobileRideMapPointBatchDto? {
-        map(core.pointsAfter(afterCursor: afterCursor, limit: limit))
+    public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
+        do {
+            return map(try core.pointsAfter(afterCursor: afterCursor, limit: limit))
+        } catch {
+            throw map(error)
+        }
     }
 
     public func storedSummaries(limit: UInt32) throws -> [MobileRideMapHistorySummaryDto] {
@@ -172,8 +193,8 @@ public final class MobileRideMapState: @unchecked Sendable {
                         durationMilliseconds: ride.updatedAtMilliseconds - ride.createdAtMilliseconds
                     ),
                     segmentCount: ride.segmentCount,
-                    candidateVehicle: nil,
-                    associatedVehicle: nil
+                    candidateVehicle: ride.candidateVehicle,
+                    associatedVehicle: ride.associatedVehicle
                 )
             }
         } catch {
@@ -250,6 +271,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    private func map(_ observation: CutoutMobileFFI.MobileRideMapTelemetryObservationDto) -> MobileRideMapTelemetryObservation {
+        switch observation {
+        case .observed: return .observed
+        case .alreadyObserved: return .alreadyObserved
+        case .notAssociated: return .notAssociated
+        case .timestampOutOfOrder: return .timestampOutOfOrder
+        case .rideNotOpen: return .rideNotOpen
+        }
+    }
+
     private func mapPoint(_ point: MobileRideMapCorePointDto) -> MobileRideMapPointDto {
         MobileRideMapPointDto(
             sequence: point.sequence,
@@ -272,7 +303,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             wallClockUnixMs: point.location.wallClockUnixMilliseconds,
             monotonicMs: point.location.monotonicMilliseconds,
             horizontalAccuracyMeters: Double(point.location.horizontalAccuracyMillimetres ?? 0) / 1_000,
-            telemetryState: .gpsOnly
+            telemetryState: map(point.telemetryState)
         )
     }
 
@@ -302,6 +333,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             case .AlreadyRecording: return .AlreadyRecording
             case .NoActiveRide: return .NoActiveRide
             case .InvalidTransition: return .InvalidTransition
+            case .InvalidLocation: return .InvalidLocation
             case let .Storage(message): return .Storage(message)
             }
         }

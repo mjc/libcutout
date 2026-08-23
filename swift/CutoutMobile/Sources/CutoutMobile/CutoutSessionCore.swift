@@ -352,6 +352,7 @@ public final class CutoutSessionCore: NSObject {
     private var liveOwner: CoreBluetoothLiveSessionOwner?
     private var selectedModel: ElectricUnicycleModel?
     private var selectedRoute: DevicePickerConnectionRoute?
+    private var hasObservedRideMapConnection = false
     private var chargeEstimateProfile: ChargeEstimateProfile?
     private var vescBoardProfile: VescBoardProfile?
     private var isRecordOnly = false
@@ -961,6 +962,20 @@ public final class CutoutSessionCore: NSObject {
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
+        if !hasObservedRideMapConnection, let peripheral {
+            hasObservedRideMapConnection = true
+            observeRideMapConnection(platformIdentifier: peripheral.identifier.uuidString)
+        }
+        if step.actions.contains(where: { $0.rawTelemetry != nil }) {
+            do {
+                let observation = try rideMapState.observeTelemetry(atMs: receivedAt.rawValue)
+                if observation == .observed {
+                    publishRideMapSnapshot()
+                }
+            } catch {
+                publishRideMapError(error)
+            }
+        }
         let snapshot = step.snapshot
         displayState = displayState.reducing(snapshot: snapshot, receivedAt: receivedAt)
         hasObservedSpeedSnapshot = hasObservedSpeedSnapshot || snapshot?.speed?.value != nil
@@ -1335,6 +1350,7 @@ public final class CutoutSessionCore: NSObject {
         isRecordOnly = false
         isProbeOnly = false
         selectedRoute = nil
+        hasObservedRideMapConnection = false
         liveOwner = nil
         subscribedCharacteristics.removeAll()
         pendingServiceDiscoveries.removeAll()
@@ -2084,7 +2100,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
-        observeRideMapConnection(platformIdentifier: peripheral.identifier.uuidString)
+        hasObservedRideMapConnection = false
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {

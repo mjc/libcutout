@@ -197,102 +197,15 @@ struct RideMapRouteView: View {
         .onAppear { model.loadRideMapHistory() }
     }
 
-    @ViewBuilder
     private var summary: some View {
-        if let snapshot = model.rideMapSnapshot {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(localizedAppText("ride_map.distance", distanceText(for: snapshot)))
-                Text(localizedAppText("ride_map.duration", durationText(for: snapshot)))
-                Text(localizedAppText("ride_map.points", snapshot.summary.pointCount))
-                if let vehicle = snapshot.associatedVehicle {
-                    Text(localizedAppText("ride_map.associated_vehicle", vehicle))
-                } else {
-                    Text(localizedAppText("ride_map.gps_only"))
-                }
-            }
-            .font(.subheadline.monospacedDigit())
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("ride-map.summary")
-        } else {
-            Text(localizedAppText("ride_map.no_active"))
-                .font(.subheadline)
-                .accessibilityIdentifier("ride-map.no-active")
-        }
+        RideMapSummaryView(snapshot: model.rideMapSnapshot)
     }
 
-    @ViewBuilder
     private var controls: some View {
-        switch model.rideMapSnapshot?.state {
-        case .recording:
-            HStack(spacing: 12) {
-                Button {
-                    _ = model.pauseRideMap()
-                } label: {
-                    Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("ride-map.pause")
-
-                Button(role: .destructive) {
-                    _ = model.stopRideMap()
-                } label: {
-                    Label(localizedAppText("ride_map.stop"), systemImage: "stop.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("ride-map.stop")
-            }
-        case .paused:
-            HStack(spacing: 12) {
-                Button {
-                    _ = model.resumeRideMap()
-                } label: {
-                    Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("ride-map.resume")
-
-                Button(role: .destructive) {
-                    _ = model.stopRideMap()
-                } label: {
-                    Label(localizedAppText("ride_map.stop"), systemImage: "stop.fill")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("ride-map.stop")
-            }
-        case .stopped:
-            HStack(spacing: 12) {
-                Button {
-                    _ = model.saveRideMap()
-                } label: {
-                    Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("ride-map.save")
-
-                Button(role: .destructive) {
-                    isDiscardConfirmationPresented = true
-                } label: {
-                    Label(localizedAppText("ride_map.discard"), systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
-                .accessibilityIdentifier("ride-map.discard")
-            }
-        case .saved, .discarded:
-            startButton(label: localizedAppText("ride_map.start_new"))
-        case nil:
-            startButton(label: localizedAppText("ride_map.start"))
-        }
-    }
-
-    private func startButton(label: String) -> some View {
-        Button {
-            _ = model.startGpsOnlyRide()
-        } label: {
-            Label(label, systemImage: "location.fill")
-                .frame(maxWidth: .infinity, minHeight: 44)
-        }
-        .buttonStyle(.borderedProminent)
-        .accessibilityIdentifier("ride-map.start")
+        RideMapControlsView(
+            model: model,
+            isDiscardConfirmationPresented: $isDiscardConfirmationPresented
+        )
     }
 
     private var statusTitle: String {
@@ -393,6 +306,42 @@ struct RideMapRouteView: View {
             .formatted(.measurement(width: .abbreviated, usage: .road))
     }
 
+    private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
+        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
+            .formatted(.measurement(width: .abbreviated, usage: .road))
+    }
+}
+
+private struct RideMapSummaryView: View {
+    let snapshot: MobileRideMapSnapshotDto?
+
+    var body: some View {
+        if let snapshot {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(localizedAppText("ride_map.distance", distanceText(for: snapshot)))
+                Text(localizedAppText("ride_map.duration", durationText(for: snapshot)))
+                Text(localizedAppText("ride_map.points", snapshot.summary.pointCount))
+                if let vehicle = snapshot.associatedVehicle {
+                    Text(localizedAppText("ride_map.associated_vehicle", vehicle))
+                } else {
+                    Text(localizedAppText("ride_map.gps_only"))
+                }
+            }
+            .font(.subheadline.monospacedDigit())
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("ride-map.summary")
+        } else {
+            Text(localizedAppText("ride_map.no_active"))
+                .font(.subheadline)
+                .accessibilityIdentifier("ride-map.no-active")
+        }
+    }
+
+    private func distanceText(for snapshot: MobileRideMapSnapshotDto) -> String {
+        Measurement(value: snapshot.summary.distanceMeters, unit: UnitLength.meters)
+            .formatted(.measurement(width: .abbreviated, usage: .road))
+    }
+
     private func durationText(for snapshot: MobileRideMapSnapshotDto) -> String {
         let totalSeconds = snapshot.summary.durationMilliseconds / 1_000
         let hours = totalSeconds / 3_600
@@ -403,9 +352,92 @@ struct RideMapRouteView: View {
         }
         return "\(minutes)m \(seconds)s"
     }
+}
 
-    private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
-        Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
-            .formatted(.measurement(width: .abbreviated, usage: .road))
+private struct RideMapControlsView: View {
+    let model: CutoutAppModel
+    @Binding var isDiscardConfirmationPresented: Bool
+
+    var body: some View {
+        switch model.rideMapSnapshot?.state {
+        case .recording:
+            HStack(spacing: 12) {
+                Button {
+                    _ = model.pauseRideMap()
+                } label: {
+                    Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("ride-map.pause")
+
+                stopButton(prominent: true)
+            }
+        case .paused:
+            HStack(spacing: 12) {
+                Button {
+                    _ = model.resumeRideMap()
+                } label: {
+                    Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("ride-map.resume")
+
+                stopButton(prominent: false)
+            }
+        case .stopped:
+            HStack(spacing: 12) {
+                Button {
+                    _ = model.saveRideMap()
+                } label: {
+                    Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("ride-map.save")
+
+                Button(role: .destructive) {
+                    isDiscardConfirmationPresented = true
+                } label: {
+                    Label(localizedAppText("ride_map.discard"), systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("ride-map.discard")
+            }
+        case .saved, .discarded:
+            startButton(label: localizedAppText("ride_map.start_new"))
+        case nil:
+            startButton(label: localizedAppText("ride_map.start"))
+        }
+    }
+
+    @ViewBuilder
+    private func stopButton(prominent: Bool) -> some View {
+        if prominent {
+            Button(role: .destructive) {
+                _ = model.stopRideMap()
+            } label: {
+                Label(localizedAppText("ride_map.stop"), systemImage: "stop.fill")
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("ride-map.stop")
+        } else {
+            Button(role: .destructive) {
+                _ = model.stopRideMap()
+            } label: {
+                Label(localizedAppText("ride_map.stop"), systemImage: "stop.fill")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("ride-map.stop")
+        }
+    }
+
+    private func startButton(label: String) -> some View {
+        Button {
+            _ = model.startGpsOnlyRide()
+        } label: {
+            Label(label, systemImage: "location.fill")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.borderedProminent)
+        .accessibilityIdentifier("ride-map.start")
     }
 }

@@ -208,10 +208,15 @@ final class CutoutAppModel {
     private func restoreRideMapState() {
         rideMapSnapshot = core.rideMapStateHandle.currentSnapshot()
         guard rideMapSnapshot != nil else { return }
-        guard let (points, _) = collectRideMapPoints({ cursor, limit in
-            core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: limit)
-        }) else { return }
-        rideMapPoints = points
+        do {
+            guard let (points, _) = try collectRideMapPoints({ cursor, limit in
+                try core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: limit)
+            }) else { return }
+            rideMapPoints = points
+        } catch {
+            rideMapError = error as? MobileRideMapError
+            rideMapPoints = []
+        }
     }
 
     func start() {

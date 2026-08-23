@@ -20,8 +20,8 @@ final class RideMapStateTests: XCTestCase {
         }
         XCTAssertEqual(
             try state.ingestLocation(
-                monotonicMs: 101,
-                wallClockUnixMs: 1_700_000_000_101,
+                monotonicMs: 2_000,
+                wallClockUnixMs: 1_700_000_002_000,
                 latitudeDegrees: 39.7393,
                 longitudeDegrees: -104.9902,
                 horizontalAccuracyMeters: 4
@@ -32,8 +32,8 @@ final class RideMapStateTests: XCTestCase {
                     segmentId: 0,
                     latitudeDegrees: 39.7393,
                     longitudeDegrees: -104.9902,
-                    wallClockUnixMs: 1_700_000_000_101,
-                    monotonicMs: 101,
+                    wallClockUnixMs: 1_700_000_002_000,
+                    monotonicMs: 2_000,
                     horizontalAccuracyMeters: 4,
                     telemetryState: .associatedNoTelemetry
                 ),
@@ -44,11 +44,11 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertEqual(stopped.state, .stopped)
         XCTAssertEqual(point.sequence, 0)
         XCTAssertEqual(stopped.summary.pointCount, 2)
-        let firstBatch = state.pointsAfter(afterCursor: nil, limit: 1)
+        let firstBatch = try state.pointsAfter(afterCursor: nil, limit: 1)
         XCTAssertEqual(firstBatch?.points.count, 1)
         XCTAssertEqual(firstBatch?.nextCursor, 0)
         XCTAssertTrue(firstBatch?.hasMore == true)
-        XCTAssertEqual(state.pointsAfter(afterCursor: firstBatch?.nextCursor, limit: 10)?.points.map(\.sequence), [1])
+        XCTAssertEqual(try state.pointsAfter(afterCursor: firstBatch?.nextCursor, limit: 10)?.points.map(\.sequence), [1])
         XCTAssertEqual(try state.save().state, .saved)
     }
 }

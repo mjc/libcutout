@@ -4436,29 +4436,11 @@ fn horizontal_accuracy_millimetres(value: f64) -> Result<u32, MobileRideMapCoreE
     Ok(millimetres as u32)
 }
 
-fn map_core_batch(
-    points: &[MobileRideMapCorePointDto],
-    cursor: Option<u64>,
-    limit: u32,
-) -> MobileRideMapCorePointBatchDto {
-    if limit == 0 {
-        return MobileRideMapCorePointBatchDto {
-            points: Vec::new(),
-            next_cursor: None,
-            has_more: false,
-        };
-    }
-    let start = cursor.map_or(0, |cursor| {
-        points
-            .iter()
-            .position(|point| point.sequence > cursor)
-            .unwrap_or(points.len())
-    });
-    let end = start.saturating_add(limit as usize).min(points.len());
+fn empty_map_point_batch() -> MobileRideMapCorePointBatchDto {
     MobileRideMapCorePointBatchDto {
-        points: points[start..end].to_vec(),
-        next_cursor: (end > start && end < points.len()).then(|| points[end - 1].sequence),
-        has_more: end < points.len(),
+        points: Vec::new(),
+        next_cursor: None,
+        has_more: false,
     }
 }
 
@@ -4723,18 +4705,57 @@ impl MobileRideMapCore {
     }
 
     /// Returns a bounded page of active route points.
+    ///
+    /// Durable recordings are paged directly from SQLite so the bridge never materializes the
+    /// complete route just to answer a preview request.
     pub fn points_after(
         &self,
         after_cursor: Option<u64>,
         limit: u32,
-    ) -> MobileRideMapCorePointBatchDto {
+    ) -> Result<MobileRideMapCorePointBatchDto, MobileRideMapCoreErrorDto> {
         let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let points: Vec<_> = state
+        if limit == 0 {
+            return Ok(empty_map_point_batch());
+        }
+        let page_size = limit.min(500);
+        if let (Some(database), Some(ride_id)) =
+            (state.database.as_ref(), state.active_ride_id.clone())
+        {
+            let page = database
+                .route_points(
+                    ride_id,
+                    after_cursor.map(|sequence| MobileRoutePointCursorDto { sequence }),
+                    page_size,
+                )
+                .map_err(map_core_error)?;
+            let points = page
+                .points
+                .into_iter()
+                .map(|point| {
+                    state.point_from_location(
+                        point.location,
+                        point.sequence,
+                        point.segment_id,
+                        map_ride_telemetry_state(point.telemetry_state),
+                    )
+                })
+                .collect();
+            return Ok(MobileRideMapCorePointBatchDto {
+                points,
+                next_cursor: page.next_cursor.map(|cursor| cursor.sequence),
+                has_more: page.next_cursor.is_some(),
+            });
+        }
+
+        let start = after_cursor.map_or(0, |cursor| cursor.saturating_add(1) as usize);
+        let mut points: Vec<_> = state
             .recorder
             .points()
             .iter()
             .copied()
             .enumerate()
+            .skip(start)
+            .take(page_size as usize + 1)
             .map(|(sequence, sample)| {
                 state.point_from_location(
                     mobile_ride_location_dto(sample.sample()),
@@ -4744,7 +4765,16 @@ impl MobileRideMapCore {
                 )
             })
             .collect();
-        map_core_batch(&points, after_cursor, limit)
+        let has_more = points.len() > page_size as usize;
+        if has_more {
+            points.pop();
+        }
+        let next_cursor = has_more.then(|| points.last().map_or(0, |point| point.sequence));
+        Ok(MobileRideMapCorePointBatchDto {
+            points,
+            next_cursor,
+            has_more,
+        })
     }
 }
 
@@ -12736,7 +12766,7 @@ mod tests {
                 ..
             }
         ));
-        let points = state.points_after(None, 10);
+        let points = state.points_after(None, 10).unwrap();
         assert_eq!(
             points.points[0].telemetry_state,
             MobileRideMapCoreTelemetryStateDto::GpsOnly
@@ -12775,16 +12805,16 @@ mod tests {
 
         let snapshot = state.current_snapshot().expect("active snapshot exists");
         assert_eq!(snapshot.summary.point_count, 2);
-        let first = state.points_after(None, 1);
+        let first = state.points_after(None, 1).unwrap();
         assert_eq!(first.points.len(), 1);
         assert_eq!(first.next_cursor, Some(0));
         assert!(first.has_more);
-        let second = state.points_after(first.next_cursor, 1);
+        let second = state.points_after(first.next_cursor, 1).unwrap();
         assert_eq!(second.points[0].sequence, 1);
         assert_eq!(second.points[0].segment_id, 1);
         assert!(!second.has_more);
 
-        let empty = state.points_after(None, 0);
+        let empty = state.points_after(None, 0).unwrap();
         assert!(empty.points.is_empty());
         assert!(!empty.has_more);
         assert!(empty.next_cursor.is_none());
@@ -12826,7 +12856,7 @@ mod tests {
         let snapshot = state.current_snapshot().expect("interrupted ride restores");
         assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
         assert_eq!(snapshot.summary.point_count, 1);
-        assert_eq!(state.points_after(None, 10).points.len(), 1);
+        assert_eq!(state.points_after(None, 10).unwrap().points.len(), 1);
         let rides = database.list_rides(None, 10).expect("recovered ride lists");
         assert_eq!(rides.rides.len(), 1);
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));

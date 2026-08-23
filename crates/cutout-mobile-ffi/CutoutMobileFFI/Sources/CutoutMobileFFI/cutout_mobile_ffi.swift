@@ -2438,6 +2438,11 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double) throws  -> MobileRideMapCoreDecisionDto
 
     /**
+     * Records a confirmed vehicle telemetry timestamp without backfilling route points.
+     */
+    func observeTelemetry(atMs: UInt64) throws  -> MobileRideMapTelemetryObservationDto
+
+    /**
      * Associates a connected vehicle with the active recording.
      */
     func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreAssociationDto
@@ -2449,8 +2454,11 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
 
     /**
      * Returns a bounded page of active route points.
+     *
+     * Durable recordings are paged directly from SQLite so the bridge never materializes the
+     * complete route just to answer a preview request.
      */
-    func pointsAfter(afterCursor: UInt64?, limit: UInt32)  -> MobileRideMapCorePointBatchDto
+    func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws  -> MobileRideMapCorePointBatchDto
 
     /**
      * Resumes the paused ride.
@@ -2590,6 +2598,18 @@ open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeD
 }
 
     /**
+     * Records a confirmed vehicle telemetry timestamp without backfilling route points.
+     */
+open func observeTelemetry(atMs: UInt64)throws  -> MobileRideMapTelemetryObservationDto  {
+    return try  FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_observe_telemetry(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
      * Associates a connected vehicle with the active recording.
      */
 open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapCoreAssociationDto  {
@@ -2615,9 +2635,12 @@ open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Returns a bounded page of active route points.
+     *
+     * Durable recordings are paged directly from SQLite so the bridge never materializes the
+     * complete route just to answer a preview request.
      */
-open func pointsAfter(afterCursor: UInt64?, limit: UInt32) -> MobileRideMapCorePointBatchDto  {
-    return try!  FfiConverterTypeMobileRideMapCorePointBatchDto_lift(try! rustCall() {
+open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideMapCorePointBatchDto  {
+    return try  FfiConverterTypeMobileRideMapCorePointBatchDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_points_after(
             self.uniffiCloneHandle(),
         FfiConverterOptionUInt64.lower(afterCursor),
@@ -2736,6 +2759,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Appends a location sample with its Rust-owned route segment identity.
      */
     func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64) throws  -> MobileRideLocationAdmissionDto
+
+    /**
+     * Appends a location sample with segment and telemetry provenance.
+     */
+    func appendLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto) throws  -> MobileRideLocationAdmissionDto
 
     /**
      * Appends and spatially indexes one trail segment.
@@ -2881,6 +2909,11 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func transition(id: MobileRideIdDto, event: MobileRideEventDto) throws  -> MobileRideLifecycleStateDto
 
     /**
+     * Persists Rust-owned map association and telemetry metadata for a ride.
+     */
+    func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) throws
+
+    /**
      * Loads a learned voltage-sag model for one device identity.
      */
     func voltageSagModel(deviceIdentity: String) throws  -> MobileVoltageSagModelDto?
@@ -2965,6 +2998,21 @@ open func appendLocationWithSegment(id: MobileRideIdDto, location: MobileRideLoc
         FfiConverterTypeMobileRideIdDto_lower(id),
         FfiConverterTypeMobileRideLocationDto_lower(location),
         FfiConverterUInt64.lower(segmentId),$0
+    )
+})
+}
+
+    /**
+     * Appends a location sample with segment and telemetry provenance.
+     */
+open func appendLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto)throws  -> MobileRideLocationAdmissionDto  {
+    return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_append_location_with_segment_and_telemetry(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterTypeMobileRideLocationDto_lower(location),
+        FfiConverterUInt64.lower(segmentId),
+        FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lower(telemetryState),$0
     )
 })
 }
@@ -3298,6 +3346,21 @@ open func transition(id: MobileRideIdDto, event: MobileRideEventDto)throws  -> M
         FfiConverterTypeMobileRideEventDto_lower(event),$0
     )
 })
+}
+
+    /**
+     * Persists Rust-owned map association and telemetry metadata for a ride.
+     */
+open func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_update_ride_map_metadata(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterOptionString.lower(candidateVehicle),
+        FfiConverterOptionString.lower(associatedVehicle),
+        FfiConverterOptionUInt64.lower(associatedAtMilliseconds),
+        FfiConverterOptionUInt64.lower(lastTelemetryAtMilliseconds),$0
+    )
+}
 }
 
     /**
@@ -9827,10 +9890,14 @@ public struct MobileRideRecordDto: Equatable, Hashable {
     public var updatedAtMilliseconds: UInt64
     public var summary: MobileRideSummaryDto
     public var segmentCount: UInt64
+    public var candidateVehicle: String?
+    public var associatedVehicle: String?
+    public var associatedAtMilliseconds: UInt64?
+    public var lastTelemetryAtMilliseconds: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64) {
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
         self.id = id
         self.source = source
         self.state = state
@@ -9838,6 +9905,10 @@ public struct MobileRideRecordDto: Equatable, Hashable {
         self.updatedAtMilliseconds = updatedAtMilliseconds
         self.summary = summary
         self.segmentCount = segmentCount
+        self.candidateVehicle = candidateVehicle
+        self.associatedVehicle = associatedVehicle
+        self.associatedAtMilliseconds = associatedAtMilliseconds
+        self.lastTelemetryAtMilliseconds = lastTelemetryAtMilliseconds
     }
 
 
@@ -9862,7 +9933,11 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
                 createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 updatedAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf),
-                segmentCount: FfiConverterUInt64.read(from: &buf)
+                segmentCount: FfiConverterUInt64.read(from: &buf),
+                candidateVehicle: FfiConverterOptionString.read(from: &buf),
+                associatedVehicle: FfiConverterOptionString.read(from: &buf),
+                associatedAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                lastTelemetryAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -9874,6 +9949,10 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.updatedAtMilliseconds, into: &buf)
         FfiConverterTypeMobileRideSummaryDto.write(value.summary, into: &buf)
         FfiConverterUInt64.write(value.segmentCount, into: &buf)
+        FfiConverterOptionString.write(value.candidateVehicle, into: &buf)
+        FfiConverterOptionString.write(value.associatedVehicle, into: &buf)
+        FfiConverterOptionUInt64.write(value.associatedAtMilliseconds, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastTelemetryAtMilliseconds, into: &buf)
     }
 }
 
@@ -10269,13 +10348,15 @@ public struct MobileRoutePointDto: Equatable, Hashable {
     public var sequence: UInt64
     public var segmentId: UInt64
     public var location: MobileRideLocationDto
+    public var telemetryState: MobileRideMapCoreTelemetryStateDto
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, segmentId: UInt64, location: MobileRideLocationDto) {
+    public init(sequence: UInt64, segmentId: UInt64, location: MobileRideLocationDto, telemetryState: MobileRideMapCoreTelemetryStateDto) {
         self.sequence = sequence
         self.segmentId = segmentId
         self.location = location
+        self.telemetryState = telemetryState
     }
 
 
@@ -10296,7 +10377,8 @@ public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
             try MobileRoutePointDto(
                 sequence: FfiConverterUInt64.read(from: &buf),
                 segmentId: FfiConverterUInt64.read(from: &buf),
-                location: FfiConverterTypeMobileRideLocationDto.read(from: &buf)
+                location: FfiConverterTypeMobileRideLocationDto.read(from: &buf),
+                telemetryState: FfiConverterTypeMobileRideMapCoreTelemetryStateDto.read(from: &buf)
         )
     }
 
@@ -10304,6 +10386,7 @@ public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.sequence, into: &buf)
         FfiConverterUInt64.write(value.segmentId, into: &buf)
         FfiConverterTypeMobileRideLocationDto.write(value.location, into: &buf)
+        FfiConverterTypeMobileRideMapCoreTelemetryStateDto.write(value.telemetryState, into: &buf)
     }
 }
 
@@ -16967,6 +17050,14 @@ public enum MobileRideLocationAdmissionDto: Equatable, Hashable {
      * Sample was older than the latest durable sample.
      */
     case outOfOrder
+    /**
+     * Sample accuracy exceeded the Rust admission threshold.
+     */
+    case accuracyTooLow
+    /**
+     * Sample implied an unrealistic travel speed.
+     */
+    case unrealisticJump
 
 
 
@@ -16994,6 +17085,10 @@ public struct FfiConverterTypeMobileRideLocationAdmissionDto: FfiConverterRustBu
 
         case 3: return .outOfOrder
 
+        case 4: return .accuracyTooLow
+
+        case 5: return .unrealisticJump
+
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -17012,6 +17107,14 @@ public struct FfiConverterTypeMobileRideLocationAdmissionDto: FfiConverterRustBu
 
         case .outOfOrder:
             writeInt(&buf, Int32(3))
+
+
+        case .accuracyTooLow:
+            writeInt(&buf, Int32(4))
+
+
+        case .unrealisticJump:
+            writeInt(&buf, Int32(5))
 
         }
     }
@@ -17278,6 +17381,10 @@ public enum MobileRideMapCoreErrorDto: Swift.Error, Equatable, Hashable, Foundat
      */
     case InvalidTransition
     /**
+     * The supplied location values are invalid.
+     */
+    case InvalidLocation
+    /**
      * The canonical database rejected the operation.
      */
     case Storage(String
@@ -17314,7 +17421,8 @@ public struct FfiConverterTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer 
         case 1: return .AlreadyRecording
         case 2: return .NoActiveRide
         case 3: return .InvalidTransition
-        case 4: return .Storage(
+        case 4: return .InvalidLocation
+        case 5: return .Storage(
             try FfiConverterString.read(from: &buf)
             )
 
@@ -17341,8 +17449,12 @@ public struct FfiConverterTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer 
             writeInt(&buf, Int32(3))
 
 
-        case let .Storage(v1):
+        case .InvalidLocation:
             writeInt(&buf, Int32(4))
+
+
+        case let .Storage(v1):
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(v1, into: &buf)
 
         }
@@ -17457,6 +17569,112 @@ public func FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lift(_ buf: RustB
 #endif
 public func FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lower(_ value: MobileRideMapCoreTelemetryStateDto) -> RustBuffer {
     return FfiConverterTypeMobileRideMapCoreTelemetryStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Result of observing a confirmed vehicle telemetry timestamp.
+ */
+
+public enum MobileRideMapTelemetryObservationDto: Equatable, Hashable {
+
+    /**
+     * The timestamp became the newest telemetry evidence.
+     */
+    case observed
+    /**
+     * The timestamp was already observed.
+     */
+    case alreadyObserved
+    /**
+     * The ride has no confirmed association.
+     */
+    case notAssociated
+    /**
+     * The timestamp moved backwards.
+     */
+    case timestampOutOfOrder
+    /**
+     * The ride is not open for telemetry.
+     */
+    case rideNotOpen
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapTelemetryObservationDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapTelemetryObservationDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapTelemetryObservationDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapTelemetryObservationDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .observed
+
+        case 2: return .alreadyObserved
+
+        case 3: return .notAssociated
+
+        case 4: return .timestampOutOfOrder
+
+        case 5: return .rideNotOpen
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapTelemetryObservationDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .observed:
+            writeInt(&buf, Int32(1))
+
+
+        case .alreadyObserved:
+            writeInt(&buf, Int32(2))
+
+
+        case .notAssociated:
+            writeInt(&buf, Int32(3))
+
+
+        case .timestampOutOfOrder:
+            writeInt(&buf, Int32(4))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(_ buf: RustBuffer) throws -> MobileRideMapTelemetryObservationDto {
+    return try FfiConverterTypeMobileRideMapTelemetryObservationDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lower(_ value: MobileRideMapTelemetryObservationDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapTelemetryObservationDto.lower(value)
 }
 
 
@@ -22781,13 +22999,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 57280) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_telemetry() != 44430) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_vehicle_connection() != 10545) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 48725) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 15622) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 46230) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 26059) {
@@ -22806,6 +23027,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment() != 27305) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location_with_segment_and_telemetry() != 56230) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_trail_segment() != 21723) {
@@ -22887,6 +23111,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 62540) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_update_ride_map_metadata() != 42313) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_voltage_sag_model() != 58929) {
