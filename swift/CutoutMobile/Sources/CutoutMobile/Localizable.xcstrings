@@ -29,6 +29,14 @@
       "comment" : "Dismiss action for the expanded music player.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Done" } } }
     },
+    "music.visualization.title" : {
+      "comment" : "Section title for the bounded music visualization preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Visualizer" } } }
+    },
+    "music.visualization.unavailable" : {
+      "comment" : "Shown when the provider does not expose analysis data for visualization.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Visualization unavailable from this provider" } } }
+    },
     "music.history.title" : {
       "comment" : "Title for the music-history privacy choice.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride music history" } } }

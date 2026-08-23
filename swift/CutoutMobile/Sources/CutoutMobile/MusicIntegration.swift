@@ -373,6 +373,12 @@ public struct MusicExpandedPlayer: View {
                 }
 
                 Section {
+                    MusicVisualizationView(nowPlaying: nowPlaying)
+                } header: {
+                    Text(pevLocalizedText("music.visualization.title"))
+                }
+
+                Section {
                     Picker(pevLocalizedText("music.history.title"), selection: $selectedPolicy) {
                         ForEach(MobileMusicHistoryPolicyDto.allCases, id: \.self) { policy in
                             Text(policy.title)
@@ -398,6 +404,44 @@ public struct MusicExpandedPlayer: View {
                 }
             }
         }
+    }
+}
+
+/// A small visualizer preview backed only by normalized provider analysis.
+public struct MusicVisualizationView: View {
+    public let nowPlaying: MusicNowPlaying
+
+    public init(nowPlaying: MusicNowPlaying) {
+        self.nowPlaying = nowPlaying
+    }
+
+    public var body: some View {
+        if let analysis = nowPlaying.analysis {
+            let rgb = MusicVisualizer.rgb(from: analysis)
+            HStack(alignment: .bottom, spacing: 6) {
+                bar(analysis.bass, color: Color(red: rgb.red, green: 0.18, blue: 0.18))
+                bar(analysis.mid, color: Color(red: 0.18, green: rgb.green, blue: 0.18))
+                bar(analysis.treble, color: Color(red: 0.18, green: 0.18, blue: rgb.blue))
+                bar(analysis.energy, color: Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
+                bar(analysis.beat, color: Color(red: rgb.red, green: rgb.green, blue: rgb.blue))
+            }
+            .frame(maxWidth: .infinity, minHeight: 64, maxHeight: 64, alignment: .bottom)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(pevLocalizedText("music.visualization.title"))
+        } else {
+            Label(
+                pevLocalizedText("music.visualization.unavailable"),
+                systemImage: "waveform"
+            )
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func bar(_ value: Double, color: Color) -> some View {
+        Capsule()
+            .fill(color)
+            .frame(maxWidth: .infinity)
+            .frame(height: max(8, 56 * value))
     }
 }
 
