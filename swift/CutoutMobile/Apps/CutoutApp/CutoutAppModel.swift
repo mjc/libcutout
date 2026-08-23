@@ -242,11 +242,17 @@ final class CutoutAppModel {
     }
 
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
+        let previousPolicy = musicHistoryPolicy
+        musicHistoryPolicy = policy
         do {
             try musicCoordinator.setHistoryPolicy(policy)
-            musicHistoryPolicy = policy
+            return true
+        } catch MobileRideMapError.NoActiveRide {
+            // Keep the choice as the default for the next ride. Rust will
+            // apply it once a recording exists.
             return true
         } catch {
+            musicHistoryPolicy = previousPolicy
             return false
         }
     }
@@ -291,12 +297,17 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
-        applyRideMapCommand(resetPoints: true) {
+        let didStart = applyRideMapCommand(resetPoints: true) {
             try core.rideMapStateHandle.startGpsOnly(
                 atMs: currentMonotonicTime.rawValue,
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
         }
+        guard didStart else { return false }
+        // Music history is deliberately best-effort: a provider or storage
+        // failure must never prevent a ride from starting.
+        try? musicCoordinator.setHistoryPolicy(musicHistoryPolicy)
+        return true
     }
 
     @discardableResult

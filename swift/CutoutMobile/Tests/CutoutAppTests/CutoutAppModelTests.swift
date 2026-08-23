@@ -132,6 +132,46 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMusicHistoryPolicySelectedBeforeRideAppliesWhenRideStarts() throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertEqual(model.musicHistoryPolicy, .opaqueItem)
+        XCTAssertTrue(model.startGpsOnlyRide())
+
+        let outcome = try driver.rideMapStateHandle.recordMusicEvent(
+            snapshot: MobileMusicSnapshotDto(
+                provider: .appleMusic,
+                sessionId: "session-1",
+                state: .playing,
+                item: MobileMusicItemDto(
+                    identifier: "track-1",
+                    title: "Track",
+                    artist: "Artist"
+                ),
+                positionMilliseconds: 0,
+                durationMilliseconds: 60_000,
+                observedAtMs: 10,
+                capabilities: MobileMusicCapabilitiesDto(
+                    previous: true,
+                    play: false,
+                    pause: true,
+                    next: true,
+                    openProvider: false
+                )
+            ),
+            kind: .itemChanged,
+            monotonicAtMs: 10,
+            wallClockAtMs: 20,
+            clockUncertaintyMs: 1
+        )
+
+        XCTAssertEqual(outcome, .recorded)
+        XCTAssertEqual(driver.rideMapStateHandle.currentMusicEvents()?.count, 1)
+    }
+
+    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
