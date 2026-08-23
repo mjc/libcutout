@@ -65,6 +65,15 @@ struct RideMapRouteView: View {
                 .frame(minHeight: 260, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 12) {
+                if model.rideMapAvailability != .ready {
+                    Label(
+                        rideMapAvailabilityText,
+                        systemImage: "location.slash"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("ride-map.location-availability")
+                }
                 if model.rideMapStorageError != nil {
                     Label(
                         localizedAppText("ride_map.persistence_unavailable"),
@@ -91,6 +100,13 @@ struct RideMapRouteView: View {
                     .font(.subheadline)
                     .foregroundStyle(PevColors.muted)
                     .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
+
+                if model.rideMapLivePointsTruncated {
+                    Text(localizedAppText("ride_map.live_route_truncated"))
+                        .font(.caption)
+                        .foregroundStyle(PevColors.muted)
+                        .accessibilityIdentifier("ride-map.live-truncated")
+                }
 
                 summary
                 controls
@@ -179,6 +195,11 @@ struct RideMapRouteView: View {
                                 .font(.headline)
                             Text(localizedAppText("ride_map.distance", distanceText(for: ride.summary)))
                             Text(localizedAppText("ride_map.points", ride.summary.pointCount))
+                            if let vehicle = ride.associatedVehicle {
+                                Text(localizedAppText("ride_map.associated_vehicle", vehicle))
+                            } else if let candidate = ride.candidateVehicle {
+                                Text(localizedAppText("ride_map.candidate_vehicle", candidate))
+                            }
                         }
                     }
                     .buttonStyle(.plain)
@@ -222,6 +243,23 @@ struct RideMapRouteView: View {
             localizedAppText("ride_map.status.discarded")
         case nil:
             localizedAppText("ride_map.no_active")
+        }
+    }
+
+    private var rideMapAvailabilityText: String {
+        switch model.rideMapAvailability {
+        case .checking:
+            localizedAppText("ride_map.location_checking")
+        case .ready:
+            ""
+        case .permissionRequired:
+            localizedAppText("ride_map.location_permission_required")
+        case .denied:
+            localizedAppText("ride_map.location_denied")
+        case .restricted:
+            localizedAppText("ride_map.location_restricted")
+        case .storageUnavailable:
+            localizedAppText("ride_map.persistence_unavailable")
         }
     }
 

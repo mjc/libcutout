@@ -1,5 +1,14 @@
 import CutoutMobileFFI
 
+public enum MobileRideMapAvailability: Equatable, Hashable {
+    case checking
+    case ready
+    case permissionRequired
+    case denied
+    case restricted
+    case storageUnavailable
+}
+
 /// Errors surfaced by the map presentation adapter.
 public enum MobileRideMapError: Error, Equatable, Hashable {
     case AlreadyRecording

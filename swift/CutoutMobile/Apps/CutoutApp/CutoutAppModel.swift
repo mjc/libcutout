@@ -28,8 +28,10 @@ final class CutoutAppModel {
     )
     private(set) var rideMapSnapshot: MobileRideMapSnapshotDto?
     private(set) var rideMapStorageError: String?
+    private(set) var rideMapAvailability = MobileRideMapAvailability.checking
     private(set) var rideMapError: MobileRideMapError?
     private(set) var rideMapPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistoryPointsTruncated = false
@@ -150,6 +152,7 @@ final class CutoutAppModel {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
         rideMapStorageError = core.rideMapStorageError
+        rideMapAvailability = core.rideMapAvailability
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
             manager: liveActivityManager,
             sessionState: core.rideSessionStateHandle,
@@ -194,6 +197,9 @@ final class CutoutAppModel {
         self.core.onRideMapErrorChange = { [weak self] error in
             self?.rideMapError = error
         }
+        self.core.onRideMapAvailabilityChange = { [weak self] availability in
+            self?.rideMapAvailability = availability
+        }
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
@@ -209,10 +215,11 @@ final class CutoutAppModel {
         rideMapSnapshot = core.rideMapStateHandle.currentSnapshot()
         guard rideMapSnapshot != nil else { return }
         do {
-            guard let (points, _) = try collectRideMapPoints({ cursor, limit in
+            guard let (points, truncated) = try collectRideMapPoints({ cursor, limit in
                 try core.rideMapStateHandle.pointsAfter(afterCursor: cursor, limit: limit)
             }) else { return }
             rideMapPoints = points
+            rideMapLivePointsTruncated = truncated
         } catch {
             rideMapError = error as? MobileRideMapError
             rideMapPoints = []
@@ -353,6 +360,10 @@ final class CutoutAppModel {
         rideMapLastDecision = decision
         if case let .accepted(point, _) = decision {
             rideMapPoints.append(point)
+            if rideMapPoints.count > Self.rideMapPreviewPointLimit {
+                rideMapPoints = Array(rideMapPoints.suffix(Self.rideMapPreviewPointLimit))
+                rideMapLivePointsTruncated = true
+            }
         }
     }
 
@@ -365,6 +376,7 @@ final class CutoutAppModel {
             rideMapError = nil
             if resetPoints {
                 rideMapPoints.removeAll(keepingCapacity: true)
+                rideMapLivePointsTruncated = false
                 rideMapLastDecision = nil
             }
             return true

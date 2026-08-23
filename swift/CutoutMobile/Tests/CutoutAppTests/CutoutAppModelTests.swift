@@ -1511,8 +1511,10 @@ final class CutoutAppModelTests: XCTestCase {
         }
         driver.onPhaseChange?(.bluetoothUnavailable(rawState: 4))
 
-        for _ in 0 ..< 20 {
-            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
+        for _ in 0 ..< 200 {
+            if case .ended(reason: .unrecoverableSessionFailure) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+                break
+            }
             await Task.yield()
         }
 
@@ -2073,6 +2075,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
     let rideMapStateHandle = MobileRideMapState()
     let rideMapStorageError: String? = nil
+    let rideMapAvailability: MobileRideMapAvailability = .ready
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
     var onReconnectScheduled: ((SessionConnectionRetry) -> Void)?
@@ -2085,6 +2088,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
     var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
+    var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     var onBluetoothRestorationResolved: ((String?) -> Void)?
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?

@@ -322,6 +322,7 @@ public final class CutoutSessionCore: NSObject {
     public private(set) var bmsSnapshot: BmsSnapshot?
     public private(set) var phoneLocationSnapshot = MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     public private(set) var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
+    public private(set) var rideMapAvailability = MobileRideMapAvailability.checking
 
     public var onDisplayStateChange: ((RideDisplayState) -> Void)?
     public var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -336,6 +337,7 @@ public final class CutoutSessionCore: NSObject {
     public var onRideMapDecisionChange: ((MobileRideMapSnapshotDto, MobileRideMapDecisionDto) -> Void)?
     public var onRideMapSnapshotChange: ((MobileRideMapSnapshotDto) -> Void)?
     public var onRideMapErrorChange: ((MobileRideMapError) -> Void)?
+    public var onRideMapAvailabilityChange: ((MobileRideMapAvailability) -> Void)?
     public var onProtocolIdentityCandidateChange: ((DevicePickerDiscoveryCandidate?) -> Void)?
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
@@ -432,6 +434,9 @@ public final class CutoutSessionCore: NSObject {
         }
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
+        if rideMapStorageError != nil {
+            rideMapAvailability = .storageUnavailable
+        }
     }
 #else
     init(
@@ -454,6 +459,9 @@ public final class CutoutSessionCore: NSObject {
         self.rideMapStorageError = storage.error
         super.init()
         bleQueue.setSpecific(key: bleQueueKey, value: ())
+        if rideMapStorageError != nil {
+            rideMapAvailability = .storageUnavailable
+        }
     }
 #endif
 
@@ -473,6 +481,7 @@ public final class CutoutSessionCore: NSObject {
         }
 #endif
         _ = locationManager
+        updateRideMapAvailability(locationManager.authorizationStatus)
         return onBleQueue {
             guard central == nil else {
                 return
@@ -2552,6 +2561,31 @@ extension CutoutSessionCore {
 }
 
 extension CutoutSessionCore: CLLocationManagerDelegate {
+    private func updateRideMapAvailability(_ status: CLAuthorizationStatus) {
+        guard rideMapStorageError == nil else {
+            guard rideMapAvailability != .storageUnavailable else { return }
+            rideMapAvailability = .storageUnavailable
+            publishOnMain { self.onRideMapAvailabilityChange?(.storageUnavailable) }
+            return
+        }
+        let availability: MobileRideMapAvailability
+        switch status {
+        case .notDetermined:
+            availability = .permissionRequired
+        case .authorizedAlways, .authorizedWhenInUse:
+            availability = .ready
+        case .denied:
+            availability = .denied
+        case .restricted:
+            availability = .restricted
+        @unknown default:
+            availability = .checking
+        }
+        guard availability != rideMapAvailability else { return }
+        rideMapAvailability = availability
+        publishOnMain { self.onRideMapAvailabilityChange?(availability) }
+    }
+
     private func requestAlwaysLocationAuthorizationIfNeeded() {
         guard !didRequestAlwaysLocationAuthorization else { return }
         didRequestAlwaysLocationAuthorization = true
@@ -2559,6 +2593,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     }
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        updateRideMapAvailability(manager.authorizationStatus)
         switch manager.authorizationStatus {
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
