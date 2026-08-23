@@ -11,16 +11,18 @@ use thiserror::Error;
 
 #[cfg(any(feature = "serde", test))]
 use crate::GattRoles;
+#[cfg(test)]
+use crate::MAX_MUSIC_IDENTIFIER_BYTES;
 #[cfg(feature = "serde")]
 use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
     DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
-    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
-    RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
-    SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
-    WriteMode, drain_semantic_events_checked,
+    MonotonicTimestamp, MusicIdentifier, MusicProvider, MusicValidationError, NotificationChunkLen,
+    ProtocolFamily, ProtocolSession, RawTelemetryReadback, ReplayChunkComparison, RequestTarget,
+    SemanticEventCount, SessionInput, SessionOutput, SessionOutputError, TransportWriteLimit,
+    VerifiedValue, WallClockUnixTimestamp, WriteMode, drain_semantic_events_checked,
 };
 
 /// PEVCAP file format magic bytes.
@@ -1002,6 +1004,49 @@ fn collect_bounded_strings<const N: usize>(
     Ok(collected)
 }
 
+/// Music metadata correlated with one PEVCAP transport frame.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PevcapMusicEvent {
+    /// Provider that supplied the opaque track identifier.
+    pub provider: MusicProvider,
+    /// Opaque provider track identifier; no title or artwork is retained.
+    pub track_id: MusicIdentifier,
+    /// Provider-reported position within the track in milliseconds.
+    pub track_position_ms: u64,
+    /// Wall-clock sample time for the provider observation.
+    pub wall_clock_unix_ms: WallClockUnixTimestamp,
+    /// Clock uncertainty for the wall-clock sample in milliseconds.
+    pub clock_uncertainty_milliseconds: u64,
+    /// Optional ride-local sequence number for deterministic correlation.
+    pub ride_sequence: Option<u64>,
+}
+
+impl PevcapMusicEvent {
+    /// Creates a bounded music correlation event.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MusicValidationError` when the provider track identifier is
+    /// blank or exceeds the platform boundary.
+    pub fn new(
+        provider: MusicProvider,
+        track_id: impl Into<String>,
+        track_position_ms: u64,
+        wall_clock_unix_ms: WallClockUnixTimestamp,
+        clock_uncertainty_milliseconds: u64,
+        ride_sequence: Option<u64>,
+    ) -> Result<Self, MusicValidationError> {
+        Ok(Self {
+            provider,
+            track_id: MusicIdentifier::new(track_id)?,
+            track_position_ms,
+            wall_clock_unix_ms,
+            clock_uncertainty_milliseconds,
+            ride_sequence,
+        })
+    }
+}
+
 /// Owned capture record for PEVCAP files.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PevcapRecord {
@@ -1031,6 +1076,9 @@ pub struct PevcapRecord {
 
     /// Typed protocol-native telemetry decoded from the same inbound notification.
     pub telemetry: Option<RawTelemetryReadback>,
+
+    /// Optional music track and timing metadata correlated with this frame.
+    pub music: Option<PevcapMusicEvent>,
 
     /// Latest phone location sample when this BLE record was received.
     pub phone_location: Option<PevcapPhoneLocation>,
@@ -1095,6 +1143,13 @@ impl PevcapRecord {
         self.phone_location = Some(location);
         self
     }
+    /// Attaches bounded music track and timing metadata to this frame.
+    #[must_use]
+    pub fn with_music(mut self, music: PevcapMusicEvent) -> Self {
+        self.music = Some(music);
+        self
+    }
+
     /// Creates a link-up lifecycle record.
     #[must_use]
     pub fn link_up(
@@ -1111,6 +1166,7 @@ impl PevcapRecord {
             target: None,
             bytes: Bytes::new(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -1128,6 +1184,7 @@ impl PevcapRecord {
             target: None,
             bytes: Bytes::new(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -1150,6 +1207,7 @@ impl PevcapRecord {
             target: None,
             bytes: bytes.into(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -1187,6 +1245,7 @@ impl PevcapRecord {
             target: None,
             bytes: bytes.into(),
             telemetry: None,
+            music: None,
             phone_location: None,
         }
     }
@@ -2000,6 +2059,10 @@ pub enum PevcapRecordError {
     #[error("non-outbound PEVCAP record carried request target metadata")]
     UnexpectedTarget,
 
+    /// A music correlation carried an invalid opaque track identifier.
+    #[error("PEVCAP record carried an invalid music track identifier")]
+    InvalidMusicTrackId,
+
     /// A link lifecycle record carried payload bytes.
     #[error("link lifecycle PEVCAP record carried payload bytes")]
     UnexpectedLinkBytes,
@@ -2400,6 +2463,75 @@ impl GattRoleJson {
 }
 
 #[cfg(feature = "serde")]
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PevcapMusicProviderJson {
+    AppleMusic,
+    Spotify,
+}
+
+#[cfg(feature = "serde")]
+impl From<MusicProvider> for PevcapMusicProviderJson {
+    fn from(provider: MusicProvider) -> Self {
+        match provider {
+            MusicProvider::AppleMusic => Self::AppleMusic,
+            MusicProvider::Spotify => Self::Spotify,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapMusicProviderJson {
+    const fn into_provider(self) -> MusicProvider {
+        match self {
+            Self::AppleMusic => MusicProvider::AppleMusic,
+            Self::Spotify => MusicProvider::Spotify,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(Deserialize, Serialize)]
+struct PevcapMusicEventJson {
+    provider: PevcapMusicProviderJson,
+    track_id: String,
+    track_position_ms: u64,
+    wall_clock_unix_ms: u64,
+    clock_uncertainty_milliseconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ride_sequence: Option<u64>,
+}
+
+#[cfg(feature = "serde")]
+impl From<&PevcapMusicEvent> for PevcapMusicEventJson {
+    fn from(event: &PevcapMusicEvent) -> Self {
+        Self {
+            provider: event.provider.into(),
+            track_id: event.track_id.as_str().to_owned(),
+            track_position_ms: event.track_position_ms,
+            wall_clock_unix_ms: event.wall_clock_unix_ms.as_milliseconds(),
+            clock_uncertainty_milliseconds: event.clock_uncertainty_milliseconds,
+            ride_sequence: event.ride_sequence,
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl PevcapMusicEventJson {
+    fn try_into_event(self) -> Result<PevcapMusicEvent, PevcapRecordError> {
+        PevcapMusicEvent::new(
+            self.provider.into_provider(),
+            self.track_id,
+            self.track_position_ms,
+            WallClockUnixTimestamp::from_milliseconds(self.wall_clock_unix_ms),
+            self.clock_uncertainty_milliseconds,
+            self.ride_sequence,
+        )
+        .map_err(|_| PevcapRecordError::InvalidMusicTrackId)
+    }
+}
+
+#[cfg(feature = "serde")]
 #[derive(Deserialize, Serialize)]
 struct PevcapRecordJson {
     monotonic_ms: u64,
@@ -2411,6 +2543,8 @@ struct PevcapRecordJson {
     link_max_write_len: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PevcapRequestTargetJson>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    music: Option<PevcapMusicEventJson>,
     bytes: Bytes,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     telemetry: Option<RawTelemetryReadback>,
@@ -2431,6 +2565,7 @@ impl From<&PevcapRecord> for PevcapRecordJson {
             target: record.target.map(PevcapRequestTargetJson::from),
             bytes: record.bytes.clone(),
             telemetry: record.telemetry.clone(),
+            music: record.music.as_ref().map(PevcapMusicEventJson::from),
             phone_location: record.phone_location,
         }
     }
@@ -2450,6 +2585,10 @@ impl PevcapRecordJson {
             target: self.target.map(PevcapRequestTargetJson::into_target),
             bytes: self.bytes,
             telemetry: self.telemetry,
+            music: self
+                .music
+                .map(PevcapMusicEventJson::try_into_event)
+                .transpose()?,
             phone_location: self.phone_location,
         })
     }
@@ -3757,6 +3896,46 @@ mod tests {
             .expect_err("JSONL input must be UTF-8");
 
         assert!(matches!(error, PevcapCodecError::Utf8(_)));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_music_metadata_round_trips_in_both_encodings() {
+        let mut capture = sample_pevcap_capture();
+        let event = PevcapMusicEvent::new(
+            MusicProvider::AppleMusic,
+            "i.am.opaque.track",
+            42_000,
+            wc(1_725_000_165_456),
+            25,
+            Some(17),
+        )
+        .expect("music metadata validates");
+        capture.records[1] = capture.records[1].clone().with_music(event.clone());
+
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let encoded = capture.encode(encoding).expect("capture encodes");
+            let decoded = PevcapCapture::decode(&encoded, encoding).expect("capture decodes");
+            assert_eq!(decoded.records[1].music.as_ref(), Some(&event));
+        }
+    }
+
+    #[test]
+    fn pevcap_music_metadata_bounds_track_identifier() {
+        let blank = PevcapMusicEvent::new(MusicProvider::AppleMusic, " ", 0, wc(1), 0, None)
+            .expect_err("blank track identifiers are rejected");
+        assert_eq!(blank, MusicValidationError::Blank("identifier"));
+
+        let oversized = PevcapMusicEvent::new(
+            MusicProvider::Spotify,
+            "x".repeat(MAX_MUSIC_IDENTIFIER_BYTES + 1),
+            0,
+            wc(1),
+            0,
+            None,
+        )
+        .expect_err("oversized track identifiers are rejected");
+        assert_eq!(oversized, MusicValidationError::TooLong("identifier"));
     }
 
     #[cfg(feature = "serde")]
