@@ -4434,31 +4434,93 @@ struct VoltageSagModelStore {
 
     private static let keyPrefix = "io.cutout.voltage-sag.v1."
     private let defaults: UserDefaults
+    private let database: RideDatabaseHandle?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        self.database = defaults === UserDefaults.standard ? RustPersistenceStore.shared : nil
+    }
+
+    init(database: RideDatabaseHandle) {
+        self.defaults = .standard
+        self.database = database
     }
 
     func load(for deviceIdentity: String) -> MobileVoltageSagModelDto? {
+        guard !deviceIdentity.isEmpty else { return nil }
+        if let database {
+            let key = Self.keyPrefix + deviceIdentity
+            if let data = defaults.data(forKey: key) {
+                if data.isEmpty {
+                    if (try? database.removeVoltageSagModel(deviceIdentity: deviceIdentity)) != nil {
+                        defaults.removeObject(forKey: key)
+                    }
+                    return nil
+                }
+                guard
+                    let legacy = try? JSONDecoder().decode(Record.self, from: data),
+                    legacy.schemaVersion == 1,
+                    legacy.deviceIdentity == deviceIdentity
+                else {
+                    return nil
+                }
+                let model = MobileVoltageSagModelDto(
+                    schemaVersion: legacy.schemaVersion,
+                    effectiveResistanceMilliohms: legacy.effectiveResistanceMilliohms,
+                    observations: legacy.observations,
+                    hardwareVerified: legacy.hardwareVerified
+                )
+                if (try? database.saveVoltageSagModel(
+                    deviceIdentity: deviceIdentity,
+                    model: model,
+                    learnedAtMilliseconds: UInt64(max(legacy.lastLearnedWallClockMilliseconds, 0))
+                )) != nil {
+                    defaults.removeObject(forKey: key)
+                }
+                return model
+            }
+            if let persisted = try? database.voltageSagModel(deviceIdentity: deviceIdentity) {
+                return persisted
+            }
+            return nil
+        }
         guard
-            !deviceIdentity.isEmpty,
             let data = defaults.data(forKey: Self.keyPrefix + deviceIdentity),
-            let record = try? JSONDecoder().decode(Record.self, from: data),
-            record.schemaVersion == 1,
-            record.deviceIdentity == deviceIdentity
+            let legacy = try? JSONDecoder().decode(Record.self, from: data),
+            legacy.schemaVersion == 1,
+            legacy.deviceIdentity == deviceIdentity
         else {
             return nil
         }
         return MobileVoltageSagModelDto(
-            schemaVersion: record.schemaVersion,
-            effectiveResistanceMilliohms: record.effectiveResistanceMilliohms,
-            observations: record.observations,
-            hardwareVerified: record.hardwareVerified
+            schemaVersion: legacy.schemaVersion,
+            effectiveResistanceMilliohms: legacy.effectiveResistanceMilliohms,
+            observations: legacy.observations,
+            hardwareVerified: legacy.hardwareVerified
         )
     }
 
     func save(_ model: MobileVoltageSagModelDto, for deviceIdentity: String) {
         guard !deviceIdentity.isEmpty else { return }
+        if let database {
+            if (try? database.saveVoltageSagModel(
+                deviceIdentity: deviceIdentity,
+                model: model,
+                learnedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
+            )) != nil {
+                defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
+            } else if let data = try? JSONEncoder().encode(Record(
+                schemaVersion: model.schemaVersion,
+                deviceIdentity: deviceIdentity,
+                effectiveResistanceMilliohms: model.effectiveResistanceMilliohms,
+                observations: model.observations,
+                hardwareVerified: model.hardwareVerified,
+                lastLearnedWallClockMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
+            )) {
+                defaults.set(data, forKey: Self.keyPrefix + deviceIdentity)
+            }
+            return
+        }
         let record = Record(
             schemaVersion: model.schemaVersion,
             deviceIdentity: deviceIdentity,
@@ -4471,8 +4533,18 @@ struct VoltageSagModelStore {
         defaults.set(data, forKey: Self.keyPrefix + deviceIdentity)
     }
 
-    func remove(for deviceIdentity: String) {
+    func remove(for deviceIdentity: String) throws {
         guard !deviceIdentity.isEmpty else { return }
+        if let database {
+            do {
+                try database.removeVoltageSagModel(deviceIdentity: deviceIdentity)
+                defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
+            } catch {
+                defaults.set(Data(), forKey: Self.keyPrefix + deviceIdentity)
+                throw error
+            }
+            return
+        }
         defaults.removeObject(forKey: Self.keyPrefix + deviceIdentity)
     }
 }
@@ -4538,7 +4610,7 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         if hadVoltageSagModel, chargeEstimator.voltageSagModel() == nil {
             persistedVoltageSagObservations = 0
             if let voltageSagIdentity {
-                voltageSagStore.remove(for: voltageSagIdentity)
+                try? voltageSagStore.remove(for: voltageSagIdentity)
             }
         }
         refreshChargeEstimate(at: currentSnapshot.at ?? MonotonicMilliseconds(0))
