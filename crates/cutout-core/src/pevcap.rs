@@ -1288,6 +1288,18 @@ impl PevcapCapture {
         }
     }
 
+    /// Returns a copy of this capture with all optional music metadata removed.
+    ///
+    /// This is the export-time privacy boundary for users who want to share
+    /// transport data without retaining the music correlation section.
+    #[must_use]
+    pub fn without_music_metadata(mut self) -> Self {
+        for record in &mut self.records {
+            record.music = None;
+        }
+        self
+    }
+
     /// Replays PEVCAP records directly through a host session using borrowed
     /// payload slices and caller-provided output storage.
     ///
@@ -3917,6 +3929,33 @@ mod tests {
             let encoded = capture.encode(encoding).expect("capture encodes");
             let decoded = PevcapCapture::decode(&encoded, encoding).expect("capture decodes");
             assert_eq!(decoded.records[1].music.as_ref(), Some(&event));
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_music_metadata_can_be_removed_before_export() {
+        let mut capture = sample_pevcap_capture();
+        let event = PevcapMusicEvent::new(
+            MusicProvider::Spotify,
+            "opaque-spotify-track",
+            1_234,
+            wc(1_725_000_165_456),
+            10,
+            Some(3),
+        )
+        .expect("music metadata validates");
+        capture.records[1] = capture.records[1].clone().with_music(event);
+        let redacted = capture.clone().without_music_metadata();
+
+        assert!(capture.records[1].music.is_some());
+        assert!(redacted.records.iter().all(|record| record.music.is_none()));
+
+        for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
+            let encoded = redacted.encode(encoding).expect("redacted capture encodes");
+            let decoded =
+                PevcapCapture::decode(&encoded, encoding).expect("redacted capture decodes");
+            assert!(decoded.records.iter().all(|record| record.music.is_none()));
         }
     }
 
