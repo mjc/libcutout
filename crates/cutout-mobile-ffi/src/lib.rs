@@ -17,9 +17,9 @@ use std::{
 };
 
 use cutout_core::{
-    ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
-    BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
-    BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
+    AccelerationAssistStateDto, ActivityProjectionState as CoreActivityProjectionState,
+    AngleReadingDto, BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto,
+    BatteryInfoDto, BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, Capacity,
     ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
@@ -1993,6 +1993,12 @@ pub enum MobileCommandDto {
     /// Set the documented pedal response; unverified models refuse this before transport.
     SetPedalMode(MobilePedalModeKindDto),
 
+    /// Enable or disable acceleration assist; unsupported models refuse this before transport.
+    SetAccelerationAssist(MobileAccelerationAssistStateDto),
+
+    /// Set the taillight independently; unsupported models refuse this before transport.
+    SetTaillight(MobileLightStateDto),
+
     /// Sound a horn or alert.
     SoundHorn,
 }
@@ -2005,6 +2011,25 @@ pub enum MobileLightStateDto {
 
     /// Lights on.
     On,
+}
+
+/// Mobile DTO acceleration-assist state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileAccelerationAssistStateDto {
+    /// Acceleration assist is disabled.
+    Disabled,
+
+    /// Acceleration assist is enabled.
+    Enabled,
+}
+
+impl From<MobileAccelerationAssistStateDto> for AccelerationAssistStateDto {
+    fn from(state: MobileAccelerationAssistStateDto) -> Self {
+        match state {
+            MobileAccelerationAssistStateDto::Disabled => Self::Disabled,
+            MobileAccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
 }
 
 /// Documented pedal stiffness mode.
@@ -9994,7 +10019,10 @@ impl AeroBenignControlSession {
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        let result = mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input));
+        let result = preserve_refused_command(
+            mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input)),
+            tracked_input.command,
+        );
         self.lock_light_state()
             .observe_step(&tracked_input, &result);
         self.lock_pedal_mode_state()
@@ -10114,6 +10142,10 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::SetPedalMode(mode) => {
                 Self::SetPedalMode(CorePedalMode::from(mode).into())
             }
+            MobileCommandDto::SetAccelerationAssist(state) => {
+                Self::SetAccelerationAssist(state.into())
+            }
+            MobileCommandDto::SetTaillight(state) => Self::SetTaillight(state.into()),
             MobileCommandDto::SoundHorn => Self::SoundHorn,
         }
     }
@@ -10497,6 +10529,21 @@ impl From<ConcreteSessionStepResultDto> for MobileSessionStepResultDto {
             error: result.error.map(Into::into),
         }
     }
+}
+
+fn preserve_refused_command(
+    mut result: MobileSessionStepResultDto,
+    command: Option<MobileCommandDto>,
+) -> MobileSessionStepResultDto {
+    if let Some(MobileSessionStepErrorDto {
+        kind: MobileSessionStepErrorKindDto::CommandRefused,
+        command: error_command @ None,
+        ..
+    }) = &mut result.error
+    {
+        *error_command = command;
+    }
+    result
 }
 
 fn mobile_aero_session_step_result(
@@ -11369,7 +11416,10 @@ impl FalconBenignControlSession {
     pub fn ingest_checked(&self, input: MobileSessionInputDto) -> MobileSessionStepResultDto {
         let tracked_input = input.clone();
         let input = SessionInputDto::from(input);
-        let result = MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input));
+        let result = preserve_refused_command(
+            MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input)),
+            tracked_input.command,
+        );
         self.lock_light_state()
             .observe_step(&tracked_input, &result);
         self.lock_pedal_mode_state()
@@ -14378,6 +14428,41 @@ mod tests {
                 .iter()
                 .all(|output| output.kind != MobileSessionOutputKindDto::Write)
         );
+    }
+
+    #[test]
+    fn mobile_wrapper_refuses_unverified_acceleration_assist_and_taillight_without_writes() {
+        let session = AeroBenignControlSession::new();
+        let commands = [
+            MobileCommandDto::SetAccelerationAssist(MobileAccelerationAssistStateDto::Enabled),
+            MobileCommandDto::SetTaillight(MobileLightStateDto::On),
+        ];
+
+        for command in commands {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(0),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(command),
+            });
+
+            assert_eq!(
+                result.error,
+                Some(MobileSessionStepErrorDto {
+                    kind: MobileSessionStepErrorKindDto::CommandRefused,
+                    command: Some(command),
+                    reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
+                })
+            );
+            assert!(
+                result
+                    .outputs
+                    .iter()
+                    .all(|output| output.kind != MobileSessionOutputKindDto::Write)
+            );
+        }
     }
 
     #[test]
