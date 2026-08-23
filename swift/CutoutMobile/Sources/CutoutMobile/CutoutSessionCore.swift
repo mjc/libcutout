@@ -1004,7 +1004,11 @@ public final class CutoutSessionCore: NSObject {
     private func applySessionAction(_ action: SessionAction) {
         switch action.kind {
         case .settingsReadback:
-            settingsReadback = action.settingsReadback
+            if let update = action.settingsReadback {
+                settingsReadback = settingsReadback?.merging(update) ?? update
+            } else {
+                settingsReadback = nil
+            }
             publishSettingsReadback()
         case .faultHistoryReadback:
             faultHistoryReadback = action.faultHistoryReadback

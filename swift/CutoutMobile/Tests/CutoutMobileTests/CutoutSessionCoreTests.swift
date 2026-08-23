@@ -1571,6 +1571,83 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(observedReadbacks, [readback, nil])
     }
 
+    func testSettingsReadbackMergesBoundedVeteranChunksWithoutDroppingFields() {
+        let core = CutoutSessionCore()
+        let firstChunk = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0014, value: 30),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0016, value: 1),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x0018, value: 116),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x001a, value: 420),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+        ])
+        let secondChunk = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x001e, value: 1_920),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+        ], eucGarageSettings: EucGarageSettingsSnapshot(
+            pedalMode: .available(.rawMode(1_920))
+        ))
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [
+                .withSettingsReadback(firstChunk),
+                .withSettingsReadback(secondChunk),
+            ]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(
+            core.settingsReadback?.entries.map(\.field.id),
+            [0x0014, 0x0016, 0x0018, 0x001a, 0x001e]
+        )
+        XCTAssertEqual(core.settingsReadback?.entries.last?.field.value, 1_920)
+        XCTAssertEqual(core.settingsReadback?.eucGarageSettings.pedalMode, .available(.rawMode(1_920)))
+    }
+
+    func testUnavailableSettingsChunkDoesNotDowngradeKnownReadback() {
+        let core = CutoutSessionCore()
+        let known = SettingsReadback(entries: [
+            SettingsReadbackEntry(
+                field: RawSettingField(id: 0x001e, value: 1),
+                source: .reported,
+                quality: .known,
+                verification: .hardwareVerified
+            ),
+        ])
+
+        core.applyNotificationStep(
+            CoreBluetoothSessionStep(operations: [], snapshot: nil, actions: [
+                .withSettingsReadback(known),
+                .withSettingsReadback(SettingsReadback(entries: [], availability: .unavailable)),
+            ]),
+            receivedAt: MonotonicMilliseconds(42)
+        )
+
+        XCTAssertEqual(core.settingsReadback, known)
+    }
+
     func testNonAvailableSettingsReadbackDoesNotCarryRawEntries() {
         let readback = SettingsReadback(entries: [
             SettingsReadbackEntry(

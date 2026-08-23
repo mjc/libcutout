@@ -1110,6 +1110,30 @@ public struct SettingsReadback: Equatable, Hashable, Sendable {
         )
     }
 
+    func merging(_ update: SettingsReadback) -> SettingsReadback {
+        guard update.availability == .available else {
+            return availability == .available ? self : update
+        }
+        guard availability == .available else {
+            return update
+        }
+
+        var mergedEntries = entries
+        for entry in update.entries {
+            if let index = mergedEntries.firstIndex(where: { $0.field.id == entry.field.id }) {
+                mergedEntries[index] = entry
+            } else {
+                mergedEntries.append(entry)
+            }
+        }
+
+        return SettingsReadback(
+            entries: mergedEntries,
+            availability: .available,
+            eucGarageSettings: eucGarageSettings.merging(update.eucGarageSettings)
+        )
+    }
+
     private static func missingGarageSettings(
         for availability: ReadbackAvailability
     ) -> EucGarageSettingsSnapshot {
@@ -2781,6 +2805,28 @@ public struct EucGarageSettingsSnapshot: Equatable, Hashable, Sendable {
             ),
             lightState: dto.lightState.map(LightState.init)
         )
+    }
+
+    func merging(_ update: EucGarageSettingsSnapshot) -> EucGarageSettingsSnapshot {
+        EucGarageSettingsSnapshot(
+            beepMargin: Self.merged(beepMargin, update.beepMargin),
+            tiltback: Self.merged(tiltback, update.tiltback),
+            pedalMode: Self.merged(pedalMode, update.pedalMode),
+            lightState: update.lightState ?? lightState
+        )
+    }
+
+    private static func merged<Value>(
+        _ current: ReadbackValue<Value>,
+        _ update: ReadbackValue<Value>
+    ) -> ReadbackValue<Value> where Value: Equatable & Hashable & Sendable {
+        if update.value != nil {
+            return update
+        }
+        if current.value != nil {
+            return current
+        }
+        return update
     }
 
     private static func readback<Value>(
