@@ -230,6 +230,12 @@ final class CutoutAppModel {
         musicNowPlaying = nil
     }
 
+    /// Connects an optional LED/matrix renderer without coupling the app to a
+    /// specific hardware transport.
+    func setMusicVisualizationSink(_ sink: (any MusicVisualizationSink)?) {
+        musicCoordinator.setVisualizationSink(sink)
+    }
+
     func refreshMusicSnapshot() {
 #if canImport(MediaPlayer) && os(iOS)
         let observedAtMs = core.now().rawValue

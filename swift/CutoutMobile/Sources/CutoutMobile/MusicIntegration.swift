@@ -129,17 +129,32 @@ public struct MusicProviderObservation: Equatable, Sendable {
 public final class MusicIntegrationCoordinator {
     public private(set) var nowPlaying: MusicNowPlaying?
     private let rideMapState: MobileRideMapState
+    private weak var visualizationSink: (any MusicVisualizationSink)?
+    private var deliveredVisualizationFrame: MusicRGBFrame?
 
-    public init(rideMapState: MobileRideMapState) {
+    public init(
+        rideMapState: MobileRideMapState,
+        visualizationSink: (any MusicVisualizationSink)? = nil
+    ) {
         self.rideMapState = rideMapState
+        self.visualizationSink = visualizationSink
     }
 
     public func update(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
         nowPlaying = MusicNowPlaying(snapshot: snapshot, analysis: analysis)
+        deliverVisualizationFrameIfChanged()
     }
 
     public var visualizationFrame: MusicRGBFrame {
         MusicVisualizer.rgb(from: nowPlaying?.analysis)
+    }
+
+    /// Attaches or detaches the RGB destination. Attaching replays the current
+    /// frame once, including a silent frame when analysis is unavailable.
+    public func setVisualizationSink(_ sink: (any MusicVisualizationSink)?) {
+        visualizationSink = sink
+        deliveredVisualizationFrame = nil
+        deliverVisualizationFrameIfChanged()
     }
 
     /// Applies one provider observation and records only a meaningful transition.
@@ -206,6 +221,13 @@ public final class MusicIntegrationCoordinator {
 
     public var recordedEvents: [MobileMusicRideEventDto] {
         rideMapState.currentMusicEvents() ?? []
+    }
+
+    private func deliverVisualizationFrameIfChanged() {
+        let frame = visualizationFrame
+        guard frame != deliveredVisualizationFrame else { return }
+        deliveredVisualizationFrame = frame
+        visualizationSink?.apply(frame)
     }
 
     private static func transitionKind(

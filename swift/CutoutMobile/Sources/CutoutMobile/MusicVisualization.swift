@@ -44,6 +44,12 @@ public struct MusicRGBFrame: Equatable, Sendable {
     }
 }
 
+/// Destination for normalized music-driven RGB frames.
+@MainActor
+public protocol MusicVisualizationSink: AnyObject {
+    func apply(_ frame: MusicRGBFrame)
+}
+
 /// Maps optional provider analysis into a stable RGB signal.
 public enum MusicVisualizer {
     public static func rgb(from analysis: MusicAnalysisFrame?) -> MusicRGBFrame {
