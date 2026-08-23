@@ -563,7 +563,12 @@ final class CutoutAppModel {
                 rideMapHistoryPointsTruncated = false
                 rideMapHistoryMusicEvents = []
             }
-            if rideMapSnapshot?.rideId == rideID {
+            let isCurrentRide = core.rideMapStateHandle.currentSnapshot()?.rideId == rideID
+            if isCurrentRide {
+                musicHistoryPolicy = .disabled
+                lastMusicCaptureKey = nil
+                core.updateMusicCaptureObservation(nil)
+                try? musicCoordinator.setHistoryPolicy(.disabled)
                 refreshMusicTimeline()
             }
             rideMapError = nil
