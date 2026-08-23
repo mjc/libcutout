@@ -16,6 +16,8 @@ mod location;
 pub use location::*;
 mod summary;
 pub use summary::*;
+mod recording;
+pub use recording::*;
 
 #[cfg(test)]
 mod tests {
