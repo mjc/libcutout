@@ -422,6 +422,9 @@ impl RgbLightingRestoreMarker {
         if !restore_enabled {
             return RgbLightingRestoreDecision::Disabled;
         }
+        if self.platform_identifier.is_empty() || restored_platform_identifier.is_empty() {
+            return RgbLightingRestoreDecision::DifferentAccessory;
+        }
         if self.platform_identifier != restored_platform_identifier {
             return RgbLightingRestoreDecision::DifferentAccessory;
         }
@@ -8000,6 +8003,27 @@ mod tests {
         assert_eq!(
             marker.recover("melk-1", true),
             crate::RgbLightingRestoreDecision::Restore(requested)
+        );
+    }
+
+    #[test]
+    fn lighting_restore_rejects_empty_platform_identity() {
+        let brightness =
+            crate::LightingBrightness::try_from_percent(42).expect("brightness is in range");
+        let requested = crate::RgbLightingRequestedState::new(
+            crate::LightingPowerState::On,
+            crate::RgbColor::new(1, 2, 3),
+            brightness,
+        );
+        let marker = crate::RgbLightingRestoreMarker::new(String::new(), requested);
+
+        assert_eq!(
+            marker.recover("", true),
+            crate::RgbLightingRestoreDecision::DifferentAccessory
+        );
+        assert_eq!(
+            crate::RgbLightingRestoreMarker::new("melk-1".to_owned(), requested).recover("", true),
+            crate::RgbLightingRestoreDecision::DifferentAccessory
         );
     }
 
