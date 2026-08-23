@@ -161,6 +161,22 @@
       "comment" : "Label for the EUC pedal mode setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pedal mode" } } }
     },
+    "settings.pedal_mode.footer" : {
+      "comment" : "Safety guidance for the pedal mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or moving below 1 mph." } } }
+    },
+    "settings.pedal_mode.hard" : {
+      "comment" : "Hard pedal mode picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hard" } } }
+    },
+    "settings.pedal_mode.medium" : {
+      "comment" : "Medium pedal mode picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Medium" } } }
+    },
+    "settings.pedal_mode.soft" : {
+      "comment" : "Soft pedal mode picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Soft" } } }
+    },
     "settings.acceleration_assist.title" : {
       "comment" : "Label for the EUC acceleration assist setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Acceleration assist" } } }

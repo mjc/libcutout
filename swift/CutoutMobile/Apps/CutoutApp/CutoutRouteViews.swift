@@ -134,10 +134,18 @@ struct EucTuneRouteView: View {
                     )
                     .disabled(model.phase != .live || !model.headlightControlAvailable)
                     .accessibilityHint(model.headlightStatusText)
+                    if model.pedalModeControlAvailable {
+                        EucPedalModeControl(model: model)
+                    }
                 } header: {
                     Text(localizedAppText("settings.lights.title"))
                 } footer: {
-                    Text(model.headlightStatusText)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.headlightStatusText)
+                        if model.pedalModeControlAvailable {
+                            Text(localizedAppText("settings.pedal_mode.footer"))
+                        }
+                    }
                 }
 
                 if let settings = model.settingsReadback?.eucGarageSettings {
@@ -212,6 +220,49 @@ struct EucTuneRouteView: View {
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
+private struct EucPedalModeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedMode: PedalMode.Kind = .hard
+
+    private static let modes: [PedalMode.Kind] = [.hard, .medium, .soft]
+
+    var body: some View {
+        Picker(
+            localizedAppText("settings.pedal_mode.title"),
+            selection: Binding(
+                get: { model.pedalModeState?.current ?? readbackMode ?? selectedMode },
+                set: {
+                    selectedMode = $0
+                    _ = model.setPedalMode($0)
+                }
+            )
+        ) {
+            ForEach(Self.modes, id: \.self) { mode in
+                Text(localizedAppText("settings.pedal_mode.\(mode.localizationKey)"))
+                    .tag(mode)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityHint(localizedAppText("settings.pedal_mode.footer"))
+        .accessibilityIdentifier("settings.control.pedalMode")
+    }
+
+    private var readbackMode: PedalMode.Kind? {
+        model.settingsReadback?.eucGarageSettings.pedalMode.value?.documentedKind
+    }
+}
+
+private extension PedalMode.Kind {
+    var localizationKey: String {
+        switch self {
+        case .hard: "hard"
+        case .medium: "medium"
+        case .soft: "soft"
+        }
     }
 }
 

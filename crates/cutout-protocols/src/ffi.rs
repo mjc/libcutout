@@ -1,7 +1,7 @@
 use cutout_core::{
     Capabilities, ControlRefusal, ControlRefusalDto, ControlRefusalReason, DeviceCommand,
     HostSession, ParserDiagnosticsDto, RideOperatingState, RideOperatingStateDto, SessionEventDto,
-    SessionInputDto, SessionOutputDto, StationarySettingsPolicy, TelemetrySnapshotDto,
+    SessionInputDto, SessionOutputDto, TelemetrySnapshotDto,
 };
 
 use crate::{
@@ -68,8 +68,18 @@ impl ConcreteAeroBenignControlSession {
     }
 
     /// Arms stationary settings writes from current, explicitly classified ride state.
-    pub fn arm_settings_writes(&mut self, state: RideOperatingStateDto, monotonic_ms: u64) -> bool {
-        arm_stationary_settings::<NosfetAeroModel, false>(&mut self.host, state, monotonic_ms)
+    pub fn arm_settings_writes(
+        &mut self,
+        state: RideOperatingStateDto,
+        speed_mm_per_second: Option<i32>,
+        monotonic_ms: u64,
+    ) -> bool {
+        arm_stationary_settings::<NosfetAeroModel, false>(
+            &mut self.host,
+            state,
+            speed_mm_per_second,
+            monotonic_ms,
+        )
     }
 
     /// Drives one owned DTO input through the wrapped protocol reactor.
@@ -131,8 +141,18 @@ impl ConcreteFalconBenignControlSession {
     }
 
     /// Arms stationary settings writes from current, explicitly classified ride state.
-    pub fn arm_settings_writes(&mut self, state: RideOperatingStateDto, monotonic_ms: u64) -> bool {
-        arm_stationary_settings::<BegodeFalconModel, true>(&mut self.host, state, monotonic_ms)
+    pub fn arm_settings_writes(
+        &mut self,
+        state: RideOperatingStateDto,
+        speed_mm_per_second: Option<i32>,
+        monotonic_ms: u64,
+    ) -> bool {
+        arm_stationary_settings::<BegodeFalconModel, true>(
+            &mut self.host,
+            state,
+            speed_mm_per_second,
+            monotonic_ms,
+        )
     }
 
     /// Creates a telemetry and headlight-control session for a selected Falcon profile.
@@ -281,6 +301,7 @@ fn arm_stationary_settings<
 >(
     host: &mut HostSession<StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>>,
     state: RideOperatingStateDto,
+    speed_mm_per_second: Option<i32>,
     monotonic_ms: u64,
 ) -> bool {
     let state = match state {
@@ -290,11 +311,12 @@ fn arm_stationary_settings<
         RideOperatingStateDto::Riding => RideOperatingState::Riding,
         RideOperatingStateDto::Charging => RideOperatingState::Charging,
     };
-    let Some(arm) = (StationarySettingsPolicy {
-        model: M::MODEL,
-        arm_duration: cutout_core::Duration::from_milliseconds(5_000),
-    })
-    .arm(state, cutout_core::MonotonicTimestamp::new(monotonic_ms)) else {
+    let speed = speed_mm_per_second.map(cutout_core::Speed::from_millimetres_per_second);
+    let Some(arm) = M::arm_settings_write(
+        state,
+        speed,
+        cutout_core::MonotonicTimestamp::new(monotonic_ms),
+    ) else {
         return false;
     };
     host.session_mut().arm(arm);
@@ -465,26 +487,18 @@ mod tests {
     }
 
     #[test]
-    fn concrete_falcon_session_refuses_unverified_set_lights() {
+    fn concrete_falcon_session_maps_set_lights_to_control_write() {
         let mut session = new_begode_falcon_benign_control_session();
 
         let result = session.ingest_checked(&SessionInputDto::Command(
             DeviceCommandDto::SetLights(cutout_core::LightStateDto::Off),
         ));
 
-        assert_eq!(
-            result.error,
-            Some(ConcreteSessionErrorDto::CommandRefused {
-                refusal: ControlRefusalDto {
-                    command: CommandKindDto::SetLights,
-                    safety_class: SafetyClassDto::BenignControl,
-                    reason: ControlRefusalReasonDto::UnsupportedCommand,
-                }
-            })
-        );
-        assert!(result.outputs.iter().all(|output| !matches!(
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| matches!(
             output,
-            SessionOutputDto::Transport(TransportActionDto::Write { .. })
+            SessionOutputDto::Transport(TransportActionDto::Write { bytes, .. })
+                if bytes == b"E"
         )));
     }
 

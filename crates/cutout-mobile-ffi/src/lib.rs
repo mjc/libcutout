@@ -10243,8 +10243,14 @@ impl AeroBenignControlSession {
         state: RideOperatingState,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> bool {
+        let speed_mm_per_second = self
+            .lock_inner()
+            .current_snapshot()
+            .speed
+            .map(|speed| speed.value);
         self.lock_inner().arm_settings_writes(
             mobile_ride_operating_state_dto(state),
+            speed_mm_per_second,
             monotonic_ms.milliseconds,
         )
     }
@@ -11658,8 +11664,14 @@ impl FalconBenignControlSession {
         state: RideOperatingState,
         monotonic_ms: MobileMonotonicMillisDto,
     ) -> bool {
+        let speed_mm_per_second = self
+            .lock_inner()
+            .current_snapshot()
+            .speed
+            .map(|speed| speed.value);
         self.lock_inner().arm_settings_writes(
             mobile_ride_operating_state_dto(state),
+            speed_mm_per_second,
             monotonic_ms.milliseconds,
         )
     }

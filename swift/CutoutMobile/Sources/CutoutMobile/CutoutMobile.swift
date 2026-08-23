@@ -5047,6 +5047,24 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
             LightSettingState(session.taillightState())
         }
     }
+
+    /// Arms the Rust-owned stationary settings gate from the latest telemetry state.
+    @discardableResult
+    public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        switch inner {
+        case .aero(let session):
+            session.armSettingsWrites(
+                state: currentSnapshot.operatingState,
+                monotonicMs: monotonicMilliseconds.dto
+            )
+        case .falcon(let session):
+            session.armSettingsWrites(
+                state: currentSnapshot.operatingState,
+                monotonicMs: monotonicMilliseconds.dto
+            )
+        }
+    }
+
     public var currentSnapshot: TelemetrySnapshot {
         switch inner {
         case .aero(let session):
@@ -5627,6 +5645,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    fileprivate func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        switch self {
+        case .electricUnicycle(let session):
+            session.armSettingsWrites(at: monotonicMilliseconds)
+        case .vescOnewheel:
+            false
+        }
+    }
+
     fileprivate func tick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> [SessionAction] {
         switch self {
         case .electricUnicycle(let session):
@@ -5694,6 +5721,11 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var settingsCapabilities: EucSettingsCapabilities? {
         session.settingsCapabilities
+    }
+
+    @discardableResult
+    public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        session.armSettingsWrites(at: monotonicMilliseconds)
     }
 
     public var headlightState: LightSettingState? {
@@ -5917,6 +5949,11 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var settingsCapabilities: EucSettingsCapabilities? {
         runner.settingsCapabilities
+    }
+
+    @discardableResult
+    public func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        runner.armSettingsWrites(at: monotonicMilliseconds)
     }
 
     public var headlightState: LightSettingState? {

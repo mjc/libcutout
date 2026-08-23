@@ -1111,8 +1111,24 @@ pub trait SupportsSettingsWrites: ProtocolModelSpec {
     /// Commands this model can write after stationary-state validation.
     const WRITE_CAPABILITIES: Capabilities;
 
+    /// Optional sub-one-mph settings-write window for models that document it.
+    const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> = None;
+
     /// Encodes a supported settings write.
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl>;
+
+    /// Issues a short-lived settings arm from current ride-state evidence.
+    fn arm_settings_write(
+        state: cutout_core::RideOperatingState,
+        speed: Option<cutout_core::Speed>,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<cutout_core::StationarySettingsArm> {
+        let policy = cutout_core::StationarySettingsPolicy {
+            model: Self::MODEL,
+            arm_duration: cutout_core::Duration::from_milliseconds(5_000),
+        };
+        policy.arm_with_speed(state, speed, Self::MAX_SETTINGS_SPEED, monotonic_ms)
+    }
 }
 
 /// Type-level benign-control capability.
@@ -1231,6 +1247,8 @@ impl SupportsBenignControls for NosfetAeroModel {
 impl SupportsSettingsWrites for NosfetAeroModel {
     const WRITE_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+    const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
+        Some(cutout_core::Speed::from_millimetres_per_second(447));
 
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
         AeroControlEncoder::encode(command)
@@ -4109,6 +4127,35 @@ mod tests {
     }
 
     #[test]
+    fn aero_settings_arm_allows_sub_one_mph_but_not_above_it() {
+        let at = ms(10);
+        assert!(
+            NosfetAeroModel::arm_settings_write(
+                RideOperatingState::Riding,
+                Some(cutout_core::Speed::from_millimetres_per_second(447)),
+                at,
+            )
+            .is_some()
+        );
+        assert!(
+            NosfetAeroModel::arm_settings_write(
+                RideOperatingState::Riding,
+                Some(cutout_core::Speed::from_millimetres_per_second(448)),
+                at,
+            )
+            .is_none()
+        );
+        assert!(
+            BegodeFalconModel::arm_settings_write(
+                RideOperatingState::Riding,
+                Some(cutout_core::Speed::from_millimetres_per_second(1)),
+                at,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn stationary_settings_session_requires_fresh_stationary_arm() {
         let mut session = StationarySettingsWriteSession::<TestModel, false>::default();
         let mut output = Vec::new();
@@ -4187,7 +4234,7 @@ mod tests {
     }
 
     #[test]
-    fn falcon_benign_control_session_refuses_unverified_light_state() {
+    fn falcon_benign_control_session_writes_source_backed_light_state() {
         let mut session = BenignControlSession::<BegodeFalconModel, true>::default();
         let mut output = Vec::new();
 
@@ -4196,15 +4243,10 @@ mod tests {
             &mut output,
         );
 
-        assert!(output.iter().all(|item| !matches!(
-            item,
-            SessionOutput::Transport(TransportAction::Write { .. })
-        )));
         assert!(output.iter().any(|item| matches!(
             item,
-            SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))
-                if refusal.command == CommandKind::SetLights
-                    && refusal.reason == ControlRefusalReason::UnsupportedCommand
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"E"
         )));
     }
 

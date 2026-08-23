@@ -686,6 +686,29 @@ public final class CutoutSessionCore: NSObject {
         }
     }
 
+    @discardableResult
+    public func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return .failed }
+            guard liveOwner.armSettingsWrites(at: clock.now()) else {
+                return .refused(.missingArm)
+            }
+            do {
+                try liveOwner.handleCommand(.setPedalMode(mode), at: clock.now())
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("set_pedal_mode_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
+            } catch {
+                record("set_pedal_mode_error=\(error)")
+                return .failed
+            }
+        }
+    }
+
     /// Configures the Rust-owned charge estimate profile for the active or next connection.
     public func configureChargeEstimate(profile: ChargeEstimateProfile) {
         onBleQueue {

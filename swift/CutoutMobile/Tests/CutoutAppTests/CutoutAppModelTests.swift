@@ -138,24 +138,20 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testUnverifiedFalconHeadlightToggleStaysUnavailable() {
+    func testFalconHeadlightToggleIsAvailableThroughTheGuardedSession() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
+        driver.headlightWriteSucceeds = true
         let model = CutoutAppModel(core: driver)
 
-        XCTAssertFalse(model.headlightControlAvailable)
-        XCTAssertEqual(
-            model.headlightStatusText,
-            "Headlight control is unavailable until this wheel model is validated."
-        )
-        XCTAssertEqual(model.setHeadlight(true), .failed)
-        XCTAssertEqual(model.headlightCommandStatus, .failed)
-        XCTAssertEqual(model.headlightStatusText, "Headlight command failed.")
-        XCTAssertTrue(driver.headlightStates.isEmpty)
+        XCTAssertTrue(model.headlightControlAvailable)
+        XCTAssertEqual(model.setHeadlight(true), .accepted)
+        XCTAssertEqual(model.headlightCommandStatus, .waitingForConfirmation)
+        XCTAssertEqual(driver.headlightStates, [.on])
     }
 
     @MainActor
-    func testSettingsCapabilitiesAreExposedToTuneSurface() {
+    func testSettingsCapabilitiesExposeGuardedWriteSupportToTuneSurface() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .falcon
         let model = CutoutAppModel(core: driver)
@@ -163,12 +159,23 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(
             model.settingsCapabilities,
             EucSettingsCapabilities(
-                pedalMode: .unverified,
+                pedalMode: .supported,
                 accelerationAssist: .unsupported,
-                headlight: .unverified,
+                headlight: .supported,
                 taillight: .unsupported
             )
         )
+    }
+
+    @MainActor
+    func testPedalModeWriteUsesTheSupportedCapability() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .aero
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.pedalModeControlAvailable)
+        XCTAssertEqual(model.setPedalMode(.soft), .accepted)
+        XCTAssertEqual(driver.pedalModes, [.soft])
     }
 
     @MainActor
@@ -2926,8 +2933,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
+    private(set) var pedalModes = [PedalMode.Kind]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: LightCommandResult = .accepted
+    var pedalModeCommandResult: LightCommandResult = .accepted
     var nowValue: UInt64 = 0
 
     init(
@@ -2999,6 +3008,11 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         guard headlightWriteSucceeds else { return .failed }
         guard headlightCommandResult == .accepted else { return headlightCommandResult }
         headlightStates.append(state)
+        return .accepted
+    }
+    func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult {
+        guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
+        pedalModes.append(mode)
         return .accepted
     }
     func now() -> MonotonicMilliseconds {

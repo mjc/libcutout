@@ -191,6 +191,10 @@ final class CutoutAppModel {
         core.pedalModeState
     }
 
+    var pedalModeControlAvailable: Bool {
+        core.settingsCapabilities?.pedalMode == .supported
+    }
+
     var accelerationAssistState: AccelerationAssistSettingState? {
         core.accelerationAssistState
     }
@@ -1335,6 +1339,12 @@ final class CutoutAppModel {
             return .failed
         }
         return applyHeadlightSubmission(core.setLights(state), for: state)
+    }
+
+    @discardableResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult {
+        guard pedalModeControlAvailable else { return .failed }
+        return core.setPedalMode(mode)
     }
 
     private func applyHeadlightSubmission(

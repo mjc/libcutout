@@ -169,7 +169,7 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, CompleteModelAuthoring, ControlRefusalReason, DeviceCommand, DeviceEvent,
+        CommandKind, CompleteModelAuthoring, DeviceCommand,
         GattFingerprint, GattRoles, LightState, ManufacturerKey, ModelAuthoring, ModelCatalog,
         ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
         ProtocolFamily, ProtocolSession, RegistryValidationError, SessionInput, SessionKey,
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn registered_sessions_only_schedule_validated_headlight_writes() {
+    fn registered_sessions_schedule_source_backed_headlight_writes() {
         let mut aero = find_session_registration(NOSFET_AERO_SESSION_KEY)
             .expect("Aero model session registration exists")
             .construct();
@@ -263,15 +263,10 @@ mod tests {
             SessionInput::Command(DeviceCommand::SetLights(LightState::Off)),
             &mut falcon_output,
         );
-        assert!(falcon_output.iter().all(|item| !matches!(
-            item,
-            SessionOutput::Transport(TransportAction::Write { .. })
-        )));
         assert!(falcon_output.iter().any(|item| matches!(
             item,
-            SessionOutput::Event(DeviceEvent::ControlRefusal(refusal))
-                if refusal.command == CommandKind::SetLights
-                    && refusal.reason == ControlRefusalReason::UnsupportedCommand
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"E"
         )));
     }
 
@@ -500,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn begode_falcon_registry_entry_exposes_reads_without_unverified_control() {
+    fn begode_falcon_registry_entry_exposes_reads_and_source_backed_controls() {
         let capabilities = BEGODE_FALCON_REGISTRY_ENTRY.capabilities;
 
         assert!(capabilities.supports_command_kind(CommandKind::RequestIdentity));
@@ -509,7 +504,7 @@ mod tests {
         assert!(capabilities.supports_command_kind(CommandKind::RequestBatteryInfo));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestDiagnostics));
         assert!(!capabilities.supports_command_kind(CommandKind::RequestFaultHistory));
-        assert!(!capabilities.supports_command_kind(CommandKind::SetLights));
+        assert!(capabilities.supports_command_kind(CommandKind::SetLights));
     }
 
     #[test]

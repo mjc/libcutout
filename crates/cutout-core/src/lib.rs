@@ -563,6 +563,27 @@ impl StationarySettingsPolicy {
             | RideOperatingState::Charging => None,
         }
     }
+
+    /// Issues an authorization for a model-specific bounded low-speed window.
+    #[must_use]
+    pub fn arm_with_speed(
+        self,
+        state: RideOperatingState,
+        speed: Option<Speed>,
+        max_speed: Option<Speed>,
+        monotonic_ms: MonotonicTimestamp,
+    ) -> Option<StationarySettingsArm> {
+        self.arm(state, monotonic_ms).or_else(|| {
+            let speed = speed?;
+            let max_speed = max_speed?;
+            (speed.as_millimetres_per_second().unsigned_abs()
+                <= max_speed.as_millimetres_per_second().unsigned_abs())
+            .then_some(StationarySettingsArm {
+                model: self.model,
+                expires_at_ms: monotonic_ms.saturating_add_duration(self.arm_duration),
+            })
+        })
+    }
 }
 
 /// Refusal reason for dangerous actuation authorization.

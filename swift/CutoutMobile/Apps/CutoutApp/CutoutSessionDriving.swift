@@ -35,6 +35,7 @@ protocol CutoutSessionDriving: AnyObject {
     func flushCapture() async -> Bool
     func disconnectAndScan()
     func setLights(_ state: LightState) -> LightCommandResult
+    func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()
