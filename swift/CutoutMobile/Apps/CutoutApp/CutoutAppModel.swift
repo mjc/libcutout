@@ -496,6 +496,7 @@ final class CutoutAppModel {
         guard applyRideMapCommand({ try core.rideMapStateHandle.discard() }) else {
             return false
         }
+        resetMusicCaptureContext()
         rideMapHistoryPoints = []
         rideMapHistoryPointsTruncated = false
         rideMapHistoryMusicEvents = []
