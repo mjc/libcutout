@@ -132,6 +132,24 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertEqual(coordinator.visualizationFrame.brightness, 0.5, accuracy: 0.0001)
     }
 
+    func testProviderObservationFeedsRecordingAndVisualizationTogether() throws {
+        let rideMap = MobileRideMapState()
+        _ = try rideMap.startGpsOnly(atMs: 1, lastConnectedVehicle: nil)
+        let coordinator = MusicIntegrationCoordinator(rideMapState: rideMap)
+        try coordinator.setHistoryPolicy(.opaqueItem)
+        let analysis = MusicAnalysisFrame(bass: 0.7, mid: 0.3, treble: 0.2, energy: 0.6, beat: 0.4)
+
+        let outcome = try coordinator.ingest(
+            observation: MusicProviderObservation(snapshot: snapshot(), analysis: analysis),
+            wallClockAtMs: 20,
+            clockUncertaintyMs: 1
+        )
+
+        XCTAssertEqual(outcome, .recorded)
+        XCTAssertEqual(coordinator.recordedEvents.count, 1)
+        XCTAssertEqual(coordinator.visualizationFrame.red, 0.7, accuracy: 0.0001)
+    }
+
     private func snapshot(
         state: MobileMusicPlaybackStateDto = .playing,
         observedAtMs: UInt64 = 10

@@ -240,17 +240,31 @@ final class CutoutAppModel {
         } else {
             appleMusicProvider.snapshot(observedAtMs: observedAtMs)
         }
+        _ = ingestMusicObservation(MusicProviderObservation(snapshot: snapshot))
+#endif
+    }
+
+    /// Accepts a provider callback without coupling the app model to a
+    /// particular SDK. History failures remain best-effort while the current
+    /// provider state still reaches the player and visualization.
+    @discardableResult
+    func ingestMusicObservation(
+        _ observation: MusicProviderObservation,
+        wallClockAtMs: UInt64? = nil,
+        clockUncertaintyMs: UInt64 = 1_000
+    ) -> Bool {
         do {
             _ = try musicCoordinator.ingest(
-                snapshot: snapshot,
-                wallClockAtMs: UInt64(Date().timeIntervalSince1970 * 1_000),
-                clockUncertaintyMs: 1_000
+                observation: observation,
+                wallClockAtMs: wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000),
+                clockUncertaintyMs: clockUncertaintyMs
             )
+            musicNowPlaying = musicCoordinator.nowPlaying
+            return true
         } catch {
-            // Music must not turn a provider or ride-history failure into a ride error.
+            musicNowPlaying = musicCoordinator.nowPlaying
+            return false
         }
-        musicNowPlaying = musicCoordinator.nowPlaying
-#endif
     }
 
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {

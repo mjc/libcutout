@@ -110,6 +110,20 @@ public extension MobileMusicHistoryPolicyDto {
     }
 }
 
+/// One provider observation entering the shared music pipeline.
+///
+/// Providers may attach bounded analysis for visualization, but never an audio
+/// buffer or artwork payload.
+public struct MusicProviderObservation: Equatable, Sendable {
+    public let snapshot: MobileMusicSnapshotDto
+    public let analysis: MusicAnalysisFrame?
+
+    public init(snapshot: MobileMusicSnapshotDto, analysis: MusicAnalysisFrame? = nil) {
+        self.snapshot = snapshot
+        self.analysis = analysis
+    }
+}
+
 /// The Rust-owned ride association is the only path for music metadata to enter a ride.
 @MainActor
 public final class MusicIntegrationCoordinator {
@@ -147,6 +161,22 @@ public final class MusicIntegrationCoordinator {
             snapshot: snapshot,
             kind: kind,
             monotonicAtMs: snapshot.observedAtMs,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
+    }
+
+    /// Applies one provider observation through the same path used by ride
+    /// recording, compact-player state, and visualization.
+    @discardableResult
+    public func ingest(
+        observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) throws -> MobileMusicTimelineOutcomeDto? {
+        try ingest(
+            snapshot: observation.snapshot,
+            analysis: observation.analysis,
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
