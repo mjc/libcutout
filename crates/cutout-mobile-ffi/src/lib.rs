@@ -2044,6 +2044,9 @@ pub enum MobileLightStateDto {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
 }
 
 /// Mobile DTO acceleration-assist state.
@@ -2499,6 +2502,7 @@ impl From<MobileLightStateDto> for LightStateDto {
         match state {
             MobileLightStateDto::Off => Self::Off,
             MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
         }
     }
 }
@@ -3492,6 +3496,7 @@ impl From<MobileLightStateDto> for CoreLightState {
         match state {
             MobileLightStateDto::Off => Self::Off,
             MobileLightStateDto::On => Self::On,
+            MobileLightStateDto::Strobe => Self::Strobe,
         }
     }
 }
@@ -3501,6 +3506,7 @@ impl From<CoreLightState> for MobileLightStateDto {
         match state {
             CoreLightState::Off => Self::Off,
             CoreLightState::On => Self::On,
+            CoreLightState::Strobe => Self::Strobe,
         }
     }
 }

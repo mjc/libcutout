@@ -86,6 +86,7 @@ impl FalconControlEncoder {
         let payload = match command {
             DeviceCommand::SetLights(LightState::On) => b"Q".as_slice(),
             DeviceCommand::SetLights(LightState::Off) => b"E".as_slice(),
+            DeviceCommand::SetLights(LightState::Strobe) => b"T".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Hard) => b"h".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Medium) => b"f".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Soft) => b"s".as_slice(),
@@ -353,6 +354,10 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"SetLightOFF");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe)),
+            None
+        );
         assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
     }
 
@@ -369,6 +374,11 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"E");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
+        let strobe = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe))
+            .expect("Begode strobe command encodes");
+        assert_eq!(strobe.command, CommandKind::SetLights);
+        assert_eq!(strobe.payload.as_slice(), b"T");
+        assert_eq!(strobe.mode, WriteMode::WithoutResponse);
         assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
     }
 

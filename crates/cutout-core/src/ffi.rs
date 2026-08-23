@@ -382,6 +382,9 @@ pub enum LightStateDto {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
 }
 
 /// UniFFI-ready acceleration-assist state.
@@ -518,6 +521,7 @@ impl From<LightState> for LightStateDto {
         match state {
             LightState::Off => Self::Off,
             LightState::On => Self::On,
+            LightState::Strobe => Self::Strobe,
         }
     }
 }
@@ -527,6 +531,7 @@ impl From<LightStateDto> for LightState {
         match state {
             LightStateDto::Off => Self::Off,
             LightStateDto::On => Self::On,
+            LightStateDto::Strobe => Self::Strobe,
         }
     }
 }

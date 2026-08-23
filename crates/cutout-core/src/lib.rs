@@ -356,6 +356,9 @@ pub enum LightState {
 
     /// Lights on.
     On,
+
+    /// Begode strobe/running-light mode.
+    Strobe,
 }
 
 /// User-facing acceleration-assist state.
