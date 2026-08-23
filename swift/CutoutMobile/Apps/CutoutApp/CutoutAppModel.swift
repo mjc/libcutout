@@ -487,6 +487,7 @@ final class CutoutAppModel {
         guard applyRideMapCommand({ try core.rideMapStateHandle.save() }) else {
             return false
         }
+        resetMusicCaptureContext()
         loadRideMapHistory()
         return true
     }
