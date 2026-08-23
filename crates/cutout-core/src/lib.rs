@@ -2276,7 +2276,7 @@ impl Capabilities {
 
 /// Compact command-kind set.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct CommandSet(u16);
+struct CommandSet(u32);
 
 impl CommandSet {
     const fn from_commands<const N: usize>(commands: [CommandKind; N]) -> Self {
@@ -2299,7 +2299,7 @@ impl CommandSet {
 }
 
 impl CommandKind {
-    const fn bit(self) -> u16 {
+    const fn bit(self) -> u32 {
         1 << (self as u16)
     }
 }
