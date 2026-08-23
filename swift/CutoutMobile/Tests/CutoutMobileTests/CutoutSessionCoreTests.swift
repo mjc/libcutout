@@ -1288,12 +1288,12 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(owner.headlightState?.kind, .timedOut)
     }
 
-    func testUnverifiedFalconHeadlightCommandDoesNotReachOperationSink() throws {
+    func testFalconHeadlightCommandReachesOperationSink() throws {
         let sink = RecordingOperationSink()
         let owner = CoreBluetoothLiveSessionOwner(
             session: try .electricUnicycle(model: .falcon),
             advertisement: CoreBluetoothAdvertisement(
-                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("unverified-falcon"),
+                peripheralIdentifier: CoreBluetoothPeripheralIdentifier("falcon-headlight-test"),
                 localName: ElectricUnicycleModel.falcon.displayName,
                 advertisedServiceUuids: []
             ),
@@ -1301,15 +1301,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
             operationSink: sink
         )
 
-        XCTAssertThrowsError(
-            try owner.handleCommand(.setLights(.off), at: MonotonicMilliseconds(1))
-        ) { error in
-            XCTAssertEqual(
-                error as? CutoutSessionError,
-                .commandRefused(.setLights(.off), .unsupportedCommand)
-            )
-        }
-        XCTAssertTrue(sink.writes.isEmpty)
+        _ = try owner.handleCommand(.setLights(.off), at: MonotonicMilliseconds(1))
+
+        XCTAssertEqual(sink.writes, [Data("E".utf8)])
     }
 
     func testElectricUnicycleSessionExposesValidationAwareSettingCapabilities() throws {
@@ -1317,9 +1311,9 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let falcon = try ElectricUnicycleSession(model: .falcon)
 
         XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
-        XCTAssertEqual(falcon.settingsCapabilities.headlight, .unverified)
+        XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
     }
 
@@ -1354,18 +1348,23 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
     }
 
-    func testElectricUnicycleSessionExposesRustOwnedPedalModeState() throws {
+    func testElectricUnicycleSessionKeepsPedalModeWriteGuardedUntilArmed() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 
         XCTAssertEqual(session.pedalModeState.kind, .unknown)
 
         XCTAssertThrowsError(
             try session.perform(.setPedalMode(.hard), at: MonotonicMilliseconds(10))
-        )
+        ) { error in
+            XCTAssertEqual(
+                error as? CutoutSessionError,
+                .commandRefused(.setPedalMode(.hard), .missingArm)
+            )
+        }
 
         XCTAssertEqual(session.pedalModeState.kind, .refused)
         XCTAssertEqual(session.pedalModeState.requested, .hard)
-        XCTAssertEqual(session.pedalModeState.refusalReason, .unsupportedCommand)
+        XCTAssertEqual(session.pedalModeState.refusalReason, .missingArm)
     }
 
     func testElectricUnicycleSessionExposesRustOwnedUnverifiedSettingStates() throws {

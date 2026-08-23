@@ -667,7 +667,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setLights(_ state: LightState) -> LightCommandResult {
+    public func setLights(_ state: LightState) -> SettingCommandResult {
         onBleQueue {
             guard phase == .live, let liveOwner else { return .failed }
             do {
@@ -687,7 +687,7 @@ public final class CutoutSessionCore: NSObject {
     }
 
     @discardableResult
-    public func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult {
+    public func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         onBleQueue {
             guard phase == .live, let liveOwner else { return .failed }
             guard liveOwner.armSettingsWrites(at: clock.now()) else {

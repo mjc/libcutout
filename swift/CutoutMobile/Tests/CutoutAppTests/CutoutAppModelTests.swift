@@ -2935,8 +2935,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var headlightStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
     var headlightWriteSucceeds = false
-    var headlightCommandResult: LightCommandResult = .accepted
-    var pedalModeCommandResult: LightCommandResult = .accepted
+    var headlightCommandResult: SettingCommandResult = .accepted
+    var pedalModeCommandResult: SettingCommandResult = .accepted
     var nowValue: UInt64 = 0
 
     init(
@@ -3004,13 +3004,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         resetRideMapLocationAdmissionCount += 1
     }
 
-    func setLights(_ state: LightState) -> LightCommandResult {
+    func setLights(_ state: LightState) -> SettingCommandResult {
         guard headlightWriteSucceeds else { return .failed }
         guard headlightCommandResult == .accepted else { return headlightCommandResult }
         headlightStates.append(state)
         return .accepted
     }
-    func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult {
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
         pedalModes.append(mode)
         return .accepted

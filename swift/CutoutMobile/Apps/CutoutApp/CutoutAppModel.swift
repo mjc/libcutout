@@ -1329,7 +1329,7 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setHeadlight(_ enabled: Bool) -> LightCommandResult {
+    func setHeadlight(_ enabled: Bool) -> SettingCommandResult {
         let state = enabled ? LightState.on : .off
         guard headlightWriteSupport == .supported else {
             fallbackHeadlightState = LightSettingState(
@@ -1342,15 +1342,15 @@ final class CutoutAppModel {
     }
 
     @discardableResult
-    func setPedalMode(_ mode: PedalMode.Kind) -> LightCommandResult {
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         guard pedalModeControlAvailable else { return .failed }
         return core.setPedalMode(mode)
     }
 
     private func applyHeadlightSubmission(
-        _ result: LightCommandResult,
+        _ result: SettingCommandResult,
         for state: LightState
-    ) -> LightCommandResult {
+    ) -> SettingCommandResult {
         switch result {
         case .accepted:
             recordHeadlightCommand(state, sentAt: core.now())

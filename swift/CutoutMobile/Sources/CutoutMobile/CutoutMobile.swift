@@ -1468,8 +1468,8 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     }
 }
 
-/// Result of submitting a benign light-setting command to the live session.
-public enum LightCommandResult: Equatable, Hashable, Sendable {
+/// Result of submitting a guarded setting command to the live session.
+public enum SettingCommandResult: Equatable, Hashable, Sendable {
     /// The command was accepted and scheduled for transport.
     case accepted
 
