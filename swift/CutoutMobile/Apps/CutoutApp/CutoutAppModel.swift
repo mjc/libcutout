@@ -36,6 +36,10 @@ final class CutoutAppModel {
         connectionState.selection?.title
     }
 
+    var selectedRideIdentifier: String? {
+        connectionState.selection?.platformIdentifier
+    }
+
     var selectedConnectionRoute: DevicePickerConnectionRoute? {
         connectionState.selection?.route
     }

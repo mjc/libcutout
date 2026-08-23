@@ -103,4 +103,19 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         let reopened = LightingAccessoryPersistence(defaults: defaults)
         XCTAssertEqual(reopened.presets.map(\.name), ["Night"])
     }
+
+    func testStorePersistsAliasAndVehicleAssociationAcrossReopen() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-metadata-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "melk-metadata"))
+        try store.setAlias("Under-seat LEDs")
+        try store.setVehicleIdentifier("euc-aero")
+
+        let reopened = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertEqual(reopened.alias, "Under-seat LEDs")
+        XCTAssertEqual(reopened.vehicleIdentifier, "euc-aero")
+    }
 }

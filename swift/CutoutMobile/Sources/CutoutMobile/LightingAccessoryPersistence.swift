@@ -42,6 +42,14 @@ public final class LightingAccessoryPersistence {
         record?.platformIdentifier()
     }
 
+    public var alias: String? {
+        record?.alias()
+    }
+
+    public var vehicleIdentifier: String? {
+        record?.vehicleIdentifier()
+    }
+
     public var requestedState: MobileMelkLightingRestoreStateDto? {
         record?.requestedState()
     }
@@ -89,6 +97,18 @@ public final class LightingAccessoryPersistence {
 
     public func setRestoreEnabled(_ enabled: Bool) {
         record?.setRestoreEnabled(enabled: enabled)
+        persist()
+    }
+
+    public func setAlias(_ alias: String?) throws {
+        guard let record else { return }
+        try record.setAlias(alias: alias)
+        persist()
+    }
+
+    public func setVehicleIdentifier(_ identifier: String?) throws {
+        guard let record else { return }
+        try record.setVehicleIdentifier(identifier: identifier)
         persist()
     }
 
