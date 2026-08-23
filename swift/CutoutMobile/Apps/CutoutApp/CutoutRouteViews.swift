@@ -250,6 +250,7 @@ final class LightingRouteModel {
     }
 
     func markConfirmed() {
+        guard commandStatus == .requested else { return }
         session.markLastCommandConfirmed()
         commandStatus = .confirmed
         guard let peripheralIdentifier else { return }
@@ -268,6 +269,7 @@ final class LightingRouteModel {
     }
 
     func markUnconfirmed() {
+        guard commandStatus == .requested else { return }
         session.markLastCommandUnconfirmed()
         commandStatus = .unconfirmed
     }
