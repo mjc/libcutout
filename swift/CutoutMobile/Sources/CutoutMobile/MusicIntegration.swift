@@ -333,8 +333,8 @@ public final class MusicIntegrationCoordinator {
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
         resetCorrelationIfRideChanged()
+        guard accept(snapshot) else { return .outOfOrder }
         update(snapshot: snapshot)
-        _ = accept(snapshot)
         let outcome = try rideMapState.recordMusicEvent(
             snapshot: snapshot,
             kind: kind,
