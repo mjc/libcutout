@@ -20,8 +20,9 @@ use cutout_core::{
     AccelerationAssistStateDto, ActivityProjectionState as CoreActivityProjectionState,
     AngleReadingDto, BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto,
     BatteryInfoDto, BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
-    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto, Capacity,
-    ChargeEstimateError, ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
+    BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
+    BluetoothServiceUuid as CoreBluetoothServiceUuid, Capacity, ChargeEstimateError,
+    ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
     ChargeEstimateUnavailableReason, ChargeFlow, ChargeMode, ChargeModeDto, ChargeModeReadingDto,
     ChargeProfileIdentity, ChargeSessionIdentity, ChargeTimeEstimate, CommandKindDto,
     ControlRefusalReason as CoreControlRefusalReason, ControlRefusalReasonDto, CutoutSessionState,
@@ -289,6 +290,13 @@ pub struct DiscoveryManufacturerDataSummary {
     pub payload_len: u64,
 }
 
+/// Normalized 128-bit Bluetooth service UUID supplied by the mobile BLE stack.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct DiscoveryServiceUuid {
+    /// UUID bytes in network order.
+    pub bytes: Vec<u8>,
+}
+
 /// Mobile discovery observation to feed into Rust-owned session state.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct DiscoveryObservation {
@@ -298,8 +306,8 @@ pub struct DiscoveryObservation {
     /// Raw advertised-name bytes from the mobile BLE stack.
     pub advertised_name: Option<Vec<u8>>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 
     /// Manufacturer data summaries without opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -320,8 +328,8 @@ pub struct DiscoveryObservationSnapshot {
     /// UTF-8 advertised-name view, when valid.
     pub advertised_name_text: Option<String>,
 
-    /// Advertised 16-bit service UUID values relevant to picker routing.
-    pub advertised_service_uuids: Vec<u16>,
+    /// Normalized advertised service UUIDs used as protocol evidence.
+    pub advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 
     /// Manufacturer data summaries without opaque payload bytes.
     pub manufacturer_data: Vec<DiscoveryManufacturerDataSummary>,
@@ -749,7 +757,11 @@ impl DiscoveryObservation {
         CoreDiscoveryObservation {
             platform_identifier: self.platform_identifier,
             advertised_name: self.advertised_name,
-            advertised_service_uuids: self.advertised_service_uuids,
+            advertised_service_uuids: self
+                .advertised_service_uuids
+                .into_iter()
+                .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+                .collect(),
             manufacturer_data: self
                 .manufacturer_data
                 .into_iter()
@@ -784,7 +796,13 @@ impl From<&CoreDiscoveryObservation> for DiscoveryObservationSnapshot {
             platform_identifier: observation.platform_identifier.clone(),
             advertised_name: observation.advertised_name.clone(),
             advertised_name_text: observation.advertised_name_text().map(str::to_owned),
-            advertised_service_uuids: observation.advertised_service_uuids.clone(),
+            advertised_service_uuids: observation
+                .advertised_service_uuids
+                .iter()
+                .map(|uuid| DiscoveryServiceUuid {
+                    bytes: uuid.as_bytes().to_vec(),
+                })
+                .collect(),
             manufacturer_data: observation
                 .manufacturer_data
                 .iter()
@@ -1354,10 +1372,14 @@ impl CutoutSessionStateHandle {
 pub fn mobile_discovery_candidate_from_advertisement(
     platform_identifier: String,
     local_name: Option<String>,
-    advertised_service_uuids: Vec<u16>,
+    advertised_service_uuids: Vec<DiscoveryServiceUuid>,
 ) -> DiscoveryCandidate {
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
-    if advertised_service_uuids.contains(&0xffe0) {
+    let advertised_service_uuids = advertised_service_uuids
+        .into_iter()
+        .filter_map(|uuid| CoreBluetoothServiceUuid::try_from(uuid.bytes).ok())
+        .collect::<Vec<_>>();
+    if advertised_service_uuids.contains(&CoreBluetoothServiceUuid::EUC_SERIAL_FFE0) {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
@@ -1374,7 +1396,10 @@ pub fn mobile_discovery_candidate_from_advertisement(
         };
     }
 
-    if advertised_service_uuids.contains(&0xfff0) {
+    if advertised_service_uuids.iter().any(|uuid| {
+        *uuid == CoreBluetoothServiceUuid::VESC_SERIAL_FFF0
+            || *uuid == CoreBluetoothServiceUuid::VESC_NORDIC_UART
+    }) {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
@@ -11656,6 +11681,11 @@ mod tests {
         }
     }
 
+    fn discovery_service(uuid: CoreBluetoothServiceUuid) -> DiscoveryServiceUuid {
+        DiscoveryServiceUuid {
+            bytes: uuid.as_bytes().to_vec(),
+        }
+    }
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -11954,7 +11984,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NOSFET Aero".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert_eq!(candidate.platform_identifier, "ios-local-aero");
@@ -12171,7 +12201,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -12205,7 +12235,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NF2557".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -12240,7 +12270,9 @@ mod tests {
         let snapshot = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-falcon".to_owned(),
             advertised_name: Some(b"Begode Falcon".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![DiscoveryManufacturerDataSummary {
                 company_identifier: 0x004c,
                 payload_len: 6,
@@ -12312,7 +12344,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-aero".to_owned(),
             advertised_name: Some(b"NF2557".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -12330,7 +12364,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-unknown-euc".to_owned(),
             advertised_name: Some(b"Unknown EUC".to_vec()),
-            advertised_service_uuids: vec![0xffe0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::EUC_SERIAL_FFE0,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -12348,7 +12384,9 @@ mod tests {
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-vesc".to_owned(),
             advertised_name: Some(b"Little FOCer".to_vec()),
-            advertised_service_uuids: vec![0xfff0],
+            advertised_service_uuids: vec![discovery_service(
+                CoreBluetoothServiceUuid::VESC_NORDIC_UART,
+            )],
             manufacturer_data: vec![],
             rssi_dbm: Some(-48),
         });
@@ -13747,7 +13785,7 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown-euc".to_owned(),
             Some("EUC-unknown".to_owned()),
-            vec![0xffe0],
+            vec![discovery_service(CoreBluetoothServiceUuid::EUC_SERIAL_FFE0)],
         );
 
         assert!(candidate.is_picker_candidate);
@@ -13776,7 +13814,9 @@ mod tests {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-unknown".to_owned(),
             Some("Little FOCer".to_owned()),
-            vec![0xfff0],
+            vec![discovery_service(
+                CoreBluetoothServiceUuid::VESC_NORDIC_UART,
+            )],
         );
 
         assert!(candidate.is_picker_candidate);

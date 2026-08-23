@@ -726,7 +726,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         self.init(candidate: mobileDiscoveryCandidateFromAdvertisement(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             localName: advertisement.localName,
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value)
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init)
         ))
     }
 
@@ -749,7 +749,7 @@ public struct DevicePickerDiscoveryCandidate: Equatable, Hashable, Sendable {
         let candidate = mobileDiscoveryCandidateFromAdvertisement(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             localName: advertisement.localName,
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap(\.bluetooth16Value)
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init)
         )
         guard candidate.isPickerCandidate else { return nil }
         return DevicePickerDiscoveryCandidate(candidate: candidate).pickerRow

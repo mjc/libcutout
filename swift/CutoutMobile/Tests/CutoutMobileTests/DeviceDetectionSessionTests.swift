@@ -87,7 +87,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         _ = aeroState.observeDiscovery(observation: DiscoveryObservation(
             platformIdentifier: "ios-local-aero",
             advertisedName: Data("BLE device".utf8),
-            advertisedServiceUuids: [0xffe0],
+            advertisedServiceUuids: [.eucSerialFfe0],
             manufacturerData: [],
             rssiDbm: -48
         ))
@@ -97,7 +97,7 @@ final class DeviceDetectionSessionTests: XCTestCase {
         _ = vescState.observeDiscovery(observation: DiscoveryObservation(
             platformIdentifier: "ios-local-vesc",
             advertisedName: Data("Controller".utf8),
-            advertisedServiceUuids: [0xfff0],
+            advertisedServiceUuids: [.vescNordicUart],
             manufacturerData: [],
             rssiDbm: -48
         ))

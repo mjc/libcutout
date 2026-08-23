@@ -5212,6 +5212,10 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
         self.bytes = bytes
     }
 
+    public static let eucSerialFfe0 = bluetooth16(0xffe0)
+
+    public static let vescSerialFff0 = bluetooth16(0xfff0)
+
     public static let vescNordicUartNotify = BluetoothUuid(Data([
         0x6e, 0x40, 0x00, 0x03,
         0xb5, 0xa3,
@@ -5248,6 +5252,15 @@ public struct BluetoothUuid: Equatable, Hashable, Sendable {
             0x5f, 0x9b, 0x34, 0xfb,
         ]))!
     }
+}
+
+public extension DiscoveryServiceUuid {
+    init(_ uuid: BluetoothUuid) {
+        self.init(bytes: uuid.bytes)
+    }
+
+    static let eucSerialFfe0 = Self(.eucSerialFfe0)
+    static let vescNordicUart = Self(.vescNordicUartService)
 }
 
 public struct CoreBluetoothPeripheralIdentifier: Equatable, Hashable, Sendable {
@@ -6031,8 +6044,8 @@ public struct CoreBluetoothScanPolicy: Equatable, Hashable, Sendable {
     }
 
     public static let aeroFalcon = CoreBluetoothScanPolicy(serviceUuids: [
-        .bluetooth16(0xffe0),
-        .bluetooth16(0xfff0),
+        .eucSerialFfe0,
+        .vescSerialFff0,
     ])
 }
 
@@ -6203,7 +6216,9 @@ public extension CoreBluetoothAdvertisement {
         self.init(
             peripheralIdentifier: CoreBluetoothPeripheralIdentifier(observation.platformIdentifier),
             localName: observation.advertisedNameText,
-            advertisedServiceUuids: observation.advertisedServiceUuids.map(BluetoothUuid.bluetooth16),
+            advertisedServiceUuids: observation.advertisedServiceUuids.compactMap {
+                BluetoothUuid($0.bytes)
+            },
             manufacturerData: observation.manufacturerData.map(CoreBluetoothManufacturerDataSummary.init),
             rssiDbm: observation.rssiDbm
         )
@@ -6215,9 +6230,7 @@ public extension DiscoveryObservation {
         self.init(
             platformIdentifier: advertisement.peripheralIdentifier.rawValue,
             advertisedName: advertisement.localName.map { Data($0.utf8) },
-            advertisedServiceUuids: advertisement.advertisedServiceUuids.compactMap { uuid in
-                uuid == .vescNordicUartService ? 0xfff0 : uuid.bluetooth16Value
-            },
+            advertisedServiceUuids: advertisement.advertisedServiceUuids.map(DiscoveryServiceUuid.init),
             manufacturerData: advertisement.manufacturerData.map(DiscoveryManufacturerDataSummary.init),
             rssiDbm: advertisement.rssiDbm
         )
