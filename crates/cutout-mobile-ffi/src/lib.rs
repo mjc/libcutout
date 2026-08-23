@@ -2847,6 +2847,7 @@ struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
     pedal_mode: MobileSettingTracker<CorePedalMode>,
     acceleration_assist: MobileSettingTracker<CoreAccelerationAssistState>,
+    taillight: MobileSettingTracker<CoreLightState>,
 }
 
 impl MobileEucSettingTrackers {
@@ -2855,6 +2856,7 @@ impl MobileEucSettingTrackers {
         self.headlight.observe_step(input.kind, now);
         self.pedal_mode.observe_step(input.kind, now);
         self.acceleration_assist.observe_step(input.kind, now);
+        self.taillight.observe_step(input.kind, now);
 
         match input.command {
             Some(MobileCommandDto::SetLights(requested)) => {
@@ -2866,6 +2868,9 @@ impl MobileEucSettingTrackers {
             Some(MobileCommandDto::SetAccelerationAssist(requested)) => {
                 self.acceleration_assist
                     .observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetTaillight(requested)) => {
+                self.taillight.observe_write(requested.into(), now, result);
             }
             _ => {}
         }
@@ -2898,6 +2903,10 @@ impl MobileEucSettingTrackers {
 
     fn acceleration_assist(&self) -> MobileAccelerationAssistSettingStateDto {
         mobile_acceleration_assist_setting_state(self.acceleration_assist.state)
+    }
+
+    fn taillight(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.taillight.state)
     }
 }
 
@@ -10205,6 +10214,11 @@ impl AeroBenignControlSession {
     pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
         self.lock_settings().acceleration_assist()
     }
+
+    /// Returns the Rust-owned taillight setting lifecycle state.
+    pub fn taillight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().taillight()
+    }
 }
 
 impl AeroBenignControlSession {
@@ -11592,6 +11606,11 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned acceleration-assist setting lifecycle state.
     pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
         self.lock_settings().acceleration_assist()
+    }
+
+    /// Returns the Rust-owned taillight setting lifecycle state.
+    pub fn taillight_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().taillight()
     }
 }
 
@@ -14626,6 +14645,28 @@ mod tests {
             state.requested,
             Some(MobileAccelerationAssistStateDto::Enabled)
         );
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_taillight_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetTaillight(MobileLightStateDto::On)),
+        });
+
+        let state = session.taillight_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(state.requested, Some(MobileLightStateDto::On));
         assert_eq!(
             state.refusal_reason,
             Some(MobileControlRefusalReasonDto::UnsupportedCommand)
