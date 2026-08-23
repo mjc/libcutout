@@ -17,9 +17,10 @@ use std::{
 };
 
 use cutout_core::{
-    AccelerationAssistStateDto, ActivityProjectionState as CoreActivityProjectionState,
-    AngleReadingDto, BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto,
-    BatteryInfoDto, BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
+    AccelerationAssistState as CoreAccelerationAssistState, AccelerationAssistStateDto,
+    ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
+    BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
+    BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
     BluetoothServiceUuid as CoreBluetoothServiceUuid, Capacity, ChargeEstimateError,
     ChargeEstimateInput, ChargeEstimateResetReason, ChargeEstimateState,
@@ -2057,6 +2058,24 @@ impl From<MobileAccelerationAssistStateDto> for AccelerationAssistStateDto {
     }
 }
 
+impl From<MobileAccelerationAssistStateDto> for CoreAccelerationAssistState {
+    fn from(state: MobileAccelerationAssistStateDto) -> Self {
+        match state {
+            MobileAccelerationAssistStateDto::Disabled => Self::Disabled,
+            MobileAccelerationAssistStateDto::Enabled => Self::Enabled,
+        }
+    }
+}
+
+impl From<CoreAccelerationAssistState> for MobileAccelerationAssistStateDto {
+    fn from(state: CoreAccelerationAssistState) -> Self {
+        match state {
+            CoreAccelerationAssistState::Disabled => Self::Disabled,
+            CoreAccelerationAssistState::Enabled => Self::Enabled,
+        }
+    }
+}
+
 /// Documented pedal stiffness mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobilePedalModeKindDto {
@@ -2245,6 +2264,45 @@ pub struct MobilePedalModeSettingStateDto {
 }
 
 impl MobilePedalModeSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed acceleration-assist lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAccelerationAssistSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current assist state, when known.
+    pub current: Option<MobileAccelerationAssistStateDto>,
+
+    /// Requested assist state, when a write is pending or terminal.
+    pub requested: Option<MobileAccelerationAssistStateDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAccelerationAssistSettingStateDto {
     fn unknown() -> Self {
         Self {
             kind: MobileSettingStateKindDto::Unknown,
@@ -2747,6 +2805,42 @@ struct MobilePedalModeSettingTracker {
     state: CoreSettingState<CorePedalMode>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MobileAccelerationAssistSettingTracker {
+    state: CoreSettingState<CoreAccelerationAssistState>,
+}
+
+impl Default for MobileAccelerationAssistSettingTracker {
+    fn default() -> Self {
+        Self {
+            state: CoreSettingState::unknown(),
+        }
+    }
+}
+
+impl MobileAccelerationAssistSettingTracker {
+    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+        if input.kind == MobileSessionInputKindDto::LinkDown {
+            self.state = CoreSettingState::unknown();
+        }
+
+        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
+
+        if let Some(MobileCommandDto::SetAccelerationAssist(requested)) = input.command {
+            observe_setting_write(
+                &mut self.state,
+                requested.into(),
+                input.monotonic_ms.into_core(),
+                result,
+            );
+        }
+    }
+
+    fn snapshot(&self) -> MobileAccelerationAssistSettingStateDto {
+        mobile_acceleration_assist_setting_state(self.state)
+    }
+}
+
 impl Default for MobilePedalModeSettingTracker {
     fn default() -> Self {
         Self {
@@ -2942,6 +3036,72 @@ fn mobile_pedal_mode_setting_state(
     state: CoreSettingState<CorePedalMode>,
 ) -> MobilePedalModeSettingStateDto {
     let mut snapshot = MobilePedalModeSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_acceleration_assist_setting_state(
+    state: CoreSettingState<CoreAccelerationAssistState>,
+) -> MobileAccelerationAssistSettingStateDto {
+    let mut snapshot = MobileAccelerationAssistSettingStateDto::unknown();
     match state {
         CoreSettingState::Unknown => {}
         CoreSettingState::Current(value) => {
@@ -10025,6 +10185,7 @@ pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
     light_state: Mutex<MobileLightSettingTracker>,
     pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
+    acceleration_assist_state: Mutex<MobileAccelerationAssistSettingTracker>,
 }
 
 #[uniffi::export]
@@ -10037,6 +10198,7 @@ impl AeroBenignControlSession {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             light_state: Mutex::new(MobileLightSettingTracker::default()),
             pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
+            acceleration_assist_state: Mutex::new(MobileAccelerationAssistSettingTracker::default()),
         })
     }
 
@@ -10051,6 +10213,8 @@ impl AeroBenignControlSession {
         self.lock_light_state()
             .observe_step(&tracked_input, &result);
         self.lock_pedal_mode_state()
+            .observe_step(&tracked_input, &result);
+        self.lock_acceleration_assist_state()
             .observe_step(&tracked_input, &result);
         result
     }
@@ -10088,6 +10252,11 @@ impl AeroBenignControlSession {
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
         self.lock_pedal_mode_state().snapshot()
     }
+
+    /// Returns the Rust-owned acceleration-assist setting lifecycle state.
+    pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
+        self.lock_acceleration_assist_state().snapshot()
+    }
 }
 
 impl AeroBenignControlSession {
@@ -10106,6 +10275,14 @@ impl AeroBenignControlSession {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn lock_acceleration_assist_state(
+        &self,
+    ) -> MutexGuard<'_, MobileAccelerationAssistSettingTracker> {
+        self.acceleration_assist_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 impl Default for AeroBenignControlSession {
@@ -10114,6 +10291,7 @@ impl Default for AeroBenignControlSession {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             light_state: Mutex::new(MobileLightSettingTracker::default()),
             pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
+            acceleration_assist_state: Mutex::new(MobileAccelerationAssistSettingTracker::default()),
         }
     }
 }
@@ -11403,6 +11581,7 @@ pub struct FalconBenignControlSession {
     inner: Mutex<ConcreteFalconBenignControlSession>,
     light_state: Mutex<MobileLightSettingTracker>,
     pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
+    acceleration_assist_state: Mutex<MobileAccelerationAssistSettingTracker>,
 }
 
 #[uniffi::export]
@@ -11434,6 +11613,7 @@ impl FalconBenignControlSession {
             )?),
             light_state: Mutex::new(MobileLightSettingTracker::default()),
             pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
+            acceleration_assist_state: Mutex::new(MobileAccelerationAssistSettingTracker::default()),
         }))
     }
 
@@ -11448,6 +11628,8 @@ impl FalconBenignControlSession {
         self.lock_light_state()
             .observe_step(&tracked_input, &result);
         self.lock_pedal_mode_state()
+            .observe_step(&tracked_input, &result);
+        self.lock_acceleration_assist_state()
             .observe_step(&tracked_input, &result);
         result
     }
@@ -11485,6 +11667,11 @@ impl FalconBenignControlSession {
     pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
         self.lock_pedal_mode_state().snapshot()
     }
+
+    /// Returns the Rust-owned acceleration-assist setting lifecycle state.
+    pub fn acceleration_assist_state(&self) -> MobileAccelerationAssistSettingStateDto {
+        self.lock_acceleration_assist_state().snapshot()
+    }
 }
 
 impl FalconBenignControlSession {
@@ -11500,6 +11687,14 @@ impl FalconBenignControlSession {
 
     fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
         self.pedal_mode_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_acceleration_assist_state(
+        &self,
+    ) -> MutexGuard<'_, MobileAccelerationAssistSettingTracker> {
+        self.acceleration_assist_state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -14503,6 +14698,33 @@ mod tests {
                     .all(|output| output.kind != MobileSessionOutputKindDto::Write)
             );
         }
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_acceleration_assist_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAccelerationAssist(
+                MobileAccelerationAssistStateDto::Enabled,
+            )),
+        });
+
+        let state = session.acceleration_assist_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(
+            state.requested,
+            Some(MobileAccelerationAssistStateDto::Enabled)
+        );
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
     }
 
     #[test]
