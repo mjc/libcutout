@@ -51,6 +51,29 @@ pub struct EncodedControl {
     pub mode: WriteMode,
 }
 
+/// One delayed write in a multi-step settings command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedControlStep {
+    /// Delay after the previous step before this write is sent.
+    pub delay_ms: u64,
+
+    /// Bounded command bytes.
+    pub payload: WritePayload,
+
+    /// GATT write mode required by this command.
+    pub mode: WriteMode,
+}
+
+/// Ordered, delayed Begode `W` submenu writes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EncodedControlSequence {
+    /// Generic command kind represented by this sequence.
+    pub command: CommandKind,
+
+    /// Writes in send order, including the immediate first write.
+    pub steps: ArrayVec<EncodedControlStep, 5>,
+}
+
 /// NOSFET Aero benign-control encoder.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AeroControlEncoder;
@@ -101,6 +124,46 @@ impl FalconControlEncoder {
             command: command.kind(),
             payload: request_payload(payload),
             mode: WriteMode::WithoutResponse,
+        })
+    }
+
+    /// Encodes a documented Begode `W` submenu as timed transport writes.
+    #[must_use]
+    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        let mut steps = ArrayVec::new();
+        let mut push = |delay_ms, payload: &[u8]| {
+            steps.push(EncodedControlStep {
+                delay_ms,
+                payload: request_payload(payload),
+                mode: WriteMode::WithoutResponse,
+            });
+        };
+        match command {
+            DeviceCommand::SetBegodeMaxSpeed(speed) => {
+                let value = speed.kilometres_per_hour();
+                push(0, b"W");
+                push(100, b"Y");
+                push(200, &[b'0' + value / 10]);
+                push(200, &[b'0' + value % 10]);
+                push(200, b"b");
+            }
+            DeviceCommand::SetBegodeBeeperVolume(volume) => {
+                push(0, b"W");
+                push(100, b"B");
+                push(200, &[b'0' + volume.level()]);
+                push(200, b"b");
+            }
+            DeviceCommand::SetBegodeLedMode(mode) => {
+                push(0, b"W");
+                push(100, b"M");
+                push(200, &[b'0' + mode.mode()]);
+                push(200, b"b");
+            }
+            _ => return None,
+        }
+        Some(EncodedControlSequence {
+            command: command.kind(),
+            steps,
         })
     }
 }
@@ -240,6 +303,9 @@ impl VescRequestEncoder {
             | CommandKind::SetPedalMode
             | CommandKind::SetRollAngle
             | CommandKind::SetSpeedAlarmMode
+            | CommandKind::SetBegodeMaxSpeed
+            | CommandKind::SetBegodeBeeperVolume
+            | CommandKind::SetBegodeLedMode
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
@@ -309,6 +375,9 @@ impl VescCanTarget {
             | CommandKind::SetPedalMode
             | CommandKind::SetRollAngle
             | CommandKind::SetSpeedAlarmMode
+            | CommandKind::SetBegodeMaxSpeed
+            | CommandKind::SetBegodeBeeperVolume
+            | CommandKind::SetBegodeLedMode
             | CommandKind::SetTaillight
             | CommandKind::SoundHorn
             | CommandKind::SetRawMotorCurrent => return None,
@@ -340,6 +409,7 @@ mod tests {
     use super::*;
     use crate::{DeviceFamily, ProtocolProbe, load_request_fixtures};
     use core::mem::size_of;
+    use cutout_core::{BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed};
 
     #[test]
     fn aero_control_encoder_uses_silent_ascii_light_commands() {
@@ -437,12 +507,11 @@ mod tests {
 
     #[test]
     fn falcon_w_settings_encode_as_delayed_ordered_writes() {
-        let max_speed = FalconControlEncoder::encode_settings_sequence(
-            DeviceCommand::SetBegodeMaxSpeed(
+        let max_speed =
+            FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeMaxSpeed(
                 BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
-            ),
-        )
-        .expect("max-speed sequence encodes");
+            ))
+            .expect("max-speed sequence encodes");
         assert_eq!(max_speed.command, CommandKind::SetBegodeMaxSpeed);
         assert_eq!(
             max_speed
@@ -450,16 +519,20 @@ mod tests {
                 .iter()
                 .map(|step| (step.delay_ms, step.payload.as_slice()))
                 .collect::<Vec<_>>(),
-            vec![(0, b"W".as_slice()), (100, b"Y".as_slice()), (200, b"3".as_slice()),
-                (200, b"0".as_slice()), (200, b"b".as_slice())]
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"Y".as_slice()),
+                (200, b"3".as_slice()),
+                (200, b"0".as_slice()),
+                (200, b"b".as_slice())
+            ]
         );
 
-        let volume = FalconControlEncoder::encode_settings_sequence(
-            DeviceCommand::SetBegodeBeeperVolume(
+        let volume =
+            FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeBeeperVolume(
                 BegodeBeeperVolume::new(7).expect("volume 7 is encodable"),
-            ),
-        )
-        .expect("beeper sequence encodes");
+            ))
+            .expect("beeper sequence encodes");
         assert_eq!(volume.command, CommandKind::SetBegodeBeeperVolume);
         assert_eq!(
             volume
@@ -467,15 +540,17 @@ mod tests {
                 .iter()
                 .map(|step| (step.delay_ms, step.payload.as_slice()))
                 .collect::<Vec<_>>(),
-            vec![(0, b"W".as_slice()), (100, b"B".as_slice()), (200, b"7".as_slice()),
-                (200, b"b".as_slice())]
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"B".as_slice()),
+                (200, b"7".as_slice()),
+                (200, b"b".as_slice())
+            ]
         );
 
-        let led = FalconControlEncoder::encode_settings_sequence(
-            DeviceCommand::SetBegodeLedMode(
-                BegodeLedModeSetting::new(4).expect("LED mode 4 is encodable"),
-            ),
-        )
+        let led = FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeLedMode(
+            BegodeLedModeSetting::new(4).expect("LED mode 4 is encodable"),
+        ))
         .expect("LED sequence encodes");
         assert_eq!(led.command, CommandKind::SetBegodeLedMode);
         assert_eq!(
@@ -483,8 +558,12 @@ mod tests {
                 .iter()
                 .map(|step| (step.delay_ms, step.payload.as_slice()))
                 .collect::<Vec<_>>(),
-            vec![(0, b"W".as_slice()), (100, b"M".as_slice()), (200, b"4".as_slice()),
-                (200, b"b".as_slice())]
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"M".as_slice()),
+                (200, b"4".as_slice()),
+                (200, b"b".as_slice())
+            ]
         );
     }
 

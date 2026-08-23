@@ -84,9 +84,10 @@ pub use refloat_codec::{
     RefloatStreamResult, VESC_COMM_CUSTOM_APP_DATA, encode_refloat_request,
 };
 pub use request_encoder::{
-    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedIdentificationProbe,
-    EncodedRequest, FalconControlEncoder, FalconRequestEncoder, RequestDisposition, VescCanTarget,
-    VescRequestEncoder, begode_identification_probes,
+    AeroControlEncoder, AeroRequestEncoder, EncodedControl, EncodedControlSequence,
+    EncodedControlStep, EncodedIdentificationProbe, EncodedRequest, FalconControlEncoder,
+    FalconRequestEncoder, RequestDisposition, VescCanTarget, VescRequestEncoder,
+    begode_identification_probes,
 };
 #[cfg(feature = "dangerous-controls")]
 pub use session::DangerousControlSession;

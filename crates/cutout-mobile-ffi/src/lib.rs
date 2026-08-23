@@ -2952,6 +2952,9 @@ pub enum MobileControlRefusalReasonDto {
 
     /// The command is unsupported by this model or session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 /// Mobile session step error DTO.
@@ -3520,6 +3523,7 @@ impl From<MobileControlRefusalReasonDto> for CoreControlRefusalReason {
             MobileControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
             MobileControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             MobileControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+            MobileControlRefusalReasonDto::Busy => Self::Busy,
         }
     }
 }
@@ -3533,6 +3537,7 @@ impl From<CoreControlRefusalReason> for MobileControlRefusalReasonDto {
             CoreControlRefusalReason::ExpiredArm => Self::ExpiredArm,
             CoreControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             CoreControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            CoreControlRefusalReason::Busy => Self::Busy,
         }
     }
 }
@@ -11224,6 +11229,7 @@ impl From<ControlRefusalReasonDto> for MobileControlRefusalReasonDto {
             ControlRefusalReasonDto::ExpiredArm => Self::ExpiredArm,
             ControlRefusalReasonDto::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             ControlRefusalReasonDto::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReasonDto::Busy => Self::Busy,
         }
     }
 }

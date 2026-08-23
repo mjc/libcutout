@@ -293,6 +293,15 @@ pub enum DeviceCommand {
     /// Set the speed-alarm mode; this command is stationary-only.
     SetSpeedAlarmMode(SpeedAlarmMode),
 
+    /// Set the Begode max speed through its timed `W` submenu.
+    SetBegodeMaxSpeed(BegodeMaxSpeed),
+
+    /// Set the Begode beeper volume through its timed `W` submenu.
+    SetBegodeBeeperVolume(BegodeBeeperVolume),
+
+    /// Set the Begode LED mode through its timed `W` submenu.
+    SetBegodeLedMode(BegodeLedModeSetting),
+
     /// Enable or disable acceleration assist; this command is stationary-only.
     SetAccelerationAssist(AccelerationAssistState),
 
@@ -325,6 +334,9 @@ impl DeviceCommand {
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SetRollAngle(_) => CommandKind::SetRollAngle,
             Self::SetSpeedAlarmMode(_) => CommandKind::SetSpeedAlarmMode,
+            Self::SetBegodeMaxSpeed(_) => CommandKind::SetBegodeMaxSpeed,
+            Self::SetBegodeBeeperVolume(_) => CommandKind::SetBegodeBeeperVolume,
+            Self::SetBegodeLedMode(_) => CommandKind::SetBegodeLedMode,
             Self::SetAccelerationAssist(_) => CommandKind::SetAccelerationAssist,
             Self::SetTaillight(_) => CommandKind::SetTaillight,
             Self::SoundHorn => CommandKind::SoundHorn,
@@ -359,6 +371,68 @@ pub enum LightState {
 
     /// Begode strobe/running-light mode.
     Strobe,
+}
+
+/// Begode max-speed setting accepted by the documented `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BegodeMaxSpeed(u8);
+
+impl BegodeMaxSpeed {
+    /// Creates a max-speed setting in the protocol's two-digit range.
+    #[must_use]
+    pub const fn new(kilometres_per_hour: u8) -> Option<Self> {
+        if kilometres_per_hour <= 99 {
+            Some(Self(kilometres_per_hour))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the whole-kilometres-per-hour wire value.
+    #[must_use]
+    pub const fn kilometres_per_hour(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode beeper volume accepted by the documented `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BegodeBeeperVolume(u8);
+
+impl BegodeBeeperVolume {
+    /// Creates a beeper volume in the documented 1..=9 range.
+    #[must_use]
+    pub const fn new(level: u8) -> Option<Self> {
+        if level >= 1 && level <= 9 {
+            Some(Self(level))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the protocol volume level.
+    #[must_use]
+    pub const fn level(self) -> u8 {
+        self.0
+    }
+}
+
+/// Begode LED mode accepted by the documented `W` submenu.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BegodeLedModeSetting(u8);
+
+impl BegodeLedModeSetting {
+    /// Creates an LED mode in the documented 0..=9 range.
+    #[must_use]
+    pub const fn new(mode: u8) -> Option<Self> {
+        if mode <= 9 { Some(Self(mode)) } else { None }
+    }
+
+    /// Returns the protocol LED mode.
+    #[must_use]
+    pub const fn mode(self) -> u8 {
+        self.0
+    }
 }
 
 /// User-facing acceleration-assist state.
@@ -407,6 +481,15 @@ pub enum CommandKind {
     /// Set the speed-alarm mode.
     SetSpeedAlarmMode,
 
+    /// Set the Begode max speed.
+    SetBegodeMaxSpeed,
+
+    /// Set the Begode beeper volume.
+    SetBegodeBeeperVolume,
+
+    /// Set the Begode LED mode.
+    SetBegodeLedMode,
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist,
 
@@ -436,6 +519,9 @@ impl CommandKind {
             Self::SetPedalMode
             | Self::SetRollAngle
             | Self::SetSpeedAlarmMode
+            | Self::SetBegodeMaxSpeed
+            | Self::SetBegodeBeeperVolume
+            | Self::SetBegodeLedMode
             | Self::SetAccelerationAssist => SafetyClass::StationaryOnly,
             Self::SetRawMotorCurrent => SafetyClass::Actuation,
         }
@@ -711,6 +797,9 @@ pub enum ControlRefusalReason {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 impl From<DangerousActuationRefusal> for ControlRefusalReason {

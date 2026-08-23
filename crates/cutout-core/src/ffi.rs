@@ -1,10 +1,11 @@
 use crate::{
     AccelerationAssistState, Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind,
     BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
-    BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand,
-    DeviceEvent, DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback,
-    DiagnosticSeverity, Distance, DutyCycle, FaultCode, FaultHistoryAvailability,
-    FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
+    BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode,
+    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
+    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
+    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
+    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
@@ -235,6 +236,15 @@ pub enum CommandKindDto {
     /// Set Begode speed-alarm mode.
     SetSpeedAlarmMode,
 
+    /// Set Begode max speed.
+    SetBegodeMaxSpeed,
+
+    /// Set Begode beeper volume.
+    SetBegodeBeeperVolume,
+
+    /// Set Begode LED mode.
+    SetBegodeLedMode,
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist,
 
@@ -262,6 +272,9 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::SetPedalMode => Self::SetPedalMode,
             CommandKind::SetRollAngle => Self::SetRollAngle,
             CommandKind::SetSpeedAlarmMode => Self::SetSpeedAlarmMode,
+            CommandKind::SetBegodeMaxSpeed => Self::SetBegodeMaxSpeed,
+            CommandKind::SetBegodeBeeperVolume => Self::SetBegodeBeeperVolume,
+            CommandKind::SetBegodeLedMode => Self::SetBegodeLedMode,
             CommandKind::SetAccelerationAssist => Self::SetAccelerationAssist,
             CommandKind::SetTaillight => Self::SetTaillight,
             CommandKind::SoundHorn => Self::SoundHorn,
@@ -306,6 +319,15 @@ pub enum DeviceCommandDto {
     /// Set Begode speed-alarm mode.
     SetSpeedAlarmMode(SpeedAlarmModeDto),
 
+    /// Set Begode max speed.
+    SetBegodeMaxSpeed(BegodeMaxSpeed),
+
+    /// Set Begode beeper volume.
+    SetBegodeBeeperVolume(BegodeBeeperVolume),
+
+    /// Set Begode LED mode.
+    SetBegodeLedMode(BegodeLedModeSetting),
+
     /// Enable or disable acceleration assist.
     SetAccelerationAssist(AccelerationAssistStateDto),
 
@@ -336,6 +358,9 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
             DeviceCommand::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
+            DeviceCommand::SetBegodeMaxSpeed(speed) => Self::SetBegodeMaxSpeed(speed),
+            DeviceCommand::SetBegodeBeeperVolume(volume) => Self::SetBegodeBeeperVolume(volume),
+            DeviceCommand::SetBegodeLedMode(mode) => Self::SetBegodeLedMode(mode),
             DeviceCommand::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -362,6 +387,9 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
             DeviceCommandDto::SetSpeedAlarmMode(mode) => Self::SetSpeedAlarmMode(mode.into()),
+            DeviceCommandDto::SetBegodeMaxSpeed(speed) => Self::SetBegodeMaxSpeed(speed),
+            DeviceCommandDto::SetBegodeBeeperVolume(volume) => Self::SetBegodeBeeperVolume(volume),
+            DeviceCommandDto::SetBegodeLedMode(mode) => Self::SetBegodeLedMode(mode),
             DeviceCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
@@ -2405,6 +2433,9 @@ pub enum ControlRefusalReasonDto {
 
     /// Command is not supported by this model/session.
     UnsupportedCommand,
+
+    /// A previous timed settings sequence is still in progress.
+    Busy,
 }
 
 impl From<ControlRefusalReason> for ControlRefusalReasonDto {
@@ -2416,6 +2447,7 @@ impl From<ControlRefusalReason> for ControlRefusalReasonDto {
             ControlRefusalReason::ExpiredArm => Self::ExpiredArm,
             ControlRefusalReason::CurrentLimitExceeded => Self::CurrentLimitExceeded,
             ControlRefusalReason::UnsupportedCommand => Self::UnsupportedCommand,
+            ControlRefusalReason::Busy => Self::Busy,
         }
     }
 }
