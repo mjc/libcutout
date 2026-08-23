@@ -1291,7 +1291,7 @@ mod tests {
         BegodeTelemetryContext, BegodeTelemetryError, BegodeUnitMode,
         estimate_begode_battery_level, validate_begode_pack_evidence,
     };
-    use cutout_core::{Capacity, Duration, Energy};
+    use cutout_core::{Capacity, Duration, Energy, LightState};
     use cutout_core::{
         DiagnosticSeverity, Measured, ParallelCount, ProtocolTag, RawFieldValue, ReadOnlyResponse,
         SeriesCount, TelemetryDelta, ValueQuality, ValueSource, VerificationStatus, Voltage,
