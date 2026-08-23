@@ -90,6 +90,33 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    func testLightingPresetSavingRequiresConfirmedCommandAndIdentity() {
+        XCTAssertTrue(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .confirmed
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: nil,
+                commandStatus: .confirmed
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .requested
+            )
+        )
+        XCTAssertFalse(
+            lightingPresetSaveEligibility(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                commandStatus: .unconfirmed
+            )
+        )
+    }
+
     func testEucPackRouteRejectsNonPackScreens() {
         XCTAssertNil(EucPackScreen(screenID: .vescRide))
         XCTAssertNil(EucPackScreen(screenID: .vescDebug))
