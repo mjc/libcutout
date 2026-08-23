@@ -2193,6 +2193,45 @@ impl MobileLightSettingStateDto {
     }
 }
 
+/// Typed pedal-mode lifecycle state exposed by a mobile EUC session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobilePedalModeSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current pedal mode, when known.
+    pub current: Option<MobilePedalModeKindDto>,
+
+    /// Requested pedal mode, when a write is pending or terminal.
+    pub requested: Option<MobilePedalModeKindDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobilePedalModeSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
 impl From<MobileLightStateDto> for LightStateDto {
     fn from(state: MobileLightStateDto) -> Self {
         match state {
@@ -2677,6 +2716,64 @@ struct MobileLightSettingTracker {
     state: CoreSettingState<CoreLightState>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MobilePedalModeSettingTracker {
+    state: CoreSettingState<CorePedalMode>,
+}
+
+impl Default for MobilePedalModeSettingTracker {
+    fn default() -> Self {
+        Self {
+            state: CoreSettingState::unknown(),
+        }
+    }
+}
+
+impl MobilePedalModeSettingTracker {
+    fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
+        if input.kind == MobileSessionInputKindDto::LinkDown {
+            self.state = CoreSettingState::unknown();
+        }
+
+        if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
+            match result.error.as_ref() {
+                None => self
+                    .state
+                    .submit(requested.into(), input.monotonic_ms.into_core()),
+                Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+                    self.state
+                        .submit(requested.into(), input.monotonic_ms.into_core());
+                    if let Some(reason) = error.reason {
+                        self.state.refuse(reason.into());
+                    } else {
+                        self.state.fail();
+                    }
+                }
+                Some(_) => self.state.fail(),
+            }
+        }
+
+        for output in &result.outputs {
+            if let Some(pedal_mode) = output
+                .settings_readback
+                .as_ref()
+                .and_then(|readback| readback.euc_garage.pedal_mode.as_ref())
+                .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
+            {
+                let _ = self.state.observe(
+                    pedal_mode,
+                    CoreSettingValueSource::LiveReadback,
+                    input.monotonic_ms.into_core(),
+                );
+            }
+        }
+    }
+
+    fn snapshot(&self) -> MobilePedalModeSettingStateDto {
+        mobile_pedal_mode_setting_state(self.state)
+    }
+}
+
 impl Default for MobileLightSettingTracker {
     fn default() -> Self {
         Self {
@@ -2697,6 +2794,8 @@ impl MobileLightSettingTracker {
                     .state
                     .submit(requested.into(), input.monotonic_ms.into_core()),
                 Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+                    self.state
+                        .submit(requested.into(), input.monotonic_ms.into_core());
                     if let Some(reason) = error.reason {
                         self.state.refuse(reason.into());
                     } else {
@@ -2731,6 +2830,72 @@ fn mobile_light_setting_state(
     state: CoreSettingState<CoreLightState>,
 ) -> MobileLightSettingStateDto {
     let mut snapshot = MobileLightSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_pedal_mode_setting_state(
+    state: CoreSettingState<CorePedalMode>,
+) -> MobilePedalModeSettingStateDto {
+    let mut snapshot = MobilePedalModeSettingStateDto::unknown();
     match state {
         CoreSettingState::Unknown => {}
         CoreSettingState::Current(value) => {
@@ -10900,6 +11065,7 @@ fn mobile_gatt_channel(channel: &[u8]) -> GattChannel {
 pub struct AeroBenignControlSession {
     inner: Mutex<ConcreteAeroBenignControlSession>,
     light_state: Mutex<MobileLightSettingTracker>,
+    pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
 }
 
 #[uniffi::export]
@@ -10911,6 +11077,7 @@ impl AeroBenignControlSession {
         Arc::new(Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             light_state: Mutex::new(MobileLightSettingTracker::default()),
+            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
         })
     }
 
@@ -10920,6 +11087,8 @@ impl AeroBenignControlSession {
         let input = SessionInputDto::from(input);
         let result = mobile_aero_session_step_result(self.lock_inner().ingest_checked(&input));
         self.lock_light_state()
+            .observe_step(&tracked_input, &result);
+        self.lock_pedal_mode_state()
             .observe_step(&tracked_input, &result);
         result
     }
@@ -10952,6 +11121,11 @@ impl AeroBenignControlSession {
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_light_state().snapshot()
     }
+
+    /// Returns the Rust-owned pedal-mode setting lifecycle state.
+    pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
+        self.lock_pedal_mode_state().snapshot()
+    }
 }
 
 impl AeroBenignControlSession {
@@ -10964,6 +11138,12 @@ impl AeroBenignControlSession {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
+        self.pedal_mode_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 }
 
 impl Default for AeroBenignControlSession {
@@ -10971,6 +11151,7 @@ impl Default for AeroBenignControlSession {
         Self {
             inner: Mutex::new(new_nosfet_aero_benign_control_session()),
             light_state: Mutex::new(MobileLightSettingTracker::default()),
+            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
         }
     }
 }
@@ -12238,6 +12419,7 @@ impl From<ConcreteSessionErrorDto> for MobileSessionConstructorError {
 pub struct FalconBenignControlSession {
     inner: Mutex<ConcreteFalconBenignControlSession>,
     light_state: Mutex<MobileLightSettingTracker>,
+    pedal_mode_state: Mutex<MobilePedalModeSettingTracker>,
 }
 
 #[uniffi::export]
@@ -12268,6 +12450,7 @@ impl FalconBenignControlSession {
                 profile.into(),
             )?),
             light_state: Mutex::new(MobileLightSettingTracker::default()),
+            pedal_mode_state: Mutex::new(MobilePedalModeSettingTracker::default()),
         }))
     }
 
@@ -12277,6 +12460,8 @@ impl FalconBenignControlSession {
         let input = SessionInputDto::from(input);
         let result = MobileSessionStepResultDto::from(self.lock_inner().ingest_checked(&input));
         self.lock_light_state()
+            .observe_step(&tracked_input, &result);
+        self.lock_pedal_mode_state()
             .observe_step(&tracked_input, &result);
         result
     }
@@ -12309,6 +12494,11 @@ impl FalconBenignControlSession {
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_light_state().snapshot()
     }
+
+    /// Returns the Rust-owned pedal-mode setting lifecycle state.
+    pub fn pedal_mode_state(&self) -> MobilePedalModeSettingStateDto {
+        self.lock_pedal_mode_state().snapshot()
+    }
 }
 
 impl FalconBenignControlSession {
@@ -12318,6 +12508,12 @@ impl FalconBenignControlSession {
 
     fn lock_light_state(&self) -> MutexGuard<'_, MobileLightSettingTracker> {
         self.light_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_pedal_mode_state(&self) -> MutexGuard<'_, MobilePedalModeSettingTracker> {
+        self.pedal_mode_state
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
@@ -15281,6 +15477,28 @@ mod tests {
             .outputs
             .iter()
             .all(|output| output.kind != MobileSessionOutputKindDto::Write));
+    }
+
+    #[test]
+    fn aero_wrapper_reports_typed_pedal_mode_refusal_state() {
+        let session = AeroBenignControlSession::new();
+
+        let _ = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(7),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
+        });
+
+        let state = session.pedal_mode_state();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Refused);
+        assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
+        assert_eq!(
+            state.refusal_reason,
+            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+        );
     }
 
     #[test]
