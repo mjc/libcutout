@@ -325,12 +325,7 @@ final class CutoutAppModel {
         outcome: MobileMusicTimelineOutcomeDto? = nil
     ) {
         guard musicCoordinator.nowPlaying == MusicNowPlaying(observation: observation) else { return }
-        switch outcome {
-        case .outOfOrder?, .rideNotOpen?, .full?:
-            return
-        default:
-            break
-        }
+        guard shouldUpdateMusicCaptureContext(for: outcome) else { return }
         guard allowsMusicCaptureContext else {
             core.updateMusicCaptureObservation(nil)
             return
@@ -340,6 +335,17 @@ final class CutoutAppModel {
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
+    }
+
+    private func shouldUpdateMusicCaptureContext(
+        for outcome: MobileMusicTimelineOutcomeDto?
+    ) -> Bool {
+        switch outcome {
+        case .outOfOrder?, .rideNotOpen?, .full?:
+            return false
+        default:
+            return true
+        }
     }
 
     private var allowsMusicCaptureContext: Bool {
