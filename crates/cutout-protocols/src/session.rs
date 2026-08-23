@@ -1119,12 +1119,14 @@ pub trait SupportsSettingsWrites: ProtocolModelSpec {
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl>;
 
     /// Encodes a supported multi-step settings write, when the protocol requires timing.
+    #[must_use]
     fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
         let _ = command;
         None
     }
 
     /// Issues a short-lived settings arm from current ride-state evidence.
+    #[must_use]
     fn arm_settings_write(
         state: cutout_core::RideOperatingState,
         speed: Option<cutout_core::Speed>,
@@ -1753,6 +1755,128 @@ impl<
     pub const fn arm(&mut self, arm: cutout_core::StationarySettingsArm) {
         self.arm = Some(arm);
     }
+
+    fn handle_tick(&mut self, monotonic_ms: MonotonicTimestamp, output: &mut Vec<SessionOutput>) {
+        self.monotonic_ms = monotonic_ms;
+        self.read_only
+            .handle(SessionInput::Tick { monotonic_ms }, output);
+        let due = self
+            .pending_sequence
+            .as_ref()
+            .is_some_and(|pending| monotonic_ms >= pending.next_at);
+        if !due {
+            return;
+        }
+
+        let step = self
+            .pending_sequence
+            .as_mut()
+            .and_then(|pending| pending.remaining.first().cloned());
+        let Some(step) = step else { return };
+        let _ = self
+            .pending_sequence
+            .as_mut()
+            .map(|pending| pending.remaining.remove(0));
+        let next_delay = self
+            .pending_sequence
+            .as_ref()
+            .and_then(|pending| pending.remaining.first())
+            .map(|next| next.delay_ms);
+        if let Some(next_delay) = next_delay {
+            if let Some(pending) = self.pending_sequence.as_mut() {
+                pending.next_at = monotonic_ms
+                    .saturating_add_duration(cutout_core::Duration::from_milliseconds(next_delay));
+            }
+        } else {
+            self.pending_sequence = None;
+        }
+        output.push(SessionOutput::Transport(TransportAction::Write {
+            channel: M::WRITE_CHANNEL,
+            bytes: step.payload,
+            mode: step.mode,
+        }));
+    }
+
+    fn handle_stationary_command(
+        &mut self,
+        command: DeviceCommand,
+        output: &mut Vec<SessionOutput>,
+    ) {
+        let kind = command.kind();
+        let reason = if M::WRITE_CAPABILITIES.supports_command_kind(kind) {
+            if self.pending_sequence.is_some() {
+                Some(ControlRefusalReason::Busy)
+            } else {
+                match self.arm {
+                    None => Some(ControlRefusalReason::MissingArm),
+                    Some(arm) if arm.model() != M::MODEL => Some(ControlRefusalReason::WrongModel),
+                    Some(arm) if !arm.is_valid_for(M::MODEL, self.monotonic_ms) => {
+                        Some(ControlRefusalReason::ExpiredArm)
+                    }
+                    Some(_) => None,
+                }
+            }
+        } else {
+            Some(ControlRefusalReason::UnsupportedCommand)
+        };
+
+        if let Some(reason) = reason {
+            output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                ControlRefusal {
+                    command: kind,
+                    safety_class: command.safety_class(),
+                    reason,
+                },
+            )));
+            return;
+        }
+
+        if let Some(sequence) = M::encode_settings_sequence(command) {
+            let mut steps = sequence.steps.into_iter();
+            let Some(first) = steps.next() else {
+                output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                    ControlRefusal {
+                        command: kind,
+                        safety_class: command.safety_class(),
+                        reason: ControlRefusalReason::UnsupportedCommand,
+                    },
+                )));
+                return;
+            };
+            let mut remaining = ArrayVec::new();
+            remaining.extend(steps);
+            let next_delay = remaining.first().map(|next| next.delay_ms);
+            self.pending_sequence = next_delay.map(|next_delay| PendingSettingsSequence {
+                remaining,
+                next_at: self
+                    .monotonic_ms
+                    .saturating_add_duration(cutout_core::Duration::from_milliseconds(next_delay)),
+            });
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: first.payload,
+                mode: first.mode,
+            }));
+            return;
+        }
+
+        if let Some(encoded) = M::encode_settings_write(command) {
+            output.push(SessionOutput::Transport(TransportAction::Write {
+                channel: M::WRITE_CHANNEL,
+                bytes: encoded.payload,
+                mode: encoded.mode,
+            }));
+            return;
+        }
+
+        output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+            ControlRefusal {
+                command: kind,
+                safety_class: command.safety_class(),
+                reason: ControlRefusalReason::UnsupportedCommand,
+            },
+        )));
+    }
 }
 
 impl<
@@ -1763,43 +1887,7 @@ impl<
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         match input {
             SessionInput::Tick { monotonic_ms } => {
-                self.monotonic_ms = monotonic_ms;
-                self.read_only.handle(input, output);
-                let due = self
-                    .pending_sequence
-                    .as_ref()
-                    .is_some_and(|pending| monotonic_ms >= pending.next_at);
-                if due {
-                    let step = self
-                        .pending_sequence
-                        .as_mut()
-                        .and_then(|pending| pending.remaining.first().cloned());
-                    if let Some(step) = step {
-                        let _ = self
-                            .pending_sequence
-                            .as_mut()
-                            .map(|pending| pending.remaining.remove(0));
-                        let next_delay = self
-                            .pending_sequence
-                            .as_ref()
-                            .and_then(|pending| pending.remaining.first())
-                            .map(|next| next.delay_ms);
-                        if let Some(next_delay) = next_delay {
-                            if let Some(pending) = self.pending_sequence.as_mut() {
-                                pending.next_at = monotonic_ms.saturating_add_duration(
-                                    cutout_core::Duration::from_milliseconds(next_delay),
-                                );
-                            }
-                        } else {
-                            self.pending_sequence = None;
-                        }
-                        output.push(SessionOutput::Transport(TransportAction::Write {
-                            channel: M::WRITE_CHANNEL,
-                            bytes: step.payload,
-                            mode: step.mode,
-                        }));
-                    }
-                }
+                self.handle_tick(monotonic_ms, output);
             }
             SessionInput::LinkDown => {
                 self.arm = None;
@@ -1809,75 +1897,7 @@ impl<
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::StationaryOnly =>
             {
-                let kind = command.kind();
-                let reason = if M::WRITE_CAPABILITIES.supports_command_kind(kind) {
-                    if self.pending_sequence.is_some() {
-                        Some(ControlRefusalReason::Busy)
-                    } else {
-                        match self.arm {
-                            None => Some(ControlRefusalReason::MissingArm),
-                            Some(arm) if arm.model() != M::MODEL => {
-                                Some(ControlRefusalReason::WrongModel)
-                            }
-                            Some(arm) if !arm.is_valid_for(M::MODEL, self.monotonic_ms) => {
-                                Some(ControlRefusalReason::ExpiredArm)
-                            }
-                            Some(_) => None,
-                        }
-                    }
-                } else {
-                    Some(ControlRefusalReason::UnsupportedCommand)
-                };
-
-                if let Some(reason) = reason {
-                    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-                        ControlRefusal {
-                            command: kind,
-                            safety_class: command.safety_class(),
-                            reason,
-                        },
-                    )));
-                } else if let Some(sequence) = M::encode_settings_sequence(command) {
-                    let mut steps = sequence.steps.into_iter();
-                    let Some(first) = steps.next() else {
-                        output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-                            ControlRefusal {
-                                command: kind,
-                                safety_class: command.safety_class(),
-                                reason: ControlRefusalReason::UnsupportedCommand,
-                            },
-                        )));
-                        return;
-                    };
-                    let mut remaining = ArrayVec::new();
-                    remaining.extend(steps);
-                    let next_delay = remaining.first().map(|next| next.delay_ms);
-                    self.pending_sequence = next_delay.map(|next_delay| PendingSettingsSequence {
-                        remaining,
-                        next_at: self.monotonic_ms.saturating_add_duration(
-                            cutout_core::Duration::from_milliseconds(next_delay),
-                        ),
-                    });
-                    output.push(SessionOutput::Transport(TransportAction::Write {
-                        channel: M::WRITE_CHANNEL,
-                        bytes: first.payload,
-                        mode: first.mode,
-                    }));
-                } else if let Some(encoded) = M::encode_settings_write(command) {
-                    output.push(SessionOutput::Transport(TransportAction::Write {
-                        channel: M::WRITE_CHANNEL,
-                        bytes: encoded.payload,
-                        mode: encoded.mode,
-                    }));
-                } else {
-                    output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
-                        ControlRefusal {
-                            command: kind,
-                            safety_class: command.safety_class(),
-                            reason: ControlRefusalReason::UnsupportedCommand,
-                        },
-                    )));
-                }
+                self.handle_stationary_command(command, output);
             }
             SessionInput::Command(command)
                 if command.safety_class() == SafetyClass::BenignControl =>

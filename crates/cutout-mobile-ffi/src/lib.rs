@@ -10262,8 +10262,8 @@ impl MobileEucGarageSettingsDto {
                 VETERAN_FIELD_AUTO_SHUTDOWN_TIME_REMAINING_SECONDS,
             )
             .and_then(|entry| u64::try_from(entry.field.value).ok()),
-            charge_mode: settings_entry(entries, VETERAN_FIELD_CHARGE_MODE).and_then(|entry| {
-                Some(MobileChargeModeReadingDto {
+            charge_mode: settings_entry(entries, VETERAN_FIELD_CHARGE_MODE).map(|entry| {
+                MobileChargeModeReadingDto {
                     value: if entry.field.value == 0 {
                         MobileChargeModeDto::NotCharging
                     } else {
@@ -10272,7 +10272,7 @@ impl MobileEucGarageSettingsDto {
                     source: entry.source,
                     quality: entry.quality,
                     verification: entry.verification,
-                })
+                }
             }),
         }
     }
@@ -10804,18 +10804,22 @@ impl From<MobileCommandDto> for DeviceCommandDto {
                 Self::SetSpeedAlarmMode(CoreSpeedAlarmMode::from(mode).into())
             }
             MobileCommandDto::SetBegodeMaxSpeed(speed) => {
-                CoreBegodeMaxSpeed::new(speed.kilometres_per_hour)
-                    .map(DeviceCommandDto::SetBegodeMaxSpeed)
-                    .unwrap_or(DeviceCommandDto::RequestSettings)
+                CoreBegodeMaxSpeed::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeMaxSpeed,
+                )
             }
             MobileCommandDto::SetBegodeBeeperVolume(volume) => {
-                CoreBegodeBeeperVolume::new(volume.level)
-                    .map(DeviceCommandDto::SetBegodeBeeperVolume)
-                    .unwrap_or(DeviceCommandDto::RequestSettings)
+                CoreBegodeBeeperVolume::new(volume.level).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeBeeperVolume,
+                )
             }
             MobileCommandDto::SetBegodeLedMode(mode) => CoreBegodeLedModeSetting::new(mode.mode)
-                .map(DeviceCommandDto::SetBegodeLedMode)
-                .unwrap_or(DeviceCommandDto::RequestSettings),
+                .map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetBegodeLedMode,
+                ),
             MobileCommandDto::SetAccelerationAssist(state) => {
                 Self::SetAccelerationAssist(state.into())
             }
