@@ -163,7 +163,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(
             model.settingsCapabilities,
             EucSettingsCapabilities(
-                pedalMode: .unsupported,
+                pedalMode: .unverified,
                 accelerationAssist: .unsupported,
                 headlight: .unverified,
                 taillight: .unsupported
