@@ -2028,7 +2028,7 @@ pub enum MobileLightStateDto {
     On,
 }
 
-/// Documented Veteran/NOSFET pedal stiffness mode.
+/// Documented pedal stiffness mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobilePedalModeKindDto {
     /// Firm pedal response.
@@ -9283,10 +9283,10 @@ pub struct MobileEucGarageSettingsDto {
 /// Read-only pedal mode projection for mobile UI.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobilePedalModeDto {
-    /// Unnormalized raw Veteran pedal mode value.
+    /// Protocol-native raw pedal-mode value.
     pub raw_mode: Option<u16>,
 
-    /// Documented mode when the raw value is 0, 1, or 2.
+    /// Documented mode when the protocol-native value has a known mapping.
     pub mode: Option<MobilePedalModeKindDto>,
 }
 
