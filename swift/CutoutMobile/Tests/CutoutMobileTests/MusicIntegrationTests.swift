@@ -94,8 +94,8 @@ final class MusicIntegrationTests: XCTestCase {
         try coordinator.setHistoryPolicy(.opaqueItem)
         XCTAssertEqual(
             try coordinator.ingest(
-                snapshot: snapshot(state: .playing, observedAtMs: 20),
-                wallClockAtMs: 30,
+                snapshot: snapshot(state: .playing, observedAtMs: 120),
+                wallClockAtMs: 130,
                 clockUncertaintyMs: 1
             ),
             .recorded
