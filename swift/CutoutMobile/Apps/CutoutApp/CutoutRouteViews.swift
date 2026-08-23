@@ -280,6 +280,26 @@ final class LightingRouteModel {
 
     var isReady: Bool { connectionState == .ready }
 
+    var presets: [MobileRgbLightingPresetDto] { persistence.presets }
+
+    var canSavePreset: Bool { persistence.platformIdentifier != nil }
+
+    func savePreset(named name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try? persistence.addPreset(name: trimmed, requested: requestedState.dto)
+    }
+
+    func applyPreset(_ preset: MobileRgbLightingPresetDto) {
+        setPower(preset.requested.powerOn)
+        setSolidColor(
+            red: preset.requested.red,
+            green: preset.requested.green,
+            blue: preset.requested.blue
+        )
+        setBrightness(preset.requested.brightness)
+    }
+
     func setRestoreEnabled(_ enabled: Bool) {
         restoreEnabled = enabled
         persistence.setRestoreEnabled(enabled)
@@ -363,6 +383,7 @@ struct LightingRouteView: View {
     let model: LightingRouteModel
     let rideModel: CutoutAppModel
     @State private var brightness = 100.0
+    @State private var presetName = ""
 
     private var controlsEnabled: Bool { model.isReady }
 
@@ -379,6 +400,7 @@ struct LightingRouteView: View {
                 connectionCard
                 rideCard
                 controlsCard
+                presetsCard
                 commandStatusCard
             }
             .padding()
@@ -493,6 +515,48 @@ struct LightingRouteView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(model.commandStatus != .requested)
+            }
+        }
+    }
+
+    private var presetsCard: some View {
+        GroupBox("Presets") {
+            VStack(alignment: .leading, spacing: 10) {
+                if model.presets.isEmpty {
+                    Text("Save a confirmed solid color and brightness as a named preset.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.presets, id: \.name) { preset in
+                        Button {
+                            brightness = Double(preset.requested.brightness)
+                            model.applyPreset(preset)
+                        } label: {
+                            HStack {
+                                Text(preset.name)
+                                Spacer()
+                                Text("\(preset.requested.brightness)%")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(!controlsEnabled)
+                        .accessibilityIdentifier("lighting.preset.\(preset.name)")
+                    }
+                }
+
+                HStack {
+                    TextField("Preset name", text: $presetName)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Save") {
+                        model.savePreset(named: presetName)
+                        presetName = ""
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSavePreset || presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("lighting.preset.save")
+                }
             }
         }
     }
