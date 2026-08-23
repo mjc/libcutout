@@ -169,11 +169,11 @@ pub fn find_session_registration(key: SessionKey) -> Option<&'static SessionRegi
 #[cfg(test)]
 mod tests {
     use cutout_core::{
-        CommandKind, CompleteModelAuthoring, DeviceCommand,
-        GattFingerprint, GattRoles, LightState, ManufacturerKey, ModelAuthoring, ModelCatalog,
-        ModelCatalogEntry, ModelKey, ModelRegistryEntry, ModelRuntimeRegistration, ParserKey,
-        ProtocolFamily, ProtocolSession, RegistryValidationError, SessionInput, SessionKey,
-        SessionOutput, TransportAction, VerificationStatus, Voltage,
+        CommandKind, CompleteModelAuthoring, DeviceCommand, GattFingerprint, GattRoles, LightState,
+        ManufacturerKey, ModelAuthoring, ModelCatalog, ModelCatalogEntry, ModelKey,
+        ModelRegistryEntry, ModelRuntimeRegistration, ParserKey, ProtocolFamily, ProtocolSession,
+        RegistryValidationError, SessionInput, SessionKey, SessionOutput, TransportAction,
+        VerificationStatus, Voltage,
     };
 
     use crate::{

@@ -1248,7 +1248,7 @@ impl SupportsSettingsWrites for NosfetAeroModel {
     const WRITE_CAPABILITIES: Capabilities =
         Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
-        Some(cutout_core::Speed::from_millimetres_per_second(447));
+        Some(cutout_core::Speed::from_millimetres_per_second(500));
 
     fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
         AeroControlEncoder::encode(command)
@@ -4127,12 +4127,12 @@ mod tests {
     }
 
     #[test]
-    fn aero_settings_arm_allows_sub_one_mph_but_not_above_it() {
+    fn aero_settings_arm_allows_the_500_mm_per_second_window() {
         let at = ms(10);
         assert!(
             NosfetAeroModel::arm_settings_write(
                 RideOperatingState::Riding,
-                Some(cutout_core::Speed::from_millimetres_per_second(447)),
+                Some(cutout_core::Speed::from_millimetres_per_second(500)),
                 at,
             )
             .is_some()
@@ -4140,7 +4140,7 @@ mod tests {
         assert!(
             NosfetAeroModel::arm_settings_write(
                 RideOperatingState::Riding,
-                Some(cutout_core::Speed::from_millimetres_per_second(448)),
+                Some(cutout_core::Speed::from_millimetres_per_second(501)),
                 at,
             )
             .is_none()
