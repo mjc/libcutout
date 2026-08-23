@@ -580,6 +580,10 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"SetLightOFF");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe)),
+            None
+        );
         assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
     }
 
@@ -596,6 +600,11 @@ mod tests {
         assert_eq!(off.command, CommandKind::SetLights);
         assert_eq!(off.payload.as_slice(), b"E");
         assert_eq!(off.mode, WriteMode::WithoutResponse);
+        let strobe = FalconControlEncoder::encode(DeviceCommand::SetLights(LightState::Strobe))
+            .expect("Begode strobe command encodes");
+        assert_eq!(strobe.command, CommandKind::SetLights);
+        assert_eq!(strobe.payload.as_slice(), b"T");
+        assert_eq!(strobe.mode, WriteMode::WithoutResponse);
         assert_eq!(FalconControlEncoder::encode(DeviceCommand::SoundHorn), None);
     }
 
@@ -610,6 +619,108 @@ mod tests {
             .expect("documented Begode pedal mode encoder");
         assert_eq!(falcon.command, CommandKind::SetPedalMode);
         assert_eq!(falcon.payload.as_slice(), b"s");
+    }
+
+    #[test]
+    fn documented_falcon_roll_angle_encoders_match_protocol_bytes() {
+        let low = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low))
+            .expect("Begode low roll-angle encoder");
+        let medium = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Medium))
+            .expect("Begode medium roll-angle encoder");
+        let high = FalconControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::High))
+            .expect("Begode high roll-angle encoder");
+
+        assert_eq!(low.command, CommandKind::SetRollAngle);
+        assert_eq!(low.payload.as_slice(), b">");
+        assert_eq!(medium.payload.as_slice(), b"=");
+        assert_eq!(high.payload.as_slice(), b"<");
+        assert_eq!(low.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetRollAngle(RollAngle::Low)),
+            None
+        );
+    }
+
+    #[test]
+    fn documented_falcon_speed_alarm_encoders_match_protocol_bytes() {
+        let both =
+            FalconControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both))
+                .expect("Begode both-alarms encoder");
+        let stage_one = FalconControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(
+            SpeedAlarmMode::StageOneOnly,
+        ))
+        .expect("Begode stage-one-only encoder");
+
+        assert_eq!(both.command, CommandKind::SetSpeedAlarmMode);
+        assert_eq!(both.payload.as_slice(), b"o");
+        assert_eq!(stage_one.payload.as_slice(), b"u");
+        assert_eq!(both.mode, WriteMode::WithoutResponse);
+        assert_eq!(
+            AeroControlEncoder::encode(DeviceCommand::SetSpeedAlarmMode(SpeedAlarmMode::Both,)),
+            None
+        );
+    }
+
+    #[test]
+    fn falcon_w_settings_encode_as_delayed_ordered_writes() {
+        let max_speed =
+            FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeMaxSpeed(
+                BegodeMaxSpeed::new(30).expect("30 km/h is encodable"),
+            ))
+            .expect("max-speed sequence encodes");
+        assert_eq!(max_speed.command, CommandKind::SetBegodeMaxSpeed);
+        assert_eq!(
+            max_speed
+                .steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"Y".as_slice()),
+                (200, b"3".as_slice()),
+                (200, b"0".as_slice()),
+                (200, b"b".as_slice())
+            ]
+        );
+
+        let volume =
+            FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeBeeperVolume(
+                BegodeBeeperVolume::new(7).expect("volume 7 is encodable"),
+            ))
+            .expect("beeper sequence encodes");
+        assert_eq!(volume.command, CommandKind::SetBegodeBeeperVolume);
+        assert_eq!(
+            volume
+                .steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"B".as_slice()),
+                (200, b"7".as_slice()),
+                (200, b"b".as_slice())
+            ]
+        );
+
+        let led = FalconControlEncoder::encode_settings_sequence(DeviceCommand::SetBegodeLedMode(
+            BegodeLedModeSetting::new(4).expect("LED mode 4 is encodable"),
+        ))
+        .expect("LED sequence encodes");
+        assert_eq!(led.command, CommandKind::SetBegodeLedMode);
+        assert_eq!(
+            led.steps
+                .iter()
+                .map(|step| (step.delay_ms, step.payload.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, b"W".as_slice()),
+                (100, b"M".as_slice()),
+                (200, b"4".as_slice()),
+                (200, b"b".as_slice())
+            ]
+        );
     }
 
     #[test]

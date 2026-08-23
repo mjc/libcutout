@@ -3531,6 +3531,33 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         begodeLedModes.append(mode)
         return .accepted
     }
+    func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
+        guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
+        pedalModes.append(mode)
+        return .accepted
+    }
+    func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
+        rollAngles.append(angle)
+        return .accepted
+    }
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        speedAlarmModes.append(mode)
+        return .accepted
+    }
+    func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult {
+        begodeMaxSpeeds.append(speed)
+        return .accepted
+    }
+
+    func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult {
+        begodeBeeperVolumes.append(volume)
+        return .accepted
+    }
+
+    func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
+        begodeLedModes.append(mode)
+        return .accepted
+    }
     func now() -> MonotonicMilliseconds {
         MonotonicMilliseconds(nowValue)
     }

@@ -290,6 +290,32 @@ struct EucTuneRouteView: View {
                                 fallback: settings.pedalMode
                             )
                         )
+                        EucSettingReadbackRow(
+                            id: "rollAngle",
+                            title: localizedAppText("settings.roll_angle.title"),
+                            value: EucSettingReadbackPresentation.rollAngle(
+                                model.rollAngleState,
+                                fallback: settings.rollAngle
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "speedAlarmMode",
+                            title: localizedAppText("settings.speed_alarm_mode.title"),
+                            value: EucSettingReadbackPresentation.speedAlarmMode(
+                                model.speedAlarmModeState,
+                                fallback: settings.speedAlarmMode
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "autoShutdown",
+                            title: localizedAppText("settings.auto_shutdown.title"),
+                            value: EucSettingReadbackPresentation.seconds(settings.autoShutdownSeconds)
+                        )
+                        EucSettingReadbackRow(
+                            id: "chargeMode",
+                            title: localizedAppText("settings.charge_mode.title"),
+                            value: EucSettingReadbackPresentation.chargeMode(settings.chargeMode)
+                        )
                     } header: {
                         Text(localizedAppText("settings.readback.title"))
                     } footer: {

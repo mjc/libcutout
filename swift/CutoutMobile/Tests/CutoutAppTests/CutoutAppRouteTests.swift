@@ -131,6 +131,10 @@ final class CutoutAppRouteTests: XCTestCase {
             "Confirmed by wheel telemetry."
         )
         XCTAssertEqual(
+            localizedAppText("settings.headlight.confirmed_ago", Int64(2)),
+            "Confirmed by wheel telemetry 2s ago."
+        )
+        XCTAssertEqual(
             localizedAppText("settings.high_beam.sent_unconfirmed"),
             "Command sent. This wheel does not report high-beam state."
         )

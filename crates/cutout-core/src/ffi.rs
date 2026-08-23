@@ -8,7 +8,6 @@ use crate::{
     FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
     IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
     MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    PedalMode,
     ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
     ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
     RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
@@ -574,6 +573,74 @@ impl From<PedalModeDto> for PedalMode {
             PedalModeDto::Hard => Self::Hard,
             PedalModeDto::Medium => Self::Medium,
             PedalModeDto::Soft => Self::Soft,
+        }
+    }
+}
+
+/// UniFFI-ready Falcon roll-angle sensitivity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RollAngleDto {
+    /// Low roll-angle sensitivity.
+    Low,
+
+    /// Medium roll-angle sensitivity.
+    Medium,
+
+    /// High roll-angle sensitivity.
+    High,
+}
+
+impl From<RollAngle> for RollAngleDto {
+    fn from(angle: RollAngle) -> Self {
+        match angle {
+            RollAngle::Low => Self::Low,
+            RollAngle::Medium => Self::Medium,
+            RollAngle::High => Self::High,
+        }
+    }
+}
+
+impl From<RollAngleDto> for RollAngle {
+    fn from(angle: RollAngleDto) -> Self {
+        match angle {
+            RollAngleDto::Low => Self::Low,
+            RollAngleDto::Medium => Self::Medium,
+            RollAngleDto::High => Self::High,
+        }
+    }
+}
+
+/// UniFFI-ready Begode speed-alarm mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SpeedAlarmModeDto {
+    /// Both speed alarms are enabled.
+    Both,
+    /// Only the first-stage speed alarm is enabled.
+    StageOneOnly,
+    /// Speed alarms are disabled.
+    Off,
+    /// Firmware-controlled PWM tiltback mode.
+    PwmTiltback,
+}
+
+impl From<SpeedAlarmMode> for SpeedAlarmModeDto {
+    fn from(mode: SpeedAlarmMode) -> Self {
+        match mode {
+            SpeedAlarmMode::Both => Self::Both,
+            SpeedAlarmMode::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmMode::Off => Self::Off,
+            SpeedAlarmMode::PwmTiltback => Self::PwmTiltback,
+        }
+    }
+}
+
+impl From<SpeedAlarmModeDto> for SpeedAlarmMode {
+    fn from(mode: SpeedAlarmModeDto) -> Self {
+        match mode {
+            SpeedAlarmModeDto::Both => Self::Both,
+            SpeedAlarmModeDto::StageOneOnly => Self::StageOneOnly,
+            SpeedAlarmModeDto::Off => Self::Off,
+            SpeedAlarmModeDto::PwmTiltback => Self::PwmTiltback,
         }
     }
 }

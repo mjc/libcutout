@@ -1289,6 +1289,19 @@ public enum AccelerationAssistState: Equatable, Hashable, Sendable {
     }
 }
 
+public enum AccelerationAssistState: Equatable, Hashable, Sendable {
+    case disabled
+    case enabled
+
+    fileprivate init(_ dto: MobileAccelerationAssistStateDto) {
+        self = dto == .enabled ? .enabled : .disabled
+    }
+
+    fileprivate var dto: MobileAccelerationAssistStateDto {
+        self == .enabled ? .enabled : .disabled
+    }
+}
+
 public enum SettingStateKind: Equatable, Hashable, Sendable {
     case unknown
     case current
@@ -6163,6 +6176,15 @@ public enum CoreBluetoothSession: Sendable {
             try session.tick(at: monotonicMilliseconds)
         case .vescOnewheel(let session):
             try session.tick(at: monotonicMilliseconds)
+        }
+    }
+
+    fileprivate func armSettingsWrites(at monotonicMilliseconds: MonotonicMilliseconds) -> Bool {
+        switch self {
+        case .electricUnicycle(let session):
+            session.armSettingsWrites(at: monotonicMilliseconds)
+        case .vescOnewheel:
+            false
         }
     }
 

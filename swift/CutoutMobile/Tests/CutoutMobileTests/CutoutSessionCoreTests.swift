@@ -1488,10 +1488,50 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let falcon = try ElectricUnicycleSession(model: .falcon)
 
         XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
-        XCTAssertEqual(falcon.settingsCapabilities.headlight, .unverified)
+        XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
-        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .unverified)
+        XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.rollAngle, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.rollAngle, .supported)
         XCTAssertEqual(aero.settingsCapabilities.accelerationAssist, .unsupported)
+        XCTAssertEqual(aero.settingsCapabilities.begodeMaxSpeed, .unsupported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeMaxSpeed, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeBeeperVolume, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.begodeLedMode, .supported)
+    }
+
+    func testBegodeWSettingValuesUseDocumentedRanges() {
+        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 0)?.kilometresPerHour, 0)
+        XCTAssertEqual(BegodeMaxSpeed(kilometresPerHour: 99)?.kilometresPerHour, 99)
+        XCTAssertNil(BegodeMaxSpeed(kilometresPerHour: 100))
+
+        XCTAssertEqual(BegodeBeeperVolume(level: 1)?.level, 1)
+        XCTAssertEqual(BegodeBeeperVolume(level: 9)?.level, 9)
+        XCTAssertNil(BegodeBeeperVolume(level: 0))
+        XCTAssertNil(BegodeBeeperVolume(level: 10))
+
+        XCTAssertEqual(BegodeLedMode(mode: 0)?.mode, 0)
+        XCTAssertEqual(BegodeLedMode(mode: 9)?.mode, 9)
+        XCTAssertNil(BegodeLedMode(mode: 10))
+    }
+
+    func testUnverifiedEucSettingCommandsAreTypedRefusals() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+        let commands: [DeviceCommand] = [
+            .setAccelerationAssist(.enabled),
+            .setTaillight(.on),
+        ]
+
+        for command in commands {
+            XCTAssertThrowsError(
+                try session.perform(command, at: MonotonicMilliseconds(1))
+            ) { error in
+                XCTAssertEqual(
+                    error as? CutoutSessionError,
+                    .commandRefused(command, .unsupportedCommand)
+                )
+            }
+        }
     }
 
     func testElectricUnicycleSessionExposesRustOwnedLightState() throws {
