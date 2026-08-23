@@ -232,6 +232,9 @@ public final class MusicIntegrationCoordinator {
     private let rideMapState: MobileRideMapState
 
     private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
+    private var lastCorrelationRideID: String?
+    private var lastRecordedNowPlaying: MusicNowPlaying?
+    private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public init(rideMapState: MobileRideMapState) {
         self.rideMapState = rideMapState
     }
@@ -263,19 +266,31 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
+        prepareForCurrentRide()
         guard accept(snapshot) else { return nil }
-        let previous = nowPlaying
+        let previous = lastRecordedNowPlaying
         update(snapshot: snapshot, artwork: artwork)
         guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
             return nil
         }
-        return try rideMapState.recordMusicEvent(
-            snapshot: snapshot,
-            kind: kind,
-            monotonicAtMs: snapshot.observedAtMs,
-            wallClockAtMs: wallClockAtMs,
-            clockUncertaintyMs: clockUncertaintyMs
-        )
+        do {
+            let outcome = try rideMapState.recordMusicEvent(
+                snapshot: snapshot,
+                kind: kind,
+                monotonicAtMs: snapshot.observedAtMs,
+                wallClockAtMs: wallClockAtMs,
+                clockUncertaintyMs: clockUncertaintyMs
+            )
+            rememberRecordedState(outcome)
+            return outcome
+        } catch MobileRideMapError.NoActiveRide {
+            if historyPolicy == .disabled {
+                rememberRecordedState(.disabled)
+                return .disabled
+            }
+            lastRecordedNowPlaying = nowPlaying
+            throw MobileRideMapError.NoActiveRide
+        }
     }
 
     /// Applies one provider observation through the same path used by ride
@@ -296,6 +311,8 @@ public final class MusicIntegrationCoordinator {
 
     public func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         try rideMapState.setMusicHistoryPolicy(policy: policy)
+        historyPolicy = policy
+        lastRecordedNowPlaying = nil
     }
 
     public func record(
@@ -305,19 +322,39 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
+        prepareForCurrentRide()
         update(snapshot: snapshot)
         _ = accept(snapshot)
-        return try rideMapState.recordMusicEvent(
+        let outcome = try rideMapState.recordMusicEvent(
             snapshot: snapshot,
             kind: kind,
             monotonicAtMs: monotonicAtMs,
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
+        rememberRecordedState(outcome)
+        return outcome
     }
 
     public var recordedEvents: [MobileMusicRideEventDto] {
         rideMapState.currentMusicEvents() ?? []
+    }
+
+    private func prepareForCurrentRide() {
+        let rideID = rideMapState.currentSnapshot()?.rideId
+        guard rideID != lastCorrelationRideID else { return }
+        lastCorrelationRideID = rideID
+        lastObservedAtByProvider.removeAll()
+        lastRecordedNowPlaying = nil
+    }
+
+    private func rememberRecordedState(_ outcome: MobileMusicTimelineOutcomeDto) {
+        switch outcome {
+        case .recorded, .duplicate, .disabled:
+            lastRecordedNowPlaying = nowPlaying
+        case .outOfOrder, .rideNotOpen, .full:
+            break
+        }
     }
 
     private func accept(_ snapshot: MobileMusicSnapshotDto) -> Bool {
@@ -413,15 +450,20 @@ public struct MusicCompactPlayer: View {
             Button { onCommand(.previous) } label: {
                 Image(systemName: "backward.fill")
             }
+            .accessibilityLabel(pevLocalizedText("music.previous"))
             .disabled(!nowPlaying.capabilities.previous)
             if let command = nowPlaying.playPauseCommand {
                 Button { onCommand(command) } label: {
                     Image(systemName: command == .pause ? "pause.fill" : "play.fill")
                 }
+                .accessibilityLabel(
+                    pevLocalizedText(command == .pause ? "music.pause" : "music.play")
+                )
             }
             Button { onCommand(.next) } label: {
                 Image(systemName: "forward.fill")
             }
+            .accessibilityLabel(pevLocalizedText("music.next"))
             .disabled(!nowPlaying.capabilities.next)
             if nowPlaying.capabilities.openProvider {
                 Button { onCommand(.openProvider) } label: {

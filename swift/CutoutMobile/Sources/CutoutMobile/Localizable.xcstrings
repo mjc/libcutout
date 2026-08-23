@@ -5,6 +5,22 @@
       "comment" : "Accessibility label for hiding the compact music player.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Hide music player" } } }
     },
+    "music.previous" : {
+      "comment" : "Accessibility label for the previous-track control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Previous track" } } }
+    },
+    "music.play" : {
+      "comment" : "Accessibility label for the play control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Play" } } }
+    },
+    "music.pause" : {
+      "comment" : "Accessibility label for the pause control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Pause" } } }
+    },
+    "music.next" : {
+      "comment" : "Accessibility label for the next-track control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Next track" } } }
+    },
     "music.not_playing" : {
       "comment" : "Compact music player title when no current item is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not playing" } } }
