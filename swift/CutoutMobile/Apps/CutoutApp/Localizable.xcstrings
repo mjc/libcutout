@@ -657,6 +657,10 @@
       "comment" : "Map marker for the most recent validated route point.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current location" } } }
     },
+    "ride_map.end_marker" : {
+      "comment" : "Map marker for the final point in a stopped or historical route.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride end" } } }
+    },
     "ride_map.duration" : {
       "comment" : "Ride-map summary label. The placeholder is the formatted duration.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Duration: %@" } } }

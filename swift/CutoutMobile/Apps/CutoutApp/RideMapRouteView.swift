@@ -208,6 +208,7 @@ struct RideMapRouteView: View {
             routeID: mode == .live
                 ? model.rideMapSnapshot?.rideId ?? "live"
                 : model.selectedRideMapHistoryID ?? "history",
+            showsEndMarker: showsEndMarker,
             mapPosition: $mapPosition,
             isApplyingCamera: $isApplyingCamera,
             cameraDidChange: { followsLatestPoint = false }
@@ -340,6 +341,18 @@ struct RideMapRouteView: View {
 
     private var visiblePoints: [MobileRideMapPointDto] {
         mode == .live ? model.rideMapPoints : model.rideMapHistoryPoints
+    }
+
+    private var showsEndMarker: Bool {
+        if mode == .history {
+            return true
+        }
+        switch model.rideMapSnapshot?.state {
+        case .stopped, .saved, .discarded:
+            return true
+        case .recording, .paused, nil:
+            return false
+        }
     }
 
     private func coordinate(for point: MobileRideMapPointDto) -> CLLocationCoordinate2D {

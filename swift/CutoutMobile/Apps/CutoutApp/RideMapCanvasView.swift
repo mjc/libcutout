@@ -19,6 +19,7 @@ struct RideMapCanvasView: View {
 
     let points: [MobileRideMapPointDto]
     let routeID: String
+    let showsEndMarker: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: () -> Void
@@ -43,10 +44,12 @@ struct RideMapCanvasView: View {
             }
             if let last = points.last, points.count > 1 {
                 Marker(
-                    localizedAppText("ride_map.current_marker"),
+                    localizedAppText(
+                        showsEndMarker ? "ride_map.end_marker" : "ride_map.current_marker"
+                    ),
                     coordinate: coordinate(for: last)
                 )
-                .tint(.blue)
+                .tint(showsEndMarker ? .red : .blue)
             }
         }
         .mapStyle(.standard)
