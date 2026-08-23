@@ -179,6 +179,24 @@ where
         };
     }
 
+    /// Records a timeout when the pending request has reached its deadline.
+    ///
+    /// Returns whether the state transitioned to timed out.
+    pub fn timeout_if_elapsed(
+        &mut self,
+        now: MonotonicTimestamp,
+        timeout: crate::Duration,
+    ) -> bool {
+        let Self::Pending { submitted_at, .. } = *self else {
+            return false;
+        };
+        if now.saturating_duration_since(submitted_at) < timeout {
+            return false;
+        }
+        self.timeout();
+        true
+    }
+
     /// Records a timeout for the pending request.
     pub fn timeout(&mut self) {
         let Self::Pending {

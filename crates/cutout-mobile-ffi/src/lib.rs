@@ -2735,7 +2735,7 @@ impl MobilePedalModeSettingTracker {
             self.state = CoreSettingState::unknown();
         }
 
-        observe_setting_tick(&mut self.state, input.kind);
+        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
 
         if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
             observe_setting_write(
@@ -2781,7 +2781,7 @@ impl MobileLightSettingTracker {
             self.state = CoreSettingState::unknown();
         }
 
-        observe_setting_tick(&mut self.state, input.kind);
+        observe_setting_tick(&mut self.state, input.kind, input.monotonic_ms.into_core());
 
         if let Some(MobileCommandDto::SetLights(requested)) = input.command {
             observe_setting_write(
@@ -2812,12 +2812,15 @@ impl MobileLightSettingTracker {
     }
 }
 
-fn observe_setting_tick<Value>(state: &mut CoreSettingState<Value>, kind: MobileSessionInputKindDto)
-where
+fn observe_setting_tick<Value>(
+    state: &mut CoreSettingState<Value>,
+    kind: MobileSessionInputKindDto,
+    now: MonotonicTimestamp,
+) where
     Value: Copy + Eq,
 {
     if kind == MobileSessionInputKindDto::Tick {
-        state.timeout();
+        state.timeout_if_elapsed(now, CoreDuration::from_seconds(2));
     }
 }
 
@@ -15611,7 +15614,7 @@ mod tests {
 
         let _ = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Tick,
-            monotonic_ms: ms(1_010),
+            monotonic_ms: ms(2_010),
             max_write_len: None,
             channel: Vec::new(),
             bytes: Vec::new(),
@@ -15647,7 +15650,7 @@ mod tests {
         tracker.observe_step(
             &MobileSessionInputDto {
                 kind: MobileSessionInputKindDto::Tick,
-                monotonic_ms: ms(1_010),
+                monotonic_ms: ms(2_010),
                 max_write_len: None,
                 channel: Vec::new(),
                 bytes: Vec::new(),
