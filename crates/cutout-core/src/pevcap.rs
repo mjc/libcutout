@@ -1150,6 +1150,11 @@ impl PevcapRecord {
         self
     }
 
+    /// Clears optional music metadata from this record.
+    pub fn clear_music_metadata(&mut self) {
+        self.music = None;
+    }
+
     /// Creates a link-up lifecycle record.
     #[must_use]
     pub fn link_up(
@@ -1295,7 +1300,7 @@ impl PevcapCapture {
     #[must_use]
     pub fn without_music_metadata(mut self) -> Self {
         for record in &mut self.records {
-            record.music = None;
+            record.clear_music_metadata();
         }
         self
     }
