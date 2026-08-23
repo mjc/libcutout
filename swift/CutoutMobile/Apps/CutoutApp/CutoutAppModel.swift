@@ -1370,7 +1370,6 @@ final class CutoutAppModel {
 
     private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
         guard core.headlightState == nil else { return }
->>>>>>> 07dcc406 (Use shared light setting state in Tune)
         guard let reportedState = readback?.eucGarageSettings.lightState else {
             if fallbackHeadlightState?.kind == .pending {
                 fallbackHeadlightState = LightSettingState(

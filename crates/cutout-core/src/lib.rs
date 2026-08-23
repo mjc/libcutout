@@ -180,6 +180,19 @@ pub enum PedalMode {
     Soft,
 }
 
+impl PedalMode {
+    /// Decodes the documented Veteran/NOSFET pedal-mode field.
+    #[must_use]
+    pub const fn from_veteran_raw(raw: u16) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Hard),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Soft),
+            _ => None,
+        }
+    }
+}
+
 /// Command requested by the host application.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeviceCommand {
@@ -9956,6 +9969,23 @@ mod tests {
         assert_eq!(horn.kind(), crate::CommandKind::SoundHorn);
         assert_eq!(lights.safety_class(), crate::SafetyClass::BenignControl);
         assert_eq!(horn.safety_class(), crate::SafetyClass::BenignControl);
+    }
+
+    #[test]
+    fn veteran_pedal_mode_raw_values_use_the_documented_mapping() {
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(0),
+            Some(crate::PedalMode::Hard)
+        );
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(1),
+            Some(crate::PedalMode::Medium)
+        );
+        assert_eq!(
+            crate::PedalMode::from_veteran_raw(2),
+            Some(crate::PedalMode::Soft)
+        );
+        assert_eq!(crate::PedalMode::from_veteran_raw(1920), None);
     }
 
     #[test]

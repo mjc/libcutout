@@ -55,7 +55,8 @@ use cutout_core::{
     SessionOutputDto, SettingState as CoreSettingState,
     SettingValueSource as CoreSettingValueSource, SettingsEntry, SettingsEntryDto,
     SettingsReadback, SettingsReadbackAvailability, SettingsReadbackAvailabilityDto,
-    SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, TelemetryFreshness,
+    SettingsReadbackDto, Speed as CoreSpeed, SpeedReadingDto, PedalMode as CorePedalMode,
+    TelemetryFreshness,
     TelemetrySnapshotDto, TemperatureReadingDto, TransportActionDto, TransportWriteLimit,
     TransportWriteLimitDto, UsablePackCapacity, ValueQuality, ValueQuality as CoreValueQuality,
     ValueQualityDto, ValueSource, ValueSource as CoreValueSource, ValueSourceDto,
@@ -2017,6 +2018,29 @@ pub enum MobileLightStateDto {
 
     /// Lights on.
     On,
+}
+
+/// Documented Veteran/NOSFET pedal stiffness mode.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobilePedalModeKindDto {
+    /// Firm pedal response.
+    Hard,
+
+    /// Mid-range pedal response.
+    Medium,
+
+    /// Soft pedal response.
+    Soft,
+}
+
+impl From<CorePedalMode> for MobilePedalModeKindDto {
+    fn from(mode: CorePedalMode) -> Self {
+        match mode {
+            CorePedalMode::Hard => Self::Hard,
+            CorePedalMode::Medium => Self::Medium,
+            CorePedalMode::Soft => Self::Soft,
+        }
+    }
 }
 
 /// Validation state for a setting write exposed to mobile consumers.
@@ -9253,6 +9277,9 @@ pub struct MobileEucGarageSettingsDto {
 pub struct MobilePedalModeDto {
     /// Unnormalized raw Veteran pedal mode value.
     pub raw_mode: Option<u16>,
+
+    /// Documented mode when the raw value is 0, 1, or 2.
+    pub mode: Option<MobilePedalModeKindDto>,
 }
 
 /// Bounded read-only settings response for mobile UI.
@@ -10501,6 +10528,8 @@ impl MobileEucGarageSettingsDto {
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
                 .map(|raw_mode| MobilePedalModeDto {
                     raw_mode: Some(raw_mode),
+                    mode: CorePedalMode::from_veteran_raw(raw_mode)
+                        .map(MobilePedalModeKindDto::from),
                 }),
             light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
@@ -13800,9 +13829,35 @@ mod tests {
                 }),
                 pedal_mode: Some(MobilePedalModeDto {
                     raw_mode: Some(1_920),
+                    mode: None,
                 }),
                 light_state: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_veteran_pedal_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(VETERAN_FIELD_PEDALS_MODE, 1),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.pedal_mode,
+            Some(MobilePedalModeDto {
+                raw_mode: Some(1),
+                mode: Some(MobilePedalModeKindDto::Medium),
+            })
         );
     }
 
