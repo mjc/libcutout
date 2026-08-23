@@ -265,8 +265,9 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.scanState.status, .scanning)
         XCTAssertEqual(core.scanState.rows.map(\.title), ["NOSFET Aero", "Little FOCer"])
-        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [.electricUnicycle, .vescOnewheel])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["NOSFET Aero", "Little FOCer"])
+        XCTAssertEqual(core.scanState.rows.map(\.connectionRoute), [nil, .vescOnewheel])
+        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Little FOCer"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["NOSFET Aero"])
         XCTAssertTrue(core.scanState.sections.unsupported.isEmpty)
         XCTAssertEqual(observedStates.count, 2)
     }
@@ -624,7 +625,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(core.scanState.rows.map(\.id), ["ios-local-falcon"])
-        XCTAssertEqual(core.scanState.sections.supported.map(\.title), ["Begode Falcon"])
+        XCTAssertEqual(core.scanState.sections.probeRecommended.map(\.title), ["Begode Falcon"])
     }
 
     func testApplyNotificationStepMarksLiveAndUpdatesDisplayState() {

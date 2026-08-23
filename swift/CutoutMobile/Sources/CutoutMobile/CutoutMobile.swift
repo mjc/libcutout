@@ -5284,7 +5284,7 @@ public struct CoreBluetoothAdvertisement: Equatable, Hashable, Sendable {
     }
 
     public var modelHint: CutoutModelHint {
-        CutoutModelHint(deviceKind: localName)
+        .unknown
     }
 }
 
@@ -6073,7 +6073,7 @@ public struct CoreBluetoothCentralCoordinator: Equatable, Hashable, Sendable {
     }
 
     public func handleDiscovered(_ advertisement: CoreBluetoothAdvertisement) -> CoreBluetoothCentralAction? {
-        guard scanPolicy.matches(advertisement), advertisement.modelHint != .unknown else {
+        guard scanPolicy.matches(advertisement) else {
             return nil
         }
         return .connect(peripheralIdentifier: advertisement.peripheralIdentifier)

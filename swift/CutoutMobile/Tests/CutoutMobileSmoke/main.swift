@@ -63,7 +63,7 @@ struct CutoutMobilePackageSmoke {
             localName: "Begode Falcon",
             advertisedServiceUuids: [BluetoothUuid.bluetooth16(0xffe0)]
         )
-        precondition(advertisement.modelHint == .falcon)
+        precondition(advertisement.modelHint == .unknown)
 
         let coordinator = CoreBluetoothCentralCoordinator(
             scanPolicy: .aeroFalcon,
@@ -132,7 +132,7 @@ struct CutoutMobilePackageSmoke {
         let runnerSubscribe = try runner.handle(.linkUp(at: MonotonicMilliseconds(20)))
         precondition(runnerSubscribe.operations.contains(.subscribe(channel: BluetoothUuid.bluetooth16(0xffe1))))
         precondition(runnerSubscribe.captureContext?.advertisedServiceUuids == [BluetoothUuid.bluetooth16(0xffe0)])
-        precondition(runnerSubscribe.captureContext?.resolvedModelHint == .falcon)
+        precondition(runnerSubscribe.captureContext?.resolvedModelHint == .unknown)
         let runnerTelemetry = try runner.handle(.notification(
             bytes: Data(hex: """
                 dc5a5c532a7c000000000000ab41001700000cff

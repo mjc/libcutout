@@ -74,16 +74,14 @@ private final class CutoutLiveValidator {
         }
 
         guard let row = state.rows.first(where: {
-            $0.isSupported
-                && $0.connectionRoute == .electricUnicycle
-                && $0.electricUnicycleModel != nil
+            $0.isProbeRecommended
         }) else {
             return
         }
 
         didRequestPairing = true
-        let didPair = core.pair(platformIdentifier: row.id)
-        appendDiagnostic("auto_pair=\(didPair) id=\(row.id) title=\(row.title)")
+        let didProbe = core.probe(platformIdentifier: row.id)
+        appendDiagnostic("auto_probe=\(didProbe) id=\(row.id) title=\(row.title)")
     }
 
     private func appendRecord(_ record: String) {

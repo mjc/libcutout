@@ -548,76 +548,33 @@ impl DiscoveryCandidateSnapshot {
         let display_name = observation
             .advertised_name_text()
             .unwrap_or("Unknown Bluetooth device");
-        let lower_name = display_name.to_ascii_lowercase();
 
         match (
             observation.advertised_service_uuids.contains(&0xffe0),
-            observation.advertised_service_uuids.contains(&0xfff0)
-                || lower_name.contains("vesc")
-                || lower_name.contains("focer")
-                || lower_name.contains("onewheel")
-                || lower_name.contains("floatwheel"),
+            observation.advertised_service_uuids.contains(&0xfff0),
         ) {
-            (true, _) => Some(match discovery_electric_unicycle_model(&lower_name) {
-                Some(model) => Self {
-                    platform_identifier: observation.platform_identifier.clone(),
-                    display_name: display_name.to_owned(),
-                    product_category: "Electric unicycle".to_owned(),
-                    evidence: "advertisement hint".to_owned(),
-                    detail: discovery_electric_unicycle_detail(model).to_owned(),
-                    support: DiscoveryCandidateSupport::ProvisionalRoute,
-                    connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
-                    electric_unicycle_model: Some(model),
-                },
-                None => Self {
-                    platform_identifier: observation.platform_identifier.clone(),
-                    display_name: display_name.to_owned(),
-                    product_category: "Electric unicycle".to_owned(),
-                    evidence: "FFE0/FFE1 transport hint".to_owned(),
-                    detail: "Read-only probe recommended".to_owned(),
-                    support: DiscoveryCandidateSupport::ProbeRecommended,
-                    connection_route: None,
-                    electric_unicycle_model: None,
-                },
+            (true, _) => Some(Self {
+                platform_identifier: observation.platform_identifier.clone(),
+                display_name: display_name.to_owned(),
+                product_category: "Electric unicycle".to_owned(),
+                evidence: "FFE0/FFE1 transport hint".to_owned(),
+                detail: "Read-only protocol probe recommended".to_owned(),
+                support: DiscoveryCandidateSupport::ProbeRecommended,
+                connection_route: None,
+                electric_unicycle_model: None,
             }),
             (false, true) => Some(Self {
                 platform_identifier: observation.platform_identifier.clone(),
                 display_name: display_name.to_owned(),
                 product_category: "VESC Onewheel".to_owned(),
-                evidence: "VESC advertisement hint".to_owned(),
-                detail: "VESC read-only route".to_owned(),
+                evidence: "FFF0 transport hint".to_owned(),
+                detail: "VESC protocol route".to_owned(),
                 support: DiscoveryCandidateSupport::ProvisionalRoute,
                 connection_route: Some(DiscoveryConnectionRoute::VescOnewheel),
                 electric_unicycle_model: None,
             }),
             (false, false) => None,
         }
-    }
-}
-
-fn discovery_electric_unicycle_model(lower_name: &str) -> Option<DiscoveryElectricUnicycleModel> {
-    match lower_name {
-        name if ["falcon", "begode", "gotway"]
-            .into_iter()
-            .any(|needle| name.contains(needle)) =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        }
-        name if ["aero", "nosfet", "veteran"]
-            .into_iter()
-            .any(|needle| name.contains(needle))
-            || name.starts_with("nf") =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        }
-        _ => None,
-    }
-}
-
-fn discovery_electric_unicycle_detail(model: DiscoveryElectricUnicycleModel) -> &'static str {
-    match model {
-        DiscoveryElectricUnicycleModel::Falcon => "Falcon provisional route",
-        DiscoveryElectricUnicycleModel::Aero => "Aero provisional route",
     }
 }
 
@@ -864,16 +821,10 @@ mod tests {
         assert_eq!(picker_candidates[0].platform_identifier, "falcon-id");
         assert_eq!(
             picker_candidates[0].support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(
-            picker_candidates[0].electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
-        assert_eq!(
-            picker_candidates[0].connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
-        );
+        assert_eq!(picker_candidates[0].electric_unicycle_model, None);
+        assert_eq!(picker_candidates[0].connection_route, None);
         assert_eq!(picker_candidates[1].platform_identifier, "vesc-id");
         assert_eq!(
             picker_candidates[1].support,
@@ -888,7 +839,7 @@ mod tests {
             picker_candidates[2].support,
             DiscoveryCandidateSupport::ProbeRecommended
         );
-        assert_eq!(picker_candidates[2].detail, "Read-only probe recommended");
+        assert_eq!(picker_candidates[2].detail, "Read-only protocol probe recommended");
         assert_eq!(picker_candidates[2].connection_route, None);
         assert_eq!(picker_candidates[2].electric_unicycle_model, None);
     }

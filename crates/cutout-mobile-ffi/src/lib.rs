@@ -1358,54 +1358,30 @@ pub fn mobile_discovery_candidate_from_advertisement(
     advertised_service_uuids: Vec<u16>,
 ) -> DiscoveryCandidate {
     let display_name = local_name.unwrap_or_else(|| "Unknown Bluetooth device".to_owned());
-    let lower_name = display_name.to_ascii_lowercase();
     if advertised_service_uuids.contains(&0xffe0) {
-        return match mobile_electric_unicycle_model_hint(&lower_name) {
-            Some(model) => DiscoveryCandidate {
-                platform_identifier,
-                display_name,
-                product_category: "Electric unicycle".to_owned(),
-                evidence: "advertisement hint".to_owned(),
-                detail: format!("{model:?} provisional route"),
-                is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::ProvisionalRoute,
-                recommended_action: DiscoveryCandidateSupport::ProvisionalRoute
-                    .recommended_action(),
-                section: DiscoveryCandidateSupport::ProvisionalRoute.picker_section(),
-                connection_route: Some(DiscoveryConnectionRoute::ElectricUnicycle),
-                electric_unicycle_model: Some(model),
-                disabled_reason: None,
-            },
-            None => DiscoveryCandidate {
-                platform_identifier,
-                display_name,
-                product_category: "Electric unicycle".to_owned(),
-                evidence: "FFE0/FFE1 transport hint".to_owned(),
-                detail: "Read-only probe recommended".to_owned(),
-                is_picker_candidate: true,
-                support: DiscoveryCandidateSupport::ProbeRecommended,
-                recommended_action: DiscoveryCandidateSupport::ProbeRecommended
-                    .recommended_action(),
-                section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
-                connection_route: None,
-                electric_unicycle_model: None,
-                disabled_reason: Some("Read-only probe recommended".to_owned()),
-            },
+        return DiscoveryCandidate {
+            platform_identifier,
+            display_name,
+            product_category: "Electric unicycle".to_owned(),
+            evidence: "FFE0/FFE1 transport hint".to_owned(),
+            detail: "Read-only protocol probe recommended".to_owned(),
+            is_picker_candidate: true,
+            support: DiscoveryCandidateSupport::ProbeRecommended,
+            recommended_action: DiscoveryCandidateSupport::ProbeRecommended.recommended_action(),
+            section: DiscoveryCandidateSupport::ProbeRecommended.picker_section(),
+            connection_route: None,
+            electric_unicycle_model: None,
+            disabled_reason: Some("Read-only protocol probe recommended".to_owned()),
         };
     }
 
-    if advertised_service_uuids.contains(&0xfff0)
-        || lower_name.contains("vesc")
-        || lower_name.contains("focer")
-        || lower_name.contains("onewheel")
-        || lower_name.contains("floatwheel")
-    {
+    if advertised_service_uuids.contains(&0xfff0) {
         return DiscoveryCandidate {
             platform_identifier,
             display_name,
             product_category: "VESC Onewheel".to_owned(),
-            evidence: "VESC advertisement hint".to_owned(),
-            detail: "VESC read-only route".to_owned(),
+            evidence: "FFF0 transport hint".to_owned(),
+            detail: "VESC protocol route".to_owned(),
             is_picker_candidate: true,
             support: DiscoveryCandidateSupport::ProvisionalRoute,
             recommended_action: DiscoveryCandidateSupport::ProvisionalRoute.recommended_action(),
@@ -13020,22 +12996,19 @@ mod tests {
         assert_eq!(candidate.platform_identifier, "ios-local-aero");
         assert_eq!(candidate.display_name, "NOSFET Aero");
         assert_eq!(candidate.product_category, "Electric unicycle");
-        assert_eq!(candidate.evidence, "advertisement hint");
-        assert_eq!(candidate.detail, "Aero provisional route");
+        assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        );
-        assert_eq!(candidate.disabled_reason, None);
     }
 
     #[test]
@@ -13230,7 +13203,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_generic_gotway_name_provisionally() {
+    fn mobile_discovery_candidate_recommends_protocol_probe_for_generic_ffe0() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-begode".to_owned(),
             Some("GotWay_002441".to_owned()),
@@ -13240,18 +13213,15 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
-        assert_eq!(candidate.disabled_reason, None);
-        assert_eq!(candidate.detail, "Falcon provisional route");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
     }
 
     #[test]
@@ -13267,7 +13237,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_discovery_candidate_routes_nf_name_provisionally() {
+    fn mobile_discovery_candidate_ignores_nf_name_until_protocol_identity() {
         let candidate = mobile_discovery_candidate_from_advertisement(
             "ios-local-aero".to_owned(),
             Some("NF2557".to_owned()),
@@ -13277,18 +13247,15 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(
             candidate.support,
-            DiscoveryCandidateSupport::ProvisionalRoute
+            DiscoveryCandidateSupport::ProbeRecommended
         );
+        assert_eq!(candidate.connection_route, None);
+        assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
-            candidate.connection_route,
-            Some(DiscoveryConnectionRoute::ElectricUnicycle)
+            candidate.disabled_reason,
+            Some("Read-only protocol probe recommended".to_owned())
         );
-        assert_eq!(
-            candidate.electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        );
-        assert_eq!(candidate.disabled_reason, None);
-        assert_eq!(candidate.detail, "Aero provisional route");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
     }
 
     #[test]
@@ -13323,10 +13290,7 @@ mod tests {
             Some("Begode Falcon".to_owned())
         );
         assert_eq!(snapshot.picker_candidates.len(), 1);
-        assert_eq!(
-            snapshot.picker_candidates[0].electric_unicycle_model,
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
+        assert_eq!(snapshot.picker_candidates[0].electric_unicycle_model, None);
 
         let selected = session.select_discovered_platform("ios-local-falcon".to_owned());
         assert_eq!(
@@ -13379,7 +13343,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_identification_probe_reports_no_probe_needed_for_selected_aero() {
+    fn mobile_identification_probe_runs_for_selected_ffe0_candidate() {
         let session = CutoutSessionStateHandle::new();
         let _ = session.observe_discovery(DiscoveryObservation {
             platform_identifier: "ios-local-aero".to_owned(),
@@ -13390,10 +13354,10 @@ mod tests {
         });
         let _ = session.select_discovered_platform("ios-local-aero".to_owned());
 
-        assert_eq!(
+        assert!(matches!(
             session.begin_identification_probe_at(1_000),
-            MobileIdentificationProbeOutcomeDto::NoProbeNeeded
-        );
+            MobileIdentificationProbeOutcomeDto::Writes { .. }
+        ));
     }
 
     #[test]
@@ -14825,7 +14789,7 @@ mod tests {
         assert!(candidate.is_picker_candidate);
         assert_eq!(candidate.product_category, "Electric unicycle");
         assert_eq!(candidate.evidence, "FFE0/FFE1 transport hint");
-        assert_eq!(candidate.detail, "Read-only probe recommended");
+        assert_eq!(candidate.detail, "Read-only protocol probe recommended");
         assert_eq!(
             candidate.support,
             DiscoveryCandidateSupport::ProbeRecommended
@@ -14839,7 +14803,7 @@ mod tests {
         assert_eq!(candidate.electric_unicycle_model, None);
         assert_eq!(
             candidate.disabled_reason,
-            Some("Read-only probe recommended".to_owned())
+            Some("Read-only protocol probe recommended".to_owned())
         );
     }
 
