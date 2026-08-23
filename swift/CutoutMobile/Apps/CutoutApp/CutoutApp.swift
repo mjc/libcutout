@@ -54,36 +54,12 @@ struct CutoutApp: App {
     @ViewBuilder
     private var rootView: some View {
 #if os(macOS)
-#if DEBUG
-        if isMelkValidation {
-            MelkValidationRouteView(rideModel: model, lighting: lighting)
-                .frame(minWidth: 360, minHeight: 280)
-        } else {
-            ContentView(model: model, lighting: lighting, navigationPath: $navigationPath)
-                .frame(minWidth: 360, minHeight: 280)
-        }
-#else
         ContentView(model: model, lighting: lighting, navigationPath: $navigationPath)
             .frame(minWidth: 360, minHeight: 280)
-#endif
-#else
-#if DEBUG
-        if isMelkValidation {
-            MelkValidationRouteView(rideModel: model, lighting: lighting)
-        } else {
-            ContentView(model: model, lighting: lighting, navigationPath: $navigationPath)
-        }
 #else
         ContentView(model: model, lighting: lighting, navigationPath: $navigationPath)
 #endif
-#endif
     }
-
-#if DEBUG
-    private var isMelkValidation: Bool {
-        CommandLine.arguments.contains("--melk-validation")
-    }
-#endif
 
     private var currentRoute: CutoutAppRoute {
         navigationPath.last ?? .devicePicker

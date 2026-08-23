@@ -202,7 +202,7 @@ final class LightingRouteModel {
     private(set) var restoreEnabled: Bool
     private(set) var accessoryAlias: String?
     private(set) var vehicleIdentifier: String?
-    private(set) var records: [MelkValidationLogEntry] = []
+    private(set) var records: [MelkLightingLogEntry] = []
     private(set) var notificationCount = 0
     private var isRunning = false
     private var requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
@@ -396,14 +396,14 @@ final class LightingRouteModel {
                 let candidate = record.dropFirst("candidate=".count)
                 peripheralName = String(candidate.split(separator: " id=", maxSplits: 1).first ?? candidate)
             }
-            records = Array((records + [MelkValidationLogEntry(text: record)]).suffix(12))
+            records = Array((records + [MelkLightingLogEntry(text: record)]).suffix(12))
         } else if record.hasPrefix("notification=") {
             notificationCount += 1
-            records = Array((records + [MelkValidationLogEntry(text: "FFF4 notification received")]).suffix(12))
+            records = Array((records + [MelkLightingLogEntry(text: "FFF4 notification received")]).suffix(12))
         } else if record.hasPrefix("requested=") {
-            records = Array((records + [MelkValidationLogEntry(text: "command requested")]).suffix(12))
+            records = Array((records + [MelkLightingLogEntry(text: "command requested")]).suffix(12))
         } else {
-            records = Array((records + [MelkValidationLogEntry(text: record)]).suffix(12))
+            records = Array((records + [MelkLightingLogEntry(text: record)]).suffix(12))
         }
     }
 
@@ -451,11 +451,11 @@ final class LightingRouteModel {
         }
         requestedState = SolidState(requested)
         commandStatus = .requested
-        records = Array((records + [MelkValidationLogEntry(text: "restore=requested")]).suffix(12))
+        records = Array((records + [MelkLightingLogEntry(text: "restore=requested")]).suffix(12))
     }
 }
 
-struct MelkValidationLogEntry: Identifiable {
+struct MelkLightingLogEntry: Identifiable {
     let id = UUID()
     let text: String
 }
@@ -1130,114 +1130,7 @@ private struct LightingPairingSheet: View {
     }
 }
 
-struct MelkValidationRouteView: View {
-    let rideModel: CutoutAppModel
-    let lighting: LightingRouteModel
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("MELK-OC21 validation")
-                    .font(.largeTitle.bold())
-
-                Text("Standalone accessory harness. LotusLamp X is only the historical official app label.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                statusCard
-                rideCard
-                commandControls
-                evidenceControls
-                testCoverageCard
-            }
-            .padding()
-        }
-        .background(PevColors.pageBackground.ignoresSafeArea())
-        .task { lighting.start() }
-    }
-
-    private var statusCard: some View {
-        GroupBox("Lighting connection") {
-            Label(lighting.connectionState.displayText, systemImage: lighting.connectionState.symbolName)
-                .accessibilityIdentifier("melk.validation.connection-state")
-            Text("FFF0 service · FFF3 write · FFF4 notify")
-                .font(.footnote.monospaced())
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var rideCard: some View {
-        GroupBox("Primary ride session") {
-            Label(rideModel.connectionStatusText, systemImage: "figure.roll")
-            Text("The MELK session uses an independent CoreBluetooth central.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var commandControls: some View {
-        GroupBox("Typed commands") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    commandButton("Power on", systemImage: "power") { lighting.setPower(true) }
-                    commandButton("Power off", systemImage: "power") { lighting.setPower(false) }
-                }
-                HStack {
-                    commandButton("Red", systemImage: "circle.fill") { lighting.setSolidColor(red: 255, green: 0, blue: 0) }
-                    commandButton("Green", systemImage: "circle.fill") { lighting.setSolidColor(red: 0, green: 255, blue: 0) }
-                    commandButton("Blue", systemImage: "circle.fill") { lighting.setSolidColor(red: 0, green: 0, blue: 255) }
-                }
-                HStack {
-                    commandButton("Mixed", systemImage: "circle.fill") { lighting.setSolidColor(red: 255, green: 96, blue: 24) }
-                    ForEach([10, 50, 100], id: \.self) { percentage in
-                        commandButton("\(percentage)%", systemImage: "sun.max") {
-                            lighting.setBrightness(UInt8(percentage))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private var evidenceControls: some View {
-        GroupBox("Command evidence") {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Status: \(lighting.commandStatus.displayText)", systemImage: lighting.commandStatus.symbolName)
-                    .accessibilityIdentifier("melk.validation.command-status")
-                Text("A write is never treated as success without an explicit confirmation observation.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button("Mark confirmed") { lighting.markConfirmed() }
-                    Button("Mark unconfirmed") { lighting.markUnconfirmed() }
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-
-    private var testCoverageCard: some View {
-        GroupBox("Branch-added tests") {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Core RGB model: preserves all channels, bounds brightness, keeps commands typed, and gates restore on opt-in plus the same accessory identity.")
-                Text("MELK protocol: verifies ELK-BLEDOM frame encoding, exact MELK-OC21 and GATT matching, and FFF3 write/FFF4 confirmation policy.")
-                Text("Mobile FFI: checks typed GATT evidence, exported payloads, invalid brightness, and restore DTO decisions.")
-                Text("CoreBluetooth harness: covers standalone scanning, explicit command evidence, typed writes/subscription, and observed identity roles.")
-                Text("Ride navigation: covers Lighting tab routing, selection, shortcuts, localization, and unavailable-tab behavior for EUC and VESC.")
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private func commandButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-    }
-}
 
 private extension MelkLightingPeripheralState {
     var displayText: String {
