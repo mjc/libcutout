@@ -334,6 +334,9 @@ public final class CutoutSessionCore: NSObject {
     public var rollAngleState: RollAngleSettingState? {
         onBleQueue { liveOwner?.rollAngleState }
     }
+    public var speedAlarmModeState: SpeedAlarmModeSettingState? {
+        onBleQueue { liveOwner?.speedAlarmModeState }
+    }
     public var accelerationAssistState: AccelerationAssistSettingState? {
         onBleQueue { liveOwner?.accelerationAssistState }
     }
@@ -730,6 +733,29 @@ public final class CutoutSessionCore: NSObject {
                 return .failed
             } catch {
                 record("set_roll_angle_error=\(error)")
+                return .failed
+            }
+        }
+    }
+
+    @discardableResult
+    public func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        onBleQueue {
+            guard phase == .live, let liveOwner else { return .failed }
+            guard liveOwner.armSettingsWrites(at: clock.now()) else {
+                return .refused(.missingArm)
+            }
+            do {
+                try liveOwner.handleCommand(.setSpeedAlarmMode(mode), at: clock.now())
+                return .accepted
+            } catch let error as CutoutSessionError {
+                record("set_speed_alarm_mode_error=\(error)")
+                if case let .commandRefused(_, reason) = error {
+                    return .refused(reason)
+                }
+                return .failed
+            } catch {
+                record("set_speed_alarm_mode_error=\(error)")
                 return .failed
             }
         }

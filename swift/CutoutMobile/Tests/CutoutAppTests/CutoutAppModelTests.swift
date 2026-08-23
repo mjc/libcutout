@@ -161,6 +161,7 @@ final class CutoutAppModelTests: XCTestCase {
             EucSettingsCapabilities(
                 pedalMode: .supported,
                 rollAngle: .supported,
+                speedAlarmMode: .supported,
                 accelerationAssist: .unsupported,
                 headlight: .supported,
                 taillight: .unsupported
@@ -188,6 +189,17 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.rollAngleControlAvailable)
         XCTAssertEqual(model.setRollAngle(.high), .accepted)
         XCTAssertEqual(driver.rollAngles, [.high])
+    }
+
+    @MainActor
+    func testSpeedAlarmModeWriteUsesTheSupportedCapability() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.electricUnicycleModel = .falcon
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.speedAlarmModeControlAvailable)
+        XCTAssertEqual(model.setSpeedAlarmMode(.stageOneOnly), .accepted)
+        XCTAssertEqual(driver.speedAlarmModes, [.stageOneOnly])
     }
 
     @MainActor
@@ -2926,6 +2938,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var headlightState: LightSettingState?
     var pedalModeState: PedalModeSettingState?
     var rollAngleState: RollAngleSettingState?
+    var speedAlarmModeState: SpeedAlarmModeSettingState?
     var accelerationAssistState: AccelerationAssistSettingState?
     var taillightState: LightSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
@@ -2948,6 +2961,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var headlightStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
     private(set) var rollAngles = [RollAngle.Kind]()
+    private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: SettingCommandResult = .accepted
     var pedalModeCommandResult: SettingCommandResult = .accepted
@@ -3031,6 +3045,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     }
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
         rollAngles.append(angle)
+        return .accepted
+    }
+    func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult {
+        speedAlarmModes.append(mode)
         return .accepted
     }
     func now() -> MonotonicMilliseconds {

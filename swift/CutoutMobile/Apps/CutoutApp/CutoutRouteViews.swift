@@ -140,6 +140,9 @@ struct EucTuneRouteView: View {
                     if model.rollAngleControlAvailable {
                         EucRollAngleControl(model: model)
                     }
+                    if model.speedAlarmModeControlAvailable {
+                        EucSpeedAlarmModeControl(model: model)
+                    }
                 } header: {
                     Text(localizedAppText("settings.lights.title"))
                 } footer: {
@@ -150,6 +153,9 @@ struct EucTuneRouteView: View {
                         }
                         if model.rollAngleControlAvailable {
                             Text(localizedAppText("settings.roll_angle.footer"))
+                        }
+                        if model.speedAlarmModeControlAvailable {
+                            Text(localizedAppText("settings.speed_alarm_mode.footer"))
                         }
                     }
                 }
@@ -180,6 +186,14 @@ struct EucTuneRouteView: View {
                             value: EucSettingReadbackPresentation.rollAngle(
                                 model.rollAngleState,
                                 fallback: settings.rollAngle
+                            )
+                        )
+                        EucSettingReadbackRow(
+                            id: "speedAlarmMode",
+                            title: localizedAppText("settings.speed_alarm_mode.title"),
+                            value: EucSettingReadbackPresentation.speedAlarmMode(
+                                model.speedAlarmModeState,
+                                fallback: settings.speedAlarmMode
                             )
                         )
                         EucSettingReadbackRow(
@@ -215,6 +229,14 @@ struct EucTuneRouteView: View {
                             support: capabilities.rollAngle,
                             state: model.rollAngleState?.kind,
                             confirmedAt: model.rollAngleState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "speedAlarmMode",
+                            title: localizedAppText("settings.speed_alarm_mode.title"),
+                            support: capabilities.speedAlarmMode,
+                            state: model.speedAlarmModeState?.kind,
+                            confirmedAt: model.speedAlarmModeState?.confirmedAt,
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
@@ -311,6 +333,39 @@ private struct EucRollAngleControl: View {
     }
 }
 
+private struct EucSpeedAlarmModeControl: View {
+    let model: CutoutAppModel
+    @State private var selectedMode: SpeedAlarmMode.Kind = .both
+
+    private static let modes: [SpeedAlarmMode.Kind] = [.both, .stageOneOnly]
+
+    var body: some View {
+        Picker(
+            localizedAppText("settings.speed_alarm_mode.title"),
+            selection: Binding(
+                get: { model.speedAlarmModeState?.current ?? readbackMode ?? selectedMode },
+                set: {
+                    selectedMode = $0
+                    _ = model.setSpeedAlarmMode($0)
+                }
+            )
+        ) {
+            ForEach(Self.modes, id: \.self) { mode in
+                Text(localizedAppText("settings.speed_alarm_mode.\(mode.localizationKey)"))
+                    .tag(mode)
+            }
+        }
+        .pickerStyle(.menu)
+        .disabled(model.phase != .live)
+        .accessibilityHint(localizedAppText("settings.speed_alarm_mode.footer"))
+        .accessibilityIdentifier("settings.control.speedAlarmMode")
+    }
+
+    private var readbackMode: SpeedAlarmMode.Kind? {
+        model.settingsReadback?.eucGarageSettings.speedAlarmMode.value?.documentedKind
+    }
+}
+
 private extension PedalMode.Kind {
     var localizationKey: String {
         switch self {
@@ -327,6 +382,17 @@ private extension RollAngle.Kind {
         case .low: "low"
         case .medium: "medium"
         case .high: "high"
+        }
+    }
+}
+
+private extension SpeedAlarmMode.Kind {
+    var localizationKey: String {
+        switch self {
+        case .both: "both"
+        case .stageOneOnly: "stage_one_only"
+        case .off: "off"
+        case .pwmTiltback: "pwm_tiltback"
         }
     }
 }
@@ -396,6 +462,21 @@ enum EucSettingReadbackPresentation {
                 : localizedAppText("settings.readback.unavailable")
         }
         return value.documentedKind?.displayName ?? value.rawAngle.map(String.init) ?? "—"
+    }
+
+    static func speedAlarmMode(
+        _ state: SpeedAlarmModeSettingState?,
+        fallback readback: ReadbackValue<SpeedAlarmMode>
+    ) -> String {
+        if let state, let value = state.current ?? state.requested {
+            return value.displayName
+        }
+        guard let value = readback.value else {
+            return readback.availability == .unsupported
+                ? localizedAppText("settings.readback.unsupported")
+                : localizedAppText("settings.readback.unavailable")
+        }
+        return value.documentedKind?.displayName ?? value.rawMode.map(String.init) ?? "—"
     }
 
     static func seconds(_ readback: ReadbackValue<UInt64>) -> String {

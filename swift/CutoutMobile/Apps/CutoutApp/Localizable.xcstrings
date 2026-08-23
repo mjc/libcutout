@@ -197,6 +197,30 @@
       "comment" : "High roll-angle sensitivity picker value.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "High" } } }
     },
+    "settings.speed_alarm_mode.title" : {
+      "comment" : "Label for the Begode speed-alarm mode setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Speed alarms" } } }
+    },
+    "settings.speed_alarm_mode.footer" : {
+      "comment" : "Safety guidance for the speed-alarm mode write control.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Change only while parked or at 500 mm/s or less." } } }
+    },
+    "settings.speed_alarm_mode.both" : {
+      "comment" : "Both speed alarms picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Both alarms" } } }
+    },
+    "settings.speed_alarm_mode.stage_one_only" : {
+      "comment" : "Stage-one-only speed alarm picker value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Stage 1 only" } } }
+    },
+    "settings.speed_alarm_mode.off" : {
+      "comment" : "Off speed alarm readback value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Off" } } }
+    },
+    "settings.speed_alarm_mode.pwm_tiltback" : {
+      "comment" : "PWM tiltback speed alarm readback value.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM tiltback" } } }
+    },
     "settings.acceleration_assist.title" : {
       "comment" : "Label for the EUC acceleration assist setting.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Acceleration assist" } } }
