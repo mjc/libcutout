@@ -226,7 +226,7 @@ final class LightingRouteModel {
                     self?.ensureRecordForConnectedAccessory()
                     self?.persistence.setConnection(.ready)
                     self?.restoreIfEligible()
-                } else if state == .disconnected {
+                } else if state != .idle {
                     self?.persistence.setConnection(.disconnected)
                 }
             }
