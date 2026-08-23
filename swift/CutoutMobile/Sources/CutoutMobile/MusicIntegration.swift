@@ -35,6 +35,18 @@ public extension MobileMusicProviderDto {
     }
 }
 
+private extension MobileMusicCapabilitiesDto {
+    func supports(_ command: MobileMusicCommandDto) -> Bool {
+        switch command {
+        case .previous: previous
+        case .play: play
+        case .pause: pause
+        case .next: next
+        case .openProvider: openProvider
+        }
+    }
+}
+
 /// Persists only the compact-player visibility preference.
 public struct MusicPlayerVisibilityStore {
     private static let key = "io.cutout.music.compact-player.hidden"
@@ -95,12 +107,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
         self.init(snapshot: observation.snapshot, artwork: observation.artwork)
     }
 
-    public var providerName: String {
-        switch provider {
-        case .appleMusic: pevLocalizedText("music.provider.apple_music")
-        case .spotify: pevLocalizedText("music.provider.spotify")
-        }
-    }
+    public var providerName: String { provider.title }
 
     public var title: String { item?.title ?? pevLocalizedText("music.not_playing") }
     public var artist: String { item?.artist ?? providerName }
@@ -148,13 +155,7 @@ public struct MusicNowPlaying: Equatable, Sendable {
     }
 
     public func supports(_ command: MobileMusicCommandDto) -> Bool {
-        switch command {
-        case .previous: capabilities.previous
-        case .play: capabilities.play
-        case .pause: capabilities.pause
-        case .next: capabilities.next
-        case .openProvider: capabilities.openProvider
-        }
+        capabilities.supports(command)
     }
 }
 
