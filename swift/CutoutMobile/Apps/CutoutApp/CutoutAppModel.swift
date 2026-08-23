@@ -283,20 +283,11 @@ final class CutoutAppModel {
         clockUncertaintyMs: UInt64 = 1_000
     ) -> Bool {
         let wallClockAtMs = wallClockAtMs ?? UInt64(Date().timeIntervalSince1970 * 1_000)
-        let captureObservation: MobilePevcapMusicEventDto? = {
-            guard musicHistoryPolicy != .disabled,
-                  let item = observation.snapshot.item,
-                  let positionMilliseconds = observation.snapshot.positionMilliseconds
-            else { return nil }
-            return MobilePevcapMusicEventDto(
-                provider: observation.snapshot.provider,
-                trackId: item.identifier,
-                trackPositionMs: positionMilliseconds,
-                wallClockUnixMs: wallClockAtMs,
-                clockUncertaintyMs: clockUncertaintyMs,
-                rideSequence: nil
-            )
-        }()
+        let captureObservation = musicCaptureObservation(
+            from: observation,
+            wallClockAtMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs
+        )
         core.updateMusicCaptureObservation(captureObservation)
         do {
             _ = try musicCoordinator.ingest(
@@ -312,6 +303,25 @@ final class CutoutAppModel {
             musicNowPlaying = isMusicPlayerHidden ? nil : musicCoordinator.nowPlaying
             return false
         }
+    }
+
+    private func musicCaptureObservation(
+        from observation: MusicProviderObservation,
+        wallClockAtMs: UInt64,
+        clockUncertaintyMs: UInt64
+    ) -> MobilePevcapMusicEventDto? {
+        guard musicHistoryPolicy != .disabled,
+              let item = observation.snapshot.item,
+              let positionMilliseconds = observation.snapshot.positionMilliseconds
+        else { return nil }
+        return MobilePevcapMusicEventDto(
+            provider: observation.snapshot.provider,
+            trackId: item.identifier,
+            trackPositionMs: positionMilliseconds,
+            wallClockUnixMs: wallClockAtMs,
+            clockUncertaintyMs: clockUncertaintyMs,
+            rideSequence: nil
+        )
     }
 
     func setMusicHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) -> Bool {
