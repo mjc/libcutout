@@ -191,6 +191,17 @@ impl PedalMode {
             _ => None,
         }
     }
+
+    /// Decodes the documented Begode Live-B pedal-mode bitfield.
+    #[must_use]
+    pub const fn from_begode_settings_bits(raw: u16) -> Option<Self> {
+        match (raw >> 13) & 0x03 {
+            0 => Some(Self::Soft),
+            1 => Some(Self::Medium),
+            2 => Some(Self::Hard),
+            _ => None,
+        }
+    }
 }
 
 /// Command requested by the host application.
@@ -9986,6 +9997,23 @@ mod tests {
             Some(crate::PedalMode::Soft)
         );
         assert_eq!(crate::PedalMode::from_veteran_raw(1920), None);
+    }
+
+    #[test]
+    fn begode_pedal_mode_settings_bits_use_documented_inverted_mapping() {
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x0000),
+            Some(crate::PedalMode::Soft)
+        );
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x2000),
+            Some(crate::PedalMode::Medium)
+        );
+        assert_eq!(
+            crate::PedalMode::from_begode_settings_bits(0x4000),
+            Some(crate::PedalMode::Hard)
+        );
+        assert_eq!(crate::PedalMode::from_begode_settings_bits(0x6000), None);
     }
 
     #[test]
