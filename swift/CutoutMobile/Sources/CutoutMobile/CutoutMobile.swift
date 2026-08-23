@@ -5668,6 +5668,7 @@ public enum CoreBluetoothLiveRecord: Equatable, Hashable, Sendable {
 }
 
 public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
+    private static let settingTickInterval = DispatchTimeInterval.milliseconds(250)
     private let platformIdentifier: CoreBluetoothPeripheralIdentifier
     private let runner: CoreBluetoothSessionRunner
     private let retainedSink: CoreBluetoothOperationSink
@@ -5808,6 +5809,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         return step
     }
 
+    /// Advances Rust-owned setting lifecycles without sending a device command.
     @discardableResult
     public func handleTick(at monotonicMilliseconds: MonotonicMilliseconds) throws -> CoreBluetoothSessionStep {
         let step = try runner.handle(.tick(at: monotonicMilliseconds))
@@ -5942,7 +5944,7 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
         }
         pendingTick = tick
         (executionQueue ?? DispatchQueue.main).asyncAfter(
-            deadline: .now() + .milliseconds(250),
+            deadline: .now() + Self.settingTickInterval,
             execute: tick
         )
     }
