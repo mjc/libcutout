@@ -185,11 +185,7 @@ where
     /// Records a timeout when the pending request has reached its deadline.
     ///
     /// Returns whether the state transitioned to timed out.
-    pub fn timeout_if_elapsed(
-        &mut self,
-        now: MonotonicTimestamp,
-        timeout: Duration,
-    ) -> bool {
+    pub fn timeout_if_elapsed(&mut self, now: MonotonicTimestamp, timeout: Duration) -> bool {
         let Self::Pending { submitted_at, .. } = *self else {
             return false;
         };
