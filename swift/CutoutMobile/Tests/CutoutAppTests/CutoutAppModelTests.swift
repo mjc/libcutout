@@ -164,7 +164,10 @@ final class CutoutAppModelTests: XCTestCase {
                 speedAlarmMode: .supported,
                 accelerationAssist: .unsupported,
                 headlight: .supported,
-                taillight: .unsupported
+                taillight: .unsupported,
+                begodeMaxSpeed: .supported,
+                begodeBeeperVolume: .supported,
+                begodeLedMode: .supported
             )
         )
     }
