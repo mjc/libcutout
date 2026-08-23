@@ -6,10 +6,12 @@ import XCTest
 final class RideMapStateTests: XCTestCase {
     func testMapStateUsesMainRustDatabaseForLifecycleAndRoutePoints() throws {
         let path = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cutout-map-(UUID().uuidString).sqlite")
-        defer { try? FileManager.default.removeItem(at: path) }
-
+            .appendingPathComponent("cutout-map-\(UUID().uuidString).sqlite")
         let database = try openRideDatabase(path: path.path)
+        defer {
+            try? database.shutdown()
+            try? FileManager.default.removeItem(at: path)
+        }
         let state = MobileRideMapState(database: database)
 
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: "pev-1")
