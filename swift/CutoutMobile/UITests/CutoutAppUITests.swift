@@ -912,6 +912,39 @@ final class CutoutAppUITests: XCTestCase {
         try assertEssentialRideControlsRemainVisibleWithoutScrolling(for: .euc)
     }
 
+    func testEucLightingRouteUsesProductionControls() throws {
+        XCTAssertTrue(pairAvailableDevice(.euc))
+        guard connectedScreen(timeout: 20) != nil else {
+            XCTFail("The deterministic EUC fixture did not open its Ride screen")
+            return
+        }
+        defer { disconnectIfConnected() }
+
+        let lightingTab = app.tabBars.buttons["dashboard.nav.lighting"]
+        XCTAssertTrue(lightingTab.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(lightingTab.isHittable)
+        lightingTab.tap()
+
+        let lighting = app.descendants(matching: .any)["dashboard.screen.lighting"]
+        XCTAssertTrue(lighting.waitForExistence(timeout: 5), app.debugDescription)
+        for identifier in [
+            "lighting.connection-state",
+            "lighting.profile-evidence",
+            "lighting.power",
+            "lighting.color-wheel",
+            "lighting.brightness",
+            "lighting.command-status",
+            "lighting.accessory-details",
+        ] {
+            let element = app.descendants(matching: .any)[identifier]
+            XCTAssertTrue(element.waitForExistence(timeout: 5), "Missing live Lighting control: \(identifier)")
+        }
+        XCTAssertTrue(app.buttons["lighting.quick-preset.red"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["lighting.quick-preset.blue"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["lighting.quick-preset.night"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["melk.validation"].exists)
+    }
+
     private func assertEssentialRideControlsRemainVisibleWithoutScrolling(
         for family: ConnectedDeviceFamily
     ) throws {
