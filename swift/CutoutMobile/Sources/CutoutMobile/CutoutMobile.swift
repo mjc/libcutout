@@ -2562,8 +2562,26 @@ public struct ReadbackValue<Value: Equatable & Hashable & Sendable>: Equatable, 
 }
 
 public struct PedalMode: Equatable, Hashable, Sendable {
+    public enum Kind: Equatable, Hashable, Sendable {
+        case hard
+        case medium
+        case soft
+
+        public var displayName: String {
+            switch self {
+            case .hard:
+                "Hard"
+            case .medium:
+                "Medium"
+            case .soft:
+                "Soft"
+            }
+        }
+    }
+
     public enum Value: Equatable, Hashable, Sendable {
         case hardnessPercent(UInt8)
+        case documented(Kind)
         case rawMode(UInt16)
     }
 
@@ -2583,8 +2601,19 @@ public struct PedalMode: Equatable, Hashable, Sendable {
         return rawMode
     }
 
+    public var documentedKind: Kind? {
+        guard case let .documented(kind) = value else {
+            return nil
+        }
+        return kind
+    }
+
     public init(hardnessPercent: UInt8) {
         self.value = .hardnessPercent(hardnessPercent)
+    }
+
+    public static func documented(_ kind: Kind) -> Self {
+        Self(value: .documented(kind))
     }
 
     public static func rawMode(_ value: UInt16) -> Self {
@@ -2666,7 +2695,24 @@ private extension PedalMode {
         guard let rawMode = dto.rawMode else {
             return nil
         }
-        self = .rawMode(rawMode)
+        if let mode = dto.mode {
+            self = .documented(Kind(mode))
+        } else {
+            self = .rawMode(rawMode)
+        }
+    }
+}
+
+private extension PedalMode.Kind {
+    init(_ dto: MobilePedalModeKindDto) {
+        switch dto {
+        case .hard:
+            self = .hard
+        case .medium:
+            self = .medium
+        case .soft:
+            self = .soft
+        }
     }
 }
 

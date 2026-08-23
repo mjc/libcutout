@@ -223,6 +223,9 @@ enum EucSettingReadbackPresentation {
         guard let value = readback.value else {
             return availabilityText(readback.availability)
         }
+        if let kind = value.documentedKind {
+            return kind.displayName
+        }
         if let percent = value.percent {
             return "\(percent)%"
         }
