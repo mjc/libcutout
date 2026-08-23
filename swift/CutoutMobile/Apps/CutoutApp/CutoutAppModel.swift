@@ -18,6 +18,7 @@ final class CutoutAppModel {
 
     private struct MusicCaptureKey: Equatable {
         let provider: MobileMusicProviderDto
+        let sessionID: String
         let itemIdentifier: String
         let state: MobileMusicPlaybackStateDto
     }
@@ -389,6 +390,7 @@ final class CutoutAppModel {
 
         let key = MusicCaptureKey(
             provider: observation.snapshot.provider,
+            sessionID: observation.snapshot.sessionId,
             itemIdentifier: item.identifier,
             state: observation.snapshot.state
         )

@@ -335,6 +335,56 @@ final class CutoutAppModelTests: XCTestCase {
 
 
     @MainActor
+    func testProviderSessionChangeRefreshesPevcapContextForTheSameTrack() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        XCTAssertTrue(model.setMusicHistoryPolicy(.opaqueItem))
+        XCTAssertTrue(model.startGpsOnlyRide())
+
+        let first = MobileMusicSnapshotDto(
+            provider: .appleMusic,
+            sessionId: "session-1",
+            state: .playing,
+            item: MobileMusicItemDto(identifier: "track-1", title: "Track", artist: "Artist"),
+            positionMilliseconds: 0,
+            durationMilliseconds: 60_000,
+            observedAtMs: 10,
+            capabilities: MobileMusicCapabilitiesDto(
+                previous: true,
+                play: false,
+                pause: true,
+                next: true,
+                openProvider: false
+            )
+        )
+        let reconnected = MobileMusicSnapshotDto(
+            provider: first.provider,
+            sessionId: "session-2",
+            state: first.state,
+            item: first.item,
+            positionMilliseconds: first.positionMilliseconds,
+            durationMilliseconds: first.durationMilliseconds,
+            observedAtMs: 20,
+            capabilities: first.capabilities
+        )
+
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: first),
+            wallClockAtMs: 30,
+            clockUncertaintyMs: 1
+        ))
+        XCTAssertTrue(model.ingestMusicObservation(
+            MusicProviderObservation(snapshot: reconnected),
+            wallClockAtMs: 40,
+            clockUncertaintyMs: 1
+        ))
+
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.trackId, "track-1")
+        XCTAssertEqual(driver.lastMusicCaptureObservation?.wallClockUnixMs, 40)
+        XCTAssertEqual(model.musicTimelineEvents.count, 1)
+    }
+
+    @MainActor
     func testProgressOnlyMusicObservationDoesNotReplacePevcapContext() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
