@@ -97,4 +97,22 @@ final class MelkLightingValidationTests: XCTestCase {
         XCTAssertTrue(target.isInvalid)
         XCTAssertFalse(target.accepts(CoreBluetoothPeripheralIdentifier("legacy-melk")))
     }
+
+    func testConnectionLossStatesResetLightingRestoreEligibility() {
+        let resetStates: [MelkLightingPeripheralState] = [
+            .scanning,
+            .connecting,
+            .retrying(attempt: 1, delayMilliseconds: 250),
+            .disconnected,
+            .failed("Bluetooth unavailable"),
+        ]
+        let stableStates: [MelkLightingPeripheralState] = [
+            .idle,
+            .discovering,
+            .ready,
+        ]
+
+        XCTAssertTrue(resetStates.allSatisfy(\.resetsRestoreEligibility))
+        XCTAssertTrue(stableStates.allSatisfy { !$0.resetsRestoreEligibility })
+    }
 }
