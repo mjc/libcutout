@@ -72,7 +72,8 @@ use cutout_core::{
     WallClockUnixTimestamp, WriteMode,
 };
 use cutout_protocols::{
-    BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_TILTBACK_SPEED_KMH,
+    BEGODE_DATA_CHANNEL, BEGODE_FIELD_LED_AND_LIGHT_MODE, BEGODE_FIELD_SETTINGS_BITS,
+    BEGODE_FIELD_TILTBACK_SPEED_KMH,
     ConcreteAeroBenignControlSession, ConcreteFalconBenignControlSession, ConcreteFalconProfileDto,
     ConcreteSessionErrorDto, ConcreteSessionStepResultDto, DeviceDetectionEvent,
     DeviceDetectionResolution, DeviceDetectionSession, DeviceFamily, IdentityBannerEvidence,
@@ -10537,6 +10538,11 @@ impl MobileEucGarageSettingsDto {
                     raw_mode: Some(raw_mode),
                     mode: CorePedalMode::from_veteran_raw(raw_mode)
                         .map(MobilePedalModeKindDto::from),
+                })
+                .or_else(|| {
+                    settings_entry(entries, BEGODE_FIELD_SETTINGS_BITS)
+                        .and_then(|entry| u16::try_from(entry.field.value).ok())
+                        .map(begode_pedal_mode)
                 }),
             light_state: settings_entry(entries, BEGODE_FIELD_LED_AND_LIGHT_MODE)
                 .and_then(|entry| u16::try_from(entry.field.value).ok())
@@ -10557,6 +10563,14 @@ fn settings_entry(
         .iter()
         .copied()
         .find(|entry| entry.field.id == field_id)
+}
+
+fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
+    MobilePedalModeDto {
+        raw_mode: Some((settings_bits >> 13) & 0x03),
+        mode: CorePedalMode::from_begode_settings_bits(settings_bits)
+            .map(MobilePedalModeKindDto::from),
+    }
 }
 
 fn settings_speed(
@@ -13898,6 +13912,31 @@ mod tests {
                 pedal_mode: None,
                 light_state: None,
             }
+        );
+    }
+
+    #[test]
+    fn mobile_settings_readback_decodes_documented_begode_pedal_mode() {
+        let readback = SettingsReadback::available([
+            Some(SettingsEntry {
+                field: RawFieldValue::new(BEGODE_FIELD_SETTINGS_BITS, 0x4000),
+                source: ValueSource::Reported,
+                quality: ValueQuality::Known,
+                verification: VerificationStatus::SourceVerified,
+            }),
+            None,
+            None,
+            None,
+        ]);
+
+        let mobile = MobileSettingsReadbackDto::from(readback);
+
+        assert_eq!(
+            mobile.euc_garage.pedal_mode,
+            Some(MobilePedalModeDto {
+                raw_mode: Some(2),
+                mode: Some(MobilePedalModeKindDto::Hard),
+            })
         );
     }
 
