@@ -2736,21 +2736,12 @@ impl MobilePedalModeSettingTracker {
         }
 
         if let Some(MobileCommandDto::SetPedalMode(requested)) = input.command {
-            match result.error.as_ref() {
-                None => self
-                    .state
-                    .submit(requested.into(), input.monotonic_ms.into_core()),
-                Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
-                    self.state
-                        .submit(requested.into(), input.monotonic_ms.into_core());
-                    if let Some(reason) = error.reason {
-                        self.state.refuse(reason.into());
-                    } else {
-                        self.state.fail();
-                    }
-                }
-                Some(_) => self.state.fail(),
-            }
+            observe_setting_write(
+                &mut self.state,
+                requested.into(),
+                input.monotonic_ms.into_core(),
+                result,
+            );
         }
 
         for output in &result.outputs {
@@ -2789,21 +2780,12 @@ impl MobileLightSettingTracker {
         }
 
         if let Some(MobileCommandDto::SetLights(requested)) = input.command {
-            match result.error.as_ref() {
-                None => self
-                    .state
-                    .submit(requested.into(), input.monotonic_ms.into_core()),
-                Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
-                    self.state
-                        .submit(requested.into(), input.monotonic_ms.into_core());
-                    if let Some(reason) = error.reason {
-                        self.state.refuse(reason.into());
-                    } else {
-                        self.state.fail();
-                    }
-                }
-                Some(_) => self.state.fail(),
-            }
+            observe_setting_write(
+                &mut self.state,
+                requested.into(),
+                input.monotonic_ms.into_core(),
+                result,
+            );
         }
 
         for output in &result.outputs {
@@ -2823,6 +2805,28 @@ impl MobileLightSettingTracker {
 
     fn snapshot(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.state)
+    }
+}
+
+fn observe_setting_write<Value>(
+    state: &mut CoreSettingState<Value>,
+    requested: Value,
+    submitted_at: MonotonicTimestamp,
+    result: &MobileSessionStepResultDto,
+) where
+    Value: Copy + Eq,
+{
+    match result.error.as_ref() {
+        None => state.submit(requested, submitted_at),
+        Some(error) if error.kind == MobileSessionStepErrorKindDto::CommandRefused => {
+            state.submit(requested, submitted_at);
+            if let Some(reason) = error.reason {
+                state.refuse(reason.into());
+            } else {
+                state.fail();
+            }
+        }
+        Some(_) => state.fail(),
     }
 }
 
