@@ -27,7 +27,7 @@ struct MelkLightingTargetPolicy: Equatable, Sendable {
 }
 
 /// Failure while matching an observed standalone MELK controller to its typed profile.
-public enum MelkLightingValidationError: Error, Equatable, Sendable {
+enum MelkLightingValidationError: Error, Equatable, Sendable {
     case missingService
     case missingWriteCharacteristic
     case missingNotificationCharacteristic
@@ -43,33 +43,33 @@ public enum MelkLightingCommandStatus: Equatable, Sendable {
 }
 
 /// Small state tracker used by the live validator; a write never self-confirms.
-public struct MelkLightingCommandEvidence: Equatable, Sendable {
-    public private(set) var status: MelkLightingCommandStatus = .idle
+struct MelkLightingCommandEvidence: Equatable, Sendable {
+    private(set) var status: MelkLightingCommandStatus = .idle
 
-    public init() {}
+    init() {}
 
-    public mutating func requested() {
+    mutating func requested() {
         status = .requested
     }
 
-    public mutating func confirmed() {
+    mutating func confirmed() {
         guard status == .requested else { return }
         status = .confirmed
     }
 
-    public mutating func unconfirmed() {
+    mutating func unconfirmed() {
         guard status == .requested else { return }
         status = .unconfirmed
     }
 }
 
 /// One Rust-owned MELK write ready for the existing CoreBluetooth operation sink.
-public struct MelkLightingWritePlan: Equatable, Sendable {
-    public let operation: CoreBluetoothPlannedOperation
-    public let confirmationChannel: BluetoothUuid
-    public let minimumIntervalMilliseconds: UInt16?
+struct MelkLightingWritePlan: Equatable, Sendable {
+    let operation: CoreBluetoothPlannedOperation
+    let confirmationChannel: BluetoothUuid
+    let minimumIntervalMilliseconds: UInt16?
 
-    public init(
+    init(
         operation: CoreBluetoothPlannedOperation,
         confirmationChannel: BluetoothUuid,
         minimumIntervalMilliseconds: UInt16?
@@ -84,16 +84,16 @@ public struct MelkLightingWritePlan: Equatable, Sendable {
 ///
 /// Rust selects the profile and emits command bytes. This type only validates the observed GATT
 /// roles and adapts those typed writes to the existing CoreBluetooth operation sink.
-public struct MelkLightingValidationHarness: Sendable {
-    public static let service = BluetoothUuid.bluetooth16(0xfff0)
-    public static let write = BluetoothUuid.bluetooth16(0xfff3)
-    public static let notify = BluetoothUuid.bluetooth16(0xfff4)
+struct MelkLightingValidationHarness: Sendable {
+    static let service = BluetoothUuid.bluetooth16(0xfff0)
+    static let write = BluetoothUuid.bluetooth16(0xfff3)
+    static let notify = BluetoothUuid.bluetooth16(0xfff4)
 
     private let profile: MobileMelkLightingProfile
 
-    public let subscription: CoreBluetoothPlannedOperation
+    let subscription: CoreBluetoothPlannedOperation
 
-    public init(
+    init(
         name: String,
         inventory: CoreBluetoothGattInventory
     ) throws {
@@ -127,15 +127,15 @@ public struct MelkLightingValidationHarness: Sendable {
         subscription = .subscribe(channel: notifyCharacteristic.uuid)
     }
 
-    public func setPower(_ on: Bool) -> MelkLightingWritePlan {
+    func setPower(_ on: Bool) -> MelkLightingWritePlan {
         plan(profile.setPower(on: on))
     }
 
-    public func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> MelkLightingWritePlan {
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> MelkLightingWritePlan {
         plan(profile.setSolidColor(red: red, green: green, blue: blue))
     }
 
-    public func setBrightness(_ percentage: UInt8) throws -> MelkLightingWritePlan {
+    func setBrightness(_ percentage: UInt8) throws -> MelkLightingWritePlan {
         plan(try profile.setBrightness(percentage: percentage))
     }
 
@@ -191,8 +191,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     public private(set) var connectionState: MelkLightingPeripheralState = .idle
     public private(set) var peripheralName: String?
     public private(set) var peripheralIdentifier: String?
-    public private(set) var commandEvidence = MelkLightingCommandEvidence()
-    public private(set) var lastWritePlan: MelkLightingWritePlan?
+    private var commandEvidence = MelkLightingCommandEvidence()
 
     /// Called on the validator's CoreBluetooth queue.
     public var onStateChange: ((MelkLightingPeripheralState) -> Void)?
@@ -534,7 +533,6 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             return false
         }
         sink.writeWithoutResponse(channel: channel, bytes: bytes)
-        lastWritePlan = plan
         commandEvidence.requested()
         record("requested=\(bytes.map { String(format: "%02x", $0) }.joined())")
         return true
