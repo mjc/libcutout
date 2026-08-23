@@ -232,6 +232,8 @@ final class LightingRouteModel {
     private(set) var peripheralIdentifier: String?
     private(set) var commandStatus: MelkLightingCommandStatus = .idle
     private(set) var restoreEnabled: Bool
+    private(set) var accessoryAlias: String?
+    private(set) var vehicleIdentifier: String?
     private(set) var records: [MelkValidationLogEntry] = []
     private(set) var notificationCount = 0
     private var isRunning = false
@@ -241,6 +243,8 @@ final class LightingRouteModel {
     init() {
         persistence = LightingAccessoryPersistence()
         restoreEnabled = persistence.restoreEnabled
+        accessoryAlias = persistence.alias
+        vehicleIdentifier = persistence.vehicleIdentifier
         if let requested = persistence.requestedState {
             requestedState = SolidState(requested)
         }
@@ -329,10 +333,22 @@ final class LightingRouteModel {
 
     var canSavePreset: Bool { persistence.platformIdentifier != nil }
 
+    var canEditMetadata: Bool { persistence.platformIdentifier != nil }
+
     func savePreset(named name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         try? persistence.addPreset(name: trimmed, requested: requestedState.dto)
+    }
+
+    func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
+        guard canEditMetadata else { return }
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedVehicle = vehicleIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? persistence.setAlias(trimmedAlias.isEmpty ? nil : trimmedAlias)
+        try? persistence.setVehicleIdentifier(trimmedVehicle?.isEmpty == true ? nil : trimmedVehicle)
+        accessoryAlias = persistence.alias
+        self.vehicleIdentifier = persistence.vehicleIdentifier
     }
 
     func applyPreset(_ preset: MobileRgbLightingPresetDto) {
@@ -393,6 +409,8 @@ final class LightingRouteModel {
         if persistence.ensureRecord(platformIdentifier: identifier) {
             persistence.setRestoreEnabled(restoreEnabled)
         }
+        accessoryAlias = persistence.alias
+        vehicleIdentifier = persistence.vehicleIdentifier
     }
 
     private func updatePersistedRequestedState() {
@@ -429,6 +447,8 @@ struct LightingRouteView: View {
     let rideModel: CutoutAppModel
     @State private var brightness = 100.0
     @State private var presetName = ""
+    @State private var accessoryAlias = ""
+    @State private var vehicleIdentifier = ""
 
     private var controlsEnabled: Bool { model.isReady }
 
@@ -441,6 +461,7 @@ struct LightingRouteView: View {
                 )
 
                 connectionCard
+                metadataCard
                 rideCard
                 controlsCard
                 presetsCard
@@ -450,7 +471,11 @@ struct LightingRouteView: View {
             .padding(.vertical, 16)
         }
         .background(PevColors.pageBackground.ignoresSafeArea())
-        .task { model.start() }
+        .task {
+            model.start()
+            accessoryAlias = model.accessoryAlias ?? ""
+            vehicleIdentifier = model.vehicleIdentifier ?? ""
+        }
         .accessibilityIdentifier("dashboard.screen.lighting")
     }
 
@@ -515,6 +540,44 @@ struct LightingRouteView: View {
             Text("Lighting uses an independent Bluetooth connection and does not replace the active ride.")
                 .font(.footnote)
                 .foregroundStyle(PevColors.muted)
+        }
+    }
+
+    private var metadataCard: some View {
+        lightingCard {
+            Label("Accessory details", systemImage: "tag.fill")
+                .font(.headline)
+            Text("Give this controller a memorable name and optionally associate it with the installed ride.")
+                .font(.footnote)
+                .foregroundStyle(PevColors.muted)
+
+            TextField("Alias", text: $accessoryAlias)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("lighting.accessory-alias")
+
+            HStack(spacing: 10) {
+                TextField("Installed vehicle identifier", text: $vehicleIdentifier)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("lighting.vehicle-association")
+                if let selectedRideIdentifier = rideModel.selectedRideIdentifier {
+                    Button("Use current ride") {
+                        vehicleIdentifier = selectedRideIdentifier
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("lighting.use-current-ride")
+                }
+            }
+
+            Button("Save details") {
+                model.saveAccessoryMetadata(
+                    alias: accessoryAlias,
+                    vehicleIdentifier: vehicleIdentifier
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .frame(maxWidth: .infinity)
+            .disabled(!model.canEditMetadata)
+            .accessibilityIdentifier("lighting.save-accessory-details")
         }
     }
 
