@@ -239,6 +239,17 @@ final class LightingRouteModel {
         session.stop()
     }
 
+    func forgetAccessory() {
+        stop()
+        persistence.forget()
+        accessoryAlias = nil
+        vehicleIdentifier = nil
+        restoreEnabled = false
+        requestedState = SolidState(powerOn: false, red: 255, green: 0, blue: 0, brightness: 100)
+        commandStatus = .idle
+        restoreAttempted = true
+    }
+
     func reconnect() {
         stop()
         start()
@@ -404,6 +415,7 @@ struct LightingRouteView: View {
     @State private var presetName = ""
     @State private var accessoryAlias = ""
     @State private var vehicleIdentifier = ""
+    @State private var showsForgetConfirmation = false
 
     private var controlsEnabled: Bool { model.isReady }
 
@@ -430,6 +442,19 @@ struct LightingRouteView: View {
             model.start()
             accessoryAlias = model.accessoryAlias ?? ""
             vehicleIdentifier = model.vehicleIdentifier ?? ""
+        }
+        .confirmationDialog(
+            "Forget this RGB accessory?",
+            isPresented: $showsForgetConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Forget accessory", role: .destructive) {
+                model.forgetAccessory()
+                accessoryAlias = ""
+                vehicleIdentifier = ""
+            }
+        } message: {
+            Text("Its alias, vehicle association, presets, and automatic restore preference will be removed.")
         }
         .accessibilityIdentifier("dashboard.screen.lighting")
     }
@@ -466,6 +491,15 @@ struct LightingRouteView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("lighting.reconnect")
+            }
+
+            if model.canEditMetadata {
+                Button("Forget accessory", role: .destructive) {
+                    showsForgetConfirmation = true
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
+                .accessibilityIdentifier("lighting.forget-accessory")
             }
 
             Toggle(

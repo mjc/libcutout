@@ -112,6 +112,13 @@ public final class LightingAccessoryPersistence {
         persist()
     }
 
+    /// Forgets the selected accessory and removes all restore-capable state.
+    public func forget() {
+        record = nil
+        defaults.removeObject(forKey: Key.record)
+        Key.legacy.forEach(defaults.removeObject(forKey:))
+    }
+
     public func updateRequestedState(_ state: MobileMelkLightingRestoreStateDto) throws {
         guard let record else { return }
         try record.setRequestedState(state: state)

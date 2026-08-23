@@ -118,4 +118,25 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertEqual(reopened.alias, "Under-seat LEDs")
         XCTAssertEqual(reopened.vehicleIdentifier, "euc-aero")
     }
+
+    func testStoreForgetRemovesRecordAndPreventsRestoreOnReopen() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-forget-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(store.ensureRecord(platformIdentifier: "melk-forget"))
+        try store.setAlias("Temporary")
+        try store.setVehicleIdentifier("euc-aero")
+        store.setRestoreEnabled(true)
+
+        store.forget()
+
+        XCTAssertNil(store.platformIdentifier)
+        XCTAssertNil(store.alias)
+        XCTAssertNil(store.vehicleIdentifier)
+        XCTAssertFalse(store.restoreEnabled)
+        XCTAssertNil(defaults.data(forKey: "lighting.accessory.record"))
+        XCTAssertNil(LightingAccessoryPersistence(defaults: defaults).platformIdentifier)
+    }
 }
