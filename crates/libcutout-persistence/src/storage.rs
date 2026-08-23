@@ -11,7 +11,7 @@ use std::{
     io::{BufReader, Read},
     path::{Path, PathBuf},
     sync::{
-        Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -20,7 +20,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 3;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
+const APPLICATION_ID: i64 = 0x4355_544f;
+const MAX_QUERY_LIMIT: u32 = 500;
 
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +69,165 @@ impl RideId {
 impl Default for RideId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Mandatory upper bound for a growing database query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QueryLimit(u32);
+
+impl QueryLimit {
+    /// Validates a non-zero query limit no larger than the service maximum.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::InvalidQueryLimit`] when the value is outside the supported range.
+    pub fn new(value: u32) -> Result<Self, StorageError> {
+        (1..=MAX_QUERY_LIMIT)
+            .contains(&value)
+            .then_some(Self(value))
+            .ok_or(StorageError::InvalidQueryLimit(value))
+    }
+
+    const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+/// Stable cursor for descending ride-history pagination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RideCursor {
+    created_at_ms: u64,
+    ride_id: RideId,
+}
+
+/// Bounded ride-history projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RideRecord {
+    id: RideId,
+    source: RideSource,
+    state: RideLifecycleState,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+    summary: RideSummary,
+}
+
+impl RideRecord {
+    /// Returns the ride identifier.
+    #[must_use]
+    pub const fn id(self) -> RideId {
+        self.id
+    }
+
+    /// Returns the persisted lifecycle state.
+    #[must_use]
+    pub const fn state(self) -> RideLifecycleState {
+        self.state
+    }
+
+    /// Returns the ride origin.
+    #[must_use]
+    pub const fn source(self) -> RideSource {
+        self.source
+    }
+
+    /// Returns the creation time in Unix milliseconds.
+    #[must_use]
+    pub const fn created_at_milliseconds(self) -> u64 {
+        self.created_at_ms
+    }
+
+    /// Returns the last durable update time in Unix milliseconds.
+    #[must_use]
+    pub const fn updated_at_milliseconds(self) -> u64 {
+        self.updated_at_ms
+    }
+
+    /// Returns the Rust-derived summary.
+    #[must_use]
+    pub const fn summary(self) -> RideSummary {
+        self.summary
+    }
+}
+
+/// One bounded page of ride-history projections.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RidePage {
+    rides: Vec<RideRecord>,
+    next_cursor: Option<RideCursor>,
+}
+
+impl RidePage {
+    /// Returns the page records in stable newest-first order.
+    #[must_use]
+    pub fn rides(&self) -> &[RideRecord] {
+        &self.rides
+    }
+
+    /// Returns the cursor for the next page, when more records exist.
+    #[must_use]
+    pub const fn next_cursor(&self) -> Option<RideCursor> {
+        self.next_cursor
+    }
+}
+
+/// Stable cursor for ascending route-point pagination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RoutePointCursor(u64);
+
+/// One canonical route point with its stable ride sequence.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoutePoint {
+    sequence: u64,
+    sample: LocationSample,
+}
+
+impl RoutePoint {
+    /// Returns the stable zero-based sequence within the ride.
+    #[must_use]
+    pub const fn sequence(self) -> u64 {
+        self.sequence
+    }
+
+    /// Returns the admitted canonical sample.
+    #[must_use]
+    pub const fn sample(self) -> LocationSample {
+        self.sample
+    }
+}
+
+/// One bounded page of canonical route points.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoutePointPage {
+    points: Vec<RoutePoint>,
+    next_cursor: Option<RoutePointCursor>,
+}
+
+impl RoutePointPage {
+    /// Returns points in stable ascending sequence order.
+    #[must_use]
+    pub fn points(&self) -> &[RoutePoint] {
+        &self.points
+    }
+
+    /// Returns the cursor for the next page, when more points exist.
+    #[must_use]
+    pub const fn next_cursor(&self) -> Option<RoutePointCursor> {
+        self.next_cursor
+    }
+}
+
+/// Bounded startup state produced by Rust after recovery.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BootstrapSnapshot {
+    recovered_rides: Arc<[RideId]>,
+}
+
+impl BootstrapSnapshot {
+    /// Returns rides changed from recording to interrupted during acquisition.
+    #[must_use]
+    pub fn recovered_rides(&self) -> &[RideId] {
+        &self.recovered_rides
     }
 }
 
@@ -250,6 +411,15 @@ pub enum StorageError {
     /// Migration found a schema newer than this build supports.
     #[error("unsupported database schema version {0}")]
     UnsupportedSchemaVersion(i64),
+    /// The file is `SQLite` but is not Cutout's application database.
+    #[error("invalid Cutout database identity")]
+    InvalidDatabaseIdentity,
+    /// `SQLite` reported that the file failed its quick integrity check.
+    #[error("database integrity check failed: {0}")]
+    IntegrityCheckFailed(String),
+    /// A growing query was not bounded by a supported limit.
+    #[error("invalid query limit {0}; expected 1..={MAX_QUERY_LIMIT}")]
+    InvalidQueryLimit(u32),
     /// A persisted value could not be decoded.
     #[error("invalid stored {field}: {value}")]
     InvalidStoredValue {
@@ -303,6 +473,7 @@ enum SpatialSchemaState {
 struct OwnerEntry {
     path: PathBuf,
     service_id: Uuid,
+    bootstrap: BootstrapSnapshot,
     sender: SyncSender<Command>,
     join: Option<JoinHandle<()>>,
 }
@@ -318,6 +489,7 @@ fn owner() -> &'static Mutex<Option<OwnerEntry>> {
 pub struct RideDatabase {
     sender: SyncSender<Command>,
     service_id: Uuid,
+    bootstrap: BootstrapSnapshot,
 }
 
 impl RideDatabase {
@@ -347,11 +519,12 @@ impl RideDatabase {
             return Ok(Self {
                 sender: existing.sender.clone(),
                 service_id: existing.service_id,
+                bootstrap: existing.bootstrap.clone(),
             });
         }
 
-        let connection = Connection::open(&canonical_path)?;
-        configure_connection(&connection)?;
+        let mut connection = Connection::open(&canonical_path)?;
+        let bootstrap = configure_connection(&mut connection)?;
         let service_id = Uuid::new_v4();
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let join = thread::Builder::new()
@@ -361,10 +534,12 @@ impl RideDatabase {
         let handle = Self {
             sender: sender.clone(),
             service_id,
+            bootstrap: bootstrap.clone(),
         };
         *owner = Some(OwnerEntry {
             path: canonical_path,
             service_id,
+            bootstrap,
             sender,
             join: Some(join),
         });
@@ -375,6 +550,12 @@ impl RideDatabase {
     #[must_use]
     pub const fn service_id(&self) -> Uuid {
         self.service_id
+    }
+
+    /// Returns the bounded startup recovery snapshot produced during acquisition.
+    #[must_use]
+    pub const fn bootstrap(&self) -> &BootstrapSnapshot {
+        &self.bootstrap
     }
 
     /// Returns runtime `SQLite` capabilities through the worker.
@@ -711,6 +892,43 @@ impl RideDatabase {
         self.request(move |reply| Command::Summary { ride_id, reply })
     }
 
+    /// Lists one bounded page of visible rides in stable newest-first order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the page.
+    pub fn list_rides(
+        &self,
+        cursor: Option<RideCursor>,
+        limit: QueryLimit,
+    ) -> Result<RidePage, StorageError> {
+        self.request(move |reply| Command::ListRides {
+            cursor,
+            limit,
+            reply,
+        })
+    }
+
+    /// Loads one bounded page of canonical route points in ascending sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist, or another typed storage
+    /// error when the page cannot be decoded.
+    pub fn route_points(
+        &self,
+        ride_id: RideId,
+        cursor: Option<RoutePointCursor>,
+        limit: QueryLimit,
+    ) -> Result<RoutePointPage, StorageError> {
+        self.request(move |reply| Command::RoutePoints {
+            ride_id,
+            cursor,
+            limit,
+            reply,
+        })
+    }
+
     /// Stops the process-wide worker and releases its ownership slot.
     ///
     /// # Errors
@@ -858,6 +1076,17 @@ enum Command {
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
+    },
+    ListRides {
+        cursor: Option<RideCursor>,
+        limit: QueryLimit,
+        reply: Reply<RidePage>,
+    },
+    RoutePoints {
+        ride_id: RideId,
+        cursor: Option<RoutePointCursor>,
+        limit: QueryLimit,
+        reply: Reply<RoutePointPage>,
     },
     Shutdown {
         reply: Reply<()>,
@@ -1027,6 +1256,21 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
             }
+            Command::ListRides {
+                cursor,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(list_rides(&connection, cursor, limit));
+            }
+            Command::RoutePoints {
+                ride_id,
+                cursor,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(route_points(&connection, ride_id, cursor, limit));
+            }
             Command::Shutdown { reply } => {
                 let _ = reply.send(Ok(()));
                 break;
@@ -1064,76 +1308,61 @@ fn canonical_backup_path(path: &Path) -> Result<PathBuf, StorageError> {
     Ok(destination)
 }
 
-fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
+fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot, StorageError> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
     let foreign_keys: i64 =
         connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
     if foreign_keys != 1 {
         return Err(StorageError::Sqlite(rusqlite::Error::InvalidQuery));
     }
-    migrate(connection)
+    let quick_check: String =
+        connection.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
+    if quick_check != "ok" {
+        return Err(StorageError::IntegrityCheckFailed(quick_check));
+    }
+    migrate(connection)?;
+    verify_current_schema(connection)?;
+    let recovered_rides = recover_interrupted_rides(connection)?;
+    Ok(BootstrapSnapshot {
+        recovered_rides: recovered_rides.into(),
+    })
 }
 
 #[allow(clippy::too_many_lines)]
-fn migrate(connection: &Connection) -> Result<(), StorageError> {
+fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version > CURRENT_SCHEMA_VERSION {
+        return Err(StorageError::UnsupportedSchemaVersion(version));
+    }
+    let application_id: i64 =
+        connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+    if application_id != 0 && application_id != APPLICATION_ID {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
     match version {
         0 => {
+            let user_table_count: u64 = connection.query_row(
+                "SELECT COUNT(*) FROM sqlite_schema
+                 WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                [],
+                |row| row.get(0),
+            )?;
+            if user_table_count != 0 {
+                return Err(StorageError::InvalidDatabaseIdentity);
+            }
+            connection.execute_batch("BEGIN IMMEDIATE;")?;
+            if let Err(error) = create_current_schema(connection) {
+                let _ = connection.execute_batch("ROLLBACK;");
+                return Err(error);
+            }
             connection.execute_batch(
-                "
-                BEGIN IMMEDIATE;
-                CREATE TABLE rides (
-                    id TEXT PRIMARY KEY NOT NULL,
-                    source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
-                    state TEXT NOT NULL CHECK (state IN ('draft', 'active', 'paused', 'stopped', 'interrupted', 'discarded', 'saved', 'imported')),
-                    created_at_ms INTEGER NOT NULL,
-                    updated_at_ms INTEGER NOT NULL,
-                    point_count INTEGER NOT NULL CHECK (point_count >= 0),
-                    distance_mm INTEGER NOT NULL CHECK (distance_mm >= 0)
-                );
-                CREATE TABLE ride_points (
-                    ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
-                    sequence INTEGER NOT NULL CHECK (sequence >= 0),
-                    monotonic_ms INTEGER NOT NULL,
-                    wall_clock_ms INTEGER NOT NULL,
-                    latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
-                    longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000),
-                    horizontal_accuracy_mm INTEGER,
-                    source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
-                    PRIMARY KEY (ride_id, sequence),
-                    UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7)
-                );
-                CREATE TABLE selected_device (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    platform_identifier TEXT NOT NULL,
-                    updated_at_ms INTEGER NOT NULL
-                );
-                CREATE TABLE voltage_sag_models (
-                    device_identity TEXT PRIMARY KEY NOT NULL,
-                    schema_version INTEGER NOT NULL,
-                    effective_resistance_milliohms INTEGER NOT NULL,
-                    observations INTEGER NOT NULL,
-                    hardware_verified INTEGER NOT NULL CHECK (hardware_verified IN (0, 1)),
-                    last_learned_wall_clock_ms INTEGER NOT NULL
-                );
-                CREATE TABLE ride_session_marker (
-                    id INTEGER PRIMARY KEY CHECK (id = 1),
-                    marker BLOB NOT NULL
-                );
-                CREATE TABLE pevcap_imports (
-                    artifact_digest TEXT PRIMARY KEY NOT NULL,
-                    artifact_path TEXT NOT NULL,
-                    ride_id TEXT NOT NULL REFERENCES rides(id),
-                    record_count INTEGER NOT NULL,
-                    location_count INTEGER NOT NULL,
-                    imported_at_ms INTEGER NOT NULL
-                );
-                PRAGMA user_version = 3;
-                COMMIT;
-                ",
+                "PRAGMA application_id = 1129665615;
+                 PRAGMA user_version = 4;
+                 COMMIT;",
             )?;
         }
         1 => {
+            verify_legacy_schema(connection)?;
             connection.execute_batch(
                 "
                 BEGIN IMMEDIATE;
@@ -1161,6 +1390,7 @@ fn migrate(connection: &Connection) -> Result<(), StorageError> {
             migrate(connection)?;
         }
         2 => {
+            verify_legacy_schema(connection)?;
             connection.execute_batch(
                 "
                 BEGIN IMMEDIATE;
@@ -1176,11 +1406,186 @@ fn migrate(connection: &Connection) -> Result<(), StorageError> {
                 COMMIT;
                 ",
             )?;
+            migrate(connection)?;
         }
-        CURRENT_SCHEMA_VERSION => {}
-        newer => return Err(StorageError::UnsupportedSchemaVersion(newer)),
+        3 => migrate_v3_to_current(connection)?,
+        CURRENT_SCHEMA_VERSION => {
+            if application_id != APPLICATION_ID {
+                return Err(StorageError::InvalidDatabaseIdentity);
+            }
+        }
+        _ => return Err(StorageError::InvalidDatabaseIdentity),
     }
     Ok(())
+}
+
+fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
+    connection.execute_batch(
+        "
+        CREATE TABLE rides (
+            id TEXT PRIMARY KEY NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
+            state TEXT NOT NULL CHECK (state IN ('draft', 'active', 'paused', 'stopped', 'interrupted', 'discarded', 'saved', 'imported')),
+            created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+            point_count INTEGER NOT NULL CHECK (point_count >= 0),
+            distance_mm INTEGER NOT NULL CHECK (distance_mm >= 0)
+        );
+        CREATE INDEX rides_history_order ON rides(created_at_ms DESC, id DESC);
+        CREATE TABLE ride_points (
+            ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+            wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+            latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
+            longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000),
+            horizontal_accuracy_mm INTEGER CHECK (horizontal_accuracy_mm IS NULL OR horizontal_accuracy_mm >= 0),
+            source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
+            PRIMARY KEY (ride_id, sequence),
+            UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7)
+        );
+        CREATE TABLE selected_device (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        CREATE TABLE voltage_sag_models (
+            device_identity TEXT PRIMARY KEY NOT NULL CHECK (length(device_identity) BETWEEN 1 AND 512),
+            schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+            effective_resistance_milliohms INTEGER NOT NULL CHECK (effective_resistance_milliohms <= 10000),
+            observations INTEGER NOT NULL CHECK (observations <= 65535),
+            hardware_verified INTEGER NOT NULL CHECK (hardware_verified IN (0, 1)),
+            last_learned_wall_clock_ms INTEGER NOT NULL CHECK (last_learned_wall_clock_ms >= 0)
+        );
+        CREATE TABLE ride_session_marker (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            marker BLOB NOT NULL CHECK (length(marker) BETWEEN 1 AND 4096)
+        );
+        CREATE TABLE pevcap_imports (
+            artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+            artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
+            ride_id TEXT REFERENCES rides(id),
+            outcome TEXT NOT NULL CHECK (outcome IN ('ride_and_capture', 'capture_only')),
+            artifact_size INTEGER NOT NULL CHECK (artifact_size >= 0),
+            record_count INTEGER NOT NULL CHECK (record_count >= 0),
+            location_count INTEGER NOT NULL CHECK (location_count >= 0),
+            imported_at_ms INTEGER NOT NULL CHECK (imported_at_ms >= 0)
+        );
+        CREATE TABLE pevcap_import_work (
+            artifact_digest TEXT PRIMARY KEY NOT NULL CHECK (length(artifact_digest) = 64),
+            artifact_path TEXT NOT NULL CHECK (length(artifact_path) BETWEEN 1 AND 4096),
+            ride_id TEXT REFERENCES rides(id) ON DELETE CASCADE
+        );
+        ",
+    )?;
+    Ok(())
+}
+
+fn verify_legacy_schema(connection: &Connection) -> Result<(), StorageError> {
+    for table in ["rides", "ride_points"] {
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
+    Ok(())
+}
+
+fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "
+        ALTER TABLE pevcap_imports RENAME TO pevcap_imports_legacy;
+        ALTER TABLE ride_points RENAME TO ride_points_legacy;
+        ALTER TABLE rides RENAME TO rides_legacy;
+        ALTER TABLE selected_device RENAME TO selected_device_legacy;
+        ALTER TABLE voltage_sag_models RENAME TO voltage_sag_models_legacy;
+        ALTER TABLE ride_session_marker RENAME TO ride_session_marker_legacy;
+        ",
+    )?;
+    create_current_schema(&transaction)?;
+    transaction.execute_batch(
+        "
+        INSERT INTO rides SELECT * FROM rides_legacy;
+        INSERT INTO ride_points SELECT * FROM ride_points_legacy;
+        INSERT INTO selected_device SELECT * FROM selected_device_legacy;
+        INSERT INTO voltage_sag_models SELECT * FROM voltage_sag_models_legacy;
+        INSERT INTO ride_session_marker SELECT * FROM ride_session_marker_legacy;
+        INSERT INTO pevcap_imports
+            (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+             record_count, location_count, imported_at_ms)
+        SELECT artifact_digest, artifact_path, ride_id, 'ride_and_capture', 0,
+               record_count, location_count, imported_at_ms
+        FROM pevcap_imports_legacy;
+        DROP TABLE pevcap_imports_legacy;
+        DROP TABLE ride_points_legacy;
+        DROP TABLE rides_legacy;
+        DROP TABLE selected_device_legacy;
+        DROP TABLE voltage_sag_models_legacy;
+        DROP TABLE ride_session_marker_legacy;
+        PRAGMA application_id = 1129665615;
+        PRAGMA user_version = 4;
+        ",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
+    let application_id: i64 =
+        connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+    if application_id != APPLICATION_ID {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    for table in [
+        "rides",
+        "ride_points",
+        "selected_device",
+        "voltage_sag_models",
+        "ride_session_marker",
+        "pevcap_imports",
+        "pevcap_import_work",
+    ] {
+        let exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
+    Ok(())
+}
+
+fn recover_interrupted_rides(connection: &mut Connection) -> Result<Vec<RideId>, StorageError> {
+    let transaction = connection.transaction()?;
+    let recovered = {
+        let mut statement = transaction
+            .prepare("SELECT id FROM rides WHERE state IN ('active', 'paused') ORDER BY id")?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut recovered = Vec::new();
+        for row in rows {
+            let value = row?;
+            let id = Uuid::parse_str(&value).map_err(|_| StorageError::InvalidStoredValue {
+                field: "ride identifier",
+                value,
+            })?;
+            recovered.push(RideId::from_uuid(id));
+        }
+        recovered
+    };
+    transaction.execute(
+        "UPDATE rides SET state = 'interrupted' WHERE state IN ('active', 'paused')",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(recovered)
 }
 
 fn sqlite_capabilities(connection: &Connection) -> Result<SqliteCapabilities, StorageError> {
@@ -1535,6 +1940,7 @@ fn import_pevcap(
     created_at_ms: u64,
 ) -> Result<PevcapImportReceipt, StorageError> {
     let path = path.canonicalize().map_err(|_| StorageError::InvalidPath)?;
+    let artifact_size = path.metadata()?.len();
     let digest = artifact_digest(&path)?;
     if let Some(existing) = connection
         .query_row(
@@ -1606,12 +2012,14 @@ fn import_pevcap(
     }
     transaction.execute(
         "INSERT INTO pevcap_imports
-            (artifact_digest, artifact_path, ride_id, record_count, location_count, imported_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
+             record_count, location_count, imported_at_ms)
+         VALUES (?1, ?2, ?3, 'ride_and_capture', ?4, ?5, ?6, ?7)",
         params![
             digest,
             path.to_string_lossy(),
             ride_id.uuid().to_string(),
+            artifact_size,
             record_count,
             location_count,
             created_at_ms,
@@ -1904,6 +2312,166 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
         )
         .optional()?
         .ok_or(StorageError::NotFound)
+}
+
+fn list_rides(
+    connection: &Connection,
+    cursor: Option<RideCursor>,
+    limit: QueryLimit,
+) -> Result<RidePage, StorageError> {
+    let fetch_limit = i64::from(limit.get()) + 1;
+    let mut rides = Vec::new();
+    if let Some(cursor) = cursor {
+        let mut statement = connection.prepare(
+            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
+             FROM rides
+             WHERE state != 'draft'
+               AND (created_at_ms < ?1 OR (created_at_ms = ?1 AND id < ?2))
+             ORDER BY created_at_ms DESC, id DESC
+             LIMIT ?3",
+        )?;
+        let rows = statement.query_map(
+            params![
+                cursor.created_at_ms,
+                cursor.ride_id.uuid().to_string(),
+                fetch_limit
+            ],
+            ride_record_from_row,
+        )?;
+        for row in rows {
+            rides.push(row?);
+        }
+    } else {
+        let mut statement = connection.prepare(
+            "SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
+             FROM rides WHERE state != 'draft'
+             ORDER BY created_at_ms DESC, id DESC
+             LIMIT ?1",
+        )?;
+        let rows = statement.query_map([fetch_limit], ride_record_from_row)?;
+        for row in rows {
+            rides.push(row?);
+        }
+    }
+    let has_more = rides.len() > limit.get() as usize;
+    if has_more {
+        rides.pop();
+    }
+    let next_cursor = has_more
+        .then(|| rides.last())
+        .flatten()
+        .map(|last| RideCursor {
+            created_at_ms: last.created_at_ms,
+            ride_id: last.id,
+        });
+    Ok(RidePage { rides, next_cursor })
+}
+
+fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord> {
+    let id_value: String = row.get(0)?;
+    let id = Uuid::parse_str(&id_value)
+        .map(RideId::from_uuid)
+        .map_err(|_| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(StorageError::InvalidStoredValue {
+                    field: "ride identifier",
+                    value: id_value,
+                }),
+            )
+        })?;
+    let source_value: String = row.get(1)?;
+    let source = ride_source_from_db(&source_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let state_value: String = row.get(2)?;
+    let state = state_from_db(&state_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(RideRecord {
+        id,
+        source,
+        state,
+        created_at_ms: row.get(3)?,
+        updated_at_ms: row.get(4)?,
+        summary: RideSummary::from_stored(row.get(5)?, row.get(6)?),
+    })
+}
+
+fn route_points(
+    connection: &Connection,
+    ride_id: RideId,
+    cursor: Option<RoutePointCursor>,
+    limit: QueryLimit,
+) -> Result<RoutePointPage, StorageError> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [ride_id.uuid().to_string()],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::NotFound);
+    }
+    let after = cursor.map_or(-1_i64, |cursor| i64::try_from(cursor.0).unwrap_or(i64::MAX));
+    let fetch_limit = i64::from(limit.get()) + 1;
+    let mut statement = connection.prepare(
+        "SELECT sequence, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
+                horizontal_accuracy_mm, source
+         FROM ride_points
+         WHERE ride_id = ?1 AND sequence > ?2
+         ORDER BY sequence ASC
+         LIMIT ?3",
+    )?;
+    let rows = statement.query_map(
+        params![ride_id.uuid().to_string(), after, fetch_limit],
+        route_point_from_row,
+    )?;
+    let mut points = Vec::new();
+    for row in rows {
+        points.push(row?);
+    }
+    let has_more = points.len() > limit.get() as usize;
+    if has_more {
+        points.pop();
+    }
+    let next_cursor = has_more
+        .then(|| points.last())
+        .flatten()
+        .map(|point| RoutePointCursor(point.sequence));
+    Ok(RoutePointPage {
+        points,
+        next_cursor,
+    })
+}
+
+fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint> {
+    let source_value: String = row.get(6)?;
+    let source = source_from_db(&source_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    let coordinate = Coordinate::from_fixed_parts(row.get(3)?, row.get(4)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            3,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })?;
+    Ok(RoutePoint {
+        sequence: row.get(0)?,
+        sample: LocationSample::new(coordinate, row.get(1)?, row.get(2)?, row.get(5)?, source),
+    })
+}
+
+fn ride_source_from_db(value: &str) -> Result<RideSource, StorageError> {
+    match value {
+        "live" => Ok(RideSource::Live),
+        "pevcap_import" => Ok(RideSource::PevcapImport),
+        other => Err(StorageError::InvalidStoredValue {
+            field: "ride source",
+            value: other.to_owned(),
+        }),
+    }
 }
 
 fn state_to_db(state: RideLifecycleState) -> &'static str {

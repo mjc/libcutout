@@ -7,7 +7,9 @@ use cutout_core::{
 use cutout_ride_maps::{Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent};
 use rusqlite::Connection;
 
-use super::{RideDatabase, RideSource, StorageError, VoltageSagModelRecord};
+use cutout_ride_maps::RideLifecycleState;
+
+use super::{QueryLimit, RideDatabase, RideSource, StorageError, VoltageSagModelRecord};
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -325,7 +327,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 3);
+        assert_eq!(current_version, 4);
         let pevcap_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pevcap_imports'",
@@ -432,4 +434,146 @@ fn database_indexes_trails_and_map_points_with_rtree() {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(backup_path);
     let _ = std::fs::remove_file(export_path);
+}
+
+#[test]
+fn database_rejects_an_unrelated_current_version_schema() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-unrelated-schema-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch("CREATE TABLE unrelated (id INTEGER); PRAGMA user_version = 3;")
+        .unwrap();
+    drop(connection);
+
+    assert!(matches!(
+        RideDatabase::open(&path),
+        Err(StorageError::InvalidDatabaseIdentity)
+    ));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn reopen_recovers_recording_rides_and_reports_them_in_bootstrap() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(reopened.bootstrap().recovered_rides(), &[ride]);
+    let page = reopened
+        .list_rides(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    let recovered = page
+        .rides()
+        .iter()
+        .find(|candidate| candidate.id() == ride)
+        .unwrap();
+    assert_eq!(recovered.state(), RideLifecycleState::Interrupted);
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_history_and_route_queries_are_stably_bounded() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-bounded-history-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut rides = Vec::new();
+    for created_at in [10_u64, 20, 30] {
+        let ride = database.create_ride(RideSource::Live, created_at).unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+        rides.push(ride);
+    }
+
+    let first = database
+        .list_rides(None, QueryLimit::new(2).unwrap())
+        .unwrap();
+    assert_eq!(first.rides().len(), 2);
+    assert_eq!(first.rides()[0].id(), rides[2]);
+    assert_eq!(first.rides()[1].id(), rides[1]);
+    let second = database
+        .list_rides(first.next_cursor(), QueryLimit::new(2).unwrap())
+        .unwrap();
+    assert_eq!(second.rides().len(), 1);
+    assert_eq!(second.rides()[0].id(), rides[0]);
+
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0_u32..3 {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0 + f64::from(sequence) / 10_000.0, -105.0).unwrap(),
+            u64::from(sequence + 1),
+            1_700_000_000_000 + u64::from(sequence),
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+    let first = database
+        .route_points(ride, None, QueryLimit::new(2).unwrap())
+        .unwrap();
+    assert_eq!(first.points().len(), 2);
+    assert_eq!(first.points()[0].sequence(), 0);
+    assert_eq!(first.points()[1].sequence(), 1);
+    let second = database
+        .route_points(ride, first.next_cursor(), QueryLimit::new(2).unwrap())
+        .unwrap();
+    assert_eq!(second.points().len(), 1);
+    assert_eq!(second.points()[0].sequence(), 2);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn migrated_ride_tables_enforce_the_current_constraints() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-migrated-constraints-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    create_legacy_schema(&path, 1);
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+                 VALUES ('bad', 'not-a-source', 'active', 0, 0, -1, -1)",
+                [],
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO ride_points
+                    (ride_id, sequence, monotonic_ms, wall_clock_ms, latitude_e7,
+                     longitude_e7, horizontal_accuracy_mm, source)
+                 VALUES ('missing', 0, 0, 0, 0, 0, NULL, 'live')",
+                [],
+            )
+            .is_err()
+    );
+    let _ = std::fs::remove_file(path);
 }
