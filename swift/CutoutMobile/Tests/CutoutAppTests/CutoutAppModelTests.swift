@@ -172,6 +172,19 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testPedalModeStateIsExposedThroughTheSettingsDriver() {
+        let driver = SessionDriverSpy(rows: [])
+        driver.pedalModeState = PedalModeSettingState(
+            kind: .current,
+            current: .hard,
+            source: .liveReadback
+        )
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertEqual(model.pedalModeState, driver.pedalModeState)
+    }
+
+    @MainActor
     func testTuneUsesRustOwnedConfirmedLightState() {
         let driver = SessionDriverSpy(rows: [])
         driver.electricUnicycleModel = .aero
@@ -2822,6 +2835,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
+    var pedalModeState: PedalModeSettingState?
     var settingsCapabilitiesOverride: EucSettingsCapabilities?
     var settingsCapabilities: EucSettingsCapabilities? {
         settingsCapabilitiesOverride ?? electricUnicycleModel?.settingsCapabilities

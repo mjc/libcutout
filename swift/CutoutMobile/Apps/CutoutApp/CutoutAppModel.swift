@@ -187,6 +187,10 @@ final class CutoutAppModel {
         core.settingsCapabilities
     }
 
+    var pedalModeState: PedalModeSettingState? {
+        core.pedalModeState
+    }
+
     var selectedRideTitle: String? {
         connectionState.selection?.title
     }
