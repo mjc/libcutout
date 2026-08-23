@@ -99,6 +99,7 @@ final class CutoutAppModel {
     private let selectedDeviceStore: DevicePickerSelectionStore
     private let rideSessionMarkerStore: RideSessionMarkerStore
     private let musicCoordinator: MusicIntegrationCoordinator
+    private let spotifyMusicProvider = SpotifyProviderAdapter()
 #if canImport(MediaPlayer) && os(iOS)
     private let appleMusicProvider = AppleMusicProviderAdapter()
 #endif
@@ -214,7 +215,11 @@ final class CutoutAppModel {
 
     func handleMusicCommand(_ command: MobileMusicCommandDto) {
 #if canImport(MediaPlayer) && os(iOS)
-        appleMusicProvider.perform(command)
+        if musicNowPlaying?.provider == .spotify {
+            spotifyMusicProvider.perform(command)
+        } else {
+            appleMusicProvider.perform(command)
+        }
         refreshMusicSnapshot()
 #else
         _ = command
@@ -227,7 +232,14 @@ final class CutoutAppModel {
 
     func refreshMusicSnapshot() {
 #if canImport(MediaPlayer) && os(iOS)
-        let snapshot = appleMusicProvider.snapshot(observedAtMs: core.now().rawValue)
+        let observedAtMs = core.now().rawValue
+        let snapshot = if musicNowPlaying?.provider == .spotify {
+            // Keep the explicit Spotify-unavailable state until App Remote is
+            // installed; do not silently replace it with Apple Music data.
+            spotifyMusicProvider.unavailableSnapshot(observedAtMs: observedAtMs)
+        } else {
+            appleMusicProvider.snapshot(observedAtMs: observedAtMs)
+        }
         do {
             _ = try musicCoordinator.ingest(
                 snapshot: snapshot,

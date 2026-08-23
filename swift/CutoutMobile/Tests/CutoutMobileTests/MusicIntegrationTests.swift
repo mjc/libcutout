@@ -86,6 +86,10 @@ final class MusicIntegrationTests: XCTestCase {
         XCTAssertNil(snapshot.item)
     }
 
+    func testSpotifyAdapterUsesTheProviderDeepLinkForOpenProvider() {
+        XCTAssertEqual(SpotifyProviderAdapter.providerURL.absoluteString, "spotify://")
+    }
+
     func testNowPlayingKeepsUnavailableStateVisibleToTheCompactPlayer() {
         let nowPlaying = MusicNowPlaying(snapshot: SpotifyProviderAdapter().unavailableSnapshot(observedAtMs: 42))
 

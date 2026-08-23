@@ -1,6 +1,9 @@
 import CutoutMobileFFI
 import Foundation
 import SwiftUI
+#if canImport(UIKit) && os(iOS)
+import UIKit
+#endif
 
 /// Bounded provider-supplied analysis data for visualization.
 ///
@@ -478,6 +481,7 @@ public final class AppleMusicProviderAdapter {
         )
     }
 
+    @MainActor
     public func perform(_ command: MobileMusicCommandDto) {
         switch command {
         case .previous: player.skipToPreviousItem()
@@ -531,7 +535,20 @@ public final class AppleMusicProviderAdapter {
 /// App Remote adapter can feed the same snapshot/command contract once its
 /// redirect, entitlement, and account lifecycle are proven on-device.
 public struct SpotifyProviderAdapter: Sendable {
+    public static let providerURL = URL(string: "spotify://")!
+
     public init() {}
+
+    /// Opens Spotify when the provider can be handed off to its own app.
+    /// Playback control and metadata remain unavailable until App Remote is
+    /// integrated and proven on a physical device.
+    @MainActor
+    public func perform(_ command: MobileMusicCommandDto) {
+        guard case .openProvider = command else { return }
+#if canImport(UIKit) && os(iOS)
+        UIApplication.shared.open(Self.providerURL)
+#endif
+    }
 
     public func unavailableSnapshot(observedAtMs: UInt64) -> MobileMusicSnapshotDto {
         MobileMusicSnapshotDto(

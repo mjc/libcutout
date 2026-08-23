@@ -20,6 +20,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>spotify</string>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>CutOut uses Bluetooth to read live vehicle telemetry.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
