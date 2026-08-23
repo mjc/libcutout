@@ -233,7 +233,7 @@ public final class MusicIntegrationCoordinator {
 
     private var lastObservedAtByProvider = [MobileMusicProviderDto: UInt64]()
     private var lastCorrelationRideID: String?
-    private var lastRecordedNowPlaying: MusicNowPlaying?
+    private var lastPersistedNowPlaying: MusicNowPlaying?
     private var historyPolicy = MobileMusicHistoryPolicyDto.disabled
     public init(rideMapState: MobileRideMapState) {
         self.rideMapState = rideMapState
@@ -266,9 +266,9 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto? {
-        prepareForCurrentRide()
+        resetCorrelationIfRideChanged()
         guard accept(snapshot) else { return nil }
-        let previous = lastRecordedNowPlaying
+        let previous = lastPersistedNowPlaying
         update(snapshot: snapshot, artwork: artwork)
         guard let kind = Self.transitionKind(from: previous, to: nowPlaying) else {
             return nil
@@ -281,14 +281,14 @@ public final class MusicIntegrationCoordinator {
                 wallClockAtMs: wallClockAtMs,
                 clockUncertaintyMs: clockUncertaintyMs
             )
-            rememberRecordedState(outcome)
+            rememberPersistedState(outcome)
             return outcome
         } catch MobileRideMapError.NoActiveRide {
             if historyPolicy == .disabled {
-                rememberRecordedState(.disabled)
+                rememberPersistedState(.disabled)
                 return .disabled
             }
-            lastRecordedNowPlaying = nowPlaying
+            lastPersistedNowPlaying = nowPlaying
             throw MobileRideMapError.NoActiveRide
         }
     }
@@ -312,7 +312,7 @@ public final class MusicIntegrationCoordinator {
     public func setHistoryPolicy(_ policy: MobileMusicHistoryPolicyDto) throws {
         try rideMapState.setMusicHistoryPolicy(policy: policy)
         historyPolicy = policy
-        lastRecordedNowPlaying = nil
+        lastPersistedNowPlaying = nil
     }
 
     public func record(
@@ -322,7 +322,7 @@ public final class MusicIntegrationCoordinator {
         wallClockAtMs: UInt64,
         clockUncertaintyMs: UInt64
     ) throws -> MobileMusicTimelineOutcomeDto {
-        prepareForCurrentRide()
+        resetCorrelationIfRideChanged()
         update(snapshot: snapshot)
         _ = accept(snapshot)
         let outcome = try rideMapState.recordMusicEvent(
@@ -332,7 +332,7 @@ public final class MusicIntegrationCoordinator {
             wallClockAtMs: wallClockAtMs,
             clockUncertaintyMs: clockUncertaintyMs
         )
-        rememberRecordedState(outcome)
+        rememberPersistedState(outcome)
         return outcome
     }
 
@@ -340,18 +340,18 @@ public final class MusicIntegrationCoordinator {
         rideMapState.currentMusicEvents() ?? []
     }
 
-    private func prepareForCurrentRide() {
+    private func resetCorrelationIfRideChanged() {
         let rideID = rideMapState.currentSnapshot()?.rideId
         guard rideID != lastCorrelationRideID else { return }
         lastCorrelationRideID = rideID
         lastObservedAtByProvider.removeAll()
-        lastRecordedNowPlaying = nil
+        lastPersistedNowPlaying = nil
     }
 
-    private func rememberRecordedState(_ outcome: MobileMusicTimelineOutcomeDto) {
+    private func rememberPersistedState(_ outcome: MobileMusicTimelineOutcomeDto) {
         switch outcome {
         case .recorded, .duplicate, .disabled:
-            lastRecordedNowPlaying = nowPlaying
+            lastPersistedNowPlaying = nowPlaying
         case .outOfOrder, .rideNotOpen, .full:
             break
         }
