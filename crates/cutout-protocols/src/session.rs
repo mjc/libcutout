@@ -1228,6 +1228,15 @@ impl SupportsBenignControls for NosfetAeroModel {
     }
 }
 
+impl SupportsSettingsWrites for NosfetAeroModel {
+    const WRITE_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+
+    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
+        AeroControlEncoder::encode(command)
+    }
+}
+
 /// Begode Falcon read-only model spec.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BegodeFalconModel;
@@ -1282,11 +1291,19 @@ impl SupportsReadRequests for BegodeFalconModel {
 }
 
 impl SupportsBenignControls for BegodeFalconModel {
-    // The Q/E bytes remain capture fixtures, but Falcon hardware validation is
-    // incomplete; keep the encoder unreachable until that evidence is landed.
-    const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
+    const CONTROL_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetLights]);
 
     fn encode_benign_control(command: DeviceCommand) -> Option<EncodedControl> {
+        FalconControlEncoder::encode(command)
+    }
+}
+
+impl SupportsSettingsWrites for BegodeFalconModel {
+    const WRITE_CAPABILITIES: Capabilities =
+        Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+
+    fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
         FalconControlEncoder::encode(command)
     }
 }
@@ -1609,7 +1626,7 @@ impl<M: ReadOnlyModelSpec + SupportsBenignControls, const ACCEPT_ANY_NOTIFICATIO
 
 /// Session shell for settings writes that require an explicit stationary arm.
 pub struct StationarySettingsWriteSession<
-    M: ReadOnlyModelSpec + SupportsSettingsWrites,
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
     const ACCEPT_ANY_NOTIFICATION: bool,
 > {
     read_only: ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>,
@@ -1617,8 +1634,10 @@ pub struct StationarySettingsWriteSession<
     monotonic_ms: MonotonicTimestamp,
 }
 
-impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool> fmt::Debug
-    for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> fmt::Debug for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1627,8 +1646,10 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool> Clone
-    for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> Clone for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
 where
     ReadOnlySession<M, ACCEPT_ANY_NOTIFICATION>: Clone,
 {
@@ -1641,8 +1662,10 @@ where
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool> Default
-    for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> Default for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn default() -> Self {
         Self {
@@ -1653,8 +1676,10 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool>
-    StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
 {
     /// Creates a settings-write session with an explicitly configured decoder.
     #[must_use]
@@ -1669,7 +1694,9 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATIO
     /// Returns the read and stationary-settings commands this session can schedule.
     #[must_use]
     pub const fn capabilities() -> Capabilities {
-        M::READ_CAPABILITIES.union(M::WRITE_CAPABILITIES)
+        M::READ_CAPABILITIES
+            .union(M::WRITE_CAPABILITIES)
+            .union(M::CONTROL_CAPABILITIES)
     }
 
     /// Installs a short-lived authorization issued from stationary evidence.
@@ -1678,8 +1705,10 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATIO
     }
 }
 
-impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATION: bool>
-    ProtocolSession for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
+impl<
+    M: ReadOnlyModelSpec + SupportsSettingsWrites + SupportsBenignControls,
+    const ACCEPT_ANY_NOTIFICATION: bool,
+> ProtocolSession for StationarySettingsWriteSession<M, ACCEPT_ANY_NOTIFICATION>
 {
     fn handle(&mut self, input: SessionInput<'_>, output: &mut Vec<SessionOutput>) {
         match input {
@@ -1733,6 +1762,28 @@ impl<M: ReadOnlyModelSpec + SupportsSettingsWrites, const ACCEPT_ANY_NOTIFICATIO
                         },
                     )));
                 }
+            }
+            SessionInput::Command(command)
+                if command.safety_class() == SafetyClass::BenignControl =>
+            {
+                let kind = command.kind();
+                if M::CONTROL_CAPABILITIES.supports_command_kind(kind) {
+                    if let Some(encoded) = M::encode_benign_control(command) {
+                        output.push(SessionOutput::Transport(TransportAction::Write {
+                            channel: M::WRITE_CHANNEL,
+                            bytes: encoded.payload,
+                            mode: encoded.mode,
+                        }));
+                        return;
+                    }
+                }
+                output.push(SessionOutput::Event(DeviceEvent::ControlRefusal(
+                    ControlRefusal {
+                        command: kind,
+                        safety_class: SafetyClass::BenignControl,
+                        reason: ControlRefusalReason::UnsupportedCommand,
+                    },
+                )));
             }
             input => self.read_only.handle(input, output),
         }
@@ -1880,6 +1931,14 @@ mod tests {
 
         fn encode_settings_write(command: DeviceCommand) -> Option<EncodedControl> {
             AeroControlEncoder::encode(command)
+        }
+    }
+
+    impl SupportsBenignControls for TestModel {
+        const CONTROL_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([]);
+
+        fn encode_benign_control(_command: DeviceCommand) -> Option<EncodedControl> {
+            None
         }
     }
 
@@ -3987,6 +4046,66 @@ mod tests {
                 mode: WriteMode::WithoutResponse,
             })]
         );
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_writes_documented_pedal_mode() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"SETh"
+        )));
+    }
+
+    #[test]
+    fn falcon_stationary_settings_session_writes_documented_pedal_mode() {
+        let mut session = StationarySettingsWriteSession::<BegodeFalconModel, true>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: BegodeFalconModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::SetPedalMode(cutout_core::PedalMode::Hard)),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"h"
+        )));
     }
 
     #[test]

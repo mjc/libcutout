@@ -7152,6 +7152,11 @@ where
         self.handle(input);
     }
 
+    /// Returns mutable access to the protocol session for typed host-side setup.
+    pub fn session_mut(&mut self) -> &mut S {
+        &mut self.session
+    }
+
     /// Drains owned session outputs accumulated so far.
     #[must_use]
     pub fn drain_outputs(&mut self) -> Vec<SessionOutput> {

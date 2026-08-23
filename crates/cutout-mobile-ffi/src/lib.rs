@@ -2112,7 +2112,7 @@ impl From<MobilePedalModeKindDto> for CorePedalMode {
 /// Validation state for a setting write exposed to mobile consumers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileSettingWriteSupportDto {
-    /// Capture-backed and hardware-validated for the model.
+    /// Available for an explicit user-initiated write through the guarded session.
     Supported,
 
     /// An encoder exists, but validation evidence is incomplete.
@@ -2141,7 +2141,7 @@ pub struct MobileEucSettingsCapabilitiesDto {
 impl MobileEucSettingsCapabilitiesDto {
     const fn aero() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unverified,
+            pedal_mode: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
@@ -2150,9 +2150,9 @@ impl MobileEucSettingsCapabilitiesDto {
 
     const fn falcon() -> Self {
         Self {
-            pedal_mode: MobileSettingWriteSupportDto::Unverified,
+            pedal_mode: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
-            headlight: MobileSettingWriteSupportDto::Unverified,
+            headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
         }
     }
@@ -10237,6 +10237,18 @@ impl AeroBenignControlSession {
         MobileEucSettingsCapabilitiesDto::aero()
     }
 
+    /// Arms settings writes only when the latest Rust-owned ride state is stationary.
+    pub fn arm_settings_writes(
+        &self,
+        state: RideOperatingState,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> bool {
+        self.lock_inner().arm_settings_writes(
+            mobile_ride_operating_state_dto(state),
+            monotonic_ms.milliseconds,
+        )
+    }
+
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
@@ -10587,6 +10599,16 @@ fn ride_operating_state(
             Some(_) => RideOperatingState::Riding,
             None => RideOperatingState::Unknown,
         },
+    }
+}
+
+fn mobile_ride_operating_state_dto(state: RideOperatingState) -> RideOperatingStateDto {
+    match state {
+        RideOperatingState::Unknown => RideOperatingStateDto::Unknown,
+        RideOperatingState::Parked => RideOperatingStateDto::Parked,
+        RideOperatingState::Standing => RideOperatingStateDto::Standing,
+        RideOperatingState::Riding => RideOperatingStateDto::Riding,
+        RideOperatingState::Charging => RideOperatingStateDto::Charging,
     }
 }
 
@@ -11628,6 +11650,18 @@ impl FalconBenignControlSession {
     /// Returns the EUC setting write capabilities and their validation state.
     pub fn settings_capabilities(&self) -> MobileEucSettingsCapabilitiesDto {
         MobileEucSettingsCapabilitiesDto::falcon()
+    }
+
+    /// Arms settings writes only when the latest Rust-owned ride state is stationary.
+    pub fn arm_settings_writes(
+        &self,
+        state: RideOperatingState,
+        monotonic_ms: MobileMonotonicMillisDto,
+    ) -> bool {
+        self.lock_inner().arm_settings_writes(
+            mobile_ride_operating_state_dto(state),
+            monotonic_ms.milliseconds,
+        )
     }
 
     /// Returns the Rust-owned headlight write lifecycle state.
@@ -14640,8 +14674,9 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_refuses_unverified_pedal_mode_without_a_write() {
+    fn aero_wrapper_writes_documented_pedal_mode_after_stationary_arm() {
         let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
         let result = session.ingest_checked(MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -14652,20 +14687,10 @@ mod tests {
             command: Some(MobileCommandDto::SetPedalMode(MobilePedalModeKindDto::Hard)),
         });
 
-        assert!(matches!(
-            result.error,
-            Some(MobileSessionStepErrorDto {
-                kind: MobileSessionStepErrorKindDto::CommandRefused,
-                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
-                ..
-            })
-        ));
-        assert!(
-            result
-                .outputs
-                .iter()
-                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
-        );
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
+        }));
     }
 
     #[test]
@@ -14753,7 +14778,7 @@ mod tests {
     }
 
     #[test]
-    fn aero_wrapper_reports_typed_pedal_mode_refusal_state() {
+    fn aero_wrapper_reports_missing_arm_for_pedal_mode() {
         let session = AeroBenignControlSession::new();
 
         let _ = session.ingest_checked(MobileSessionInputDto {
@@ -14770,14 +14795,16 @@ mod tests {
         assert_eq!(state.requested, Some(MobilePedalModeKindDto::Hard));
         assert_eq!(
             state.refusal_reason,
-            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
+            Some(MobileControlRefusalReasonDto::MissingArm)
         );
     }
 
     #[test]
-    fn aero_wrapper_writes_while_falcon_wrapper_refuses_unverified_lights() {
+    fn aero_and_falcon_wrappers_write_lights_after_stationary_arm() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
+        assert!(aero.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+        assert!(falcon.arm_settings_writes(RideOperatingState::Parked, ms(0)));
 
         let command_input = |state| MobileSessionInputDto {
             kind: MobileSessionInputKindDto::Command,
@@ -14795,28 +14822,10 @@ mod tests {
         assert!(aero_result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SetLightON"
         }));
-        assert!(matches!(
-            falcon_result.error,
-            Some(MobileSessionStepErrorDto {
-                kind: MobileSessionStepErrorKindDto::CommandRefused,
-                reason: Some(MobileControlRefusalReasonDto::UnsupportedCommand),
-                ..
-            })
-        ));
-        assert!(
-            falcon_result
-                .outputs
-                .iter()
-                .all(|output| output.kind != MobileSessionOutputKindDto::Write)
-        );
-        assert_eq!(
-            falcon.headlight_state().kind,
-            MobileSettingStateKindDto::Refused
-        );
-        assert_eq!(
-            falcon.headlight_state().refusal_reason,
-            Some(MobileControlRefusalReasonDto::UnsupportedCommand)
-        );
+        assert_eq!(falcon_result.error, None);
+        assert!(falcon_result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"E"
+        }));
     }
 
     #[test]
@@ -14921,7 +14930,7 @@ mod tests {
     }
 
     #[test]
-    fn euc_settings_capabilities_preserve_validation_state() {
+    fn euc_settings_capabilities_expose_guarded_write_support() {
         let aero = AeroBenignControlSession::new();
         let falcon = FalconBenignControlSession::new().expect("default profile should construct");
 
@@ -14931,7 +14940,7 @@ mod tests {
         );
         assert_eq!(
             falcon.settings_capabilities().headlight,
-            MobileSettingWriteSupportDto::Unverified
+            MobileSettingWriteSupportDto::Supported
         );
         assert_eq!(
             aero.settings_capabilities().taillight,
@@ -14939,11 +14948,11 @@ mod tests {
         );
         assert_eq!(
             aero.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Unverified
+            MobileSettingWriteSupportDto::Supported
         );
         assert_eq!(
             falcon.settings_capabilities().pedal_mode,
-            MobileSettingWriteSupportDto::Unverified
+            MobileSettingWriteSupportDto::Supported
         );
         assert_eq!(
             aero.settings_capabilities().acceleration_assist,
