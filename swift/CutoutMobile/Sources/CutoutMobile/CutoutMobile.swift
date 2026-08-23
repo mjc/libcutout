@@ -1373,6 +1373,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestFaultHistory
     case requestSettings
     case setLights(LightState)
+    case setPedalMode(PedalMode.Kind)
     case soundHorn
 
     fileprivate init(_ dto: MobileCommandDto) {
@@ -1393,6 +1394,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestSettings
         case .setLights(let state):
             self = .setLights(LightState(state))
+        case .setPedalMode(let mode):
+            self = .setPedalMode(PedalMode.Kind(mode))
         case .soundHorn:
             self = .soundHorn
         }
@@ -1416,6 +1419,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestSettings
         case .setLights(let state):
             .setLights(state.dto)
+        case .setPedalMode(let mode):
+            .setPedalMode(mode.dto)
         case .soundHorn:
             .soundHorn
         }
@@ -2712,6 +2717,17 @@ private extension PedalMode.Kind {
             self = .medium
         case .soft:
             self = .soft
+        }
+    }
+
+    var dto: MobilePedalModeKindDto {
+        switch self {
+        case .hard:
+            .hard
+        case .medium:
+            .medium
+        case .soft:
+            .soft
         }
     }
 }
