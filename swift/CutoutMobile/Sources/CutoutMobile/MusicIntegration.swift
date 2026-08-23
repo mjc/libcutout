@@ -410,6 +410,7 @@ import MediaPlayer
 /// only; iOS does not provide a system PCM tap for another app's playback.
 @MainActor
 public final class AppleMusicProviderAdapter {
+    public static let providerURL = URL(string: "https://music.apple.com/")!
     private let player = MPMusicPlayerController.systemMusicPlayer
     private var notificationTokens = [NSObjectProtocol]()
 
@@ -461,7 +462,7 @@ public final class AppleMusicProviderAdapter {
                 play: false,
                 pause: false,
                 next: false,
-                openProvider: false
+                openProvider: true
             )
         )
     }
@@ -473,7 +474,10 @@ public final class AppleMusicProviderAdapter {
         case .play: player.play()
         case .pause: player.pause()
         case .next: player.skipToNextItem()
-        case .openProvider: break
+        case .openProvider:
+#if canImport(UIKit) && os(iOS)
+            UIApplication.shared.open(Self.providerURL)
+#endif
         }
     }
 
@@ -509,7 +513,7 @@ public final class AppleMusicProviderAdapter {
                 play: state == .paused || state == .stopped,
                 pause: state == .playing,
                 next: item != nil,
-                openProvider: false
+                openProvider: true
             )
         )
     }
