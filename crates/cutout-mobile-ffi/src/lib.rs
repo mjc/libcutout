@@ -3122,8 +3122,10 @@ pub struct MobileTrailIdDto {
 }
 
 /// One indexed trail segment.
-#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileTrailSegmentDto {
+    /// Stable trail identifier owning this segment.
+    pub trail_id: MobileTrailIdDto,
     /// Segment sequence within its trail.
     pub sequence: u32,
     /// Segment start coordinate.
@@ -3371,6 +3373,9 @@ impl RideDatabaseHandle {
                 segments
                     .into_iter()
                     .map(|segment| MobileTrailSegmentDto {
+                        trail_id: MobileTrailIdDto {
+                            value: segment.trail_id.uuid().to_string(),
+                        },
                         sequence: segment.sequence,
                         start: mobile_map_coordinate_dto(segment.start),
                         end: mobile_map_coordinate_dto(segment.end),

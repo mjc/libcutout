@@ -9996,6 +9996,10 @@ public func FfiConverterTypeMobileTrailIdDto_lower(_ value: MobileTrailIdDto) ->
  */
 public struct MobileTrailSegmentDto: Equatable, Hashable {
     /**
+     * Stable trail identifier owning this segment.
+     */
+    public var trailId: MobileTrailIdDto
+    /**
      * Segment sequence within its trail.
      */
     public var sequence: UInt32
@@ -10012,6 +10016,9 @@ public struct MobileTrailSegmentDto: Equatable, Hashable {
     // declare one manually.
     public init(
         /**
+         * Stable trail identifier owning this segment.
+         */trailId: MobileTrailIdDto,
+        /**
          * Segment sequence within its trail.
          */sequence: UInt32,
         /**
@@ -10020,6 +10027,7 @@ public struct MobileTrailSegmentDto: Equatable, Hashable {
         /**
          * Segment end coordinate.
          */end: MobileMapCoordinateDto) {
+        self.trailId = trailId
         self.sequence = sequence
         self.start = start
         self.end = end
@@ -10041,6 +10049,7 @@ public struct FfiConverterTypeMobileTrailSegmentDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileTrailSegmentDto {
         return
             try MobileTrailSegmentDto(
+                trailId: FfiConverterTypeMobileTrailIdDto.read(from: &buf),
                 sequence: FfiConverterUInt32.read(from: &buf),
                 start: FfiConverterTypeMobileMapCoordinateDto.read(from: &buf),
                 end: FfiConverterTypeMobileMapCoordinateDto.read(from: &buf)
@@ -10048,6 +10057,7 @@ public struct FfiConverterTypeMobileTrailSegmentDto: FfiConverterRustBuffer {
     }
 
     public static func write(_ value: MobileTrailSegmentDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileTrailIdDto.write(value.trailId, into: &buf)
         FfiConverterUInt32.write(value.sequence, into: &buf)
         FfiConverterTypeMobileMapCoordinateDto.write(value.start, into: &buf)
         FfiConverterTypeMobileMapCoordinateDto.write(value.end, into: &buf)

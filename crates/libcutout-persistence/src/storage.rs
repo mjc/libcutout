@@ -486,8 +486,14 @@ impl RideDatabase {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError`] when the worker cannot commit the deletion.
+    /// Returns [`StorageError`] when the identity is empty or the worker cannot commit the deletion.
     pub fn remove_voltage_sag_model(&self, device_identity: &str) -> Result<(), StorageError> {
+        if device_identity.trim().is_empty() {
+            return Err(StorageError::InvalidStoredValue {
+                field: "device identity",
+                value: "empty".to_owned(),
+            });
+        }
         self.request(move |reply| Command::RemoveVoltageSagModel {
             device_identity: device_identity.to_owned(),
             reply,

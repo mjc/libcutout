@@ -31,11 +31,10 @@ impl RideSummary {
     /// Derives a summary from samples in monotonic order.
     #[must_use]
     pub fn from_samples(samples: &[LocationSample]) -> Self {
-        let distance_metres = samples
+        let distance_millimetres = samples
             .windows(2)
-            .map(|pair| haversine_metres(pair[0], pair[1]))
-            .sum::<f64>();
-        let distance_millimetres = rounded_distance_millimetres(distance_metres);
+            .map(|pair| distance_between_millimetres(pair[0], pair[1]))
+            .sum::<u64>();
         Self {
             point_count: samples.len() as u64,
             distance_millimetres: DistanceMillimetres::new(distance_millimetres),
