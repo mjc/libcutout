@@ -18,30 +18,25 @@ struct RideMapHistoryContentView: View {
 
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
+    @State private var dateFilter = "Last 30 days"
+    @State private var vehicleFilter = "All vehicles"
 
     var body: some View {
         VStack(spacing: 0) {
-            if isRecording {
-                HStack(spacing: 12) {
-                    Label(
-                        localizedAppText("ride_map.history_recording_continues"),
-                        systemImage: "record.circle.fill"
-                    )
-                    .font(.subheadline)
-                    Spacer()
-                    Button(localizedAppText("ride_map.return_live"), action: returnToLive)
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("ride-map.return-live")
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(PevColors.pageBackground)
-                .accessibilityIdentifier("ride-map.history-recording-banner")
-            }
-
             if rides.isEmpty {
                 emptyState
             } else {
+                HStack(spacing: 8) {
+                    filterMenu(title: dateFilter, systemImage: "calendar") {
+                        dateFilter = "Last 30 days"
+                    }
+                    filterMenu(title: vehicleFilter, systemImage: "car") {
+                        vehicleFilter = "All vehicles"
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
                 RideMapCanvasView(
                     points: points,
                     routeID: selectedRideID ?? "history",
@@ -51,22 +46,49 @@ struct RideMapHistoryContentView: View {
                     isApplyingCamera: $isApplyingCamera,
                     cameraDidChange: {}
                 )
-                .frame(minHeight: 260, maxHeight: .infinity)
-                RideMapHistoryListView(
-                    rides: rides,
-                    searchText: $searchText,
-                    canLoadMore: canLoadMore,
-                    selectedRideID: selectedRideID,
-                    select: select,
-                    loadMore: loadMore
-                )
-                if pointsTruncated {
-                    Text(localizedAppText("ride_map.history_truncated"))
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                        .padding(.horizontal, 20)
-                        .accessibilityIdentifier("ride-map.history-truncated")
+                .frame(minHeight: 290, maxHeight: .infinity)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if isRecording {
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(PevColors.green)
+                                .frame(width: 9, height: 9)
+                            Text(localizedAppText("ride_map.history_recording_continues"))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(PevColors.green)
+                            Spacer()
+                            Button(localizedAppText("ride_map.return_live"), action: returnToLive)
+                                .font(.subheadline.weight(.semibold))
+                                .buttonStyle(.plain)
+                                .foregroundStyle(PevColors.green)
+                                .accessibilityIdentifier("ride-map.return-live")
+                        }
+                        .accessibilityIdentifier("ride-map.history-recording-banner")
+                    }
+
+                    RideMapHistoryListView(
+                        rides: rides,
+                        searchText: $searchText,
+                        canLoadMore: canLoadMore,
+                        selectedRideID: selectedRideID,
+                        select: select,
+                        loadMore: loadMore
+                    )
+                    if pointsTruncated {
+                        Text(localizedAppText("ride_map.history_truncated"))
+                            .font(.caption)
+                            .foregroundStyle(PevColors.muted)
+                            .accessibilityIdentifier("ride-map.history-truncated")
+                    }
                 }
+                .padding(16)
+                .background(PevColors.cardFill, in: UnevenRoundedRectangle(
+                    topLeadingRadius: 28,
+                    bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: 28
+                ))
             }
         }
         .onAppear { loadHistoryIfNeeded() }
@@ -98,5 +120,23 @@ struct RideMapHistoryContentView: View {
 
     private func loadHistoryIfNeeded() {
         if rides.isEmpty { load() }
+    }
+
+    private func filterMenu(
+        title: String,
+        systemImage: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Menu {
+            Button("Last 30 days", action: action)
+            Button("All time", action: action)
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(PevColors.cardStroke)
     }
 }

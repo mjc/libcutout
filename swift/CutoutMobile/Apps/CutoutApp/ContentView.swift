@@ -159,11 +159,19 @@ struct ContentView: View {
             PevColors.pageBackground
                 .ignoresSafeArea()
 
-            PevAppShell(
-                sectionTitle: appSectionTitle(for: destination),
-                disconnect: disconnectAndReturnToPicker
-            ) {
-                routedContent(for: destination)
+            Group {
+                if isRideMapDestination(destination) {
+                    // The map is a product-category-neutral destination. It owns its
+                    // CutOut/Map chrome instead of inheriting the vehicle dashboard shell.
+                    routedContent(for: destination)
+                } else {
+                    PevAppShell(
+                        sectionTitle: appSectionTitle(for: destination),
+                        disconnect: disconnectAndReturnToPicker
+                    ) {
+                        routedContent(for: destination)
+                    }
+                }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(appSectionTitle(for: destination))

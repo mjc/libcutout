@@ -37,9 +37,19 @@ struct RideMapLiveContentView: View {
                 isApplyingCamera: $isApplyingCamera,
                 cameraDidChange: { followsLatestPoint = false }
             )
-            .frame(minHeight: 260, maxHeight: .infinity)
+            .frame(minHeight: 320, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 12) {
+                if snapshot?.state == .recording {
+                    Text(recordingPillText)
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(PevColors.green, in: Capsule())
+                        .accessibilityIdentifier("ride-map.recording-pill")
+                }
+
                 if availability != .ready {
                     Label(availabilityText, systemImage: "location.slash")
                         .font(.subheadline)
@@ -65,7 +75,7 @@ struct RideMapLiveContentView: View {
                     .accessibilityIdentifier("ride-map.command-error")
                 }
                 Text(statusTitle)
-                    .font(.headline)
+                    .font(.title3.weight(.bold))
                     .accessibilityAddTraits(.isHeader)
                 Text(accessibilityRouteSummary)
                     .font(.subheadline)
@@ -94,11 +104,16 @@ struct RideMapLiveContentView: View {
                     recenter: recenterOnLatestPoint
                 )
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 14)
-            .padding(.bottom, 20)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(PevColors.pageBackground)
+            .background(PevColors.pageBackground, in: UnevenRoundedRectangle(
+                topLeadingRadius: 28,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 28
+            ))
         }
         .onChange(of: points.last?.sequence) { _, _ in
             guard followsLatestPoint else { return }
@@ -157,6 +172,13 @@ struct RideMapLiveContentView: View {
         case .storageUnavailable:
             localizedAppText("ride_map.persistence_unavailable")
         }
+    }
+
+    private var recordingPillText: String {
+        let source = snapshot?.associatedVehicle == nil
+            ? localizedAppText("ride_map.gps_only")
+            : localizedAppText("ride_map.associated_vehicle", snapshot?.associatedVehicle ?? "")
+        return "\(localizedAppText("ride_map.status.recording").uppercased()) · \(source.uppercased())"
     }
 
     private var showsEndMarker: Bool {

@@ -32,28 +32,38 @@ struct RideMapCanvasView: View {
             ForEach(segmentPaths) { segment in
                 MapPolyline(coordinates: segment.coordinates)
                     .stroke(
-                        segment.id == 0 ? .blue : .orange,
-                        style: StrokeStyle(lineWidth: 4, dash: segment.id == 0 ? [] : [6, 4])
+                        segment.id == 0 ? PevColors.yellow : PevColors.muted,
+                        style: StrokeStyle(lineWidth: 4, dash: segment.id == 0 ? [] : [7, 5])
                     )
             }
             if let first = points.first {
-                Marker(
+                Annotation(
                     localizedAppText("ride_map.start_marker"),
                     coordinate: coordinate(for: first)
-                )
-                .tint(.green)
+                ) {
+                    RideMapRouteMarker(
+                        title: localizedAppText("ride_map.start_marker"),
+                        color: PevColors.yellow
+                    )
+                }
             }
             if let last = points.last, points.count > 1 {
-                Marker(
+                Annotation(
                     localizedAppText(
                         showsEndMarker ? "ride_map.end_marker" : "ride_map.current_marker"
                     ),
                     coordinate: coordinate(for: last)
-                )
-                .tint(showsEndMarker ? .red : .blue)
+                ) {
+                    RideMapRouteMarker(
+                        title: localizedAppText(
+                            showsEndMarker ? "ride_map.end_marker" : "ride_map.current_marker"
+                        ),
+                        color: showsEndMarker ? PevColors.red : PevColors.green
+                    )
+                }
             }
         }
-        .mapStyle(.standard)
+        .mapStyle(.standard(elevation: .realistic, pointsOfInterest: .excludingAll, showsTraffic: false))
         .onMapCameraChange(frequency: .onEnd) { _ in
             if isApplyingCamera == false {
                 cameraDidChange()
@@ -186,5 +196,35 @@ struct RideMapCanvasView: View {
         DispatchQueue.main.async {
             isApplyingCamera = false
         }
+    }
+}
+
+private struct RideMapRouteMarker: View {
+    let title: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.black))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(.black.opacity(0.78), in: .rect(cornerRadius: 5))
+
+            ZStack {
+                Circle()
+                    .fill(.black.opacity(0.85))
+                    .frame(width: 26, height: 26)
+                Circle()
+                    .stroke(color, lineWidth: 3)
+                    .frame(width: 20, height: 20)
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
     }
 }

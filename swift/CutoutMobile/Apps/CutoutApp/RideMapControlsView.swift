@@ -17,8 +17,10 @@ struct RideMapControlsView: View {
             HStack(spacing: 12) {
                 Button(action: pause) {
                     Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .tint(PevColors.yellow)
                 .accessibilityIdentifier("ride-map.pause")
                 stopButton(prominent: true)
             }
@@ -26,8 +28,10 @@ struct RideMapControlsView: View {
             HStack(spacing: 12) {
                 Button(action: resume) {
                     Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(PevColors.yellow)
                 .accessibilityIdentifier("ride-map.resume")
                 stopButton(prominent: false)
             }
@@ -58,6 +62,7 @@ struct RideMapControlsView: View {
             Label(localizedAppText("ride_map.stop"), systemImage: "stop.fill")
         }
         .modifier(StopButtonStyle(prominent: prominent))
+        .tint(PevColors.red)
         .accessibilityIdentifier("ride-map.stop")
     }
 
@@ -80,9 +85,10 @@ struct RideMapControlsView: View {
                 localizedAppText(state == nil ? "ride_map.start" : "ride_map.start_new"),
                 systemImage: "location.fill"
             )
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: 48)
         }
         .buttonStyle(.borderedProminent)
+        .tint(PevColors.yellow)
         .accessibilityIdentifier("ride-map.start")
     }
 }

@@ -36,13 +36,15 @@ struct RideMapRouteView: View {
             if detailOnly {
                 detailContent
             } else {
+                RideMapNavigationHeader()
+
                 Picker(localizedAppText("navigation.section.map"), selection: $mode) {
                     Text(localizedAppText("ride_map.mode.live")).tag(Mode.live)
                     Text(localizedAppText("ride_map.mode.history")).tag(Mode.history)
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 10)
                 .accessibilityIdentifier("ride-map.mode-picker")
 
                 if mode == .live {
@@ -55,6 +57,7 @@ struct RideMapRouteView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(PevColors.pageBackground)
         .foregroundStyle(PevColors.primaryText)
+        .preferredColorScheme(.dark)
         .accessibilityIdentifier("ride-map.screen")
     }
 
@@ -107,5 +110,26 @@ struct RideMapRouteView: View {
             load: { model.loadRideMapHistory(selecting: initialHistoryID) },
             close: closeDetail ?? { dismiss() }
         )
+    }
+}
+
+private struct RideMapNavigationHeader: View {
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("CutOut")
+                .font(.title3.weight(.black))
+                .foregroundStyle(PevColors.yellow)
+
+            Text(localizedAppText("navigation.section.map"))
+                .font(.title3.weight(.bold))
+                .foregroundStyle(PevColors.muted)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("ride-map.navigation-header")
     }
 }

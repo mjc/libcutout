@@ -16,20 +16,22 @@ struct RideMapHistoryDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Button {
                     close()
                 } label: {
                     Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
+                .foregroundStyle(PevColors.yellow)
                 Spacer()
                 Text(localizedAppText("ride_map.detail_title"))
-                    .font(.headline)
+                    .font(.headline.weight(.bold))
                 Spacer()
+                Color.clear.frame(width: 44)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
 
             RideMapCanvasView(
                 points: points,
@@ -40,12 +42,24 @@ struct RideMapHistoryDetailView: View {
                 isApplyingCamera: $isApplyingCamera,
                 cameraDidChange: {}
             )
-            .frame(minHeight: 260, maxHeight: .infinity)
+            .frame(minHeight: 360, maxHeight: .infinity)
 
             if let ride = rides.first(where: { $0.rideId == initialHistoryID }) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(localizedAppText("ride_map.distance", distanceText(for: ride.summary)))
-                    Text(localizedAppText("ride_map.points", ride.summary.pointCount))
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        RideMapDetailMetric(
+                            value: distanceText(for: ride.summary),
+                            label: localizedAppText("ride_map.metric_distance")
+                        )
+                        RideMapDetailMetric(
+                            value: durationText(for: ride.summary),
+                            label: localizedAppText("ride_map.metric_elapsed")
+                        )
+                        RideMapDetailMetric(
+                            value: "—",
+                            label: localizedAppText("ride_map.metric_speed")
+                        )
+                    }
                     RideMapRouteTruthView(points: points, decision: nil)
                     if pointsTruncated {
                         Text(localizedAppText("ride_map.history_truncated"))
@@ -53,10 +67,34 @@ struct RideMapHistoryDetailView: View {
                             .foregroundStyle(PevColors.muted)
                             .accessibilityIdentifier("ride-map.detail-truncated")
                     }
+
+                    HStack(spacing: 10) {
+                        Button("Show full ride") {
+                            mapPosition = .automatic
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(PevColors.primaryText)
+
+                        Button {
+                            // Export/share is owned by LIBCU-411; keep the affordance
+                            // visible without inventing a second export path here.
+                        } label: {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(PevColors.primaryText)
+                        .disabled(true)
+                    }
                 }
                 .font(.subheadline)
-                .padding(20)
+                .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .background(PevColors.cardFill, in: UnevenRoundedRectangle(
+                    topLeadingRadius: 28,
+                    bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0,
+                    topTrailingRadius: 28
+                ))
             }
         }
         .task(id: rides.map(\.rideId)) { loadSelectionIfNeeded() }
@@ -78,5 +116,28 @@ struct RideMapHistoryDetailView: View {
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {
         Measurement(value: summary.distanceMeters, unit: UnitLength.meters)
             .formatted(.measurement(width: .abbreviated, usage: .road))
+    }
+
+    private func durationText(for summary: MobileRideMapSummaryDto) -> String {
+        Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
+            .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
+    }
+}
+
+private struct RideMapDetailMetric: View {
+    let value: String
+    let label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(value)
+                .font(.title2.weight(.bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(PevColors.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

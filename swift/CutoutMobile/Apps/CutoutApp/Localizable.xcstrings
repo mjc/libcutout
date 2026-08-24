@@ -653,6 +653,18 @@
       "comment" : "Ride-map summary label. The placeholder is the formatted distance.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Distance: %@" } } }
     },
+    "ride_map.metric_distance" : {
+      "comment" : "Live map metric label for distance.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "distance" } } }
+    },
+    "ride_map.metric_elapsed" : {
+      "comment" : "Live map metric label for elapsed time.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "elapsed" } } }
+    },
+    "ride_map.metric_speed" : {
+      "comment" : "Live map metric label for speed when a typed speed value is available.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "speed" } } }
+    },
     "ride_map.current_marker" : {
       "comment" : "Map marker for the most recent validated route point.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Current location" } } }
