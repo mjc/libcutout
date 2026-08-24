@@ -1384,6 +1384,43 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapVehicleNameRematchesTheCurrentProtocolIdentity() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        let supported = DevicePickerCandidateSupport.supported(
+            connectionRoute: .electricUnicycle,
+            electricUnicycleModel: .aero
+        )
+        let persistedName = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "wheel-1",
+            displayName: "wheel-1",
+            productCategory: "Electric unicycle",
+            evidence: "restored selection",
+            detail: "restored selection",
+            support: supported,
+            symbolName: "circle.hexagongrid.circle"
+        )
+        let protocolIdentity = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "wheel-1",
+            displayName: "NF2557",
+            productCategory: "Electric unicycle",
+            evidence: "Veteran protocol model id",
+            detail: "NOSFET Aero confirmed by model id 43",
+            support: supported,
+            symbolName: "circle.hexagongrid.circle"
+        )
+        driver.protocolIdentityCandidate = protocolIdentity
+
+        model.applyProtocolIdentityCandidate(persistedName)
+        XCTAssertEqual(model.selectedRideTitle, "wheel-1")
+        model.applyProtocolIdentityCandidate(protocolIdentity)
+
+        XCTAssertEqual(model.selectedRideTitle, "wheel-1")
+        XCTAssertEqual(model.rideMapVehicleIdentity, "wheel-1")
+        XCTAssertEqual(model.rideMapVehicleName, "NF2557")
+    }
+
+    @MainActor
     func testLiveActivityStartFailureIsObservableAndRetryable() async {
         let row = DevicePickerRow(
             id: "vesc-1234",

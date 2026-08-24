@@ -60,7 +60,14 @@ final class CutoutAppModel {
     }
 
     var rideMapVehicleName: String? {
-        connectionState.selection?.title
+        if let identity = rideMapVehicleIdentity,
+           let candidate = core.protocolIdentityCandidate,
+           candidate.platformIdentifier == identity,
+           candidate.displayName != identity,
+           !candidate.displayName.isEmpty {
+            return candidate.displayName
+        }
+        return connectionState.selection?.title
             ?? core.protocolIdentityCandidate?.displayName
             ?? devicePickerScanState?.rows.first(where: { $0.id == rideMapVehicleIdentity })?.title
     }
