@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use cutout_ride_maps::RideLifecycleState;
 
 use super::{
-    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideSource, StorageError,
+    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideId, RideSource, StorageError,
     VoltageSagModelRecord,
 };
 
@@ -945,6 +945,9 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .unwrap();
     assert_eq!(second.rides().len(), 1);
     assert_eq!(second.rides()[0].id(), rides[0]);
+    let selected = database.find_ride(rides[0]).unwrap().expect("saved ride");
+    assert_eq!(selected.id(), rides[0]);
+    assert!(database.find_ride(RideId::new()).unwrap().is_none());
 
     let ride = database.create_ride(RideSource::Live, 40).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();

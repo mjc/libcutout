@@ -358,15 +358,13 @@ final class CutoutAppModel {
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    var page = try state.storedHistoryPage(cursor: nil, limit: 50)
+                    let page = try state.storedHistoryPage(cursor: nil, limit: 50)
                     var summaries = page.summaries
-                    if let requestedRideID {
-                        while summaries.contains(where: { $0.rideId == requestedRideID }) == false,
-                              let cursor = page.nextCursor
-                        {
-                            page = try state.storedHistoryPage(cursor: cursor, limit: 50)
-                            summaries.append(contentsOf: page.summaries)
-                        }
+                    if let requestedRideID,
+                       summaries.contains(where: { $0.rideId == requestedRideID }) == false,
+                       let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
+                    {
+                        summaries.append(requestedRide)
                     }
                     return (summaries, page.nextCursor)
                 }.value

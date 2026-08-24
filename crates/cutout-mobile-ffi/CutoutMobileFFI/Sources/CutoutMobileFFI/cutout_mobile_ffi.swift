@@ -3083,6 +3083,15 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func exportRideJson(id: MobileRideIdDto, path: String) throws
 
     /**
+     * Finds one visible ride by stable identifier without scanning history pages.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier, worker, or stored record is invalid.
+     */
+    func findRide(rideId: MobileRideIdDto) throws  -> MobileRideRecordDto?
+
+    /**
      * Lists one bounded page of ride history in stable newest-first order.
      *
      * # Errors
@@ -3566,6 +3575,22 @@ open func exportRideJson(id: MobileRideIdDto, path: String)throws   {try rustCal
         FfiConverterString.lower(path),$0
     )
 }
+}
+
+    /**
+     * Finds one visible ride by stable identifier without scanning history pages.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier, worker, or stored record is invalid.
+     */
+open func findRide(rideId: MobileRideIdDto)throws  -> MobileRideRecordDto?  {
+    return try  FfiConverterOptionTypeMobileRideRecordDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_find_ride(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(rideId),$0
+    )
+})
 }
 
     /**
@@ -21955,6 +21980,30 @@ fileprivate struct FfiConverterOptionTypeMobileRideMapCoreSnapshotDto: FfiConver
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRideRecordDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideRecordDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideRecordDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideRecordDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileRideSessionIdentityDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileRideSessionIdentityDto?
 
@@ -23733,6 +23782,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 4935) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_find_ride() != 46554) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 9190) {

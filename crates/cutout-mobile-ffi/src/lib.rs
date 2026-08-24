@@ -3617,6 +3617,29 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
     }
 }
 
+fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto {
+    let summary = ride.summary();
+    MobileRideRecordDto {
+        id: MobileRideIdDto {
+            value: ride.id().uuid().to_string(),
+        },
+        source: ride.source().into(),
+        state: ride.state().into(),
+        created_at_milliseconds: ride.created_at_milliseconds(),
+        updated_at_milliseconds: ride.updated_at_milliseconds(),
+        duration_milliseconds: ride.duration_milliseconds(),
+        summary: MobileRideSummaryDto {
+            point_count: summary.point_count(),
+            distance_millimetres: summary.distance_millimetres(),
+        },
+        segment_count: ride.segment_count(),
+        candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
+        associated_vehicle: ride.associated_vehicle().map(str::to_owned),
+        associated_at_milliseconds: ride.associated_at_milliseconds(),
+        last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds(),
+    }
+}
+
 fn parse_mobile_ride_id(
     id: &MobileRideIdDto,
 ) -> Result<persistence::RideId, MobileRideDatabaseError> {
@@ -3804,28 +3827,7 @@ impl RideDatabaseHandle {
                 rides: page
                     .rides()
                     .iter()
-                    .map(|ride| {
-                        let summary = ride.summary();
-                        MobileRideRecordDto {
-                            id: MobileRideIdDto {
-                                value: ride.id().uuid().to_string(),
-                            },
-                            source: ride.source().into(),
-                            state: ride.state().into(),
-                            created_at_milliseconds: ride.created_at_milliseconds(),
-                            updated_at_milliseconds: ride.updated_at_milliseconds(),
-                            duration_milliseconds: ride.duration_milliseconds(),
-                            summary: MobileRideSummaryDto {
-                                point_count: summary.point_count(),
-                                distance_millimetres: summary.distance_millimetres(),
-                            },
-                            segment_count: ride.segment_count(),
-                            candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
-                            associated_vehicle: ride.associated_vehicle().map(str::to_owned),
-                            associated_at_milliseconds: ride.associated_at_milliseconds(),
-                            last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds(),
-                        }
-                    })
+                    .map(mobile_ride_record_dto)
                     .collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileRideCursorDto {
                     created_at_milliseconds: cursor.created_at_milliseconds(),
@@ -3834,6 +3836,22 @@ impl RideDatabaseHandle {
                     },
                 }),
             })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Finds one visible ride by stable identifier without scanning history pages.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identifier, worker, or stored record is invalid.
+    pub fn find_ride(
+        &self,
+        ride_id: MobileRideIdDto,
+    ) -> Result<Option<MobileRideRecordDto>, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        self.inner
+            .find_ride(ride_id)
+            .map(|ride| ride.as_ref().map(mobile_ride_record_dto))
             .map_err(map_ride_database_error)
     }
 

@@ -1484,6 +1484,15 @@ impl RideDatabase {
         self.request(move |reply| Command::Summary { ride_id, reply })
     }
 
+    /// Loads one visible ride record by its stable identifier without paging through history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the record.
+    pub fn find_ride(&self, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
+        self.request(move |reply| Command::FindRide { ride_id, reply })
+    }
+
     /// Lists one bounded page of visible rides in stable newest-first order.
     ///
     /// # Errors
@@ -1748,6 +1757,10 @@ enum Command {
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
+    },
+    FindRide {
+        ride_id: RideId,
+        reply: Reply<Option<RideRecord>>,
     },
     ListRides {
         cursor: Option<RideCursor>,
@@ -2020,6 +2033,9 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
+            }
+            Command::FindRide { ride_id, reply } => {
+                let _ = reply.send(find_ride(&connection, ride_id));
             }
             Command::ListRides {
                 cursor,
@@ -3787,6 +3803,34 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
         )
         .optional()?
         .ok_or(StorageError::NotFound)
+}
+
+fn find_ride(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<Option<RideRecord>, StorageError> {
+    connection
+        .query_row(
+            "SELECT id, source, state, created_at_ms, updated_at_ms,
+                    CASE
+                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 IS NULL
+                            OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 < created_at_ms
+                            THEN 0
+                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 - created_at_ms
+                    END,
+                    point_count, distance_mm,
+                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
+             FROM rides
+             WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
+            params![ride_id.uuid().to_string()],
+            ride_record_from_row,
+        )
+        .optional()
+        .map_err(StorageError::from)
 }
 
 fn list_rides(

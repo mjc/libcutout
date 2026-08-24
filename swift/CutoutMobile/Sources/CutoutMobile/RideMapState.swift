@@ -243,6 +243,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         try storedHistoryPage(cursor: nil, limit: limit).summaries
     }
 
+    public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
+        guard let database else { return nil }
+        do {
+            let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
+            return ride.map(mapHistorySummary)
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func storedHistoryPage(
         cursor: MobileRideCursorDto?,
         limit: UInt32
