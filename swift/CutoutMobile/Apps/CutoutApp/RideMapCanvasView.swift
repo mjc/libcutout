@@ -101,7 +101,7 @@ struct RideMapCanvasView: View {
                     RideMapRouteMarker(
                         title: showsEndMarker
                             ? localizedAppText("ride_map.end_marker")
-                            : "",
+                            : localizedAppText("ride_map.current_marker"),
                         color: showsEndMarker ? PevColors.red : PevColors.green
                     )
                     .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)

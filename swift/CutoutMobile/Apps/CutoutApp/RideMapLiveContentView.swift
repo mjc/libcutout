@@ -51,6 +51,8 @@ struct RideMapLiveContentView: View {
                     Text(recordingPillText)
                         .font(.caption.weight(.black))
                         .foregroundStyle(.black)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(PevColors.green, in: Capsule())
