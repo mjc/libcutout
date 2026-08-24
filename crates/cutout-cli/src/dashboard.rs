@@ -4481,6 +4481,19 @@ mod tests {
         SessionBridgeReport::default()
     }
 
+    fn aero_identity_report(confidence: BridgeIdentityConfidence) -> SessionBridgeReport {
+        SessionBridgeReport {
+            identity: Some(cutout_btle::BridgeIdentityResolution {
+                manufacturer: Some("NOSFET"),
+                model: Some("NOSFET Aero"),
+                confidence,
+                evidence: cutout_btle::BridgeIdentityEvidence::empty()
+                    .with(cutout_btle::BridgeIdentityEvidenceKind::ProtocolModelId),
+            }),
+            ..SessionBridgeReport::default()
+        }
+    }
+
     #[test]
     fn sample_state_has_device_profiles_and_logs() {
         let state = DashboardState::sample();
@@ -4589,17 +4602,11 @@ mod tests {
         assert_eq!(state.device.make, "unknown");
         assert_eq!(state.device.model, "unknown");
 
-        let report = SessionBridgeReport {
-            identity: Some(cutout_btle::BridgeIdentityResolution {
-                manufacturer: Some("NOSFET"),
-                model: Some("NOSFET Aero"),
-                confidence: BridgeIdentityConfidence::Model,
-                evidence: cutout_btle::BridgeIdentityEvidence::empty()
-                    .with(cutout_btle::BridgeIdentityEvidenceKind::ProtocolModelId),
-            }),
-            ..SessionBridgeReport::default()
-        };
-        state.apply_session_report(&report);
+        state.apply_session_report(&aero_identity_report(BridgeIdentityConfidence::HintsOnly));
+        assert_eq!(state.device.make, "unknown");
+        assert_eq!(state.device.model, "unknown");
+
+        state.apply_session_report(&aero_identity_report(BridgeIdentityConfidence::Model));
 
         assert_eq!(state.device.make, "NOSFET");
         assert_eq!(state.device.model, "NOSFET Aero");
@@ -6517,17 +6524,7 @@ mod tests {
             services: Vec::new().into(),
         };
         let mut state = DashboardState::live_connected(&target, &summary);
-        let report = SessionBridgeReport {
-            identity: Some(cutout_btle::BridgeIdentityResolution {
-                manufacturer: Some("NOSFET"),
-                model: Some("NOSFET Aero"),
-                confidence: BridgeIdentityConfidence::Model,
-                evidence: cutout_btle::BridgeIdentityEvidence::empty()
-                    .with(cutout_btle::BridgeIdentityEvidenceKind::ProtocolModelId),
-            }),
-            ..SessionBridgeReport::default()
-        };
-        state.apply_session_report(&report);
+        state.apply_session_report(&aero_identity_report(BridgeIdentityConfidence::Model));
         state.active_tab = DashboardTab::new(2);
 
         state.handle_input(DashboardInput::Enter);
