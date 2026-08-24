@@ -2092,6 +2092,22 @@ pub struct MobileAeroAngleAdjustmentDto {
     pub tenths_of_degree: i8,
 }
 
+impl From<CoreAeroPwmPercent> for MobileAeroPwmPercentDto {
+    fn from(setting: CoreAeroPwmPercent) -> Self {
+        Self {
+            percent: setting.percent(),
+        }
+    }
+}
+
+impl From<CoreAeroAngleAdjustment> for MobileAeroAngleAdjustmentDto {
+    fn from(setting: CoreAeroAngleAdjustment) -> Self {
+        Self {
+            tenths_of_degree: setting.tenths_of_degree(),
+        }
+    }
+}
+
 /// Mobile DTO light state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum MobileLightStateDto {
@@ -2470,6 +2486,84 @@ pub struct MobileAeroSpeedSettingStateDto {
 }
 
 impl MobileAeroSpeedSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed NOSFET/Veteran PWM-warning lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPwmSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current PWM warning percentage, when known.
+    pub current: Option<MobileAeroPwmPercentDto>,
+
+    /// Requested PWM warning percentage, when a write is pending or terminal.
+    pub requested: Option<MobileAeroPwmPercentDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroPwmSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
+}
+
+/// Typed NOSFET/Veteran angle-adjustment lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroAngleAdjustmentStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current angle adjustment, when known.
+    pub current: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Requested angle adjustment, when a write is pending or terminal.
+    pub requested: Option<MobileAeroAngleAdjustmentDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroAngleAdjustmentStateDto {
     fn unknown() -> Self {
         Self {
             kind: MobileSettingStateKindDto::Unknown,
@@ -3187,7 +3281,9 @@ where
 struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
     aero_tiltback_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
+    aero_pwm_percent: MobileSettingTracker<CoreAeroPwmPercent>,
     aero_alarm_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
+    aero_angle_adjustment: MobileSettingTracker<CoreAeroAngleAdjustment>,
     pedal_mode: MobileSettingTracker<CorePedalMode>,
     roll_angle: MobileSettingTracker<CoreRollAngle>,
     speed_alarm_mode: MobileSettingTracker<CoreSpeedAlarmMode>,
@@ -3200,14 +3296,30 @@ impl MobileEucSettingTrackers {
         let now = input.monotonic_ms.into_core();
         self.headlight.observe_step(input.kind, now);
         self.aero_tiltback_speed.observe_step(input.kind, now);
+        self.aero_pwm_percent.observe_step(input.kind, now);
         self.aero_alarm_speed.observe_step(input.kind, now);
+        self.aero_angle_adjustment.observe_step(input.kind, now);
         self.pedal_mode.observe_step(input.kind, now);
         self.roll_angle.observe_step(input.kind, now);
         self.speed_alarm_mode.observe_step(input.kind, now);
         self.acceleration_assist.observe_step(input.kind, now);
         self.taillight.observe_step(input.kind, now);
 
-        match input.command {
+        self.observe_command(input.command, now, result);
+        for output in &result.outputs {
+            if let Some(readback) = output.settings_readback.as_ref() {
+                self.observe_readback(readback, now);
+            }
+        }
+    }
+
+    fn observe_command(
+        &mut self,
+        command: Option<MobileCommandDto>,
+        now: MonotonicTimestamp,
+        result: &MobileSessionStepResultDto,
+    ) {
+        match command {
             Some(MobileCommandDto::SetLights(requested)) => {
                 self.headlight.observe_write(requested.into(), now, result);
             }
@@ -3217,9 +3329,20 @@ impl MobileEucSettingTrackers {
                         .observe_write(requested, now, result);
                 }
             }
+            Some(MobileCommandDto::SetAeroPwmPercent(requested)) => {
+                if let Some(requested) = CoreAeroPwmPercent::new(requested.percent) {
+                    self.aero_pwm_percent.observe_write(requested, now, result);
+                }
+            }
             Some(MobileCommandDto::SetAeroAlarmSpeed(requested)) => {
                 if let Some(requested) = CoreAeroSpeedSetting::new(requested.kilometres_per_hour) {
                     self.aero_alarm_speed.observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroAngleAdjustment(requested)) => {
+                if let Some(requested) = CoreAeroAngleAdjustment::new(requested.tenths_of_degree) {
+                    self.aero_angle_adjustment
+                        .observe_write(requested, now, result);
                 }
             }
             Some(MobileCommandDto::SetPedalMode(requested)) => {
@@ -3241,51 +3364,47 @@ impl MobileEucSettingTrackers {
             }
             _ => {}
         }
+    }
 
-        for output in &result.outputs {
-            let Some(readback) = output.settings_readback.as_ref() else {
-                continue;
-            };
-            if let Some(light_state) = readback.euc_garage.light_state {
-                self.headlight.observe_readback(light_state.into(), now);
-            }
-            if let Some(entry) =
-                settings_entry(&readback.entries, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH)
-                    .and_then(aero_speed_setting_from_entry)
-            {
-                self.aero_tiltback_speed.observe_readback(entry, now);
-            }
-            if let Some(entry) =
-                settings_entry(&readback.entries, VETERAN_FIELD_SPEED_ALERT_DECI_KMH)
-                    .and_then(aero_speed_setting_from_entry)
-            {
-                self.aero_alarm_speed.observe_readback(entry, now);
-            }
-            if let Some(pedal_mode) = readback
-                .euc_garage
-                .pedal_mode
-                .as_ref()
-                .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
-            {
-                self.pedal_mode.observe_readback(pedal_mode, now);
-            }
-            if let Some(roll_angle) = readback
-                .euc_garage
-                .roll_angle
-                .as_ref()
-                .and_then(|roll_angle| roll_angle.angle.map(CoreRollAngle::from))
-            {
-                self.roll_angle.observe_readback(roll_angle, now);
-            }
-            if let Some(speed_alarm_mode) = readback
-                .euc_garage
-                .speed_alarm_mode
-                .as_ref()
-                .and_then(|mode| mode.mode.map(CoreSpeedAlarmMode::from))
-            {
-                self.speed_alarm_mode
-                    .observe_readback(speed_alarm_mode, now);
-            }
+    fn observe_readback(&mut self, readback: &MobileSettingsReadbackDto, now: MonotonicTimestamp) {
+        if let Some(light_state) = readback.euc_garage.light_state {
+            self.headlight.observe_readback(light_state.into(), now);
+        }
+        if let Some(entry) =
+            settings_entry(&readback.entries, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH)
+                .and_then(aero_speed_setting_from_entry)
+        {
+            self.aero_tiltback_speed.observe_readback(entry, now);
+        }
+        if let Some(entry) = settings_entry(&readback.entries, VETERAN_FIELD_SPEED_ALERT_DECI_KMH)
+            .and_then(aero_speed_setting_from_entry)
+        {
+            self.aero_alarm_speed.observe_readback(entry, now);
+        }
+        if let Some(pedal_mode) = readback
+            .euc_garage
+            .pedal_mode
+            .as_ref()
+            .and_then(|pedal_mode| pedal_mode.mode.map(CorePedalMode::from))
+        {
+            self.pedal_mode.observe_readback(pedal_mode, now);
+        }
+        if let Some(roll_angle) = readback
+            .euc_garage
+            .roll_angle
+            .as_ref()
+            .and_then(|roll_angle| roll_angle.angle.map(CoreRollAngle::from))
+        {
+            self.roll_angle.observe_readback(roll_angle, now);
+        }
+        if let Some(speed_alarm_mode) = readback
+            .euc_garage
+            .speed_alarm_mode
+            .as_ref()
+            .and_then(|mode| mode.mode.map(CoreSpeedAlarmMode::from))
+        {
+            self.speed_alarm_mode
+                .observe_readback(speed_alarm_mode, now);
         }
     }
 
@@ -3297,8 +3416,16 @@ impl MobileEucSettingTrackers {
         mobile_aero_speed_setting_state(self.aero_tiltback_speed.state)
     }
 
+    fn aero_pwm_percent(&self) -> MobileAeroPwmSettingStateDto {
+        mobile_aero_pwm_setting_state(self.aero_pwm_percent.state)
+    }
+
     fn aero_alarm_speed(&self) -> MobileAeroSpeedSettingStateDto {
         mobile_aero_speed_setting_state(self.aero_alarm_speed.state)
+    }
+
+    fn aero_angle_adjustment(&self) -> MobileAeroAngleAdjustmentStateDto {
+        mobile_aero_angle_setting_state(self.aero_angle_adjustment.state)
     }
 
     fn pedal_mode(&self) -> MobilePedalModeSettingStateDto {
@@ -3348,6 +3475,138 @@ fn mobile_aero_speed_setting_state(
     state: CoreSettingState<CoreAeroSpeedSetting>,
 ) -> MobileAeroSpeedSettingStateDto {
     let mut snapshot = MobileAeroSpeedSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_aero_pwm_setting_state(
+    state: CoreSettingState<CoreAeroPwmPercent>,
+) -> MobileAeroPwmSettingStateDto {
+    let mut snapshot = MobileAeroPwmSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
+}
+
+fn mobile_aero_angle_setting_state(
+    state: CoreSettingState<CoreAeroAngleAdjustment>,
+) -> MobileAeroAngleAdjustmentStateDto {
+    let mut snapshot = MobileAeroAngleAdjustmentStateDto::unknown();
     match state {
         CoreSettingState::Unknown => {}
         CoreSettingState::Current(value) => {
@@ -10925,9 +11184,19 @@ impl AeroBenignControlSession {
         self.lock_settings().aero_tiltback_speed()
     }
 
+    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
+    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
+        self.lock_settings().aero_pwm_percent()
+    }
+
     /// Returns the Rust-owned Aero alarm-speed lifecycle state.
     pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
         self.lock_settings().aero_alarm_speed()
+    }
+
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -12425,9 +12694,19 @@ impl FalconBenignControlSession {
         self.lock_settings().aero_tiltback_speed()
     }
 
+    /// Returns the Rust-owned Aero PWM-warning lifecycle state.
+    pub fn aero_pwm_percent_state(&self) -> MobileAeroPwmSettingStateDto {
+        self.lock_settings().aero_pwm_percent()
+    }
+
     /// Returns the Rust-owned Aero alarm-speed lifecycle state.
     pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
         self.lock_settings().aero_alarm_speed()
+    }
+
+    /// Returns the Rust-owned Aero angle-adjustment lifecycle state.
+    pub fn aero_angle_adjustment_state(&self) -> MobileAeroAngleAdjustmentStateDto {
+        self.lock_settings().aero_angle_adjustment()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -15613,6 +15892,46 @@ mod tests {
             })
         );
         assert_eq!(state.confirmed_at_ms, Some(10));
+    }
+
+    #[test]
+    fn aero_wrapper_tracks_pwm_and_angle_writes() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        for command in [
+            MobileCommandDto::SetAeroPwmPercent(MobileAeroPwmPercentDto { percent: 64 }),
+            MobileCommandDto::SetAeroAngleAdjustment(MobileAeroAngleAdjustmentDto {
+                tenths_of_degree: -36,
+            }),
+        ] {
+            let result = session.ingest_checked(MobileSessionInputDto {
+                kind: MobileSessionInputKindDto::Command,
+                monotonic_ms: ms(0),
+                max_write_len: None,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                command: Some(command),
+            });
+            assert_eq!(result.error, None);
+            assert!(
+                result
+                    .outputs
+                    .iter()
+                    .any(|output| output.kind == MobileSessionOutputKindDto::Write)
+            );
+        }
+
+        assert_eq!(
+            session.aero_pwm_percent_state().requested,
+            Some(MobileAeroPwmPercentDto { percent: 64 })
+        );
+        assert_eq!(
+            session.aero_angle_adjustment_state().requested,
+            Some(MobileAeroAngleAdjustmentDto {
+                tenths_of_degree: -36,
+            })
+        );
     }
 
     #[test]
