@@ -1,6 +1,6 @@
 use crate::{
     LocationAdmission, LocationSample, RideEvent, RideLifecycleState, RideSummary, TransitionError,
-    distance_between_millimetres,
+    VehicleIdentity, distance_between_millimetres,
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
@@ -152,9 +152,9 @@ pub enum VehicleAssociation {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RideMapMetadata {
     /// Candidate vehicle identity retained for automatic association.
-    pub candidate_vehicle: Option<String>,
+    pub candidate_vehicle: Option<VehicleIdentity>,
     /// Confirmed associated vehicle identity.
-    pub associated_vehicle: Option<String>,
+    pub associated_vehicle: Option<VehicleIdentity>,
     /// Monotonic timestamp of the confirmed association.
     pub associated_at_milliseconds: Option<u64>,
     /// Newest observed vehicle telemetry timestamp.
@@ -166,8 +166,8 @@ pub struct RideMapMetadata {
 pub struct RideMapRecorder {
     state: Option<RideLifecycleState>,
     created_at_milliseconds: u64,
-    candidate_vehicle: Option<String>,
-    associated_vehicle: Option<String>,
+    candidate_vehicle: Option<VehicleIdentity>,
+    associated_vehicle: Option<VehicleIdentity>,
     associated_at_milliseconds: Option<u64>,
     last_telemetry_at_milliseconds: Option<u64>,
     points: Vec<RideMapPoint>,
@@ -233,8 +233,8 @@ impl RideMapRecorder {
     pub fn restored_with_metadata(
         state: RideLifecycleState,
         created_at_milliseconds: u64,
-        candidate_vehicle: Option<String>,
-        associated_vehicle: Option<String>,
+        candidate_vehicle: Option<VehicleIdentity>,
+        associated_vehicle: Option<VehicleIdentity>,
         associated_at_milliseconds: Option<u64>,
         last_telemetry_at_milliseconds: Option<u64>,
         points: Vec<RideMapPoint>,
@@ -325,13 +325,15 @@ impl RideMapRecorder {
     /// Returns the associated vehicle identity, if one exists.
     #[must_use]
     pub fn associated_vehicle(&self) -> Option<&str> {
-        self.associated_vehicle.as_deref()
+        self.associated_vehicle
+            .as_ref()
+            .map(VehicleIdentity::as_str)
     }
 
     /// Returns the candidate identity retained for automatic association.
     #[must_use]
     pub fn candidate_vehicle(&self) -> Option<&str> {
-        self.candidate_vehicle.as_deref()
+        self.candidate_vehicle.as_ref().map(VehicleIdentity::as_str)
     }
 
     /// Returns the monotonic association timestamp.
@@ -422,7 +424,7 @@ impl RideMapRecorder {
     pub fn start(
         &mut self,
         at_milliseconds: u64,
-        candidate_vehicle: Option<String>,
+        candidate_vehicle: Option<VehicleIdentity>,
     ) -> Result<(), TransitionError> {
         if !matches!(
             self.state,
@@ -507,7 +509,7 @@ impl RideMapRecorder {
     #[must_use]
     pub fn observe_vehicle(
         &mut self,
-        platform_identifier: &str,
+        platform_identifier: &VehicleIdentity,
         at_milliseconds: u64,
     ) -> VehicleAssociation {
         if !matches!(
@@ -519,19 +521,19 @@ impl RideMapRecorder {
         if at_milliseconds < self.last_monotonic_milliseconds {
             return VehicleAssociation::TimestampOutOfOrder;
         }
-        if let Some(associated) = self.associated_vehicle.as_deref() {
+        if let Some(associated) = self.associated_vehicle.as_ref() {
             return if associated == platform_identifier {
                 VehicleAssociation::AlreadyAssociated
             } else {
                 VehicleAssociation::IdentityMismatch
             };
         }
-        if let Some(candidate) = self.candidate_vehicle.as_deref()
+        if let Some(candidate) = self.candidate_vehicle.as_ref()
             && candidate != platform_identifier
         {
             return VehicleAssociation::IdentityMismatch;
         }
-        self.associated_vehicle = Some(platform_identifier.to_owned());
+        self.associated_vehicle = Some(platform_identifier.clone());
         self.candidate_vehicle = None;
         self.associated_at_milliseconds = Some(at_milliseconds);
         VehicleAssociation::Associated
@@ -662,8 +664,12 @@ mod tests {
     use super::{RideMapRecorder, VehicleAssociation};
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
-        RideLifecycleState,
+        RideLifecycleState, VehicleIdentity,
     };
+
+    fn identity(value: &str) -> VehicleIdentity {
+        VehicleIdentity::new(value).expect("valid vehicle identity")
+    }
 
     fn sample(monotonic: u64, latitude: f64) -> LocationSample {
         LocationSample::new(
@@ -679,14 +685,14 @@ mod tests {
     fn recorder_owns_transitions_association_and_sample_admission() {
         let mut recorder = RideMapRecorder::new();
         recorder
-            .start(1_000, Some("pev-1".to_owned()))
+            .start(1_000, Some(identity("pev-1")))
             .expect("starts");
         assert_eq!(
             recorder.validate_transition(RideEvent::Pause),
             Ok(RideLifecycleState::Paused)
         );
         assert_eq!(
-            recorder.observe_vehicle("pev-1", 1_001),
+            recorder.observe_vehicle(&identity("pev-1"), 1_001),
             VehicleAssociation::Associated
         );
 
@@ -696,7 +702,7 @@ mod tests {
         assert_eq!(recorder.segment_count(), 1);
         assert_eq!(recorder.check_sample(&first), LocationAdmission::Duplicate);
         assert_eq!(
-            recorder.observe_vehicle("pev-1", 1_002),
+            recorder.observe_vehicle(&identity("pev-1"), 1_002),
             VehicleAssociation::AlreadyAssociated
         );
         recorder.apply_transition(RideLifecycleState::Active);
@@ -736,21 +742,21 @@ mod tests {
         let mut no_candidate = RideMapRecorder::new();
         no_candidate.start(1_000, None).expect("starts");
         assert_eq!(
-            no_candidate.observe_vehicle("pev-1", 1_001),
+            no_candidate.observe_vehicle(&identity("pev-1"), 1_001),
             VehicleAssociation::Associated
         );
         assert_eq!(no_candidate.associated_vehicle(), Some("pev-1"));
 
         let mut associated = RideMapRecorder::new();
         associated
-            .start(1_000, Some("pev-1".to_owned()))
+            .start(1_000, Some(identity("pev-1")))
             .expect("starts");
         assert_eq!(
-            associated.observe_vehicle("pev-1", 1_001),
+            associated.observe_vehicle(&identity("pev-1"), 1_001),
             VehicleAssociation::Associated
         );
         assert_eq!(
-            associated.observe_vehicle("pev-2", 1_002),
+            associated.observe_vehicle(&identity("pev-2"), 1_002),
             VehicleAssociation::IdentityMismatch
         );
         assert_eq!(associated.associated_vehicle(), Some("pev-1"));

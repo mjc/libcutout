@@ -4629,8 +4629,14 @@ impl MobileRideMapCoreInner {
             map_ride_lifecycle_state(ride.state),
             ride.created_at_milliseconds,
             ride_maps::RideMapMetadata {
-                candidate_vehicle: ride.candidate_vehicle,
-                associated_vehicle: ride.associated_vehicle,
+                candidate_vehicle: ride
+                    .candidate_vehicle
+                    .as_deref()
+                    .and_then(ride_maps::VehicleIdentity::new),
+                associated_vehicle: ride
+                    .associated_vehicle
+                    .as_deref()
+                    .and_then(ride_maps::VehicleIdentity::new),
                 associated_at_milliseconds: ride.associated_at_milliseconds,
                 last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds,
             },
@@ -4754,7 +4760,12 @@ impl MobileRideMapCoreInner {
             }
         };
         self.recorder
-            .start(at_ms, last_connected_vehicle)
+            .start(
+                at_ms,
+                last_connected_vehicle
+                    .as_deref()
+                    .and_then(ride_maps::VehicleIdentity::new),
+            )
             .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
         self.active_ride_id = Some(id);
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
@@ -4908,7 +4919,16 @@ impl MobileRideMapCore {
         }
 
         let mut staged = state.recorder.clone();
-        let association = staged.observe_vehicle(&platform_identifier, at_ms);
+        let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
+            return Ok(state.snapshot(
+                state
+                    .recorder
+                    .state()
+                    .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?
+                    .into(),
+            ));
+        };
+        let association = staged.observe_vehicle(&identity, at_ms);
         if association == ride_maps::VehicleAssociation::Associated {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
@@ -5020,7 +5040,10 @@ impl MobileRideMapCore {
     ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let mut staged = state.recorder.clone();
-        let association = staged.observe_vehicle(&platform_identifier, at_ms);
+        let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
+            return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
+        };
+        let association = staged.observe_vehicle(&identity, at_ms);
         if association == ride_maps::VehicleAssociation::Associated {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())

@@ -14,6 +14,8 @@ mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
 mod location;
 pub use location::{LocationAdmission, LocationSample, LocationSource};
+mod vehicle;
+pub use vehicle::{VehicleIdentity, VehicleIdentityError};
 mod summary;
 pub use summary::{DistanceMillimetres, RideSummary, distance_between_millimetres};
 mod recording;
@@ -27,7 +29,7 @@ pub use recording::{
 mod tests {
     use super::{
         Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
-        RideEvent, RideLifecycleState, RideSummary, TransitionError,
+        RideEvent, RideLifecycleState, RideSummary, TransitionError, VehicleIdentity,
     };
 
     #[test]
@@ -93,5 +95,14 @@ mod tests {
         assert_eq!(summary.point_count(), 2);
         assert!(summary.distance_millimetres() > 80_000);
         assert!(summary.distance_millimetres() < 100_000);
+    }
+
+    #[test]
+    fn vehicle_identity_rejects_blank_values_and_trims_boundaries() {
+        assert_eq!(
+            VehicleIdentity::new("  NF2557 "),
+            Some(VehicleIdentity::new("NF2557").expect("test identity is valid"))
+        );
+        assert_eq!(VehicleIdentity::new("   "), None);
     }
 }
