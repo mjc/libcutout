@@ -101,6 +101,16 @@ struct RideMapHistoryContentView: View {
                     .frame(height: 340)
                     .frame(maxWidth: .infinity)
 
+                    if pointsTruncated {
+                        Text(localizedAppText("ride_map.history_truncated"))
+                            .font(.caption)
+                            .foregroundStyle(PevColors.muted)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityIdentifier("ride-map.history-truncated")
+                    }
+
                     VStack(alignment: .leading, spacing: 10) {
                         if isRecording || isPaused {
                             HStack(spacing: 10) {
@@ -129,12 +139,6 @@ struct RideMapHistoryContentView: View {
                             select: select,
                             loadMore: loadMore
                         )
-                        if pointsTruncated {
-                            Text(localizedAppText("ride_map.history_truncated"))
-                                .font(.caption)
-                                .foregroundStyle(PevColors.muted)
-                                .accessibilityIdentifier("ride-map.history-truncated")
-                        }
                     }
                     .padding(16)
                     .background(PevColors.cardFill, in: UnevenRoundedRectangle(
