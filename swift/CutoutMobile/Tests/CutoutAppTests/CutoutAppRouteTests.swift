@@ -154,6 +154,15 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapOnlyUsesRecordedBoundsForTerminalStates() {
+        XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .recording))
+        XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .paused))
+        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .stopped))
+        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .saved))
+        XCTAssertTrue(RideMapLiveContentView.showsRecordedBounds(for: .discarded))
+    }
+
+    @MainActor
     func testRideMapPresentationStateSurvivesRouteRecreation() {
         let presentation = RideMapPresentationState()
 

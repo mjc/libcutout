@@ -95,7 +95,7 @@ struct RideMapLiveContentView: View {
                     points: points,
                     rustSegmentCount: snapshot?.segmentCount ?? 0,
                     decision: lastDecision,
-                    showsRecordedBounds: snapshot?.state != .recording
+                    showsRecordedBounds: Self.showsRecordedBounds(for: snapshot?.state)
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated"))
@@ -204,13 +204,17 @@ struct RideMapLiveContentView: View {
         return "\(localizedAppText("ride_map.status.recording")) · \(source)"
     }
 
-    private var showsEndMarker: Bool {
-        switch snapshot?.state {
+    static func showsRecordedBounds(for state: MobileRideMapStateDto?) -> Bool {
+        switch state {
         case .stopped, .saved, .discarded:
             true
         case .recording, .paused, nil:
             false
         }
+    }
+
+    private var showsEndMarker: Bool {
+        Self.showsRecordedBounds(for: snapshot?.state)
     }
 
     private var accessibilityRouteSummary: String {
