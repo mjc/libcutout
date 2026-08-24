@@ -169,8 +169,18 @@ struct RideMapHistoryContentView: View {
                 }
             }
         }
-        .onAppear { loadHistoryIfNeeded() }
-        .onChange(of: searchText) { _, _ in load() }
+        // Search is Rust-owned, but keystrokes should not launch one query per
+        // character. A task keyed to the text cancels stale queries and also
+        // reloads when the user clears the field.
+        .task(id: searchText) {
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                return
+            }
+            guard Task.isCancelled == false else { return }
+            load()
+        }
         // Search belongs to the screen container so it stays attached to the
         // Map navigation context instead of the inner fixed-height list.
         .searchable(text: $searchText)
@@ -225,10 +235,6 @@ struct RideMapHistoryContentView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ride-map.history-error-state")
-    }
-
-    private func loadHistoryIfNeeded() {
-        if rides.isEmpty { load() }
     }
 
     private func filterMenu(
