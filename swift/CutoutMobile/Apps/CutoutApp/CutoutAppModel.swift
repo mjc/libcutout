@@ -230,6 +230,26 @@ final class CutoutAppModel {
         core.settingsCapabilities
     }
 
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        core.aeroTiltbackSpeedState
+    }
+
+    var aeroPwmPercentState: AeroPwmSettingState? {
+        core.aeroPwmPercentState
+    }
+
+    var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        core.aeroAlarmSpeedState
+    }
+
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        core.aeroAngleAdjustmentState
+    }
+
+    var aeroHighBeamState: LightSettingState? {
+        core.aeroHighBeamState
+    }
+
     var pedalModeState: PedalModeSettingState? {
         core.pedalModeState
     }
@@ -264,6 +284,30 @@ final class CutoutAppModel {
 
     var begodeLedModeControlAvailable: Bool {
         core.settingsCapabilities?.begodeLedMode == .supported
+    }
+
+    var resetTripMeterControlAvailable: Bool {
+        core.settingsCapabilities?.resetTripMeter == .supported
+    }
+
+    var aeroTiltbackSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.aeroTiltbackSpeed == .supported
+    }
+
+    var aeroPwmPercentControlAvailable: Bool {
+        core.settingsCapabilities?.aeroPwmPercent == .supported
+    }
+
+    var aeroAlarmSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.aeroAlarmSpeed == .supported
+    }
+
+    var aeroAngleAdjustmentControlAvailable: Bool {
+        core.settingsCapabilities?.aeroAngleAdjustment == .supported
+    }
+
+    var aeroHighBeamControlAvailable: Bool {
+        core.settingsCapabilities?.aeroHighBeam == .supported
     }
 
     var accelerationAssistState: AccelerationAssistSettingState? {
@@ -473,7 +517,19 @@ final class CutoutAppModel {
     }
 
     private var headlightWriteSupport: SettingWriteSupport? {
-        core.settingsCapabilities?.headlight
+        usesAeroHighBeam
+            ? core.settingsCapabilities?.aeroHighBeam
+            : core.settingsCapabilities?.headlight
+    }
+
+    private var coreHeadlightState: LightSettingState? {
+        usesAeroHighBeam
+            ? (core.aeroHighBeamState ?? core.headlightState)
+            : core.headlightState
+    }
+
+    private var usesAeroHighBeam: Bool {
+        core.electricUnicycleModel == .aero
     }
 
     convenience init() {
@@ -2142,7 +2198,10 @@ final class CutoutAppModel {
             )
             return .failed
         }
-        return applyHeadlightSubmission(core.setLights(state), for: state)
+        let result = usesAeroHighBeam
+            ? core.setAeroHighBeam(state)
+            : core.setLights(state)
+        return applyHeadlightSubmission(result, for: state)
     }
 
     @discardableResult
@@ -2181,6 +2240,31 @@ final class CutoutAppModel {
         return core.setBegodeLedMode(mode)
     }
 
+    func resetTripMeter() -> SettingCommandResult {
+        guard resetTripMeterControlAvailable else { return .failed }
+        return core.resetTripMeter()
+    }
+
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroTiltbackSpeedControlAvailable else { return .failed }
+        return core.setAeroTiltbackSpeed(speed)
+    }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        guard aeroPwmPercentControlAvailable else { return .failed }
+        return core.setAeroPwmPercent(percent)
+    }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroAlarmSpeedControlAvailable else { return .failed }
+        return core.setAeroAlarmSpeed(speed)
+    }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        guard aeroAngleAdjustmentControlAvailable else { return .failed }
+        return core.setAeroAngleAdjustment(angle)
+    }
+
     private func applyHeadlightSubmission(
         _ result: SettingCommandResult,
         for state: LightState
@@ -2212,7 +2296,7 @@ final class CutoutAppModel {
     }
 
     private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
-        guard core.headlightState == nil else { return }
+        guard coreHeadlightState == nil else { return }
         fallbackHeadlightState = LightSettingState(
             kind: .pending,
             current: displayedHeadlightState,
@@ -2222,19 +2306,20 @@ final class CutoutAppModel {
         )
     }
     private var effectiveHeadlightState: LightSettingState? {
-        core.headlightState ?? fallbackHeadlightState
+        coreHeadlightState ?? fallbackHeadlightState
     }
 
     private var displayedHeadlightState: LightState? {
         guard let state = effectiveHeadlightState else { return nil }
-        if state.kind == .pending, core.electricUnicycleModel == .aero {
+        if state.kind == .pending, usesAeroHighBeam {
             return state.requested
         }
         return state.current
     }
 
     private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
-        guard core.headlightState == nil else { return }
+        guard !usesAeroHighBeam else { return }
+        guard coreHeadlightState == nil else { return }
         guard let reportedState = readback?.eucGarageSettings.lightState else {
             if fallbackHeadlightState?.kind == .pending {
                 fallbackHeadlightState = LightSettingState(
@@ -2339,7 +2424,6 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
-        let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let previousCapture = (
             status: captureStatus,
             progress: captureProgress,
@@ -2351,18 +2435,11 @@ final class CutoutAppModel {
             deviceKind: recordOnlyDeviceKind
         )
         resetCaptureSession()
-        let didStart = switch modelHint {
-        case .falcon:
-            core.pair(platformIdentifier: platformIdentifier, model: .falcon)
-        case .aero:
-            core.pair(platformIdentifier: platformIdentifier, model: .aero)
-        case .unknown:
-            core.recordOnly(
-                platformIdentifier: platformIdentifier,
-                note: "unsupported picker row",
-                annotations: annotations
-            )
-        }
+        let didStart = core.recordOnly(
+            platformIdentifier: platformIdentifier,
+            note: "unsupported picker row",
+            annotations: annotations
+        )
         guard didStart else {
             captureStatus = previousCapture.status
             captureProgress = previousCapture.progress
@@ -2376,15 +2453,10 @@ final class CutoutAppModel {
         }
 
         permitsStoredDeviceAutoPairing = false
-        if modelHint != .unknown {
-            core.annotateCapture(key: "device_kind", value: annotationKind)
-        }
-        isRecordOnlyCapture = modelHint == .unknown
+        isRecordOnlyCapture = true
         recordOnlyDeviceKind = annotationKind
-        if modelHint == .unknown {
-            liveActivityIdentity = nil
-            liveActivityGlyph = .electricUnicycle
-        }
+        liveActivityIdentity = nil
+        liveActivityGlyph = .electricUnicycle
         syncLiveActivity()
         return true
     }

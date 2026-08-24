@@ -59,6 +59,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn ensure_swift_ffi(root: &Path) -> Result<()> {
+    let _lock = SwiftFfiLock::acquire(root)?;
     let package = root.join(GENERATED_PACKAGE);
     let expected = source_fingerprint(root)?;
     let current = fs::read_to_string(package.join(".cutout-source.sha256"))
@@ -130,20 +131,39 @@ fn regenerate_swift_ffi(root: &Path, package: &Path) -> Result<()> {
     }
 
     let backup = package.with_file_name(format!(".CutoutMobileFFI.backup.{}", std::process::id()));
+    let cargo_backup = cargo_package.with_file_name(format!(
+        ".CutoutMobileFFI.cargo-backup.{}",
+        std::process::id()
+    ));
     ensure!(
         !backup.exists(),
         "generated-package backup already exists: {}",
         backup.display()
     );
+    ensure!(
+        !cargo_backup.exists(),
+        "cargo-swift backup already exists: {}",
+        cargo_backup.display()
+    );
+    if let Some(parent) = package.parent() {
+        fs::create_dir_all(parent)?;
+    }
     if package.exists() {
         fs::rename(package, &backup)
             .with_context(|| format!("backing up {}", package.display()))?;
+    }
+    if cargo_package.exists() {
+        fs::rename(&cargo_package, &cargo_backup)
+            .with_context(|| format!("backing up {}", cargo_package.display()))?;
     }
 
     match fs::rename(&stage, package) {
         Ok(()) => {
             if backup.exists() {
                 fs::remove_dir_all(&backup)?;
+            }
+            if cargo_backup.exists() {
+                fs::remove_dir_all(&cargo_backup)?;
             }
             Ok(())
         }

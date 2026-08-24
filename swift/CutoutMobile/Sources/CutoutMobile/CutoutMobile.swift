@@ -1400,6 +1400,66 @@ public struct LightSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+public struct AeroSpeedSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroSpeedSetting?
+    public let requested: AeroSpeedSetting?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroSpeedSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroSpeedSetting.init)
+        self.requested = dto.requested.map(AeroSpeedSetting.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroPwmSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroPwmPercent?
+    public let requested: AeroPwmPercent?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroPwmSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroPwmPercent.init)
+        self.requested = dto.requested.map(AeroPwmPercent.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroAngleAdjustmentSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroAngleAdjustment?
+    public let requested: AeroAngleAdjustment?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroAngleAdjustmentStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroAngleAdjustment.init)
+        self.requested = dto.requested.map(AeroAngleAdjustment.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
 public struct PedalModeSettingState: Equatable, Hashable, Sendable {
     public let kind: SettingStateKind
     public let current: PedalMode.Kind?
@@ -1624,49 +1684,127 @@ public struct BegodeLedMode: Equatable, Hashable, Sendable {
     }
 }
 
+/// NOSFET/Veteran speed setting in the captured 1...99 km/h wire range.
+public struct AeroSpeedSetting: Equatable, Hashable, Sendable {
+    public let kilometresPerHour: UInt8
+
+    public init?(kilometresPerHour: UInt8) {
+        guard (1...99).contains(Int(kilometresPerHour)) else { return nil }
+        self.kilometresPerHour = kilometresPerHour
+    }
+
+    fileprivate init(_ dto: MobileAeroSpeedSettingDto) {
+        self.kilometresPerHour = dto.kilometresPerHour
+    }
+
+    fileprivate var dto: MobileAeroSpeedSettingDto {
+        MobileAeroSpeedSettingDto(kilometresPerHour: kilometresPerHour)
+    }
+}
+
+/// NOSFET/Veteran PWM warning percentage.
+public struct AeroPwmPercent: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard percent <= 100 else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroPwmPercentDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroPwmPercentDto {
+        MobileAeroPwmPercentDto(percent: percent)
+    }
+}
+
+/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
+    public let tenthsOfDegree: Int8
+
+    public init?(tenthsOfDegree: Int8) {
+        guard (-100...100).contains(Int(tenthsOfDegree)) else { return nil }
+        self.tenthsOfDegree = tenthsOfDegree
+    }
+
+    fileprivate init(_ dto: MobileAeroAngleAdjustmentDto) {
+        self.tenthsOfDegree = dto.tenthsOfDegree
+    }
+
+    fileprivate var dto: MobileAeroAngleAdjustmentDto {
+        MobileAeroAngleAdjustmentDto(tenthsOfDegree: tenthsOfDegree)
+    }
+}
+
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
+    public let resetTripMeter: SettingWriteSupport
     public let pedalMode: SettingWriteSupport
     public let rollAngle: SettingWriteSupport
     public let speedAlarmMode: SettingWriteSupport
     public let accelerationAssist: SettingWriteSupport
     public let headlight: SettingWriteSupport
+    public let aeroHighBeam: SettingWriteSupport
     public let taillight: SettingWriteSupport
     public let begodeMaxSpeed: SettingWriteSupport
     public let begodeBeeperVolume: SettingWriteSupport
     public let begodeLedMode: SettingWriteSupport
+    public let aeroTiltbackSpeed: SettingWriteSupport
+    public let aeroPwmPercent: SettingWriteSupport
+    public let aeroAlarmSpeed: SettingWriteSupport
+    public let aeroAngleAdjustment: SettingWriteSupport
 
     public init(
+        resetTripMeter: SettingWriteSupport = .unsupported,
         pedalMode: SettingWriteSupport,
         rollAngle: SettingWriteSupport = .unsupported,
         speedAlarmMode: SettingWriteSupport = .unsupported,
         accelerationAssist: SettingWriteSupport,
         headlight: SettingWriteSupport,
+        aeroHighBeam: SettingWriteSupport = .unsupported,
         taillight: SettingWriteSupport,
         begodeMaxSpeed: SettingWriteSupport = .unsupported,
         begodeBeeperVolume: SettingWriteSupport = .unsupported,
-        begodeLedMode: SettingWriteSupport = .unsupported
+        begodeLedMode: SettingWriteSupport = .unsupported,
+        aeroTiltbackSpeed: SettingWriteSupport = .unsupported,
+        aeroPwmPercent: SettingWriteSupport = .unsupported,
+        aeroAlarmSpeed: SettingWriteSupport = .unsupported,
+        aeroAngleAdjustment: SettingWriteSupport = .unsupported
     ) {
+        self.resetTripMeter = resetTripMeter
         self.pedalMode = pedalMode
         self.rollAngle = rollAngle
         self.speedAlarmMode = speedAlarmMode
         self.accelerationAssist = accelerationAssist
         self.headlight = headlight
+        self.aeroHighBeam = aeroHighBeam
         self.taillight = taillight
         self.begodeMaxSpeed = begodeMaxSpeed
         self.begodeBeeperVolume = begodeBeeperVolume
         self.begodeLedMode = begodeLedMode
+        self.aeroTiltbackSpeed = aeroTiltbackSpeed
+        self.aeroPwmPercent = aeroPwmPercent
+        self.aeroAlarmSpeed = aeroAlarmSpeed
+        self.aeroAngleAdjustment = aeroAngleAdjustment
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
+        self.resetTripMeter = SettingWriteSupport(dto.resetTripMeter)
         self.pedalMode = SettingWriteSupport(dto.pedalMode)
         self.rollAngle = SettingWriteSupport(dto.rollAngle)
         self.speedAlarmMode = SettingWriteSupport(dto.speedAlarmMode)
         self.accelerationAssist = SettingWriteSupport(dto.accelerationAssist)
         self.headlight = SettingWriteSupport(dto.headlight)
+        self.aeroHighBeam = SettingWriteSupport(dto.aeroHighBeam)
         self.taillight = SettingWriteSupport(dto.taillight)
         self.begodeMaxSpeed = SettingWriteSupport(dto.begodeMaxSpeed)
         self.begodeBeeperVolume = SettingWriteSupport(dto.begodeBeeperVolume)
         self.begodeLedMode = SettingWriteSupport(dto.begodeLedMode)
+        self.aeroTiltbackSpeed = SettingWriteSupport(dto.aeroTiltbackSpeed)
+        self.aeroPwmPercent = SettingWriteSupport(dto.aeroPwmPercent)
+        self.aeroAlarmSpeed = SettingWriteSupport(dto.aeroAlarmSpeed)
+        self.aeroAngleAdjustment = SettingWriteSupport(dto.aeroAngleAdjustment)
     }
 }
 
@@ -1690,6 +1828,12 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestDiagnostics
     case requestFaultHistory
     case requestSettings
+    case resetTripMeter
+    case setAeroTiltbackSpeed(AeroSpeedSetting)
+    case setAeroPwmPercent(AeroPwmPercent)
+    case setAeroAlarmSpeed(AeroSpeedSetting)
+    case setAeroAngleAdjustment(AeroAngleAdjustment)
+    case setAeroHighBeam(LightState)
     case setLights(LightState)
     case setPedalMode(PedalMode.Kind)
     case setRollAngle(RollAngle.Kind)
@@ -1717,6 +1861,18 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestFaultHistory
         case .requestSettings:
             self = .requestSettings
+        case .resetTripMeter:
+            self = .resetTripMeter
+        case .setAeroTiltbackSpeed(let speed):
+            self = .setAeroTiltbackSpeed(AeroSpeedSetting(speed))
+        case .setAeroPwmPercent(let percent):
+            self = .setAeroPwmPercent(AeroPwmPercent(percent))
+        case .setAeroAlarmSpeed(let speed):
+            self = .setAeroAlarmSpeed(AeroSpeedSetting(speed))
+        case .setAeroAngleAdjustment(let angle):
+            self = .setAeroAngleAdjustment(AeroAngleAdjustment(angle))
+        case .setAeroHighBeam(let state):
+            self = .setAeroHighBeam(LightState(state))
         case .setLights(let state):
             self = .setLights(LightState(state))
         case .setPedalMode(let mode):
@@ -1756,6 +1912,18 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestFaultHistory
         case .requestSettings:
             .requestSettings
+        case .resetTripMeter:
+            .resetTripMeter
+        case .setAeroTiltbackSpeed(let speed):
+            .setAeroTiltbackSpeed(speed.dto)
+        case .setAeroPwmPercent(let percent):
+            .setAeroPwmPercent(percent.dto)
+        case .setAeroAlarmSpeed(let speed):
+            .setAeroAlarmSpeed(speed.dto)
+        case .setAeroAngleAdjustment(let angle):
+            .setAeroAngleAdjustment(angle.dto)
+        case .setAeroHighBeam(let state):
+            .setAeroHighBeam(state.dto)
         case .setLights(let state):
             .setLights(state.dto)
         case .setPedalMode(let mode):
@@ -1834,6 +2002,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
     public let batteryTemperature: Temperature?
     public let pwm: DutyCycle?
     public let distance: Distance?
+    public let tripDistance: Distance?
     public let limpHomeRange: Distance?
     public let pitch: Angle?
     public let balanceAngle: Angle?
@@ -1864,6 +2033,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         batteryTemperature: Temperature? = nil,
         pwm: DutyCycle? = nil,
         distance: Distance? = nil,
+        tripDistance: Distance? = nil,
         limpHomeRange: Distance? = nil,
         pitch: Angle? = nil,
         balanceAngle: Angle? = nil,
@@ -1893,6 +2063,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
         self.batteryTemperature = batteryTemperature
         self.pwm = pwm
         self.distance = distance
+        self.tripDistance = tripDistance
         self.limpHomeRange = limpHomeRange
         self.pitch = pitch
         self.balanceAngle = balanceAngle
@@ -1931,6 +2102,7 @@ public struct TelemetrySnapshot: Equatable, Hashable, Sendable {
             batteryTemperature: dto.batteryTemperature?.value,
             pwm: dto.pwm,
             distance: dto.distance?.value,
+            tripDistance: dto.tripDistance?.value,
             limpHomeRange: dto.limpHomeRange?.value,
             pitch: dto.pitch?.value,
             balanceAngle: dto.balanceAngle?.value,
@@ -5862,19 +6034,11 @@ public struct CoreBluetoothPeripheralIdentifier: Equatable, Hashable, Sendable {
 }
 
 public enum CutoutModelHint: Equatable, Hashable, Sendable {
-    case aero
-    case falcon
     case unknown
 
-    public init(deviceKind: String?) {
-        switch deviceKind.flatMap(mobileElectricUnicycleModelHintFromDeviceKind) {
-        case .some(.aero):
-            self = .aero
-        case .some(.falcon):
-            self = .falcon
-        case .none:
-            self = .unknown
-        }
+    public init(deviceKind _: String?) {
+        // A display label is capture provenance, never protocol identity.
+        self = .unknown
     }
 }
 

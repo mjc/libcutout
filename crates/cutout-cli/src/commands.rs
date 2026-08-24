@@ -43,10 +43,10 @@ use cutout_protocols::{
     BegodeFrameReassembler, BegodePackEvidenceConsistency, BegodePackLayoutEvidence,
     BegodePackLayoutSelection, BegodeVoltageEvidence, BegodeVoltageProfileSelection, MODEL_CATALOG,
     NOSFET_AERO_SESSION_KEY, ReadOnlySession, RefloatReadOnlyRequest, RefloatRealtimeValue,
-    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredReadOnlySession,
+    RefloatReply, RefloatStreamDecoder, RefloatStreamResult, RegisteredEucSession,
     VESC_MAX_FRAME_LEN, VESC_NOTIFY_CHANNEL, VESC_WRITE_CHANNEL, VescReadOnlyCodec,
     VescReadOnlyReply, VescReadOnlyRequest, VescReadOnlyStreamDecoder, VescReadOnlyStreamResult,
-    VescStatsMask, begode_falcon_read_only_session_with_voltage_profile, encode_refloat_request,
+    VescStatsMask, begode_falcon_session_with_voltage_profile, encode_refloat_request,
     find_session_registration, select_begode_pack_capacity_from_annotations,
     select_begode_pack_layout_from_annotations, select_begode_pack_voltage_profile,
     select_begode_pack_voltage_profile_from_annotations, validate_begode_pack_evidence,
@@ -536,7 +536,7 @@ fn replay_pevcap_capture(
 }
 
 #[cfg(test)]
-fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySession> {
+fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredEucSession> {
     falcon_replay_session_from_evidence(
         &capture.header,
         &falcon_replay_bms_voltage_evidence(capture),
@@ -546,11 +546,11 @@ fn falcon_replay_session(capture: &PevcapCapture) -> Result<RegisteredReadOnlySe
 fn falcon_replay_session_from_evidence(
     header: &PevcapHeader,
     bms_evidence: &[BegodeVoltageEvidence],
-) -> Result<RegisteredReadOnlySession> {
+) -> Result<RegisteredEucSession> {
     match select_falcon_replay_voltage_profile_from_evidence(header, bms_evidence) {
-        BegodeVoltageProfileSelection::Selected(profile) => Ok(
-            begode_falcon_read_only_session_with_voltage_profile(profile),
-        ),
+        BegodeVoltageProfileSelection::Selected(profile) => {
+            Ok(begode_falcon_session_with_voltage_profile(profile))
+        }
         BegodeVoltageProfileSelection::Missing => {
             bail!("Falcon PEVCAP replay requires explicit Falcon battery voltage evidence")
         }
@@ -1399,7 +1399,7 @@ async fn dashboard_session_profile_from_protocol(
 async fn run_dashboard_live_iteration(
     connection: &ConnectedPeripheral,
     tx: &mpsc::Sender<DashboardUpdate>,
-    session: &mut RegisteredReadOnlySession,
+    session: &mut RegisteredEucSession,
     data_channel: GattChannel,
     iteration: u64,
     refresh_battery: bool,
@@ -1628,6 +1628,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 async fn connect(args: TargetedScanArgs, mode: SessionMode) -> Result<()> {
     let seconds = args.seconds();
     let requested_profile = args.profile();
+    require_explicit_live_profile(requested_profile)?;
     let commands = read_probe_commands(args.probes());
     let diagnostics_jsonl = args.diagnostics_jsonl();
     let read_only_jsonl = args.read_only_jsonl();
@@ -1746,6 +1747,7 @@ fn capture_output(
 async fn capture_reconnecting(args: CaptureArgs, output: CaptureOutput) -> Result<()> {
     let seconds = args.target.seconds();
     let requested_profile = args.target.profile();
+    require_explicit_live_profile(requested_profile)?;
     let target = args.target.clone().into_target();
     let commands = read_probe_commands(args.target.probes());
     let diagnostics_jsonl = args.target.diagnostics_jsonl();
@@ -1968,6 +1970,7 @@ const fn read_probe_command(probe: ReadProbe) -> DeviceCommand {
         ReadProbe::Firmware => DeviceCommand::RequestFirmwareInfo,
         ReadProbe::Telemetry => DeviceCommand::RequestTelemetry,
         ReadProbe::Battery => DeviceCommand::RequestBatteryInfo,
+        ReadProbe::Settings => DeviceCommand::RequestSettings,
         ReadProbe::Diagnostics => DeviceCommand::RequestDiagnostics,
         ReadProbe::FaultHistory => DeviceCommand::RequestFaultHistory,
     }
@@ -2188,6 +2191,15 @@ fn auto_session_resolution() -> Result<SessionResolution> {
     bail!(
         "auto session resolution requires protocol identity evidence; advertised BLE names are display-only"
     )
+}
+
+fn require_explicit_live_profile(profile: SessionProfile) -> Result<()> {
+    if matches!(profile, SessionProfile::Auto) {
+        bail!(
+            "live EUC sessions require protocol identity evidence; pass --profile aero or --profile falcon"
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3285,6 +3297,12 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestDiagnostics => "request_diagnostics",
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
+        CommandKind::ResetTripMeter => "reset_trip_meter",
+        CommandKind::SetAeroTiltbackSpeed => "set_aero_tiltback_speed",
+        CommandKind::SetAeroPwmPercent => "set_aero_pwm_percent",
+        CommandKind::SetAeroAlarmSpeed => "set_aero_alarm_speed",
+        CommandKind::SetAeroAngleAdjustment => "set_aero_angle_adjustment",
+        CommandKind::SetAeroHighBeam => "set_aero_high_beam",
         CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
         CommandKind::SetPedalMode => "set_pedal_mode",
@@ -5956,6 +5974,19 @@ mod tests {
     }
 
     #[test]
+    fn live_sessions_reject_auto_before_connecting() {
+        let error = require_explicit_live_profile(SessionProfile::Auto)
+            .expect_err("live sessions must not guess a protocol");
+        assert!(
+            error
+                .to_string()
+                .contains("--profile aero or --profile falcon")
+        );
+        require_explicit_live_profile(SessionProfile::Aero)
+            .expect("explicit protocol profile is accepted");
+    }
+
+    #[test]
     fn dashboard_session_profile_from_summary_requires_protocol_identity() {
         let falcon_summary = ConnectionSummary {
             observation: PeripheralObservation {
@@ -6041,6 +6072,7 @@ mod tests {
                 ReadProbe::Firmware,
                 ReadProbe::Telemetry,
                 ReadProbe::Battery,
+                ReadProbe::Settings,
                 ReadProbe::Diagnostics,
                 ReadProbe::FaultHistory,
             ]),
@@ -6049,6 +6081,7 @@ mod tests {
                 DeviceCommand::RequestFirmwareInfo,
                 DeviceCommand::RequestTelemetry,
                 DeviceCommand::RequestBatteryInfo,
+                DeviceCommand::RequestSettings,
                 DeviceCommand::RequestDiagnostics,
                 DeviceCommand::RequestFaultHistory,
             ]
@@ -6244,7 +6277,7 @@ mod tests {
             constructed_rx.recv_timeout(Duration::from_secs(1)).expect(
                 "registered Aero session construction should not block the live update runner"
             ),
-            RegisteredReadOnlySession::NosfetAero(_)
+            RegisteredEucSession::NosfetAero(_)
         ));
     }
 
@@ -6352,6 +6385,23 @@ mod tests {
             assert_eq!(encoded.protocol, protocol);
             assert_eq!(encoded.command, command);
             assert!(!encoded.payload.is_empty());
+        }
+    }
+
+    #[test]
+    fn command_kind_names_cover_aero_settings_commands() {
+        for (kind, expected) in [
+            (CommandKind::ResetTripMeter, "reset_trip_meter"),
+            (CommandKind::SetAeroTiltbackSpeed, "set_aero_tiltback_speed"),
+            (CommandKind::SetAeroPwmPercent, "set_aero_pwm_percent"),
+            (CommandKind::SetAeroAlarmSpeed, "set_aero_alarm_speed"),
+            (
+                CommandKind::SetAeroAngleAdjustment,
+                "set_aero_angle_adjustment",
+            ),
+            (CommandKind::SetAeroHighBeam, "set_aero_high_beam"),
+        ] {
+            assert_eq!(command_kind_name(kind), expected);
         }
     }
 }

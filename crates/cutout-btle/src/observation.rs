@@ -87,8 +87,32 @@ impl PeripheralObservation {
         peripheral: &Peripheral,
         properties: PeripheralProperties,
     ) -> Self {
+        Self::from_identifier_and_properties(peripheral.id().to_string(), Some(properties))
+    }
+
+    pub(crate) fn from_optional_properties(
+        peripheral: &Peripheral,
+        properties: Option<PeripheralProperties>,
+    ) -> Self {
+        Self::from_identifier_and_properties(peripheral.id().to_string(), properties)
+    }
+
+    fn from_identifier_and_properties(
+        identifier: String,
+        properties: Option<PeripheralProperties>,
+    ) -> Self {
+        let Some(properties) = properties else {
+            return Self {
+                identifier,
+                address: None,
+                name: None,
+                rssi: None,
+                advertised_services: AdvertisedServices::new(),
+                manufacturer_data: ManufacturerDataSummaries::new(),
+            };
+        };
         Self {
-            identifier: peripheral.id().to_string(),
+            identifier,
             address: normalize_address(properties.address.to_string()),
             name: properties.local_name,
             rssi: properties.rssi.map(SignalStrength::from_dbm),
@@ -103,14 +127,7 @@ impl PeripheralObservation {
     }
 
     pub(crate) fn without_properties(peripheral: &Peripheral) -> Self {
-        Self {
-            identifier: peripheral.id().to_string(),
-            address: None,
-            name: None,
-            rssi: None,
-            advertised_services: AdvertisedServices::new(),
-            manufacturer_data: ManufacturerDataSummaries::new(),
-        }
+        Self::from_optional_properties(peripheral, None)
     }
 }
 
@@ -167,7 +184,7 @@ fn sorted_manufacturer_data_summaries(
 
 #[cfg(test)]
 mod tests {
-    use super::sorted_manufacturer_data_summaries;
+    use super::{PeripheralObservation, sorted_manufacturer_data_summaries};
     use crate::{ManufacturerDataSize, ManufacturerDataSummary};
 
     #[test]
@@ -196,5 +213,18 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn identifier_only_observation_remains_selectable_without_properties() {
+        let observation = PeripheralObservation::from_identifier_and_properties(
+            "macos-platform-id".to_owned(),
+            None,
+        );
+
+        assert_eq!(observation.identifier, "macos-platform-id");
+        assert_eq!(observation.address, None);
+        assert_eq!(observation.name, None);
+        assert!(observation.advertised_services.is_empty());
     }
 }

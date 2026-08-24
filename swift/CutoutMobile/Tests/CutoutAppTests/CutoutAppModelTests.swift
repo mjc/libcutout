@@ -368,6 +368,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
         XCTAssertEqual(model.headlightControlTitle, "High beam")
+        XCTAssertEqual(driver.aeroHighBeamStates, [.on])
         XCTAssertEqual(
             model.headlightStatusText,
             "Command sent. This wheel does not report high-beam state."
@@ -1949,6 +1950,18 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRecordOnlyLabelNeverSelectsAProtocolModel() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "EUC falcon"))
+        XCTAssertEqual(driver.recordedPlatformIdentifiers, ["unknown-device"])
+        XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+        XCTAssertTrue(model.isRecordOnlyCapture)
+        XCTAssertEqual(CutoutModelHint(deviceKind: "NOSFET Aero"), .unknown)
+    }
+
+    @MainActor
     func testFinishCaptureFlushesOnceBeforeDisconnecting() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -3371,6 +3384,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
+    private(set) var aeroHighBeamStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
     private(set) var rollAngles = [RollAngle.Kind]()
     private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
@@ -3379,6 +3393,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var begodeLedModes = [BegodeLedMode]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: SettingCommandResult = .accepted
+    var aeroHighBeamWriteSucceeds = false
+    var aeroHighBeamCommandResult: SettingCommandResult = .accepted
     var pedalModeCommandResult: SettingCommandResult = .accepted
     var nowValue: UInt64 = 0
 
@@ -3531,11 +3547,30 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         begodeLedModes.append(mode)
         return .accepted
     }
+    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
+        let succeeds = aeroHighBeamWriteSucceeds || headlightWriteSucceeds
+        guard succeeds else { return .failed }
+        let commandResult = aeroHighBeamWriteSucceeds
+            ? aeroHighBeamCommandResult
+            : headlightCommandResult
+        guard commandResult == .accepted else { return commandResult }
+        aeroHighBeamStates.append(state)
+        headlightStates.append(state)
+        return .accepted
+    }
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult {
         guard pedalModeCommandResult == .accepted else { return pedalModeCommandResult }
         pedalModes.append(mode)
         return .accepted
     }
+    func resetTripMeter() -> SettingCommandResult { .accepted }
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult { .accepted }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
         rollAngles.append(angle)
         return .accepted

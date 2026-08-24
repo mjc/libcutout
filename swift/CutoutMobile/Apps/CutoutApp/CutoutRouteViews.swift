@@ -156,6 +156,7 @@ struct EucPackRouteView: View {
 
 struct EucTuneRouteView: View {
     let model: CutoutAppModel
+    @State private var showingTripResetConfirmation = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
@@ -215,6 +216,44 @@ struct EucTuneRouteView: View {
                             Text(localizedAppText("settings.begode_led_mode.footer"))
                         }
                     }
+                }
+
+                if model.resetTripMeterControlAvailable {
+                    Section {
+                        EucSettingReadbackRow(
+                            id: "tripDistance",
+                            title: localizedAppText("settings.trip_meter.distance_title"),
+                            value: EucSettingReadbackPresentation.tripDistance(
+                                model.displayState.telemetry?.tripDistance?.value
+                            )
+                        )
+                        Button(localizedAppText("settings.trip_meter.reset"), role: .destructive) {
+                            showingTripResetConfirmation = true
+                        }
+                        .disabled(model.phase != .live)
+                        .accessibilityIdentifier("settings.control.resetTripMeter")
+                    } header: {
+                        Text(localizedAppText("settings.trip_meter.title"))
+                    } footer: {
+                        Text(localizedAppText("settings.trip_meter.footer"))
+                    }
+                    .confirmationDialog(
+                        localizedAppText("settings.trip_meter.confirm_title"),
+                        isPresented: $showingTripResetConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button(localizedAppText("settings.trip_meter.reset"), role: .destructive) {
+                            _ = model.resetTripMeter()
+                        }
+                        Button(localizedAppText("app.command.cancel"), role: .cancel) {}
+                    }
+                }
+
+                if model.aeroTiltbackSpeedControlAvailable
+                    || model.aeroPwmPercentControlAvailable
+                    || model.aeroAlarmSpeedControlAvailable
+                    || model.aeroAngleAdjustmentControlAvailable {
+                    EucAeroSettingsControls(model: model)
                 }
 
                 if let settings = model.settingsReadback?.eucGarageSettings {
@@ -326,6 +365,14 @@ struct EucTuneRouteView: View {
                 if let capabilities = model.settingsCapabilities {
                     Section {
                         EucSettingCapabilityRow(
+                            id: "aeroHighBeam",
+                            title: localizedAppText("settings.high_beam.title"),
+                            support: capabilities.aeroHighBeam,
+                            state: model.aeroHighBeamState?.kind,
+                            confirmedAt: model.aeroHighBeamState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
                             id: "pedalMode",
                             title: localizedAppText("settings.pedal_mode.title"),
                             support: capabilities.pedalMode,
@@ -374,6 +421,38 @@ struct EucTuneRouteView: View {
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
+                            id: "aeroTiltbackSpeed",
+                            title: localizedAppText("settings.aero.tiltback.title"),
+                            support: capabilities.aeroTiltbackSpeed,
+                            state: model.aeroTiltbackSpeedState?.kind,
+                            confirmedAt: model.aeroTiltbackSpeedState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroPwmPercent",
+                            title: localizedAppText("settings.aero.pwm.title"),
+                            support: capabilities.aeroPwmPercent,
+                            state: model.aeroPwmPercentState?.kind,
+                            confirmedAt: model.aeroPwmPercentState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroAlarmSpeed",
+                            title: localizedAppText("settings.aero.alarm.title"),
+                            support: capabilities.aeroAlarmSpeed,
+                            state: model.aeroAlarmSpeedState?.kind,
+                            confirmedAt: model.aeroAlarmSpeedState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroAngleAdjustment",
+                            title: localizedAppText("settings.aero.angle.title"),
+                            support: capabilities.aeroAngleAdjustment,
+                            state: model.aeroAngleAdjustmentState?.kind,
+                            confirmedAt: model.aeroAngleAdjustmentState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
                             id: "accelerationAssist",
                             title: localizedAppText("settings.acceleration_assist.title"),
                             support: capabilities.accelerationAssist,
@@ -398,6 +477,158 @@ struct EucTuneRouteView: View {
             }
         }
         .accessibilityIdentifier("settings.screen.eucTune")
+    }
+}
+
+private struct EucAeroSettingsControls: View {
+    let model: CutoutAppModel
+    @State private var tiltbackSpeed: Int
+    @State private var pwmPercent: Int
+    @State private var alarmSpeed: Int
+    @State private var angleTenths: Int
+    @State private var seededTiltback = false
+    @State private var seededPwm = false
+    @State private var seededAlarm = false
+    @State private var seededAngle = false
+
+    @MainActor
+    init(model: CutoutAppModel) {
+        self.model = model
+        let values = AeroSettingsFormValues(model: model)
+        _tiltbackSpeed = State(initialValue: values.tiltbackSpeed)
+        _pwmPercent = State(initialValue: values.pwmPercent)
+        _alarmSpeed = State(initialValue: values.alarmSpeed)
+        _angleTenths = State(initialValue: values.angleTenths)
+        _seededTiltback = State(initialValue: values.tiltback != nil)
+        _seededPwm = State(initialValue: values.pwm != nil)
+        _seededAlarm = State(initialValue: values.alarm != nil)
+        _seededAngle = State(initialValue: values.angle != nil)
+    }
+
+    var body: some View {
+        Section {
+            if model.aeroTiltbackSpeedControlAvailable {
+                Stepper(value: $tiltbackSpeed, in: 1...99) {
+                    Text("\(localizedAppText("settings.aero.tiltback.title")): \(tiltbackSpeed) km/h")
+                }
+                Button(localizedAppText("settings.aero.send"), action: sendTiltbackSpeed)
+                .accessibilityIdentifier("settings.control.aeroTiltbackSpeed")
+            }
+            if model.aeroPwmPercentControlAvailable {
+                Stepper(value: $pwmPercent, in: 0...100) {
+                    Text("\(localizedAppText("settings.aero.pwm.title")): \(pwmPercent)%")
+                }
+                Button(localizedAppText("settings.aero.send"), action: sendPwmPercent)
+                .accessibilityIdentifier("settings.control.aeroPwmPercent")
+            }
+            if model.aeroAlarmSpeedControlAvailable {
+                Stepper(value: $alarmSpeed, in: 1...99) {
+                    Text("\(localizedAppText("settings.aero.alarm.title")): \(alarmSpeed) km/h")
+                }
+                Button(localizedAppText("settings.aero.send"), action: sendAlarmSpeed)
+                .accessibilityIdentifier("settings.control.aeroAlarmSpeed")
+            }
+            if model.aeroAngleAdjustmentControlAvailable {
+                Stepper(value: $angleTenths, in: -100...100) {
+                    Text("\(localizedAppText("settings.aero.angle.title")): \(Double(angleTenths) / 10, specifier: "%.1f")°")
+                }
+                Button(localizedAppText("settings.aero.send"), action: sendAngleAdjustment)
+                .accessibilityIdentifier("settings.control.aeroAngleAdjustment")
+            }
+        } header: {
+            Text(localizedAppText("settings.aero.title"))
+        } footer: {
+            Text(localizedAppText("settings.aero.footer"))
+        }
+        .disabled(model.phase != .live)
+        .onChange(of: model.aeroTiltbackSpeedState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroPwmPercentState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroAlarmSpeedState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroAngleAdjustmentState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+    }
+
+    private func seedFromDeviceIfNeeded() {
+        if !seededTiltback, let current = model.aeroTiltbackSpeedState?.current {
+            tiltbackSpeed = Int(current.kilometresPerHour)
+            seededTiltback = true
+        }
+        if !seededPwm, let current = model.aeroPwmPercentState?.current {
+            pwmPercent = Int(current.percent)
+            seededPwm = true
+        }
+        if !seededAlarm, let current = model.aeroAlarmSpeedState?.current {
+            alarmSpeed = Int(current.kilometresPerHour)
+            seededAlarm = true
+        }
+        if !seededAngle, let current = model.aeroAngleAdjustmentState?.current {
+            angleTenths = Int(current.tenthsOfDegree)
+            seededAngle = true
+        }
+    }
+
+    private func sendTiltbackSpeed() {
+        guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(tiltbackSpeed)) else { return }
+        _ = model.setAeroTiltbackSpeed(setting)
+    }
+
+    private func sendPwmPercent() {
+        guard let setting = AeroPwmPercent(percent: UInt8(pwmPercent)) else { return }
+        _ = model.setAeroPwmPercent(setting)
+    }
+
+    private func sendAlarmSpeed() {
+        guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(alarmSpeed)) else { return }
+        _ = model.setAeroAlarmSpeed(setting)
+    }
+
+    private func sendAngleAdjustment() {
+        guard let setting = AeroAngleAdjustment(tenthsOfDegree: Int8(angleTenths)) else { return }
+        _ = model.setAeroAngleAdjustment(setting)
+    }
+}
+
+struct AeroSettingsFormValues: Equatable {
+    let tiltbackSpeed: Int
+    let pwmPercent: Int
+    let alarmSpeed: Int
+    let angleTenths: Int
+    let tiltback: AeroSpeedSetting?
+    let pwm: AeroPwmPercent?
+    let alarm: AeroSpeedSetting?
+    let angle: AeroAngleAdjustment?
+
+    init(
+        tiltback: AeroSpeedSetting?,
+        pwm: AeroPwmPercent?,
+        alarm: AeroSpeedSetting?,
+        angle: AeroAngleAdjustment?
+    ) {
+        self.tiltback = tiltback
+        self.pwm = pwm
+        self.alarm = alarm
+        self.angle = angle
+        tiltbackSpeed = Int(tiltback?.kilometresPerHour ?? 20)
+        pwmPercent = Int(pwm?.percent ?? 60)
+        alarmSpeed = Int(alarm?.kilometresPerHour ?? 20)
+        angleTenths = Int(angle?.tenthsOfDegree ?? 0)
+    }
+
+    @MainActor
+    init(model: CutoutAppModel) {
+        self.init(
+            tiltback: model.aeroTiltbackSpeedState?.current,
+            pwm: model.aeroPwmPercentState?.current,
+            alarm: model.aeroAlarmSpeedState?.current,
+            angle: model.aeroAngleAdjustmentState?.current
+        )
     }
 }
 
@@ -702,6 +933,19 @@ enum EucSettingReadbackPresentation {
         case .notCharging:
             return localizedAppText("settings.charge_mode.not_charging")
         }
+    }
+
+    static func tripDistance(_ millimetres: UInt64?) -> String {
+        guard let millimetres else {
+            return localizedAppText("settings.readback.unavailable")
+        }
+        let unit = RideUnits.distanceUnit(forSpeedUnit: RideUnits.speedUnit)
+        let value = RideUnits.distanceText(
+            millimetres: millimetres,
+            unit: unit,
+            fractionDigits: 1
+        )
+        return "\(value) \(unit)"
     }
 
     private static func availabilityText(_ availability: ReadbackAvailability) -> String {

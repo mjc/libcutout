@@ -9,7 +9,7 @@ pub const NOSFET_AERO_MODEL_DEFINITION: RegisteredModelDefinition = RegisteredMo
     VETERAN_PARSER_KEY,
     NOSFET_AERO_SESSION_KEY,
     crate::VETERAN_DATA_CHANNEL,
-    super::nosfet_aero_read_only_session,
+    super::nosfet_aero_session,
 );
 
 /// Hardware-backed registry entry for the NOSFET Aero.
