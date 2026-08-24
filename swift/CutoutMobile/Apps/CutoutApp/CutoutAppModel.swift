@@ -187,6 +187,22 @@ final class CutoutAppModel {
         core.settingsCapabilities
     }
 
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        core.aeroTiltbackSpeedState
+    }
+
+    var aeroPwmPercentState: AeroPwmSettingState? {
+        core.aeroPwmPercentState
+    }
+
+    var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        core.aeroAlarmSpeedState
+    }
+
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        core.aeroAngleAdjustmentState
+    }
+
     var pedalModeState: PedalModeSettingState? {
         core.pedalModeState
     }

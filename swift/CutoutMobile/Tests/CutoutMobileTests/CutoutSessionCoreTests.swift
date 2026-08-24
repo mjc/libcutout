@@ -1369,6 +1369,36 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
     }
 
+    func testElectricUnicycleSessionExposesAeroSettingStates() throws {
+        let session = try ElectricUnicycleSession(model: .aero)
+        let speed = AeroSpeedSetting(kilometresPerHour: 30)!
+        let pwm = AeroPwmPercent(percent: 64)!
+        let angle = AeroAngleAdjustment(tenthsOfDegree: -36)!
+
+        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .unknown)
+        XCTAssertEqual(session.aeroPwmPercentState.kind, .unknown)
+        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .unknown)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .unknown)
+
+        for command in [
+            DeviceCommand.setAeroTiltbackSpeed(speed),
+            .setAeroPwmPercent(pwm),
+            .setAeroAlarmSpeed(speed),
+            .setAeroAngleAdjustment(angle),
+        ] {
+            XCTAssertThrowsError(try session.perform(command, at: MonotonicMilliseconds(10)))
+        }
+
+        XCTAssertEqual(session.aeroTiltbackSpeedState.kind, .refused)
+        XCTAssertEqual(session.aeroTiltbackSpeedState.requested, speed)
+        XCTAssertEqual(session.aeroPwmPercentState.kind, .refused)
+        XCTAssertEqual(session.aeroPwmPercentState.requested, pwm)
+        XCTAssertEqual(session.aeroAlarmSpeedState.kind, .refused)
+        XCTAssertEqual(session.aeroAlarmSpeedState.requested, speed)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.kind, .refused)
+        XCTAssertEqual(session.aeroAngleAdjustmentState.requested, angle)
+    }
+
     func testElectricUnicycleSessionKeepsPedalModeWriteGuardedUntilArmed() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 

@@ -21,6 +21,10 @@ protocol CutoutSessionDriving: AnyObject {
     var electricUnicycleModel: ElectricUnicycleModel? { get }
     var settingsCapabilities: EucSettingsCapabilities? { get }
     var headlightState: LightSettingState? { get }
+    var aeroTiltbackSpeedState: AeroSpeedSettingState? { get }
+    var aeroPwmPercentState: AeroPwmSettingState? { get }
+    var aeroAlarmSpeedState: AeroSpeedSettingState? { get }
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? { get }
     var pedalModeState: PedalModeSettingState? { get }
     var rollAngleState: RollAngleSettingState? { get }
     var speedAlarmModeState: SpeedAlarmModeSettingState? { get }

@@ -2960,6 +2960,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
+    var aeroTiltbackSpeedState: AeroSpeedSettingState?
+    var aeroPwmPercentState: AeroPwmSettingState?
+    var aeroAlarmSpeedState: AeroSpeedSettingState?
+    var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState?
     var pedalModeState: PedalModeSettingState?
     var rollAngleState: RollAngleSettingState?
     var speedAlarmModeState: SpeedAlarmModeSettingState?

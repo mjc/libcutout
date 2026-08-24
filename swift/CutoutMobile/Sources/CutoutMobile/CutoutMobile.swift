@@ -1348,6 +1348,66 @@ public struct LightSettingState: Equatable, Hashable, Sendable {
     }
 }
 
+public struct AeroSpeedSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroSpeedSetting?
+    public let requested: AeroSpeedSetting?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroSpeedSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroSpeedSetting.init)
+        self.requested = dto.requested.map(AeroSpeedSetting.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroPwmSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroPwmPercent?
+    public let requested: AeroPwmPercent?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroPwmSettingStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroPwmPercent.init)
+        self.requested = dto.requested.map(AeroPwmPercent.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
+public struct AeroAngleAdjustmentSettingState: Equatable, Hashable, Sendable {
+    public let kind: SettingStateKind
+    public let current: AeroAngleAdjustment?
+    public let requested: AeroAngleAdjustment?
+    public let source: SettingValueSource
+    public let submittedAt: MonotonicMilliseconds?
+    public let confirmedAt: MonotonicMilliseconds?
+    public let refusalReason: CommandRefusalReason?
+
+    fileprivate init(_ dto: MobileAeroAngleAdjustmentStateDto) {
+        self.kind = SettingStateKind(dto.kind)
+        self.current = dto.current.map(AeroAngleAdjustment.init)
+        self.requested = dto.requested.map(AeroAngleAdjustment.init)
+        self.source = SettingValueSource(dto.source)
+        self.submittedAt = dto.submittedAtMs.map(MonotonicMilliseconds.init)
+        self.confirmedAt = dto.confirmedAtMs.map(MonotonicMilliseconds.init)
+        self.refusalReason = dto.refusalReason.map(CommandRefusalReason.init)
+    }
+}
+
 public struct PedalModeSettingState: Equatable, Hashable, Sendable {
     public let kind: SettingStateKind
     public let current: PedalMode.Kind?
@@ -5493,6 +5553,42 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroSpeedSettingState(session.aeroTiltbackSpeedState())
+        case .falcon(let session):
+            AeroSpeedSettingState(session.aeroTiltbackSpeedState())
+        }
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroPwmSettingState(session.aeroPwmPercentState())
+        case .falcon(let session):
+            AeroPwmSettingState(session.aeroPwmPercentState())
+        }
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroSpeedSettingState(session.aeroAlarmSpeedState())
+        case .falcon(let session):
+            AeroSpeedSettingState(session.aeroAlarmSpeedState())
+        }
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState {
+        switch inner {
+        case .aero(let session):
+            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
+        case .falcon(let session):
+            AeroAngleAdjustmentSettingState(session.aeroAngleAdjustmentState())
+        }
+    }
+
     public var pedalModeState: PedalModeSettingState {
         switch inner {
         case .aero(let session):
@@ -6041,6 +6137,42 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroTiltbackSpeedState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroPwmPercentState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroAlarmSpeedState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroAngleAdjustmentState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     public var pedalModeState: PedalModeSettingState? {
         switch self {
         case .electricUnicycle(let session):
@@ -6238,6 +6370,22 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var headlightState: LightSettingState? {
         session.headlightState
+    }
+
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        session.aeroTiltbackSpeedState
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        session.aeroPwmPercentState
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        session.aeroAlarmSpeedState
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        session.aeroAngleAdjustmentState
     }
 
     public var pedalModeState: PedalModeSettingState? {
@@ -6474,6 +6622,22 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var headlightState: LightSettingState? {
         runner.headlightState
+    }
+
+    public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
+        runner.aeroTiltbackSpeedState
+    }
+
+    public var aeroPwmPercentState: AeroPwmSettingState? {
+        runner.aeroPwmPercentState
+    }
+
+    public var aeroAlarmSpeedState: AeroSpeedSettingState? {
+        runner.aeroAlarmSpeedState
+    }
+
+    public var aeroAngleAdjustmentState: AeroAngleAdjustmentSettingState? {
+        runner.aeroAngleAdjustmentState
     }
 
     public var pedalModeState: PedalModeSettingState? {
