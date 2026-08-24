@@ -84,6 +84,7 @@ struct RideMapHistoryDetailView: View {
                 )
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .task(id: selectionTaskID) { loadSelectionIfNeeded() }
         .accessibilityIdentifier("ride-map.detail")
     }
