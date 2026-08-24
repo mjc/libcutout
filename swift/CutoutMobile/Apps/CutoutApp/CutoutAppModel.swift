@@ -455,15 +455,19 @@ final class CutoutAppModel {
     private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
 
     private var headlightWriteSupport: SettingWriteSupport? {
-        core.electricUnicycleModel == .aero
+        usesAeroHighBeam
             ? core.settingsCapabilities?.aeroHighBeam
             : core.settingsCapabilities?.headlight
     }
 
     private var coreHeadlightState: LightSettingState? {
-        core.electricUnicycleModel == .aero
+        usesAeroHighBeam
             ? (core.aeroHighBeamState ?? core.headlightState)
             : core.headlightState
+    }
+
+    private var usesAeroHighBeam: Bool {
+        core.electricUnicycleModel == .aero
     }
 
     convenience init() {
@@ -1418,7 +1422,7 @@ final class CutoutAppModel {
             )
             return .failed
         }
-        let result = core.electricUnicycleModel == .aero
+        let result = usesAeroHighBeam
             ? core.setAeroHighBeam(state)
             : core.setLights(state)
         return applyHeadlightSubmission(result, for: state)
@@ -1529,14 +1533,14 @@ final class CutoutAppModel {
 
     private var displayedHeadlightState: LightState? {
         guard let state = effectiveHeadlightState else { return nil }
-        if state.kind == .pending, core.electricUnicycleModel == .aero {
+        if state.kind == .pending, usesAeroHighBeam {
             return state.requested
         }
         return state.lightState
     }
 
     private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
-        guard core.electricUnicycleModel != .aero else { return }
+        guard !usesAeroHighBeam else { return }
         guard coreHeadlightState == nil else { return }
         guard let reportedState = readback?.eucGarageSettings.lightState else {
             if fallbackHeadlightState?.kind == .pending {
