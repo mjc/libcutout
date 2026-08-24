@@ -1648,7 +1648,6 @@ final class CutoutAppModel {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "=", with: " ")
         let annotations = ["device_kind=\(annotationKind)"]
-        let modelHint = CutoutModelHint(deviceKind: annotationKind)
         let previousCapture = (
             status: captureStatus,
             progress: captureProgress,
@@ -1660,18 +1659,11 @@ final class CutoutAppModel {
             deviceKind: recordOnlyDeviceKind
         )
         resetCaptureSession()
-        let didStart = switch modelHint {
-        case .falcon:
-            core.pair(platformIdentifier: platformIdentifier, model: .falcon)
-        case .aero:
-            core.pair(platformIdentifier: platformIdentifier, model: .aero)
-        case .unknown:
-            core.recordOnly(
-                platformIdentifier: platformIdentifier,
-                note: "unsupported picker row",
-                annotations: annotations
-            )
-        }
+        let didStart = core.recordOnly(
+            platformIdentifier: platformIdentifier,
+            note: "unsupported picker row",
+            annotations: annotations
+        )
         guard didStart else {
             captureStatus = previousCapture.status
             captureProgress = previousCapture.progress
@@ -1685,15 +1677,10 @@ final class CutoutAppModel {
         }
 
         permitsStoredDeviceAutoPairing = false
-        if modelHint != .unknown {
-            core.annotateCapture(key: "device_kind", value: annotationKind)
-        }
-        isRecordOnlyCapture = modelHint == .unknown
+        isRecordOnlyCapture = true
         recordOnlyDeviceKind = annotationKind
-        if modelHint == .unknown {
-            liveActivityIdentity = nil
-            liveActivityGlyph = .electricUnicycle
-        }
+        liveActivityIdentity = nil
+        liveActivityGlyph = .electricUnicycle
         syncLiveActivity()
         return true
     }

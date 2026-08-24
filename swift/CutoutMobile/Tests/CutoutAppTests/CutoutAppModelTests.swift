@@ -1620,6 +1620,18 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRecordOnlyLabelNeverSelectsAProtocolModel() {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+
+        XCTAssertTrue(model.recordOnly(platformIdentifier: "unknown-device", deviceKind: "EUC falcon"))
+        XCTAssertEqual(driver.recordedPlatformIdentifiers, ["unknown-device"])
+        XCTAssertTrue(driver.pairedPlatformIdentifiers.isEmpty)
+        XCTAssertTrue(model.isRecordOnlyCapture)
+        XCTAssertEqual(CutoutModelHint(deviceKind: "NOSFET Aero"), .unknown)
+    }
+
+    @MainActor
     func testFinishCaptureFlushesOnceBeforeDisconnecting() async {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

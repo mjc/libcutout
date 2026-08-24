@@ -5999,19 +5999,11 @@ public struct CoreBluetoothPeripheralIdentifier: Equatable, Hashable, Sendable {
 }
 
 public enum CutoutModelHint: Equatable, Hashable, Sendable {
-    case aero
-    case falcon
     case unknown
 
-    public init(deviceKind: String?) {
-        switch deviceKind.flatMap(mobileElectricUnicycleModelHintFromDeviceKind) {
-        case .some(.aero):
-            self = .aero
-        case .some(.falcon):
-            self = .falcon
-        case .none:
-            self = .unknown
-        }
+    public init(deviceKind _: String?) {
+        // A display label is capture provenance, never protocol identity.
+        self = .unknown
     }
 }
 
