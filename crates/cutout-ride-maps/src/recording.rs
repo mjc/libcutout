@@ -376,7 +376,13 @@ impl RideMapRecorder {
     ) -> Result<(), TransitionError> {
         if !matches!(
             self.state,
-            None | Some(RideLifecycleState::Saved | RideLifecycleState::Discarded)
+            None
+                | Some(
+                    RideLifecycleState::Stopped
+                        | RideLifecycleState::Interrupted
+                        | RideLifecycleState::Saved
+                        | RideLifecycleState::Discarded,
+                )
         ) {
             return Err(TransitionError::Invalid);
         }

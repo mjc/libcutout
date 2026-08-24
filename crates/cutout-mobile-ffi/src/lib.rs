@@ -4618,7 +4618,10 @@ impl MobileRideMapCoreInner {
         if self.recorder.state().is_some_and(|current| {
             !matches!(
                 current,
-                ride_maps::RideLifecycleState::Saved | ride_maps::RideLifecycleState::Discarded
+                ride_maps::RideLifecycleState::Stopped
+                    | ride_maps::RideLifecycleState::Interrupted
+                    | ride_maps::RideLifecycleState::Saved
+                    | ride_maps::RideLifecycleState::Discarded
             )
         }) {
             return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
@@ -4777,7 +4780,15 @@ impl MobileRideMapCore {
         at_ms: u64,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.recorder.state().is_none() {
+        if state.recorder.state().is_none_or(|current| {
+            matches!(
+                current,
+                ride_maps::RideLifecycleState::Stopped
+                    | ride_maps::RideLifecycleState::Interrupted
+                    | ride_maps::RideLifecycleState::Saved
+                    | ride_maps::RideLifecycleState::Discarded
+            )
+        }) {
             state.start_gps_only(at_ms, Some(platform_identifier.clone()))?;
         }
 
@@ -13025,6 +13036,12 @@ mod tests {
         assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
         assert_eq!(snapshot.associated_vehicle, Some("pev-1".to_owned()));
         assert_eq!(snapshot.summary.point_count, 0);
+        state.stop().expect("the live map ride stops");
+        let restarted = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 2_000)
+            .expect("a later connection starts a fresh live map ride");
+        assert_eq!(restarted.state, MobileRideLifecycleStateDto::Active);
+        assert_ne!(restarted.ride_id, snapshot.ride_id);
     }
 
     #[test]

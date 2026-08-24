@@ -976,7 +976,7 @@ public final class CutoutSessionCore: NSObject {
         step.actions.forEach(applySessionAction)
         if !hasObservedRideMapConnection, let peripheral {
             hasObservedRideMapConnection = true
-            observeRideMapConnection(platformIdentifier: peripheral.identifier.uuidString)
+            ensureRideMapRecordingForConnection(platformIdentifier: peripheral.identifier.uuidString)
         }
         if step.actions.contains(where: { $0.rawTelemetry != nil }) {
             do {
@@ -2123,20 +2123,6 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
-    }
-
-    private func observeRideMapConnection(platformIdentifier: String) {
-        do {
-            let outcome = try rideMapState.observeVehicleConnection(
-                platformIdentifier: platformIdentifier,
-                atMs: clock.now().rawValue
-            )
-            if outcome == .associated {
-                publishRideMapSnapshot()
-            }
-        } catch {
-            publishRideMapError(error)
-        }
     }
 
     private func ensureRideMapRecordingForConnection(platformIdentifier: String) {
