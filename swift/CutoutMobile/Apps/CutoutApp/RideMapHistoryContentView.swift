@@ -20,6 +20,14 @@ struct RideMapHistoryContentView: View {
     @State private var isApplyingCamera = false
     @State private var dateFilter = "Last 30 days"
     @State private var vehicleFilter = "All vehicles"
+    private enum FilterKind {
+        case date
+        case vehicle
+    }
+
+    private var vehicleOptions: [String] {
+        Set(rides.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }).sorted()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,12 +35,8 @@ struct RideMapHistoryContentView: View {
                 emptyState
             } else {
                 HStack(spacing: 8) {
-                    filterMenu(title: dateFilter, systemImage: "calendar") {
-                        dateFilter = "Last 30 days"
-                    }
-                    filterMenu(title: vehicleFilter, systemImage: "car") {
-                        vehicleFilter = "All vehicles"
-                    }
+                    filterMenu(kind: .date, title: dateFilter, systemImage: "calendar")
+                    filterMenu(kind: .vehicle, title: vehicleFilter, systemImage: "car")
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
@@ -123,13 +127,21 @@ struct RideMapHistoryContentView: View {
     }
 
     private func filterMenu(
+        kind: FilterKind,
         title: String,
-        systemImage: String,
-        action: @escaping () -> Void
+        systemImage: String
     ) -> some View {
         Menu {
-            Button("Last 30 days", action: action)
-            Button("All time", action: action)
+            switch kind {
+            case .date:
+                Button("Last 30 days") { dateFilter = "Last 30 days" }
+                Button("All time") { dateFilter = "All time" }
+            case .vehicle:
+                Button("All vehicles") { vehicleFilter = "All vehicles" }
+                ForEach(vehicleOptions, id: \.self) { vehicle in
+                    Button(vehicle) { vehicleFilter = vehicle }
+                }
+            }
         } label: {
             Label(title, systemImage: systemImage)
                 .font(.subheadline.weight(.semibold))
