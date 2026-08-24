@@ -410,40 +410,28 @@ private struct EucAeroSettingsControls: View {
                 Stepper(value: $tiltbackSpeed, in: 1...99) {
                     Text("\(localizedAppText("settings.aero.tiltback.title")): \(tiltbackSpeed) km/h")
                 }
-                Button(localizedAppText("settings.aero.send")) {
-                    guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(tiltbackSpeed)) else { return }
-                    _ = model.setAeroTiltbackSpeed(setting)
-                }
+                Button(localizedAppText("settings.aero.send"), action: sendTiltbackSpeed)
                 .accessibilityIdentifier("settings.control.aeroTiltbackSpeed")
             }
             if model.aeroPwmPercentControlAvailable {
                 Stepper(value: $pwmPercent, in: 0...100) {
                     Text("\(localizedAppText("settings.aero.pwm.title")): \(pwmPercent)%")
                 }
-                Button(localizedAppText("settings.aero.send")) {
-                    guard let setting = AeroPwmPercent(percent: UInt8(pwmPercent)) else { return }
-                    _ = model.setAeroPwmPercent(setting)
-                }
+                Button(localizedAppText("settings.aero.send"), action: sendPwmPercent)
                 .accessibilityIdentifier("settings.control.aeroPwmPercent")
             }
             if model.aeroAlarmSpeedControlAvailable {
                 Stepper(value: $alarmSpeed, in: 1...99) {
                     Text("\(localizedAppText("settings.aero.alarm.title")): \(alarmSpeed) km/h")
                 }
-                Button(localizedAppText("settings.aero.send")) {
-                    guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(alarmSpeed)) else { return }
-                    _ = model.setAeroAlarmSpeed(setting)
-                }
+                Button(localizedAppText("settings.aero.send"), action: sendAlarmSpeed)
                 .accessibilityIdentifier("settings.control.aeroAlarmSpeed")
             }
             if model.aeroAngleAdjustmentControlAvailable {
                 Stepper(value: $angleTenths, in: -100...100) {
                     Text("\(localizedAppText("settings.aero.angle.title")): \(Double(angleTenths) / 10, specifier: "%.1f")°")
                 }
-                Button(localizedAppText("settings.aero.send")) {
-                    guard let setting = AeroAngleAdjustment(tenthsOfDegree: Int8(angleTenths)) else { return }
-                    _ = model.setAeroAngleAdjustment(setting)
-                }
+                Button(localizedAppText("settings.aero.send"), action: sendAngleAdjustment)
                 .accessibilityIdentifier("settings.control.aeroAngleAdjustment")
             }
         } header: {
@@ -482,6 +470,26 @@ private struct EucAeroSettingsControls: View {
             angleTenths = Int(current.tenthsOfDegree)
             seededAngle = true
         }
+    }
+
+    private func sendTiltbackSpeed() {
+        guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(tiltbackSpeed)) else { return }
+        _ = model.setAeroTiltbackSpeed(setting)
+    }
+
+    private func sendPwmPercent() {
+        guard let setting = AeroPwmPercent(percent: UInt8(pwmPercent)) else { return }
+        _ = model.setAeroPwmPercent(setting)
+    }
+
+    private func sendAlarmSpeed() {
+        guard let setting = AeroSpeedSetting(kilometresPerHour: UInt8(alarmSpeed)) else { return }
+        _ = model.setAeroAlarmSpeed(setting)
+    }
+
+    private func sendAngleAdjustment() {
+        guard let setting = AeroAngleAdjustment(tenthsOfDegree: Int8(angleTenths)) else { return }
+        _ = model.setAeroAngleAdjustment(setting)
     }
 }
 
