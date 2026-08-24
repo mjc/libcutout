@@ -483,6 +483,7 @@ public final class CutoutSessionCore: NSObject {
 #endif
         _ = locationManager
         updateRideMapAvailability(locationManager.authorizationStatus)
+        startLocationUpdatesIfAuthorized(locationManager)
         return onBleQueue {
             guard central == nil else {
                 return
@@ -2587,6 +2588,20 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         publishOnMain { self.onRideMapAvailabilityChange?(availability) }
     }
 
+    private func startLocationUpdatesIfAuthorized(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedAlways:
+            manager.startUpdatingLocation()
+        case .authorizedWhenInUse:
+            requestAlwaysLocationAuthorizationIfNeeded()
+            manager.startUpdatingLocation()
+        case .notDetermined, .denied, .restricted:
+            break
+        @unknown default:
+            break
+        }
+    }
+
     private func requestAlwaysLocationAuthorizationIfNeeded() {
         guard !didRequestAlwaysLocationAuthorization else { return }
         didRequestAlwaysLocationAuthorization = true
@@ -2599,10 +2614,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
         case .authorizedAlways:
-            manager.startUpdatingLocation()
+            startLocationUpdatesIfAuthorized(manager)
         case .authorizedWhenInUse:
-            requestAlwaysLocationAuthorizationIfNeeded()
-            manager.startUpdatingLocation()
+            startLocationUpdatesIfAuthorized(manager)
         case .denied, .restricted:
             break
         @unknown default:
