@@ -3154,6 +3154,12 @@ const fn command_kind_name(kind: CommandKind) -> &'static str {
         CommandKind::RequestDiagnostics => "request_diagnostics",
         CommandKind::RequestFaultHistory => "request_fault_history",
         CommandKind::RequestSettings => "request_settings",
+        CommandKind::ResetTripMeter => "reset_trip_meter",
+        CommandKind::SetAeroTiltbackSpeed => "set_aero_tiltback_speed",
+        CommandKind::SetAeroPwmPercent => "set_aero_pwm_percent",
+        CommandKind::SetAeroAlarmSpeed => "set_aero_alarm_speed",
+        CommandKind::SetAeroAngleAdjustment => "set_aero_angle_adjustment",
+        CommandKind::SetAeroHighBeam => "set_aero_high_beam",
         CommandKind::SetAccelerationAssist => "set_acceleration_assist",
         CommandKind::SetLights => "set_lights",
         CommandKind::SetPedalMode => "set_pedal_mode",
@@ -6222,5 +6228,33 @@ mod tests {
             assert_eq!(encoded.command, command);
             assert!(!encoded.payload.is_empty());
         }
+    }
+
+    #[test]
+    fn command_kind_names_cover_aero_settings_commands() {
+        assert_eq!(
+            command_kind_name(CommandKind::ResetTripMeter),
+            "reset_trip_meter"
+        );
+        assert_eq!(
+            command_kind_name(CommandKind::SetAeroTiltbackSpeed),
+            "set_aero_tiltback_speed"
+        );
+        assert_eq!(
+            command_kind_name(CommandKind::SetAeroPwmPercent),
+            "set_aero_pwm_percent"
+        );
+        assert_eq!(
+            command_kind_name(CommandKind::SetAeroAlarmSpeed),
+            "set_aero_alarm_speed"
+        );
+        assert_eq!(
+            command_kind_name(CommandKind::SetAeroAngleAdjustment),
+            "set_aero_angle_adjustment"
+        );
+        assert_eq!(
+            command_kind_name(CommandKind::SetAeroHighBeam),
+            "set_aero_high_beam"
+        );
     }
 }
