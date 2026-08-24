@@ -439,6 +439,7 @@ private struct EucAeroSettingsControls: View {
         } footer: {
             Text(localizedAppText("settings.aero.footer"))
         }
+        .disabled(model.phase != .live)
         .onChange(of: model.aeroTiltbackSpeedState?.current, initial: true) { _, _ in
             seedFromDeviceIfNeeded()
         }
