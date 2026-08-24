@@ -1,6 +1,7 @@
 use crate::{
-    LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent, RideLifecycleState,
-    RidePointCount, RideSummary, TransitionError, distance_between_millimetres,
+    DistanceMillimetres, LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent,
+    RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
+    distance_between_millimetres,
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
@@ -361,8 +362,11 @@ impl RideMapRecorder {
         let distance_millimetres = points
             .windows(2)
             .filter(|pair| pair[0].segment_id() == pair[1].segment_id())
-            .map(|pair| distance_between_millimetres(pair[0].sample(), pair[1].sample()))
-            .sum();
+            .map(|pair| distance_between(pair[0].sample(), pair[1].sample()))
+            .fold(
+                DistanceMillimetres::default(),
+                DistanceMillimetres::saturating_add,
+            );
         Self::restored_with_summary(
             state,
             created_at_milliseconds,
@@ -373,7 +377,7 @@ impl RideMapRecorder {
                 last_telemetry_at_milliseconds,
             },
             points,
-            RideSummary::from_stored(point_count, distance_millimetres),
+            RideSummary::from_stored(point_count, distance_millimetres.as_u64()),
         )
     }
 
@@ -775,17 +779,19 @@ impl RideMapRecorder {
             self.segment_id = self.segment_id.next();
         }
         let distance = if segment_started {
-            0
+            DistanceMillimetres::default()
         } else {
-            self.points.last().map_or(0, |previous| {
-                distance_between_millimetres(previous.sample(), sample)
-            })
+            self.points
+                .last()
+                .map_or(DistanceMillimetres::default(), |previous| {
+                    distance_between(previous.sample(), sample)
+                })
         };
         self.summary = RideSummary::from_stored(
             self.summary
                 .point_count()
                 .saturating_add(RidePointCount::new(1)),
-            self.summary.distance_millimetres().saturating_add(distance),
+            self.summary.distance().saturating_add(distance).as_u64(),
         );
         self.last_monotonic_milliseconds = sample.monotonic_milliseconds();
         self.points.push(RideMapPoint::new(

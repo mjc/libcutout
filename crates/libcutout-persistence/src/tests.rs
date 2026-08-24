@@ -139,7 +139,7 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
 
     let reopened = RideDatabase::open(&path).unwrap();
     let summary = reopened.summary(ride).unwrap();
-    assert_eq!(summary.point_count(), 2);
+    assert_eq!(summary.point_count().as_u64(), 2);
     reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -355,7 +355,7 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     assert_eq!(first.location_count, 1);
     assert_eq!(first.outcome, PevcapImportOutcome::RideAndCapture);
     let ride_id = first.ride_id.unwrap();
-    assert_eq!(database.summary(ride_id).unwrap().point_count(), 1);
+    assert_eq!(database.summary(ride_id).unwrap().point_count().as_u64(), 1);
     assert!(first.managed_artifact_path.exists());
     assert!(
         first

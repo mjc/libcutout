@@ -55,7 +55,7 @@ impl From<u64> for RidePointCount {
 }
 
 /// Derived distance represented in millimetres.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DistanceMillimetres(u64);
 
 impl DistanceMillimetres {
@@ -69,6 +69,12 @@ impl DistanceMillimetres {
     #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0
+    }
+
+    /// Adds distances without overflowing.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
     }
 }
 
@@ -85,11 +91,14 @@ impl RideSummary {
     pub fn from_samples(samples: &[LocationSample]) -> Self {
         let distance_millimetres = samples
             .windows(2)
-            .map(|pair| distance_between_millimetres(pair[0], pair[1]))
-            .sum::<u64>();
+            .map(|pair| distance_between(pair[0], pair[1]))
+            .fold(
+                DistanceMillimetres::default(),
+                DistanceMillimetres::saturating_add,
+            );
         Self {
             point_count: RidePointCount::from_usize(samples.len()),
-            distance_millimetres: DistanceMillimetres::new(distance_millimetres),
+            distance_millimetres,
         }
     }
 
@@ -101,8 +110,14 @@ impl RideSummary {
 
     /// Returns the derived distance in millimetres.
     #[must_use]
+    pub const fn distance(self) -> DistanceMillimetres {
+        self.distance_millimetres
+    }
+
+    /// Returns the derived distance in millimetres as its persisted representation.
+    #[must_use]
     pub const fn distance_millimetres(self) -> u64 {
-        self.distance_millimetres.as_u64()
+        self.distance().as_u64()
     }
 
     /// Reconstructs a summary persisted by the storage layer.
@@ -118,7 +133,15 @@ impl RideSummary {
 /// Returns the rounded distance between two location samples.
 #[must_use]
 pub fn distance_between_millimetres(first: LocationSample, second: LocationSample) -> u64 {
-    rounded_distance_millimetres(haversine_metres(first, second))
+    distance_between(first, second).as_u64()
+}
+
+/// Returns the rounded distance between two samples as a typed domain value.
+#[must_use]
+pub fn distance_between(first: LocationSample, second: LocationSample) -> DistanceMillimetres {
+    DistanceMillimetres::new(rounded_distance_millimetres(haversine_metres(
+        first, second,
+    )))
 }
 
 fn rounded_distance_millimetres(distance_metres: f64) -> u64 {

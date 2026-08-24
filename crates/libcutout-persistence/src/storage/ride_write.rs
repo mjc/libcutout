@@ -2,7 +2,7 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use cutout_ride_maps::{
     LocationAdmission, LocationSample, RideEvent, RideLifecycleState, TransitionError,
-    distance_between_millimetres,
+    distance_between,
 };
 
 use super::RideSource;
@@ -63,7 +63,7 @@ impl RideWriteState {
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
                 .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id)
-                .map(|(_, previous)| distance_between_millimetres(previous, sample))
+                .map(|(_, previous)| distance_between(previous, sample).as_u64())
                 .unwrap_or_default(),
             updated_at_ms: self
                 .updated_at_ms
