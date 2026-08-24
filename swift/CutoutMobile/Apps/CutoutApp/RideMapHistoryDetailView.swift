@@ -282,7 +282,9 @@ private struct RideMapLoadingSurface: ViewModifier {
         if #available(iOS 26, macOS 26, *) {
             content.glassEffect(.regular, in: .capsule)
         } else {
-            content.background(.ultraThinMaterial, in: Capsule())
+            content
+                .background(PevColors.cardFill, in: Capsule())
+                .overlay { Capsule().stroke(PevColors.cardStroke, lineWidth: 1) }
         }
     }
 }

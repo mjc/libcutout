@@ -67,15 +67,17 @@ struct RideMapHistoryContentView: View {
                 } else if rides.isEmpty {
                     emptyState
                 } else {
-                    HStack(spacing: 8) {
-                        filterMenu(kind: .date, title: dateFilterTitle, systemImage: "calendar")
-                        filterMenu(
-                            kind: .vehicle,
-                            title: vehicleFilter.map(vehicleLabel)
-                                ?? localizedAppText("ride_map.history_all_vehicles"),
-                            systemImage: "car"
-                        )
-                    }
+                    RideMapHistoryFilterRow(
+                        dateMenu: { filterMenu(kind: .date, title: dateFilterTitle, systemImage: "calendar") },
+                        vehicleMenu: {
+                            filterMenu(
+                                kind: .vehicle,
+                                title: vehicleFilter.map(vehicleLabel)
+                                    ?? localizedAppText("ride_map.history_all_vehicles"),
+                                systemImage: "car"
+                            )
+                        }
+                    )
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
 
@@ -261,11 +263,35 @@ struct RideMapHistoryContentView: View {
 private struct RideMapFilterSurface: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 26, macOS 26, *) {
-            content.glassEffect(.regular, in: .capsule)
+            content.glassEffect(.regular.interactive(), in: .capsule)
         } else {
             content
                 .background(PevColors.pageBackground.opacity(0.72), in: Capsule())
                 .overlay { Capsule().stroke(PevColors.cardStroke.opacity(0.45), lineWidth: 1) }
+        }
+    }
+}
+
+private struct RideMapHistoryFilterRow<DateMenu: View, VehicleMenu: View>: View {
+    @ViewBuilder let dateMenu: () -> DateMenu
+    @ViewBuilder let vehicleMenu: () -> VehicleMenu
+
+    var body: some View {
+        Group {
+            if #available(iOS 26, macOS 26, *) {
+                GlassEffectContainer(spacing: 8) {
+                    menus
+                }
+            } else {
+                menus
+            }
+        }
+    }
+
+    private var menus: some View {
+        HStack(spacing: 8) {
+            dateMenu()
+            vehicleMenu()
         }
     }
 }
