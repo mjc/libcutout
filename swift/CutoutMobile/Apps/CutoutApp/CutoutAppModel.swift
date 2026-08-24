@@ -377,6 +377,9 @@ final class CutoutAppModel {
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
         rideMapHistoryLoadTask?.cancel()
         rideMapHistoryPageTask?.cancel()
+        // A reload changes the query that owns the selected route. Do not let an
+        // older route request repopulate points after the new page arrives.
+        rideMapHistorySelectionTask?.cancel()
         rideMapHistoryLoading = true
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         let state = core.rideMapStateHandle
