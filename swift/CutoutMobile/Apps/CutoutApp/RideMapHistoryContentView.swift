@@ -15,6 +15,8 @@ struct RideMapHistoryContentView: View {
     let load: () -> Void
     let loadMore: () -> Void
     let returnToLive: () -> Void
+    let currentVehicleIdentity: String?
+    let currentVehicleName: String?
 
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
@@ -26,7 +28,18 @@ struct RideMapHistoryContentView: View {
     }
 
     private var vehicleOptions: [String] {
-        Set(rides.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }).sorted()
+        Set(rides.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } })
+            .map(vehicleLabel(for:))
+            .sorted()
+    }
+
+    private func vehicleLabel(for identity: String) -> String {
+        guard identity == currentVehicleIdentity,
+              let currentVehicleName,
+              !currentVehicleName.isEmpty else {
+            return identity
+        }
+        return currentVehicleName
     }
 
     var body: some View {
