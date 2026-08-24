@@ -76,8 +76,9 @@ struct RideMapHistoryContentView: View {
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
+        VStack(spacing: 0) {
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
                 if isLoading && rides.isEmpty {
                     ProgressView(localizedAppText("ride_map.history_loading"))
                         .tint(PevColors.yellow)
@@ -206,6 +207,7 @@ struct RideMapHistoryContentView: View {
                         topTrailingRadius: 28
                     ))
                     .padding(.bottom, 8)
+                }
                 }
             }
         }
