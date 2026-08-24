@@ -13,6 +13,11 @@ private enum RideSessionRestorationState {
 @MainActor
 @Observable
 final class CutoutAppModel {
+    enum RideMapMode: String {
+        case live
+        case history
+    }
+
     // Keep this within the Rust persistence query limit (max 500).
     private static let rideMapPointBatchLimit: UInt32 = 500
     private static let rideMapPreviewPointLimit = 4_096
@@ -40,6 +45,8 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var selectedRideMapHistoryID: String?
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
+    var rideMapMode = RideMapMode.live
+    private(set) var rideMapHistoryLoading = false
     private(set) var captureStatus: CaptureStatus?
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
@@ -73,6 +80,12 @@ final class CutoutAppModel {
         }
         return connectionState.selection?.title
             ?? devicePickerScanState?.rows.first(where: { $0.id == rideMapVehicleIdentity })?.title
+    }
+
+    func rideMapVehicleName(for identity: String?) -> String? {
+        guard let identity else { return nil }
+        return selectedDeviceStore.displayName(for: identity)
+            ?? (identity == rideMapVehicleIdentity ? rideMapVehicleName : nil)
     }
 
     var selectedConnectionRoute: DevicePickerConnectionRoute? {
@@ -136,7 +149,9 @@ final class CutoutAppModel {
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
     private var rideMapHistoryCursor: MobileRideCursorDto?
-    private var rideMapHistoryTask: Task<Void, Never>?
+    private var rideMapHistoryLoadTask: Task<Void, Never>?
+    private var rideMapHistoryPageTask: Task<Void, Never>?
+    private var rideMapHistorySelectionTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
@@ -337,9 +352,10 @@ final class CutoutAppModel {
     }
 
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
-        rideMapHistoryTask?.cancel()
+        rideMapHistoryLoadTask?.cancel()
+        rideMapHistoryLoading = true
         let state = core.rideMapStateHandle
-        rideMapHistoryTask = Task { [weak self] in
+        rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     var page = try state.storedHistoryPage(cursor: nil, limit: 50)
@@ -355,6 +371,7 @@ final class CutoutAppModel {
                     return (summaries, page.nextCursor)
                 }.value
                 guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryLoading = false
                 self.rideMapHistory = result.0
                 self.rideMapHistoryCursor = result.1
                 self.rideMapHistoryCanLoadMore = result.1 != nil
@@ -371,6 +388,7 @@ final class CutoutAppModel {
                 self.selectRideMapHistory(selectedID)
             } catch {
                 guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryLoading = false
                 self.rideMapError = error as? MobileRideMapError
                 self.rideMapHistory = []
                 self.rideMapHistoryCursor = nil
@@ -384,10 +402,10 @@ final class CutoutAppModel {
 
     func loadMoreRideMapHistory() {
         guard rideMapHistoryCanLoadMore else { return }
-        rideMapHistoryTask?.cancel()
+        rideMapHistoryPageTask?.cancel()
         let state = core.rideMapStateHandle
         let cursor = rideMapHistoryCursor
-        rideMapHistoryTask = Task { [weak self] in
+        rideMapHistoryPageTask = Task { [weak self] in
             do {
                 let page = try await Task.detached(priority: .userInitiated) {
                     try state.storedHistoryPage(cursor: cursor, limit: 50)
@@ -408,15 +426,29 @@ final class CutoutAppModel {
         let query = rideMapHistorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return rideMapHistory }
         return rideMapHistory.filter { ride in
-            ride.rideId.localizedCaseInsensitiveContains(query)
+            let dateText = Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000)
+                .formatted(date: .abbreviated, time: .shortened)
+            return ride.rideId.localizedCaseInsensitiveContains(query)
                 || ride.associatedVehicle?.localizedCaseInsensitiveContains(query) == true
                 || ride.candidateVehicle?.localizedCaseInsensitiveContains(query) == true
+                || rideMapVehicleName(for: ride.associatedVehicle)?.localizedCaseInsensitiveContains(query) == true
+                || rideMapVehicleName(for: ride.candidateVehicle)?.localizedCaseInsensitiveContains(query) == true
+                || dateText.localizedCaseInsensitiveContains(query)
         }
     }
 
     func selectRideMapHistory(_ rideID: String) {
+        selectRideMapHistory(rideID, previewLimit: Self.rideMapPreviewPointLimit)
+    }
+
+    func loadFullRideMapHistory() {
+        guard let selectedRideMapHistoryID else { return }
+        selectRideMapHistory(selectedRideMapHistoryID, previewLimit: nil)
+    }
+
+    private func selectRideMapHistory(_ rideID: String, previewLimit: Int?) {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
-        rideMapHistoryTask?.cancel()
+        rideMapHistorySelectionTask?.cancel()
         if selectedRideMapHistoryID != rideID {
             rideMapHistoryPoints = []
         }
@@ -425,8 +457,7 @@ final class CutoutAppModel {
         rideMapHistoryPointsTruncated = false
         let state = core.rideMapStateHandle
         let pointBatchLimit = Self.rideMapPointBatchLimit
-        let previewPointLimit = Self.rideMapPreviewPointLimit
-        rideMapHistoryTask = Task { [weak self] in
+        rideMapHistorySelectionTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     var points = [MobileRideMapPointDto]()
@@ -439,15 +470,20 @@ final class CutoutAppModel {
                         ) else {
                             return ([MobileRideMapPointDto](), false)
                         }
-                        let remaining = previewPointLimit - points.count
-                        if batch.points.count > remaining {
-                            points.append(contentsOf: batch.points.prefix(remaining))
-                            return (points, true)
-                        }
-                        points.append(contentsOf: batch.points)
-                        cursor = batch.nextCursor
-                        if points.count == previewPointLimit {
-                            return (points, batch.hasMore)
+                        if let previewLimit {
+                            let remaining = previewLimit - points.count
+                            if batch.points.count > remaining {
+                                points.append(contentsOf: batch.points.prefix(remaining))
+                                return (points, true)
+                            }
+                            points.append(contentsOf: batch.points)
+                            cursor = batch.nextCursor
+                            if points.count == previewLimit {
+                                return (points, batch.hasMore)
+                            }
+                        } else {
+                            points.append(contentsOf: batch.points)
+                            cursor = batch.nextCursor
                         }
                         if batch.hasMore == false {
                             return (points, false)

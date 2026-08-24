@@ -5,6 +5,7 @@ import SwiftUI
 struct RideMapRouteTruthView: View {
     let points: [MobileRideMapPointDto]
     let decision: MobileRideMapDecisionDto?
+    let showsRecordedBounds: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -12,7 +13,7 @@ struct RideMapRouteTruthView: View {
                 .font(.caption)
                 .foregroundStyle(PevColors.muted)
                 .accessibilityIdentifier("ride-map.route-truth")
-            if points.isEmpty == false {
+            if points.isEmpty == false, showsRecordedBounds {
                 Text(localizedAppText("ride_map.route_start_end", points.count))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)

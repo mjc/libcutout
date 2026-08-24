@@ -76,6 +76,7 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
     public var state: MobileRideMapStateDto
     public var summary: MobileRideMapSummaryDto
     public var segmentCount: UInt64
+    public var createdAtMilliseconds: UInt64
     public var candidateVehicle: String?
     public var associatedVehicle: String?
 }
@@ -270,6 +271,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 durationMilliseconds: ride.durationMilliseconds
             ),
             segmentCount: ride.segmentCount,
+            createdAtMilliseconds: ride.createdAtMilliseconds,
             candidateVehicle: ride.candidateVehicle,
             associatedVehicle: ride.associatedVehicle
         )

@@ -127,7 +127,6 @@ struct ContentView: View {
                     if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
                             connectedDestination(for: tabRoute)
-                                .id(tabRoute)
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
                         }
@@ -199,9 +198,10 @@ struct ContentView: View {
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .rideMap:
-            RideMapRouteView(model: model) { rideID in
+            RideMapRouteView(model: model, { rideID in
+                model.rideMapMode = .history
                 navigate(to: .rideMapDetail(rideID: rideID))
-            }
+            }, showBackButton: model.selectedConnectionRoute == nil, back: { navigate(to: .devicePicker) })
         case let .rideMapDetail(rideID):
             RideMapRouteView(
                 model: model,

@@ -10,6 +10,7 @@ struct RideMapHistoryDetailView: View {
     let pointsTruncated: Bool
     let select: (String) -> Void
     let load: () -> Void
+    let loadFullRide: () -> Void
     let close: () -> Void
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
@@ -19,9 +20,7 @@ struct RideMapHistoryDetailView: View {
         return rides.first(where: { $0.rideId == initialHistoryID })
     }
 
-    private var selectionTaskID: [String] {
-        [initialHistoryID ?? ""] + rides.map(\.rideId)
-    }
+    private var selectionTaskID: String { initialHistoryID ?? "" }
 
     private var isRouteLoading: Bool {
         guard let selectedRide else { return initialHistoryID != nil }
@@ -30,27 +29,11 @@ struct RideMapHistoryDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
-                Button {
-                    close()
-                } label: {
-                    Label(localizedAppText("ride_map.detail_back"), systemImage: "chevron.left")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(PevColors.yellow)
-                Spacer()
-                Text(localizedAppText("ride_map.detail_title"))
-                    .font(.headline.weight(.bold))
-                Spacer()
-                Color.clear.frame(width: 44)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-
             ZStack {
                 RideMapCanvasView(
                     points: points,
                     routeID: initialHistoryID ?? "history-detail",
+                    showsStartMarker: true,
                     showsEndMarker: true,
                     fitsRouteOnChange: true,
                     mapPosition: $mapPosition,
@@ -67,11 +50,11 @@ struct RideMapHistoryDetailView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .modifier(RideMapLoadingSurface())
                     .accessibilityIdentifier("ride-map.detail-loading")
                 }
             }
-            .frame(minHeight: 360, maxHeight: .infinity)
+            .frame(height: 320)
 
             if let ride = selectedRide {
                 RideMapHistoryDetailSummary(
@@ -80,6 +63,7 @@ struct RideMapHistoryDetailView: View {
                     points: points,
                     pointsTruncated: pointsTruncated,
                     isLoading: isRouteLoading,
+                    loadFullRide: loadFullRide,
                     mapPosition: $mapPosition
                 )
             }
@@ -108,7 +92,7 @@ struct RideMapHistoryDetailView: View {
 
     private func durationText(for summary: MobileRideMapSummaryDto) -> String {
         Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
-            .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
+            .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
     }
 }
 
@@ -118,6 +102,7 @@ private struct RideMapHistoryDetailSummary: View {
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
     let isLoading: Bool
+    let loadFullRide: () -> Void
     @Binding var mapPosition: MapCameraPosition
 
     var body: some View {
@@ -142,11 +127,11 @@ private struct RideMapHistoryDetailSummary: View {
                         label: localizedAppText("ride_map.metric_elapsed")
                     )
                     RideMapDetailMetric(
-                        value: "—",
+                        value: localizedAppText("ride_map.speed_unavailable"),
                         label: localizedAppText("ride_map.metric_speed")
                     )
                 }
-                RideMapRouteTruthView(points: points, decision: nil)
+                RideMapRouteTruthView(points: points, decision: nil, showsRecordedBounds: true)
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated"))
                         .font(.caption)
@@ -155,7 +140,8 @@ private struct RideMapHistoryDetailSummary: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button("Show full ride") {
+                    Button(localizedAppText("ride_map.show_full_ride")) {
+                        loadFullRide()
                         mapPosition = .automatic
                     }
                     .buttonStyle(.bordered)
@@ -165,7 +151,7 @@ private struct RideMapHistoryDetailSummary: View {
                         // Export/share is owned by LIBCU-411; keep the affordance
                         // visible without inventing a second export path here.
                     } label: {
-                        Label("Share", systemImage: "square.and.arrow.up")
+                        Label(localizedAppText("ride_map.share"), systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(.bordered)
                     .tint(PevColors.primaryText)
@@ -182,6 +168,17 @@ private struct RideMapHistoryDetailSummary: View {
             bottomTrailingRadius: 0,
             topTrailingRadius: 28
         ))
+        .padding(.bottom, 8)
+    }
+}
+
+private struct RideMapLoadingSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, macOS 26, *) {
+            content.glassEffect(.regular, in: .capsule)
+        } else {
+            content.background(.ultraThinMaterial, in: Capsule())
+        }
     }
 }
 

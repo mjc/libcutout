@@ -9,6 +9,7 @@ struct RideMapLiveContentView: View {
     let routeID: String
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
+    let vehicleName: String?
     let storageError: String?
     let mapError: MobileRideMapError?
     let lastDecision: MobileRideMapDecisionDto?
@@ -27,17 +28,22 @@ struct RideMapLiveContentView: View {
     @State private var isDiscardConfirmationPresented = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
             RideMapCanvasView(
                 points: points,
                 routeID: routeID,
+                showsStartMarker: snapshot?.state != .recording,
                 showsEndMarker: showsEndMarker,
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
                 cameraDidChange: { followsLatestPoint = false }
             )
-            .frame(minHeight: 320, maxHeight: .infinity)
+            // Keep the live hero compact enough that the metrics and controls
+            // remain above a connected TabView on the smallest iPhone.
+            .frame(height: 330)
+            .frame(maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 12) {
                 if snapshot?.state == .recording {
@@ -82,14 +88,18 @@ struct RideMapLiveContentView: View {
                     .foregroundStyle(PevColors.muted)
                     .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
 
-                RideMapRouteTruthView(points: points, decision: lastDecision)
+                RideMapRouteTruthView(
+                    points: points,
+                    decision: lastDecision,
+                    showsRecordedBounds: snapshot?.state != .recording
+                )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated"))
                         .font(.caption)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityIdentifier("ride-map.live-truncated")
                 }
-                RideMapSummaryView(snapshot: snapshot)
+                RideMapSummaryView(snapshot: snapshot, vehicleName: vehicleName)
                 RideMapControlsView(
                     state: snapshot?.state,
                     isDiscardConfirmationPresented: $isDiscardConfirmationPresented,
@@ -106,7 +116,7 @@ struct RideMapLiveContentView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
-            .padding(.bottom, 18)
+            .padding(.bottom, 72)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(PevColors.pageBackground, in: UnevenRoundedRectangle(
                 topLeadingRadius: 28,
@@ -114,8 +124,14 @@ struct RideMapLiveContentView: View {
                 bottomTrailingRadius: 0,
                 topTrailingRadius: 28
             ))
+            }
         }
-        .onChange(of: points.last?.sequence) { _, _ in
+        // Connected presentations place a floating TabView over the bottom
+        // safe area. Keep the final metrics/control rows above that surface.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 92)
+        }
+        .onChange(of: points.last?.sequence, initial: true) { _, _ in
             guard followsLatestPoint else { return }
             recenterOnLatestPoint()
         }
@@ -177,7 +193,8 @@ struct RideMapLiveContentView: View {
     private var recordingPillText: String {
         let source = snapshot?.associatedVehicle == nil
             ? localizedAppText("ride_map.gps_only")
-            : localizedAppText("ride_map.associated_vehicle", snapshot?.associatedVehicle ?? "")
+            : vehicleName
+                ?? localizedAppText("ride_map.associated_vehicle", snapshot?.associatedVehicle ?? "")
         return "\(localizedAppText("ride_map.status.recording").uppercased()) · \(source.uppercased())"
     }
 
@@ -199,16 +216,29 @@ struct RideMapLiveContentView: View {
     private func recenterOnLatestPoint() {
         guard let point = points.last else { return }
         isApplyingCamera = true
-        mapPosition = .region(
-            MKCoordinateRegion(
-                center: CLLocationCoordinate2D(
-                    latitude: point.latitudeDegrees,
-                    longitude: point.longitudeDegrees
-                ),
-                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-            )
-        )
+        mapPosition = routeRegion(centeredOn: point)
         DispatchQueue.main.async { isApplyingCamera = false }
+    }
+
+    private func routeRegion(centeredOn latest: MobileRideMapPointDto) -> MapCameraPosition {
+        guard points.count > 1 else {
+            return .region(MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: latest.latitudeDegrees, longitude: latest.longitudeDegrees),
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            ))
+        }
+        let latitudes = points.map(\.latitudeDegrees)
+        let longitudes = points.map(\.longitudeDegrees)
+        return .region(MKCoordinateRegion(
+            center: CLLocationCoordinate2D(
+                latitude: (latitudes.min()! + latitudes.max()!) / 2,
+                longitude: (longitudes.min()! + longitudes.max()!) / 2
+            ),
+            span: MKCoordinateSpan(
+                latitudeDelta: max((latitudes.max()! - latitudes.min()!) * 1.35, 0.002),
+                longitudeDelta: max((longitudes.max()! - longitudes.min()!) * 1.35, 0.002)
+            )
+        ))
     }
 }
 

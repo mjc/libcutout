@@ -19,6 +19,7 @@ struct RideMapCanvasView: View {
 
     let points: [MobileRideMapPointDto]
     let routeID: String
+    let showsStartMarker: Bool
     let showsEndMarker: Bool
     let fitsRouteOnChange: Bool
     @Binding var mapPosition: MapCameraPosition
@@ -26,6 +27,7 @@ struct RideMapCanvasView: View {
     let cameraDidChange: () -> Void
     @State private var segmentPaths = [SegmentPath]()
     @State private var renderedKey: PathKey?
+    @State private var fittedRouteID: String?
 
     var body: some View {
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
@@ -36,9 +38,9 @@ struct RideMapCanvasView: View {
                         style: StrokeStyle(lineWidth: 4, dash: segment.id == 0 ? [] : [7, 5])
                     )
             }
-            if let first = points.first {
+            if showsStartMarker, let first = points.first {
                 Annotation(
-                    localizedAppText("ride_map.start_marker"),
+                    "",
                     coordinate: coordinate(for: first)
                 ) {
                     RideMapRouteMarker(
@@ -49,9 +51,7 @@ struct RideMapCanvasView: View {
             }
             if let last = points.last, points.count > 1 {
                 Annotation(
-                    localizedAppText(
-                        showsEndMarker ? "ride_map.end_marker" : "ride_map.current_marker"
-                    ),
+                    "",
                     coordinate: coordinate(for: last)
                 ) {
                     RideMapRouteMarker(
@@ -70,9 +70,11 @@ struct RideMapCanvasView: View {
             }
         }
         .task(id: pathKey) {
-            updatePaths(for: pathKey)
-            if fitsRouteOnChange {
+            let key = pathKey
+            updatePaths(for: key)
+            if fitsRouteOnChange, fittedRouteID != key.routeID {
                 fitMap(to: points)
+                fittedRouteID = key.routeID
             }
         }
         .accessibilityLabel(localizedAppText("ride_map.map_alternative"))

@@ -58,8 +58,7 @@ struct RideMapHistoryListView: View {
                     }
                 }
             }
-            .frame(maxHeight: 230)
-            .searchable(text: $searchText)
+            .frame(minHeight: 120, maxHeight: 320)
             if canLoadMore {
                 Button(localizedAppText("ride_map.history_load_more"), action: loadMore)
                     .buttonStyle(.bordered)
@@ -67,6 +66,7 @@ struct RideMapHistoryListView: View {
                     .padding(.vertical, 8)
             }
         }
+        .searchable(text: $searchText)
     }
 
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {

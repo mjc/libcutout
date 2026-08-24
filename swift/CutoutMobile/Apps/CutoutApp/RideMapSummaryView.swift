@@ -5,6 +5,7 @@ import SwiftUI
 
 struct RideMapSummaryView: View {
     let snapshot: MobileRideMapSnapshotDto?
+    let vehicleName: String?
 
     var body: some View {
         if let snapshot {
@@ -19,16 +20,16 @@ struct RideMapSummaryView: View {
                         label: localizedAppText("ride_map.metric_elapsed")
                     )
                     RideMapMetric(
-                        value: "—",
+                        value: localizedAppText("ride_map.speed_unavailable"),
                         label: localizedAppText("ride_map.metric_speed")
                     )
                 }
 
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(PevColors.green)
+                        .fill(snapshot.state == .recording ? PevColors.green : PevColors.yellow)
                         .frame(width: 8, height: 8)
-                    Text(snapshot.associatedVehicle ?? localizedAppText("ride_map.gps_only"))
+                    Text(vehicleName ?? snapshot.associatedVehicle ?? localizedAppText("ride_map.gps_only"))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(PevColors.muted)
                         .lineLimit(1)
@@ -45,9 +46,9 @@ struct RideMapSummaryView: View {
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("ride-map.summary")
         } else {
-            Text(localizedAppText("ride_map.no_active"))
-                .font(.subheadline)
-                .accessibilityIdentifier("ride-map.no-active")
+            // The lifecycle title above owns the no-active state. Keeping the
+            // summary slot empty avoids repeating the same message in the card.
+            EmptyView()
         }
     }
 
