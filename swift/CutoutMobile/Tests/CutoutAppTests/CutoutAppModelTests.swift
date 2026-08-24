@@ -1423,6 +1423,13 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapVehicleNameNeverTreatsThePlatformIdentityAsDisplayName() {
+        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
+        XCTAssertNil(CutoutAppModel.meaningfulDeviceName("", identity: "wheel-1"))
+        XCTAssertEqual(CutoutAppModel.meaningfulDeviceName("NF2557", identity: "wheel-1"), "NF2557")
+    }
+
+    @MainActor
     func testLiveActivityStartFailureIsObservableAndRetryable() async {
         let row = DevicePickerRow(
             id: "vesc-1234",

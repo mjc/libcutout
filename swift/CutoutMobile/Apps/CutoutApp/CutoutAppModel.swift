@@ -85,14 +85,30 @@ final class CutoutAppModel {
            !candidate.displayName.isEmpty {
             return candidate.displayName
         }
-        return connectionState.selection?.title
-            ?? devicePickerScanState?.rows.first(where: { $0.id == rideMapVehicleIdentity })?.title
+        guard let identity = rideMapVehicleIdentity else {
+            return connectionState.selection?.title
+        }
+        return Self.meaningfulDeviceName(connectionState.selection?.title, identity: identity)
+            ?? Self.meaningfulDeviceName(
+                devicePickerScanState?.rows.first(where: { $0.id == identity })?.title,
+                identity: identity
+            )
     }
 
     func rideMapVehicleName(for identity: String?) -> String? {
         guard let identity else { return nil }
         return selectedDeviceStore.displayName(for: identity)
             ?? (identity == rideMapVehicleIdentity ? rideMapVehicleName : nil)
+    }
+
+    static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {
+        guard let candidate,
+              !candidate.isEmpty,
+              candidate != identity
+        else {
+            return nil
+        }
+        return candidate
     }
 
     var selectedConnectionRoute: DevicePickerConnectionRoute? {
