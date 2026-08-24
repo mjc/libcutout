@@ -119,6 +119,7 @@ struct ContentView: View {
                     .ignoresSafeArea()
             routedContent(for: destination)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .accessibilityFocused($focusedRoute, equals: destination)
         } else {
             let tabs = TabView(selection: tabSelection) {
