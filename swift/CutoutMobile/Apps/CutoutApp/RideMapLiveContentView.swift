@@ -86,13 +86,9 @@ struct RideMapLiveContentView: View {
                 Text(statusTitle)
                     .font(.title3.weight(.bold))
                     .accessibilityAddTraits(.isHeader)
-                Text(accessibilityRouteSummary)
-                    .font(.subheadline)
-                    .foregroundStyle(PevColors.muted)
-                    .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
-
                 RideMapRouteTruthView(
                     points: points,
+                    recordedPointCount: snapshot?.summary.pointCount,
                     rustSegmentCount: snapshot?.segmentCount ?? 0,
                     decision: lastDecision,
                     showsRecordedBounds: Self.showsRecordedBounds(for: snapshot?.state)
@@ -215,12 +211,6 @@ struct RideMapLiveContentView: View {
 
     private var showsEndMarker: Bool {
         Self.showsRecordedBounds(for: snapshot?.state)
-    }
-
-    private var accessibilityRouteSummary: String {
-        points.isEmpty
-            ? localizedAppText("ride_map.no_points")
-            : localizedAppText("ride_map.points", points.count)
     }
 
     private func recenterOnLatestPoint() {

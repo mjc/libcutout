@@ -114,6 +114,7 @@ struct RideMapHistoryDetailView: View {
                             recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
                             vehicle: vehicleLabel(for: ride),
                             points: points,
+                            recordedPointCount: ride.summary.pointCount,
                             pointsTruncated: pointsTruncated,
                             segmentCount: ride.segmentCount,
                             error: error,
@@ -198,6 +199,7 @@ private struct RideMapHistoryDetailSummary: View {
     let recordedAt: String
     let vehicle: String
     let points: [MobileRideMapPointDto]
+    let recordedPointCount: UInt64
     let pointsTruncated: Bool
     let segmentCount: UInt64
     let error: MobileRideMapError?
@@ -251,6 +253,7 @@ private struct RideMapHistoryDetailSummary: View {
                 }
                 RideMapRouteTruthView(
                     points: points,
+                    recordedPointCount: recordedPointCount,
                     rustSegmentCount: segmentCount,
                     decision: nil,
                     showsRecordedBounds: true
@@ -289,6 +292,7 @@ private struct RideMapHistoryDetailSummary: View {
         ))
         .padding(.bottom, 8)
     }
+
 }
 
 private struct RideMapLoadingSurface: ViewModifier {

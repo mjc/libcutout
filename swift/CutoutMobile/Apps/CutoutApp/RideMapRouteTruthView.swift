@@ -4,6 +4,7 @@ import SwiftUI
 
 struct RideMapRouteTruthView: View {
     let points: [MobileRideMapPointDto]
+    let recordedPointCount: UInt64?
     let rustSegmentCount: UInt64
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
@@ -15,7 +16,7 @@ struct RideMapRouteTruthView: View {
                 .foregroundStyle(PevColors.muted)
                 .accessibilityIdentifier("ride-map.route-truth")
             if points.isEmpty == false, showsRecordedBounds {
-                Text(localizedAppText("ride_map.route_start_end", points.count))
+                Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(points.count)))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
                 if segmentCount > 1 {
