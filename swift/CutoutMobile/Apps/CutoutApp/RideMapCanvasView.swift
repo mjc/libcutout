@@ -170,21 +170,21 @@ struct RideMapCanvasView: View {
 
         var minimumLatitude = first.latitudeDegrees
         var maximumLatitude = first.latitudeDegrees
-        var minimumLongitude = first.longitudeDegrees
-        var maximumLongitude = first.longitudeDegrees
+        var longitudes = [first.longitudeDegrees]
         for point in points.dropFirst() {
             minimumLatitude = min(minimumLatitude, point.latitudeDegrees)
             maximumLatitude = max(maximumLatitude, point.latitudeDegrees)
-            minimumLongitude = min(minimumLongitude, point.longitudeDegrees)
-            maximumLongitude = max(maximumLongitude, point.longitudeDegrees)
+            longitudes.append(point.longitudeDegrees)
         }
+
+        let longitude = shortestLongitudeInterval(longitudes)
 
         let center = CLLocationCoordinate2D(
             latitude: (minimumLatitude + maximumLatitude) / 2,
-            longitude: (minimumLongitude + maximumLongitude) / 2
+            longitude: longitude.center
         )
         let latitudeDelta = max((maximumLatitude - minimumLatitude) * 1.35, 0.002)
-        let longitudeDelta = max((maximumLongitude - minimumLongitude) * 1.35, 0.002)
+        let longitudeDelta = max(longitude.span * 1.35, 0.002)
         isApplyingCamera = true
         mapPosition = .region(
             MKCoordinateRegion(
@@ -198,6 +198,37 @@ struct RideMapCanvasView: View {
         DispatchQueue.main.async {
             isApplyingCamera = false
         }
+    }
+
+    private func shortestLongitudeInterval(_ longitudes: [Double]) -> (center: Double, span: Double) {
+        guard longitudes.count > 1 else { return (longitudes[0], 0) }
+        let normalized = longitudes.map { longitude in
+            let shifted = (longitude + 180).truncatingRemainder(dividingBy: 360)
+            return shifted >= 0 ? shifted : shifted + 360
+        }.sorted()
+
+        var largestGap = -1.0
+        var largestGapIndex = 0
+        for index in normalized.indices {
+            let next = index == normalized.index(before: normalized.endIndex)
+                ? normalized[0] + 360
+                : normalized[index + 1]
+            let gap = next - normalized[index]
+            if gap > largestGap {
+                largestGap = gap
+                largestGapIndex = index
+            }
+        }
+
+        let startIndex = normalized.index(after: largestGapIndex) == normalized.endIndex
+            ? normalized.startIndex
+            : normalized.index(after: largestGapIndex)
+        let start = normalized[startIndex]
+        let end = normalized[largestGapIndex] + (normalized[largestGapIndex] < start ? 360 : 0)
+        let span = max(end - start, 0)
+        let rawCenter = start + span / 2 - 180
+        let center = rawCenter > 180 ? rawCenter - 360 : rawCenter
+        return (center, span)
     }
 }
 

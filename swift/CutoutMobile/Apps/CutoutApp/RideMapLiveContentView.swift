@@ -195,7 +195,9 @@ struct RideMapLiveContentView: View {
             ? localizedAppText("ride_map.gps_only")
             : vehicleName
                 ?? localizedAppText("ride_map.associated_vehicle", snapshot?.associatedVehicle ?? "")
-        return "\(localizedAppText("ride_map.status.recording").uppercased()) · \(source.uppercased())"
+        // Keep the lifecycle label emphatic, but preserve the device's persisted
+        // display name (`NF2557`) exactly as the user knows it.
+        return "\(localizedAppText("ride_map.status.recording").uppercased()) · \(source)"
     }
 
     private var showsEndMarker: Bool {
