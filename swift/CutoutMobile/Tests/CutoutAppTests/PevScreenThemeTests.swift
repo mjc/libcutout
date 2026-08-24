@@ -16,6 +16,11 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testRideMapVehicleFallbackDoesNotExposePlatformIdentity() {
+        XCTAssertEqual(RideMapSummaryView.vehicleLabel(for: nil), "GPS-only ride")
+        XCTAssertEqual(RideMapSummaryView.vehicleLabel(for: "corebluetooth-1"), "Vehicle name unavailable")
+    }
+
     func testRideMapIndicatorStateFollowsLifecycleAndAssociation() {
         XCTAssertEqual(
             RideMapSummaryView.IndicatorState.state(lifecycle: .recording, associatedVehicle: nil),

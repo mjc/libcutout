@@ -196,7 +196,7 @@ struct RideMapLiveContentView: View {
         let source = snapshot?.associatedVehicle == nil
             ? localizedAppText("ride_map.gps_only")
             : vehicleName
-                ?? localizedAppText("ride_map.associated_vehicle", snapshot?.associatedVehicle ?? "")
+                ?? localizedAppText("ride_map.vehicle_name_unavailable")
         // Keep the localized lifecycle label and preserve the device's persisted
         // display name (`NF2557`) exactly as the user knows it.
         return "\(localizedAppText("ride_map.status.recording")) · \(source)"

@@ -48,6 +48,13 @@ struct RideMapSummaryView: View {
         return "\(speed.displayValue) \(speed.displayUnit)"
     }
 
+    @MainActor
+    static func vehicleLabel(for identity: String?) -> String {
+        identity == nil
+            ? localizedAppText("ride_map.gps_only")
+            : localizedAppText("ride_map.vehicle_name_unavailable")
+    }
+
     var body: some View {
         if let snapshot {
             VStack(alignment: .leading, spacing: 12) {
@@ -57,7 +64,7 @@ struct RideMapSummaryView: View {
                     Circle()
                         .fill(indicatorColor(for: Self.IndicatorState.state(for: snapshot)))
                         .frame(width: 8, height: 8)
-                    Text(vehicleName ?? snapshot.associatedVehicle ?? localizedAppText("ride_map.gps_only"))
+                    Text(vehicleName ?? Self.vehicleLabel(for: snapshot.associatedVehicle))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(PevColors.muted)
                         .lineLimit(1)

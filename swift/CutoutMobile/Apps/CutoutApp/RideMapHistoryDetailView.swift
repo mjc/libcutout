@@ -25,7 +25,8 @@ struct RideMapHistoryDetailView: View {
         fallback: String
     ) -> String {
         let identity = associatedVehicle ?? candidateVehicle
-        return identity.flatMap(resolve) ?? identity ?? fallback
+        return identity.flatMap(resolve)
+            ?? (identity == nil ? fallback : localizedAppText("ride_map.vehicle_name_unavailable"))
     }
 
     static func averageSpeedText(
@@ -160,16 +161,12 @@ struct RideMapHistoryDetailView: View {
     }
 
     private func vehicleLabel(for ride: MobileRideMapHistorySummaryDto) -> String {
-        let identity = ride.associatedVehicle ?? ride.candidateVehicle
-        let label = Self.resolvedVehicleLabel(
+        Self.resolvedVehicleLabel(
             associatedVehicle: ride.associatedVehicle,
             candidateVehicle: ride.candidateVehicle,
             resolve: { vehicleName($0) },
             fallback: localizedAppText("ride_map.gps_only")
         )
-        return vehicleName(identity) == nil && identity != nil
-            ? localizedAppText("ride_map.associated_vehicle", label)
-            : label
     }
 
     private func shareText(for ride: MobileRideMapHistorySummaryDto) -> String {

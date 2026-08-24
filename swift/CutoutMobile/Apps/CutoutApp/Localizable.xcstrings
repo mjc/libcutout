@@ -697,6 +697,10 @@
       "comment" : "Ride-map summary when no vehicle has been associated.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "GPS-only ride" } } }
     },
+    "ride_map.vehicle_name_unavailable" : {
+      "comment" : "Ride-map fallback when a vehicle is associated but its persisted display name is unavailable; never expose the platform identity in user-facing UI.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Vehicle name unavailable" } } }
+    },
     "ride_map.following" : {
       "comment" : "Camera state while the map follows the latest validated point.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Following route" } } }

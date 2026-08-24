@@ -171,7 +171,7 @@ final class CutoutAppRouteTests: XCTestCase {
                 resolve: { _ in nil },
                 fallback: "GPS-only ride"
             ),
-            "candidate-1"
+            "Vehicle name unavailable"
         )
     }
 
