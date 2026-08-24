@@ -12,6 +12,8 @@ struct RideMapHistoryContentView: View {
     let canLoadMore: Bool
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
+    let isLoading: Bool
+    let error: MobileRideMapError?
     let selectedRideID: String?
     let select: (String) -> Void
     let load: () -> Void
@@ -26,8 +28,15 @@ struct RideMapHistoryContentView: View {
     @State private var dateFilter = DateFilter.last30Days
     @State private var vehicleFilter: String?
     private enum DateFilter: String {
-        case last30Days = "Last 30 days"
-        case allTime = "All time"
+        case last30Days
+        case allTime
+
+        var title: String {
+            switch self {
+            case .last30Days: localizedAppText("ride_map.history_last_30_days")
+            case .allTime: localizedAppText("ride_map.history_all_time")
+            }
+        }
     }
 
     private struct VehicleOption: Hashable, Identifiable {
@@ -68,19 +77,34 @@ struct RideMapHistoryContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if filteredRides.isEmpty {
+            if isLoading && rides.isEmpty {
+                ProgressView(localizedAppText("ride_map.history_loading"))
+                    .tint(PevColors.yellow)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(24)
+            } else if filteredRides.isEmpty {
                 emptyState
             } else {
                 HStack(spacing: 8) {
-                    filterMenu(kind: .date, title: dateFilter.rawValue, systemImage: "calendar")
+                    filterMenu(kind: .date, title: dateFilter.title, systemImage: "calendar")
                     filterMenu(
                         kind: .vehicle,
-                        title: vehicleFilter.map(vehicleLabel) ?? "All vehicles",
+                        title: vehicleFilter.map(vehicleLabel)
+                            ?? localizedAppText("ride_map.history_all_vehicles"),
                         systemImage: "car"
                     )
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+
+                if error != nil {
+                    Label(localizedAppText("ride_map.command_failed"), systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .accessibilityIdentifier("ride-map.history-error")
+                }
 
                 RideMapCanvasView(
                     points: points,
@@ -182,10 +206,10 @@ struct RideMapHistoryContentView: View {
         Menu {
             switch kind {
             case .date:
-                Button(DateFilter.last30Days.rawValue) { dateFilter = .last30Days }
-                Button(DateFilter.allTime.rawValue) { dateFilter = .allTime }
+                Button(DateFilter.last30Days.title) { dateFilter = .last30Days }
+                Button(DateFilter.allTime.title) { dateFilter = .allTime }
             case .vehicle:
-                Button("All vehicles") { vehicleFilter = nil }
+                Button(localizedAppText("ride_map.history_all_vehicles")) { vehicleFilter = nil }
                 ForEach(vehicleOptions) { vehicle in
                     Button(vehicle.label) { vehicleFilter = vehicle.identity }
                 }
@@ -200,9 +224,18 @@ struct RideMapHistoryContentView: View {
         .foregroundStyle(PevColors.primaryText)
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(PevColors.pageBackground.opacity(0.72), in: Capsule())
-        .overlay {
-            Capsule().stroke(PevColors.cardStroke.opacity(0.45), lineWidth: 1)
+        .modifier(RideMapFilterSurface())
+    }
+}
+
+private struct RideMapFilterSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26, macOS 26, *) {
+            content.glassEffect(.regular, in: .capsule)
+        } else {
+            content
+                .background(PevColors.pageBackground.opacity(0.72), in: Capsule())
+                .overlay { Capsule().stroke(PevColors.cardStroke.opacity(0.45), lineWidth: 1) }
         }
     }
 }

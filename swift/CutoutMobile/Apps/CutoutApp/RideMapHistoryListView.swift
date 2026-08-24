@@ -12,7 +12,7 @@ struct RideMapHistoryListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Recent rides")
+            Text(localizedAppText("ride_map.history_recent"))
                 .font(.title3.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
 
@@ -29,7 +29,7 @@ struct RideMapHistoryListView: View {
                                     .frame(width: 30)
 
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text("Ride \(String(ride.rideId.prefix(8)))")
+                                    Text(rideTitle(for: ride))
                                         .font(.headline)
                                         .lineLimit(1)
                                     Text(rideSubtitle(for: ride))
@@ -54,6 +54,7 @@ struct RideMapHistoryListView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .accessibilityAddTraits(ride.rideId == selectedRideID ? .isSelected : [])
                         .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
                     }
                 }
@@ -78,5 +79,11 @@ struct RideMapHistoryListView: View {
         let distance = distanceText(for: ride.summary)
         let points = ride.summary.pointCount.formatted()
         return "\(distance) · \(points) points"
+    }
+
+    private func rideTitle(for ride: MobileRideMapHistorySummaryDto) -> String {
+        let date = Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000)
+            .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
+        return date.isEmpty ? "Ride \(String(ride.rideId.prefix(8)))" : date
     }
 }

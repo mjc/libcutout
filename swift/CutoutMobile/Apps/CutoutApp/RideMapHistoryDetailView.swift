@@ -28,8 +28,9 @@ struct RideMapHistoryDetailView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                ZStack {
                 RideMapCanvasView(
                     points: points,
                     routeID: initialHistoryID ?? "history-detail",
@@ -53,19 +54,26 @@ struct RideMapHistoryDetailView: View {
                     .modifier(RideMapLoadingSurface())
                     .accessibilityIdentifier("ride-map.detail-loading")
                 }
-            }
-            .frame(height: 320)
+                }
+                .frame(height: max(320, proxy.size.height * 0.58))
 
-            if let ride = selectedRide {
-                RideMapHistoryDetailSummary(
-                    distance: distanceText(for: ride.summary),
-                    duration: durationText(for: ride.summary),
-                    points: points,
-                    pointsTruncated: pointsTruncated,
-                    isLoading: isRouteLoading,
-                    loadFullRide: loadFullRide,
-                    mapPosition: $mapPosition
-                )
+                if let ride = selectedRide {
+                    RideMapHistoryDetailSummary(
+                        distance: distanceText(for: ride.summary),
+                        duration: durationText(for: ride.summary),
+                        points: points,
+                        pointsTruncated: pointsTruncated,
+                        isLoading: isRouteLoading,
+                        loadFullRide: loadFullRide,
+                        shareText: shareText(for: ride),
+                        mapPosition: $mapPosition
+                    )
+                } else if initialHistoryID != nil {
+                    ContentUnavailableView(
+                        localizedAppText("ride_map.history_empty"),
+                        systemImage: "map"
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -94,6 +102,13 @@ struct RideMapHistoryDetailView: View {
         Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
     }
+
+    private func shareText(for ride: MobileRideMapHistorySummaryDto) -> String {
+        let distance = distanceText(for: ride.summary)
+        let duration = durationText(for: ride.summary)
+        let title = localizedAppText("ride_map.detail_title")
+        return "\(title)\n\(distance) · \(duration) · \(ride.summary.pointCount.formatted()) points"
+    }
 }
 
 private struct RideMapHistoryDetailSummary: View {
@@ -103,6 +118,7 @@ private struct RideMapHistoryDetailSummary: View {
     let pointsTruncated: Bool
     let isLoading: Bool
     let loadFullRide: () -> Void
+    let shareText: String
     @Binding var mapPosition: MapCameraPosition
 
     var body: some View {
@@ -147,15 +163,11 @@ private struct RideMapHistoryDetailSummary: View {
                     .buttonStyle(.bordered)
                     .tint(PevColors.primaryText)
 
-                    Button {
-                        // Export/share is owned by LIBCU-411; keep the affordance
-                        // visible without inventing a second export path here.
-                    } label: {
+                    ShareLink(item: shareText) {
                         Label(localizedAppText("ride_map.share"), systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(.bordered)
                     .tint(PevColors.primaryText)
-                    .disabled(true)
                 }
             }
         }

@@ -757,6 +757,22 @@
       "comment" : "History pagination control that loads the next durable page.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load more rides" } } }
     },
+    "ride_map.history_recent" : {
+      "comment" : "Heading above the recent historical ride list.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent rides" } } }
+    },
+    "ride_map.history_last_30_days" : {
+      "comment" : "History date filter for rides created in the last 30 days.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last 30 days" } } }
+    },
+    "ride_map.history_all_time" : {
+      "comment" : "History date filter showing every stored ride.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All time" } } }
+    },
+    "ride_map.history_all_vehicles" : {
+      "comment" : "History vehicle filter showing rides for every vehicle.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All vehicles" } } }
+    },
     "ride_map.live_route_truncated" : {
       "comment" : "Live route warning when the in-memory map preview keeps only its bounded tail.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the newest 4,096 points; the full route remains stored." } } }

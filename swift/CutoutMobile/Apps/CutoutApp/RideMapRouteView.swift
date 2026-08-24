@@ -110,6 +110,8 @@ struct RideMapRouteView: View {
             canLoadMore: model.rideMapHistoryCanLoadMore,
             points: model.rideMapHistoryPoints,
             pointsTruncated: model.rideMapHistoryPointsTruncated,
+            isLoading: model.rideMapHistoryLoading,
+            error: model.rideMapError,
             selectedRideID: model.selectedRideMapHistoryID,
             select: { rideID in
                 model.rideMapMode = .history

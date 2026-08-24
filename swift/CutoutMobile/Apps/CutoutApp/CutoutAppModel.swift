@@ -389,13 +389,9 @@ final class CutoutAppModel {
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryLoading = false
-                self.rideMapError = error as? MobileRideMapError
-                self.rideMapHistory = []
-                self.rideMapHistoryCursor = nil
-                self.rideMapHistoryCanLoadMore = false
-                self.selectedRideMapHistoryID = nil
-                self.rideMapHistoryPoints = []
-                self.rideMapHistoryPointsTruncated = false
+                // Preserve the last good page so a transient storage failure does not
+                // turn an otherwise usable history screen into an empty state.
+                self.rideMapError = Self.mapRideMapError(error)
             }
         }
     }
@@ -417,7 +413,7 @@ final class CutoutAppModel {
                 self.rideMapError = nil
             } catch {
                 guard !Task.isCancelled, let self else { return }
-                self.rideMapError = error as? MobileRideMapError
+                self.rideMapError = Self.mapRideMapError(error)
             }
         }
     }
@@ -496,11 +492,18 @@ final class CutoutAppModel {
                 self.rideMapHistoryPointsTruncated = result.1
             } catch {
                 guard !Task.isCancelled, let self else { return }
-                self.rideMapError = error as? MobileRideMapError
+                self.rideMapError = Self.mapRideMapError(error)
                 self.rideMapHistoryPoints = []
                 self.rideMapHistoryPointsTruncated = false
             }
         }
+    }
+
+    private static func mapRideMapError(_ error: Error) -> MobileRideMapError {
+        if let error = error as? MobileRideMapError {
+            return error
+        }
+        return .Storage(String(describing: error))
     }
 
     private nonisolated static func collectRideMapPoints(
