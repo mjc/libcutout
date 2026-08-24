@@ -58,13 +58,20 @@ struct RideMapRouteView: View {
                     RideMapNavigationHeader(showBackButton: showBackButton, back: back)
                 }
 
-                Picker(localizedAppText("navigation.section.map"), selection: $model.rideMapMode) {
-                    Text(localizedAppText("ride_map.mode.live")).tag(CutoutAppModel.RideMapMode.live)
-                    Text(localizedAppText("ride_map.mode.history")).tag(CutoutAppModel.RideMapMode.history)
+                HStack(spacing: 0) {
+                    Picker(localizedAppText("navigation.section.map"), selection: $model.rideMapMode) {
+                        Text(localizedAppText("ride_map.mode.live")).tag(CutoutAppModel.RideMapMode.live)
+                        Text(localizedAppText("ride_map.mode.history")).tag(CutoutAppModel.RideMapMode.history)
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
                 .padding(.horizontal, 18)
                 .padding(.bottom, 10)
+                // SwiftUI does not consistently forward identifiers from a
+                // segmented Picker itself to the UIKit accessibility tree. Keep
+                // the picker as the source of truth, but expose a stable wrapper
+                // for UI tests and assistive technology.
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("ride-map.mode-picker")
 
                 if model.rideMapMode == .live {
