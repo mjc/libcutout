@@ -2032,6 +2032,9 @@ pub enum MobileCommandDto {
     /// Set NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
     SetAeroAngleAdjustment(MobileAeroAngleAdjustmentDto),
 
+    /// Set the documented NOSFET/Veteran high beam; stationary-only.
+    SetAeroHighBeam(MobileLightStateDto),
+
     /// Set the device lights.
     SetLights(MobileLightStateDto),
 
@@ -2323,6 +2326,9 @@ pub struct MobileEucSettingsCapabilitiesDto {
     /// Headlight or validated high-beam write support.
     pub headlight: MobileSettingWriteSupportDto,
 
+    /// NOSFET/Veteran high-beam write support.
+    pub aero_high_beam: MobileSettingWriteSupportDto,
+
     /// Separate taillight write support.
     pub taillight: MobileSettingWriteSupportDto,
 
@@ -2353,6 +2359,7 @@ impl MobileEucSettingsCapabilitiesDto {
             begode_led_mode: MobileSettingWriteSupportDto::Unsupported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
+            aero_high_beam: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
             reset_trip_meter: MobileSettingWriteSupportDto::Supported,
             aero_tiltback_speed: MobileSettingWriteSupportDto::Supported,
@@ -2372,6 +2379,7 @@ impl MobileEucSettingsCapabilitiesDto {
             begode_led_mode: MobileSettingWriteSupportDto::Supported,
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
+            aero_high_beam: MobileSettingWriteSupportDto::Unsupported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
             reset_trip_meter: MobileSettingWriteSupportDto::Unsupported,
             aero_tiltback_speed: MobileSettingWriteSupportDto::Unsupported,
@@ -3280,6 +3288,7 @@ where
 #[derive(Clone, Copy, Debug, Default)]
 struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
+    aero_high_beam: MobileSettingTracker<CoreLightState>,
     aero_tiltback_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
     aero_pwm_percent: MobileSettingTracker<CoreAeroPwmPercent>,
     aero_alarm_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
@@ -3295,6 +3304,7 @@ impl MobileEucSettingTrackers {
     fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
         let now = input.monotonic_ms.into_core();
         self.headlight.observe_step(input.kind, now);
+        self.aero_high_beam.observe_step(input.kind, now);
         self.aero_tiltback_speed.observe_step(input.kind, now);
         self.aero_pwm_percent.observe_step(input.kind, now);
         self.aero_alarm_speed.observe_step(input.kind, now);
@@ -3322,6 +3332,10 @@ impl MobileEucSettingTrackers {
         match command {
             Some(MobileCommandDto::SetLights(requested)) => {
                 self.headlight.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAeroHighBeam(requested)) => {
+                self.aero_high_beam
+                    .observe_write(requested.into(), now, result);
             }
             Some(MobileCommandDto::SetAeroTiltbackSpeed(requested)) => {
                 if let Some(requested) = CoreAeroSpeedSetting::new(requested.kilometres_per_hour) {
@@ -3410,6 +3424,10 @@ impl MobileEucSettingTrackers {
 
     fn headlight(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.headlight.state)
+    }
+
+    fn aero_high_beam(&self) -> MobileLightSettingStateDto {
+        mobile_light_setting_state(self.aero_high_beam.state)
     }
 
     fn aero_tiltback_speed(&self) -> MobileAeroSpeedSettingStateDto {
@@ -11179,6 +11197,11 @@ impl AeroBenignControlSession {
         self.lock_settings().headlight()
     }
 
+    /// Returns the Rust-owned Aero high-beam write lifecycle state.
+    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().aero_high_beam()
+    }
+
     /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
     pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
         self.lock_settings().aero_tiltback_speed()
@@ -11314,6 +11337,7 @@ impl From<MobileCommandDto> for DeviceCommandDto {
                     DeviceCommandDto::SetAeroAngleAdjustment,
                 )
             }
+            MobileCommandDto::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state.into()),
             MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
             MobileCommandDto::SetPedalMode(mode) => {
                 Self::SetPedalMode(CorePedalMode::from(mode).into())
@@ -11365,6 +11389,7 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         | CommandKindDto::SetAeroPwmPercent
         | CommandKindDto::SetAeroAlarmSpeed
         | CommandKindDto::SetAeroAngleAdjustment
+        | CommandKindDto::SetAeroHighBeam
         | CommandKindDto::SetAccelerationAssist
         | CommandKindDto::SetLights
         | CommandKindDto::SetPedalMode
@@ -12687,6 +12712,11 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
+    }
+
+    /// Returns the Rust-owned Aero high-beam write lifecycle state.
+    pub fn aero_high_beam_state(&self) -> MobileLightSettingStateDto {
+        self.lock_settings().aero_high_beam()
     }
 
     /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
@@ -15836,6 +15866,30 @@ mod tests {
             Some(MobileAeroSpeedSettingDto {
                 kilometres_per_hour: 21,
             })
+        );
+    }
+
+    #[test]
+    fn aero_wrapper_tracks_high_beam_write() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroHighBeam(MobileLightStateDto::On)),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LkAp")
+        }));
+        assert_eq!(
+            session.aero_high_beam_state().requested,
+            Some(MobileLightStateDto::On)
         );
     }
 
