@@ -14,15 +14,13 @@ mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
 mod location;
 pub use location::{LocationAdmission, LocationSample, LocationSource};
-mod vehicle;
-pub use vehicle::{VehicleIdentity, VehicleIdentityError};
 mod summary;
 pub use summary::{DistanceMillimetres, RideSummary, distance_between_millimetres};
 mod recording;
 pub use recording::{
     MAX_LIVE_ROUTE_POINTS, RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId,
     RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
-    VehicleAssociation,
+    VehicleAssociation, VehicleIdentity, VehicleIdentityError,
 };
 
 #[cfg(test)]
