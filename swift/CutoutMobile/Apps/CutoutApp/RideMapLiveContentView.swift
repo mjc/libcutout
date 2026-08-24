@@ -32,6 +32,7 @@ struct RideMapLiveContentView: View {
                 points: points,
                 routeID: routeID,
                 showsEndMarker: showsEndMarker,
+                fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
                 cameraDidChange: { followsLatestPoint = false }

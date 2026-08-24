@@ -13,7 +13,8 @@ private enum RideSessionRestorationState {
 @MainActor
 @Observable
 final class CutoutAppModel {
-    private static let rideMapPointBatchLimit: UInt32 = 512
+    // Keep this within the Rust persistence query limit (max 500).
+    private static let rideMapPointBatchLimit: UInt32 = 500
     private static let rideMapPreviewPointLimit = 4_096
 
     private(set) var displayState = RideDisplayState()
@@ -395,6 +396,7 @@ final class CutoutAppModel {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
         rideMapHistoryTask?.cancel()
         selectedRideMapHistoryID = rideID
+        rideMapError = nil
         rideMapHistoryPointsTruncated = false
         let state = core.rideMapStateHandle
         let pointBatchLimit = Self.rideMapPointBatchLimit

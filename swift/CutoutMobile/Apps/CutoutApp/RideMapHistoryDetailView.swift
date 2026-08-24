@@ -35,6 +35,7 @@ struct RideMapHistoryDetailView: View {
                 points: points,
                 routeID: initialHistoryID ?? "history-detail",
                 showsEndMarker: true,
+                fitsRouteOnChange: true,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
                 cameraDidChange: {}
@@ -58,7 +59,7 @@ struct RideMapHistoryDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .task { loadSelectionIfNeeded() }
+        .task(id: rides.map(\.rideId)) { loadSelectionIfNeeded() }
         .accessibilityIdentifier("ride-map.detail")
     }
 

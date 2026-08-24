@@ -46,6 +46,7 @@ struct RideMapHistoryContentView: View {
                     points: points,
                     routeID: selectedRideID ?? "history",
                     showsEndMarker: true,
+                    fitsRouteOnChange: true,
                     mapPosition: $mapPosition,
                     isApplyingCamera: $isApplyingCamera,
                     cameraDidChange: {}
@@ -55,6 +56,7 @@ struct RideMapHistoryContentView: View {
                     rides: rides,
                     searchText: $searchText,
                     canLoadMore: canLoadMore,
+                    selectedRideID: selectedRideID,
                     select: select,
                     loadMore: loadMore
                 )

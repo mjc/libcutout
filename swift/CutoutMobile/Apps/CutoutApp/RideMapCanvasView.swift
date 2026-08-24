@@ -20,6 +20,7 @@ struct RideMapCanvasView: View {
     let points: [MobileRideMapPointDto]
     let routeID: String
     let showsEndMarker: Bool
+    let fitsRouteOnChange: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: () -> Void
@@ -60,6 +61,9 @@ struct RideMapCanvasView: View {
         }
         .task(id: pathKey) {
             updatePaths(for: pathKey)
+            if fitsRouteOnChange {
+                fitMap(to: points)
+            }
         }
         .accessibilityLabel(localizedAppText("ride_map.map_alternative"))
         .accessibilityIdentifier("ride-map.map")
@@ -147,5 +151,40 @@ struct RideMapCanvasView: View {
 
     private func coordinate(for point: MobileRideMapPointDto) -> CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: point.latitudeDegrees, longitude: point.longitudeDegrees)
+    }
+
+    private func fitMap(to points: [MobileRideMapPointDto]) {
+        guard let first = points.first else { return }
+
+        var minimumLatitude = first.latitudeDegrees
+        var maximumLatitude = first.latitudeDegrees
+        var minimumLongitude = first.longitudeDegrees
+        var maximumLongitude = first.longitudeDegrees
+        for point in points.dropFirst() {
+            minimumLatitude = min(minimumLatitude, point.latitudeDegrees)
+            maximumLatitude = max(maximumLatitude, point.latitudeDegrees)
+            minimumLongitude = min(minimumLongitude, point.longitudeDegrees)
+            maximumLongitude = max(maximumLongitude, point.longitudeDegrees)
+        }
+
+        let center = CLLocationCoordinate2D(
+            latitude: (minimumLatitude + maximumLatitude) / 2,
+            longitude: (minimumLongitude + maximumLongitude) / 2
+        )
+        let latitudeDelta = max((maximumLatitude - minimumLatitude) * 1.35, 0.002)
+        let longitudeDelta = max((maximumLongitude - minimumLongitude) * 1.35, 0.002)
+        isApplyingCamera = true
+        mapPosition = .region(
+            MKCoordinateRegion(
+                center: center,
+                span: MKCoordinateSpan(
+                    latitudeDelta: latitudeDelta,
+                    longitudeDelta: longitudeDelta
+                )
+            )
+        )
+        DispatchQueue.main.async {
+            isApplyingCamera = false
+        }
     }
 }

@@ -6,6 +6,7 @@ struct RideMapHistoryListView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     @Binding var searchText: String
     let canLoadMore: Bool
+    let selectedRideID: String?
     let select: (String) -> Void
     let loadMore: () -> Void
 
@@ -26,8 +27,15 @@ struct RideMapHistoryListView: View {
                             Text(localizedAppText("ride_map.candidate_vehicle", candidate))
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .buttonStyle(.borderless)
+                .listRowBackground(
+                    ride.rideId == selectedRideID
+                        ? PevColors.cardStroke.opacity(0.28)
+                        : Color.clear
+                )
                 .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
             }
             .frame(maxHeight: 240)
