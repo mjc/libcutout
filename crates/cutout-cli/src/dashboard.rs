@@ -14,18 +14,19 @@ use std::{
 
 use anyhow::Result;
 use cutout_btle::{
-    ConnectionSummary, ConnectionTarget, NotificationCount, NotificationPayloadTotal,
-    ServiceSummary, SessionBridgeEvent, SessionBridgeReport, SubscribeCount,
+    BridgeIdentityConfidence, ConnectionSummary, ConnectionTarget, NotificationCount,
+    NotificationPayloadTotal, ServiceSummary, SessionBridgeEvent, SessionBridgeReport,
+    SubscribeCount,
 };
 use cutout_core::{
     Angle, BatteryCurrent, BatteryLevel, BatteryPagePayload, BatteryReadbackAvailability,
-    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel,
-    CatalogModelResolution, Count, Current, DiagnosticReadback, Distance, DutyCycle,
-    FaultHistoryReadback, FirmwareInfo, Measured, ModelCatalog, NotificationByteLen,
-    NotificationIngestOutcome, ParserDiagnostics, PercentQuantity, PevcapHeader, PhaseCurrent,
-    Power, ProtocolFamily, Quantity, QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse,
-    SettingsEntry, SettingsReadback, SettingsReadbackAvailability, SignalStrength, Speed,
-    TelemetryDelta, TelemetrySnapshot, Temperature, Unit, Voltage,
+    CaptureDistribution, CaptureEvidence, CapturePrivacy, CaptureSessionLabel, Count, Current,
+    DiagnosticReadback, Distance, DutyCycle, FaultHistoryReadback, FirmwareInfo, Measured,
+    ModelCatalog, NotificationByteLen, NotificationIngestOutcome, ParserDiagnostics,
+    PercentQuantity, PevcapHeader, PhaseCurrent, Power, ProtocolFamily, Quantity,
+    QuantityDisplayValue, RawTelemetryReadback, ReadOnlyResponse, SettingsEntry, SettingsReadback,
+    SettingsReadbackAvailability, SignalStrength, Speed, TelemetryDelta, TelemetrySnapshot,
+    Temperature, Unit, Voltage,
 };
 use cutout_protocols::{
     MODEL_CATALOG, NOSFET_AERO_SESSION_KEY, VETERAN_FIELD_CHARGE_MODE, VeteranModelId,
@@ -1103,6 +1104,8 @@ impl DashboardState {
             "v3.8.12",
             "connected",
         );
+        "NOSFET".clone_into(&mut self.device.make);
+        "NOSFET Aero".clone_into(&mut self.device.model);
         self.scan_browser.filters = TargetFilterSummary {
             address: Some("AA:BB:CC:DD:EE:FF".to_owned()),
             identifier: Some("platform-0001".to_owned()),
@@ -1203,9 +1206,6 @@ impl DashboardState {
     #[cfg(test)]
     pub(crate) fn live_target(device: String) -> Self {
         let mut state = Self::empty();
-        let identity = classify_device_identity(&device);
-        identity.make.clone_into(&mut state.device.make);
-        identity.model.clone_into(&mut state.device.model);
         state.device.name.clone_from(&device);
         "target selected".clone_into(&mut state.device.connection_state);
         state.scan_browser.filters.name_contains = Some(device);
@@ -1225,10 +1225,9 @@ impl DashboardState {
             .name
             .clone()
             .unwrap_or_else(|| "unknown".to_owned());
-        let identity = classify_device_identity(&device_name);
         state.device = DeviceSnapshot {
-            make: identity.make,
-            model: identity.model,
+            make: "unknown".to_owned(),
+            model: "unknown".to_owned(),
             name: device_name,
             address: observation
                 .address
@@ -1270,6 +1269,16 @@ impl DashboardState {
     }
 
     pub(crate) fn apply_session_report(&mut self, report: &SessionBridgeReport) {
+        if let Some(identity) = report.identity.as_ref()
+            && identity.confidence == BridgeIdentityConfidence::Model
+        {
+            if let Some(manufacturer) = identity.manufacturer {
+                manufacturer.clone_into(&mut self.device.make);
+            }
+            if let Some(model) = identity.model {
+                model.clone_into(&mut self.device.model);
+            }
+        }
         self.counters.subscriptions = self
             .counters
             .subscriptions
@@ -1412,10 +1421,9 @@ impl DashboardState {
         firmware: &str,
         connection_state: &str,
     ) {
-        let identity = classify_device_identity(name);
         self.device = DeviceSnapshot {
-            make: identity.make,
-            model: identity.model,
+            make: "unknown".to_owned(),
+            model: "unknown".to_owned(),
             name: name.to_owned(),
             address: address.to_owned(),
             identifier: identifier.to_owned(),
@@ -1935,24 +1943,6 @@ struct TenthsDisplay(u64);
 impl fmt::Display for TenthsDisplay {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}.{}", self.0 / 10, self.0 % 10)
-    }
-}
-
-struct DeviceIdentity {
-    make: String,
-    model: String,
-}
-
-fn classify_device_identity(name: &str) -> DeviceIdentity {
-    match ModelCatalog::new(&MODEL_CATALOG).resolve_advertised_name(name) {
-        CatalogModelResolution::Matched(entry) => DeviceIdentity {
-            make: entry.registry.manufacturer.as_str().to_owned(),
-            model: entry.registry.model.as_str().to_owned(),
-        },
-        CatalogModelResolution::NoMatch | CatalogModelResolution::Ambiguous => DeviceIdentity {
-            make: "unknown".to_owned(),
-            model: "unknown".to_owned(),
-        },
     }
 }
 
@@ -4551,8 +4541,8 @@ mod tests {
         let state = DashboardState::live_target("NF2557".to_owned());
 
         assert_eq!(state.source, DashboardSource::Live);
-        assert_eq!(state.device.make, "NOSFET");
-        assert_eq!(state.device.model, "NOSFET Aero");
+        assert_eq!(state.device.make, "unknown");
+        assert_eq!(state.device.model, "unknown");
         assert_eq!(state.device.name, "NF2557");
         assert_eq!(state.device.connection_state, "target selected");
         assert_eq!(
@@ -4566,14 +4556,53 @@ mod tests {
     }
 
     #[test]
-    fn live_target_identity_comes_from_model_catalog_hints() {
+    fn live_target_identity_waits_for_protocol_confirmation() {
         let state = DashboardState::live_target("Begode Falcon".to_owned());
 
         assert_eq!(state.source, DashboardSource::Live);
-        assert_eq!(state.device.make, "Begode");
-        assert_eq!(state.device.model, "Falcon");
+        assert_eq!(state.device.make, "unknown");
+        assert_eq!(state.device.model, "unknown");
         assert_eq!(state.device.name, "Begode Falcon");
         assert_eq!(state.device.connection_state, "target selected");
+    }
+
+    #[test]
+    fn live_dashboard_adopts_only_protocol_confirmed_identity() {
+        let target = ConnectionTarget {
+            address: None,
+            identifier: None,
+            name_contains: Some("NF2557".to_owned()),
+        };
+        let summary = ConnectionSummary {
+            observation: PeripheralObservation {
+                identifier: "platform-0001".to_owned(),
+                address: None,
+                name: Some("NF2557".to_owned()),
+                rssi: None,
+                advertised_services: Vec::new().into(),
+                manufacturer_data: Vec::new().into(),
+            },
+            services: Vec::new().into(),
+        };
+
+        let mut state = DashboardState::live_connected(&target, &summary);
+        assert_eq!(state.device.make, "unknown");
+        assert_eq!(state.device.model, "unknown");
+
+        let report = SessionBridgeReport {
+            identity: Some(cutout_btle::BridgeIdentityResolution {
+                manufacturer: Some("NOSFET"),
+                model: Some("NOSFET Aero"),
+                confidence: BridgeIdentityConfidence::Model,
+                evidence: cutout_btle::BridgeIdentityEvidence::empty()
+                    .with(cutout_btle::BridgeIdentityEvidenceKind::ProtocolModelId),
+            }),
+            ..SessionBridgeReport::default()
+        };
+        state.apply_session_report(&report);
+
+        assert_eq!(state.device.make, "NOSFET");
+        assert_eq!(state.device.model, "NOSFET Aero");
     }
 
     #[test]
@@ -4598,8 +4627,8 @@ mod tests {
         let state = DashboardState::live_connected(&target, &summary);
 
         assert_eq!(state.source, DashboardSource::Live);
-        assert_eq!(state.device.make, "NOSFET");
-        assert_eq!(state.device.model, "NOSFET Aero");
+        assert_eq!(state.device.make, "unknown");
+        assert_eq!(state.device.model, "unknown");
         assert_eq!(state.device.name, "Aero NF2557");
         assert_eq!(state.device.address, "AA:BB:CC:DD:EE:FF");
         assert_eq!(state.device.connection_state, "connected");
@@ -4617,10 +4646,7 @@ mod tests {
 
         let text = buffer_text(&render_buffer(&state, 120, 36));
         assert!(text.contains("78% / -61 dBm"));
-        assert_eq!(
-            dashboard_voltage_range(&state),
-            Some(Voltage::from_millivolts(91_000)..=Voltage::from_millivolts(126_000))
-        );
+        assert_eq!(dashboard_voltage_range(&state), None);
     }
 
     #[test]
@@ -6491,6 +6517,17 @@ mod tests {
             services: Vec::new().into(),
         };
         let mut state = DashboardState::live_connected(&target, &summary);
+        let report = SessionBridgeReport {
+            identity: Some(cutout_btle::BridgeIdentityResolution {
+                manufacturer: Some("NOSFET"),
+                model: Some("NOSFET Aero"),
+                confidence: BridgeIdentityConfidence::Model,
+                evidence: cutout_btle::BridgeIdentityEvidence::empty()
+                    .with(cutout_btle::BridgeIdentityEvidenceKind::ProtocolModelId),
+            }),
+            ..SessionBridgeReport::default()
+        };
+        state.apply_session_report(&report);
         state.active_tab = DashboardTab::new(2);
 
         state.handle_input(DashboardInput::Enter);
