@@ -154,6 +154,16 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapSeparatesStartAndEndMarkersForSinglePointRoutes() {
+        let coordinate = CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903)
+        let offsets = RideMapCanvasView.markerOffsets(for: [coordinate])
+
+        XCTAssertNotEqual(offsets.start, .zero)
+        XCTAssertNotEqual(offsets.end, .zero)
+        XCTAssertEqual(offsets.start.width, -offsets.end.width)
+    }
+
+    @MainActor
     func testRideMapOnlyUsesRecordedBoundsForTerminalStates() {
         XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .recording))
         XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .paused))

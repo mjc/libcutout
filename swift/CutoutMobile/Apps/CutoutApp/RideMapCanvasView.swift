@@ -33,7 +33,11 @@ struct RideMapCanvasView: View {
         for coordinates: [CLLocationCoordinate2D]
     ) -> (start: CGSize, end: CGSize) {
         guard let first = coordinates.first, let last = coordinates.last, coordinates.count > 1 else {
-            return (.zero, .zero)
+            guard coordinates.isEmpty == false else { return (.zero, .zero) }
+            return (
+                CGSize(width: -36, height: -18),
+                CGSize(width: 36, height: 18)
+            )
         }
         let distance = CLLocation(latitude: first.latitude, longitude: first.longitude)
             .distance(from: CLLocation(latitude: last.latitude, longitude: last.longitude))
@@ -93,7 +97,7 @@ struct RideMapCanvasView: View {
                     .offset(x: endpointOffsets.start.width, y: endpointOffsets.start.height)
                 }
             }
-            if let last = points.last, points.count > 1 {
+            if let last = points.last {
                 Annotation(
                     "",
                     coordinate: coordinate(for: last)
