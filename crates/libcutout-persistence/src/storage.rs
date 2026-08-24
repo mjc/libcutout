@@ -3834,8 +3834,8 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
             sequence,
             segment_id,
             telemetry_state.storage_value(),
-            sample.monotonic_milliseconds(),
-            sample.wall_clock_unix_milliseconds(),
+            sample.monotonic_milliseconds().as_u64(),
+            sample.wall_clock_unix_milliseconds().as_u64(),
             sample.coordinate().latitude().as_i32(),
             sample.coordinate().longitude().as_i32(),
             sample.horizontal_accuracy_millimetres(),
@@ -4106,7 +4106,13 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
                 }),
             )
         })?,
-        sample: LocationSample::new(coordinate, row.get(3)?, row.get(4)?, row.get(7)?, source),
+        sample: LocationSample::new(
+            coordinate,
+            row.get::<_, u64>(3)?,
+            row.get::<_, u64>(4)?,
+            row.get(7)?,
+            source,
+        ),
     })
 }
 

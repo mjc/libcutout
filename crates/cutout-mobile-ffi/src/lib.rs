@@ -3750,8 +3750,8 @@ fn mobile_ride_location(
             .map_err(|_| MobileRideDatabaseError::InvalidCoordinate)?;
     Ok(ride_maps::LocationSample::new(
         coordinate,
-        location.monotonic_milliseconds,
-        location.wall_clock_unix_milliseconds,
+        ride_maps::MonotonicMilliseconds::new(location.monotonic_milliseconds),
+        ride_maps::WallClockUnixMilliseconds::new(location.wall_clock_unix_milliseconds),
         location.horizontal_accuracy_millimetres,
         match location.source {
             MobileRideSourceDto::Live => ride_maps::LocationSource::Live,
@@ -3764,8 +3764,8 @@ fn mobile_ride_location_dto(location: ride_maps::LocationSample) -> MobileRideLo
     MobileRideLocationDto {
         latitude_degrees: location.coordinate().latitude_degrees(),
         longitude_degrees: location.coordinate().longitude_degrees(),
-        monotonic_milliseconds: location.monotonic_milliseconds(),
-        wall_clock_unix_milliseconds: location.wall_clock_unix_milliseconds(),
+        monotonic_milliseconds: location.monotonic_milliseconds().as_u64(),
+        wall_clock_unix_milliseconds: location.wall_clock_unix_milliseconds().as_u64(),
         horizontal_accuracy_millimetres: location.horizontal_accuracy_millimetres(),
         source: match location.source() {
             ride_maps::LocationSource::Live => MobileRideSourceDto::Live,
@@ -4627,7 +4627,7 @@ impl MobileRideMapCoreInner {
         }
         self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary(
             map_ride_lifecycle_state(ride.state),
-            ride.created_at_milliseconds,
+            ride_maps::MonotonicMilliseconds::new(ride.created_at_milliseconds),
             ride_maps::RideMapMetadata {
                 candidate_vehicle: ride
                     .candidate_vehicle
@@ -4637,8 +4637,12 @@ impl MobileRideMapCoreInner {
                     .associated_vehicle
                     .as_deref()
                     .and_then(ride_maps::VehicleIdentity::new),
-                associated_at_milliseconds: ride.associated_at_milliseconds,
-                last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds,
+                associated_at_milliseconds: ride
+                    .associated_at_milliseconds
+                    .map(ride_maps::MonotonicMilliseconds::new),
+                last_telemetry_at_milliseconds: ride
+                    .last_telemetry_at_milliseconds
+                    .map(ride_maps::MonotonicMilliseconds::new),
             },
             samples,
             ride_maps::RideSummary::from_stored(
@@ -4716,8 +4720,9 @@ impl MobileRideMapCoreInner {
         at_milliseconds: u64,
     ) -> MobileRideMapCoreSnapshotDto {
         let mut snapshot = self.snapshot(state);
-        snapshot.summary.duration_milliseconds =
-            self.recorder.duration_milliseconds_at(at_milliseconds);
+        snapshot.summary.duration_milliseconds = self
+            .recorder
+            .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds));
         snapshot
     }
 
@@ -4761,7 +4766,7 @@ impl MobileRideMapCoreInner {
         };
         self.recorder
             .start(
-                at_ms,
+                ride_maps::MonotonicMilliseconds::new(at_ms),
                 last_connected_vehicle
                     .as_deref()
                     .and_then(ride_maps::VehicleIdentity::new),
@@ -4928,7 +4933,8 @@ impl MobileRideMapCore {
                     .into(),
             ));
         };
-        let association = staged.observe_vehicle(&identity, at_ms);
+        let association =
+            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if association == ride_maps::VehicleAssociation::Associated {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
@@ -4938,8 +4944,12 @@ impl MobileRideMapCore {
                         id,
                         None,
                         Some(platform_identifier),
-                        staged.associated_at_milliseconds(),
-                        staged.last_telemetry_at_milliseconds(),
+                        staged
+                            .associated_at_milliseconds()
+                            .map(|value| value.as_u64()),
+                        staged
+                            .last_telemetry_at_milliseconds()
+                            .map(|value| value.as_u64()),
                     )
                     .map_err(map_core_error)?;
             }
@@ -5043,7 +5053,8 @@ impl MobileRideMapCore {
         let Some(identity) = ride_maps::VehicleIdentity::new(&platform_identifier) else {
             return Ok(ride_maps::VehicleAssociation::CandidateMissing.into());
         };
-        let association = staged.observe_vehicle(&identity, at_ms);
+        let association =
+            staged.observe_vehicle(&identity, ride_maps::MonotonicMilliseconds::new(at_ms));
         if association == ride_maps::VehicleAssociation::Associated {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
@@ -5053,8 +5064,12 @@ impl MobileRideMapCore {
                         id,
                         None,
                         Some(platform_identifier.clone()),
-                        staged.associated_at_milliseconds(),
-                        staged.last_telemetry_at_milliseconds(),
+                        staged
+                            .associated_at_milliseconds()
+                            .map(|value| value.as_u64()),
+                        staged
+                            .last_telemetry_at_milliseconds()
+                            .map(|value| value.as_u64()),
                     )
                     .map_err(map_core_error)?;
             }
@@ -5074,7 +5089,7 @@ impl MobileRideMapCore {
     ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let mut staged = state.recorder.clone();
-        let observation = staged.observe_telemetry(at_ms);
+        let observation = staged.observe_telemetry(ride_maps::MonotonicMilliseconds::new(at_ms));
         if observation == ride_maps::TelemetryObservation::Observed {
             if let (Some(database), Some(id)) =
                 (state.database.as_ref(), state.active_ride_id.clone())
@@ -5084,8 +5099,12 @@ impl MobileRideMapCore {
                         id,
                         staged.candidate_vehicle().map(str::to_owned),
                         staged.associated_vehicle().map(str::to_owned),
-                        staged.associated_at_milliseconds(),
-                        staged.last_telemetry_at_milliseconds(),
+                        staged
+                            .associated_at_milliseconds()
+                            .map(|value| value.as_u64()),
+                        staged
+                            .last_telemetry_at_milliseconds()
+                            .map(|value| value.as_u64()),
                     )
                     .map_err(map_core_error)?;
             }
@@ -5155,9 +5174,12 @@ impl MobileRideMapCore {
             }
             ride_maps::LocationAdmission::Accepted => {}
         }
-        let telemetry_state = state
-            .recorder
-            .telemetry_state_at(location.monotonic_milliseconds);
+        let telemetry_state =
+            state
+                .recorder
+                .telemetry_state_at(ride_maps::MonotonicMilliseconds::new(
+                    location.monotonic_milliseconds,
+                ));
         if let Some(database) = state.database.as_ref() {
             database
                 .enqueue_location_with_segment_and_telemetry(
@@ -5305,7 +5327,8 @@ impl MobileRideMapCoreInner {
         if let Some(database) = self.database.as_ref() {
             database.transition(id, event).map_err(map_core_error)?;
         }
-        self.recorder.apply_transition_at(next, at_milliseconds);
+        self.recorder
+            .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
         Ok(self.snapshot_at(next.into(), at_milliseconds))
     }
 }

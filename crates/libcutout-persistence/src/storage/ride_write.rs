@@ -67,7 +67,7 @@ impl RideWriteState {
                 .unwrap_or_default(),
             updated_at_ms: self
                 .updated_at_ms
-                .max(sample.wall_clock_unix_milliseconds()),
+                .max(sample.wall_clock_unix_milliseconds().as_u64()),
         })
     }
 

@@ -13,7 +13,10 @@ pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
 mod lifecycle;
 pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
 mod location;
-pub use location::{LocationAdmission, LocationSample, LocationSource};
+pub use location::{
+    LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
+    WallClockUnixMilliseconds,
+};
 mod summary;
 pub use summary::{DistanceMillimetres, RideSummary, distance_between_millimetres};
 mod recording;
@@ -27,7 +30,8 @@ pub use recording::{
 mod tests {
     use super::{
         Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
-        RideEvent, RideLifecycleState, RideSummary, TransitionError, VehicleIdentity,
+        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideSummary, TransitionError,
+        VehicleIdentity, WallClockUnixMilliseconds,
     };
 
     #[test]
@@ -61,8 +65,8 @@ mod tests {
         let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
         let sample = LocationSample::new(
             coordinate,
-            1_000,
-            1_700_000_000_000,
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
             Some(3_000),
             LocationSource::PevcapImport,
         );
@@ -77,15 +81,15 @@ mod tests {
     fn ride_summary_counts_points_and_distance() {
         let first = LocationSample::new(
             Coordinate::from_degrees(40.0, -105.0).unwrap(),
-            1_000,
-            1_700_000_000_000,
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
             None,
             LocationSource::Live,
         );
         let second = LocationSample::new(
             Coordinate::from_degrees(40.0, -104.999).unwrap(),
-            2_000,
-            1_700_000_001_000,
+            MonotonicMilliseconds::new(2_000),
+            WallClockUnixMilliseconds::new(1_700_000_001_000),
             None,
             LocationSource::Live,
         );
