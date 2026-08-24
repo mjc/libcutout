@@ -312,6 +312,38 @@ struct EucTuneRouteView: View {
                             now: model.currentMonotonicTime
                         )
                         EucSettingCapabilityRow(
+                            id: "aeroTiltbackSpeed",
+                            title: localizedAppText("settings.aero.tiltback.title"),
+                            support: capabilities.aeroTiltbackSpeed,
+                            state: model.aeroTiltbackSpeedState?.kind,
+                            confirmedAt: model.aeroTiltbackSpeedState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroPwmPercent",
+                            title: localizedAppText("settings.aero.pwm.title"),
+                            support: capabilities.aeroPwmPercent,
+                            state: model.aeroPwmPercentState?.kind,
+                            confirmedAt: model.aeroPwmPercentState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroAlarmSpeed",
+                            title: localizedAppText("settings.aero.alarm.title"),
+                            support: capabilities.aeroAlarmSpeed,
+                            state: model.aeroAlarmSpeedState?.kind,
+                            confirmedAt: model.aeroAlarmSpeedState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
+                            id: "aeroAngleAdjustment",
+                            title: localizedAppText("settings.aero.angle.title"),
+                            support: capabilities.aeroAngleAdjustment,
+                            state: model.aeroAngleAdjustmentState?.kind,
+                            confirmedAt: model.aeroAngleAdjustmentState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
                             id: "accelerationAssist",
                             title: localizedAppText("settings.acceleration_assist.title"),
                             support: capabilities.accelerationAssist,
