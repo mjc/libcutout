@@ -113,7 +113,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture || (isRideMapDestination(destination) && model.selectedConnectionRoute == nil) {
+        if destination == .capture || isRideMapDetail(destination) || (destination == .rideMap && model.selectedConnectionRoute == nil) {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
