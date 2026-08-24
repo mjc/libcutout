@@ -127,20 +127,26 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture || isRideMapDetail(destination) || (destination == .rideMap && model.selectedConnectionRoute == nil) {
+        if destination == .capture {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
-            routedContent(for: destination)
+                routedContent(for: destination)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .accessibilityFocused($focusedRoute, equals: destination)
+        } else if isRideMapDetail(destination) || (destination == .rideMap && model.selectedConnectionRoute == nil) {
+            mapDestinationContent(for: destination)
         } else {
             let tabs = TabView(selection: tabSelection) {
                 ForEach(availableTabs) { tab in
                     if let tabRoute = destination.destination(for: tab) {
                         Tab(value: tab.id) {
-                            connectedDestination(for: tabRoute)
+                            if isRideMapDestination(tabRoute) {
+                                mapDestinationContent(for: tabRoute)
+                            } else {
+                                connectedDestination(for: tabRoute)
+                            }
                         } label: {
                             Label(tab.title, systemImage: tab.id.systemImage)
                         }
@@ -174,23 +180,34 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             Group {
-                if isRideMapDestination(destination) {
-                    // The map is a product-category-neutral destination. It owns its
-                    // CutOut/Map chrome instead of inheriting the vehicle dashboard shell.
+                PevAppShell(
+                    sectionTitle: appSectionTitle(for: destination),
+                    disconnect: disconnectAndReturnToPicker
+                ) {
                     routedContent(for: destination)
-                } else {
-                    PevAppShell(
-                        sectionTitle: appSectionTitle(for: destination),
-                        disconnect: disconnectAndReturnToPicker
-                    ) {
-                        routedContent(for: destination)
-                    }
                 }
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(appSectionTitle(for: destination))
             .accessibilityFocused($focusedRoute, equals: destination)
         }
+    }
+
+    /// Shared map presentation shell for connected tabs and the home-route entry.
+    /// The only intentional difference between those paths is the surrounding tab or
+    /// navigation chrome; Map content, safe-area ownership, and accessibility context
+    /// stay in one place.
+    @ViewBuilder
+    private func mapDestinationContent(for destination: CutoutAppRoute) -> some View {
+        ZStack {
+            PevColors.pageBackground
+                .ignoresSafeArea()
+            routedContent(for: destination)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(appSectionTitle(for: destination))
+        .accessibilityFocused($focusedRoute, equals: destination)
     }
 
     @ViewBuilder
