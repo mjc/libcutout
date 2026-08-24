@@ -11,6 +11,7 @@ struct RideMapHistoryDetailView: View {
     let error: MobileRideMapError?
     let select: (String) -> Void
     let load: () -> Void
+    let retry: () -> Void
     let loadFullRide: () -> Void
     let vehicleName: (String?) -> String?
     let close: () -> Void
@@ -27,6 +28,24 @@ struct RideMapHistoryDetailView: View {
         return identity.flatMap(resolve) ?? identity ?? fallback
     }
 
+    static func averageSpeedText(
+        distanceMeters: Double,
+        durationMilliseconds: UInt64
+    ) -> String {
+        guard distanceMeters.isFinite,
+              distanceMeters > 0,
+              durationMilliseconds > 0
+        else {
+            return localizedAppText("ride_map.speed_unavailable")
+        }
+        let metersPerSecond = distanceMeters / (Double(durationMilliseconds) / 1_000)
+        guard metersPerSecond.isFinite, metersPerSecond >= 0 else {
+            return localizedAppText("ride_map.speed_unavailable")
+        }
+        let milesPerHour = metersPerSecond * 2.236_936_292_054_4
+        return "\(milesPerHour.formatted(.number.precision(.fractionLength(1)))) mph"
+    }
+
     private var selectedRide: MobileRideMapHistorySummaryDto? {
         guard let initialHistoryID else { return nil }
         return rides.first(where: { $0.rideId == initialHistoryID })
@@ -35,6 +54,7 @@ struct RideMapHistoryDetailView: View {
     private var selectionTaskID: String { initialHistoryID ?? "" }
 
     private var isRouteLoading: Bool {
+        guard error == nil else { return false }
         guard let selectedRide else { return initialHistoryID != nil }
         return selectedRide.summary.pointCount > 0 && points.isEmpty
     }
@@ -73,6 +93,10 @@ struct RideMapHistoryDetailView: View {
                     RideMapHistoryDetailSummary(
                         distance: distanceText(for: ride.summary),
                         duration: durationText(for: ride.summary),
+                        averageSpeed: Self.averageSpeedText(
+                            distanceMeters: ride.summary.distanceMeters,
+                            durationMilliseconds: ride.summary.durationMilliseconds
+                        ),
                         recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
                         vehicle: vehicleLabel(for: ride),
                         points: points,
@@ -85,10 +109,21 @@ struct RideMapHistoryDetailView: View {
                         mapPosition: $mapPosition
                     )
                 } else if initialHistoryID != nil {
-                    ContentUnavailableView(
-                        localizedAppText("ride_map.history_empty"),
-                        systemImage: "map"
-                    )
+                    VStack(spacing: 12) {
+                        ContentUnavailableView(
+                            error == nil
+                                ? localizedAppText("ride_map.history_empty")
+                                : localizedAppText("ride_map.detail_error_title"),
+                            systemImage: error == nil ? "map" : "exclamationmark.triangle"
+                        )
+                        if error != nil {
+                            Button(localizedAppText("ride_map.history_retry"), action: retry)
+                                .buttonStyle(.borderedProminent)
+                                .tint(PevColors.yellow)
+                                .accessibilityIdentifier("ride-map.detail-retry")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -141,13 +176,14 @@ struct RideMapHistoryDetailView: View {
         let distance = distanceText(for: ride.summary)
         let duration = durationText(for: ride.summary)
         let title = localizedAppText("ride_map.detail_title")
-        return "\(title)\n\(distance) · \(duration) · \(ride.summary.pointCount.formatted()) points"
+        return "\(title)\n\(distance) · \(duration) · \(RideMapHistoryListView.pointCountText(ride.summary.pointCount))"
     }
 }
 
 private struct RideMapHistoryDetailSummary: View {
     let distance: String
     let duration: String
+    let averageSpeed: String
     let recordedAt: String
     let vehicle: String
     let points: [MobileRideMapPointDto]
@@ -198,8 +234,8 @@ private struct RideMapHistoryDetailSummary: View {
                         label: localizedAppText("ride_map.metric_elapsed")
                     )
                     RideMapDetailMetric(
-                        value: localizedAppText("ride_map.speed_unavailable"),
-                        label: localizedAppText("ride_map.metric_speed")
+                        value: averageSpeed,
+                        label: localizedAppText("ride_map.metric_average_speed")
                     )
                 }
                 RideMapRouteTruthView(

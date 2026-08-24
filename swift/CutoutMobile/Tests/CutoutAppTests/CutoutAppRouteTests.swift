@@ -175,6 +175,28 @@ final class CutoutAppRouteTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testRideDetailShowsAverageSpeedWhenDistanceAndDurationExist() {
+        XCTAssertEqual(
+            RideMapHistoryDetailView.averageSpeedText(
+                distanceMeters: 16_093.44,
+                durationMilliseconds: 5_400_000
+            ),
+            "6.7 mph"
+        )
+        XCTAssertEqual(
+            RideMapHistoryDetailView.averageSpeedText(distanceMeters: 0, durationMilliseconds: 0),
+            "N/A"
+        )
+    }
+
+    @MainActor
+    func testRideHistoryPointCountUsesSingularAndPluralCopy() {
+        XCTAssertEqual(RideMapHistoryListView.pointCountText(1), "1 point")
+        XCTAssertEqual(RideMapHistoryListView.pointCountText(0), "0 points")
+        XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
+    }
+
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
         XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs.isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs.isEmpty)
@@ -217,7 +239,7 @@ final class CutoutAppRouteTests: XCTestCase {
 
         let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
             .availableNavigationTabs(for: .vescOnewheel)
-        XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
+        XCTAssertTrue(vescTabs.isEmpty)
         XCTAssertTrue(CutoutAppRoute.rideMap.availableNavigationTabs(for: nil).isEmpty)
     }
 

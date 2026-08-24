@@ -665,6 +665,10 @@
       "comment" : "Live map metric label for speed when a typed speed value is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "speed" } } }
     },
+    "ride_map.metric_average_speed" : {
+      "comment" : "Historical ride detail metric label for distance divided by elapsed duration.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "avg speed" } } }
+    },
     "ride_map.speed_unavailable" : {
       "comment" : "Ride-map speed value when no typed GPS or vehicle speed is available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "N/A" } } }
@@ -700,6 +704,18 @@
     "ride_map.history_empty" : {
       "comment" : "Ride-map history state before durable history queries are available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved rides will appear here when history storage is available." } } }
+    },
+    "ride_map.history_error_title" : {
+      "comment" : "History state when the Rust-owned ride query fails before any rides can be shown.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "History unavailable" } } }
+    },
+    "ride_map.history_error_detail" : {
+      "comment" : "Explanation shown with the history query retry action.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "The stored rides could not be loaded. Your recording state was not changed." } } }
+    },
+    "ride_map.history_retry" : {
+      "comment" : "Retry action for a failed history or selected-detail query.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Try again" } } }
     },
     "ride_map.map_alternative" : {
       "comment" : "Accessible textual alternative for the route map.",
@@ -845,6 +861,10 @@
       "comment" : "Title for a typed historical ride detail destination.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride detail" } } }
     },
+    "ride_map.detail_error_title" : {
+      "comment" : "Selected historical ride detail state when the route cannot be loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride unavailable" } } }
+    },
     "ride_map.detail_back" : {
       "comment" : "Navigation control returning from historical ride detail.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Back" } } }
@@ -856,6 +876,14 @@
     "ride_map.points" : {
       "comment" : "Ride-map summary label. The placeholder is the admitted point count.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Points: %lld" } } }
+    },
+    "ride_map.point_count.one" : {
+      "comment" : "Ride-map history subtitle for exactly one admitted point.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld point" } } }
+    },
+    "ride_map.point_count.other" : {
+      "comment" : "Ride-map history subtitle for zero or multiple admitted points.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld points" } } }
     },
     "ride_map.not_following" : {
       "comment" : "Camera state after the user pans or zooms the map.",

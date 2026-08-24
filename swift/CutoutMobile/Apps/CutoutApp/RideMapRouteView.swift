@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 import CutoutMobile
 import CutoutMobileFFI
 
@@ -11,7 +12,8 @@ struct RideMapRouteView: View {
     private let showBackButton: Bool
     private let back: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
-    @State private var mode: CutoutAppModel.RideMapMode
+    @State private var historyMapPosition: MapCameraPosition = .automatic
+    @State private var historyIsApplyingCamera = false
 
     init(
         model: CutoutAppModel,
@@ -29,7 +31,6 @@ struct RideMapRouteView: View {
         self.detailOnly = detailOnly
         self.showBackButton = showBackButton
         self.back = back
-        _mode = State(initialValue: initialHistoryID == nil ? .live : .history)
     }
 
     var body: some View {
@@ -39,7 +40,7 @@ struct RideMapRouteView: View {
             } else {
                 RideMapNavigationHeader(showBackButton: showBackButton, back: back)
 
-                Picker(localizedAppText("navigation.section.map"), selection: $mode) {
+                Picker(localizedAppText("navigation.section.map"), selection: $model.rideMapMode) {
                     Text(localizedAppText("ride_map.mode.live")).tag(CutoutAppModel.RideMapMode.live)
                     Text(localizedAppText("ride_map.mode.history")).tag(CutoutAppModel.RideMapMode.history)
                 }
@@ -48,7 +49,7 @@ struct RideMapRouteView: View {
                 .padding(.bottom, 10)
                 .accessibilityIdentifier("ride-map.mode-picker")
 
-                if mode == .live {
+                if model.rideMapMode == .live {
                     liveContent
                 } else {
                     historyContent
@@ -60,8 +61,6 @@ struct RideMapRouteView: View {
         .foregroundStyle(PevColors.primaryText)
         .preferredColorScheme(.dark)
         .accessibilityIdentifier("ride-map.screen")
-        .onAppear { mode = model.rideMapMode }
-        .onChange(of: mode) { _, newMode in model.rideMapMode = newMode }
         .toolbar {
             if detailOnly {
                 ToolbarItem(placement: .cancellationAction) {
@@ -124,14 +123,15 @@ struct RideMapRouteView: View {
             load: { model.loadRideMapHistory(selecting: model.selectedRideMapHistoryID) },
             loadMore: { model.loadMoreRideMapHistory() },
             returnToLive: {
-                mode = .live
                 model.rideMapMode = .live
             },
             setDateFilter: { model.setRideMapHistoryDateFilter($0) },
             setVehicleFilter: { model.setRideMapHistoryVehicleFilter($0) },
             currentVehicleIdentity: model.rideMapVehicleIdentity,
             currentVehicleName: model.rideMapVehicleName,
-            vehicleName: model.rideMapVehicleName(for:)
+            vehicleName: model.rideMapVehicleName(for:),
+            mapPosition: $historyMapPosition,
+            isApplyingCamera: $historyIsApplyingCamera
         )
     }
 
@@ -144,6 +144,7 @@ struct RideMapRouteView: View {
             error: model.rideMapError,
             select: { model.selectRideMapHistory($0) },
             load: { model.loadRideMapHistory(selecting: initialHistoryID) },
+            retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
             loadFullRide: { model.loadFullRideMapHistory() },
             vehicleName: model.rideMapVehicleName(for:),
             close: closeDetail ?? { dismiss() }

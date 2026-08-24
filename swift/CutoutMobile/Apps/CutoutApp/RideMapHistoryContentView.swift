@@ -27,8 +27,8 @@ struct RideMapHistoryContentView: View {
     let currentVehicleName: String?
     let vehicleName: (String?) -> String?
 
-    @State private var mapPosition: MapCameraPosition = .automatic
-    @State private var isApplyingCamera = false
+    @Binding var mapPosition: MapCameraPosition
+    @Binding var isApplyingCamera: Bool
 
     private struct VehicleOption: Hashable, Identifiable {
         let identity: String
@@ -62,6 +62,8 @@ struct RideMapHistoryContentView: View {
                         .tint(PevColors.yellow)
                         .frame(maxWidth: .infinity, alignment: .top)
                         .padding(24)
+                } else if rides.isEmpty, error != nil {
+                    historyErrorState
                 } else if rides.isEmpty {
                     emptyState
                 } else {
@@ -180,6 +182,27 @@ struct RideMapHistoryContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("ride-map.history-empty")
+    }
+
+    private var historyErrorState: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.largeTitle)
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text(localizedAppText("ride_map.history_error_title"))
+                .font(.title2.weight(.semibold))
+            Text(localizedAppText("ride_map.history_error_detail"))
+                .foregroundStyle(PevColors.muted)
+            Button(localizedAppText("ride_map.history_retry"), action: load)
+                .buttonStyle(.borderedProminent)
+                .tint(PevColors.yellow)
+                .accessibilityIdentifier("ride-map.history-retry")
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ride-map.history-error-state")
     }
 
     private func loadHistoryIfNeeded() {

@@ -16,6 +16,25 @@ final class PevScreenThemeTests: XCTestCase {
         )
     }
 
+    func testRideMapIndicatorStateFollowsLifecycleAndAssociation() {
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(lifecycle: .recording, associatedVehicle: nil),
+            .gpsOnly
+        )
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(lifecycle: .recording, associatedVehicle: "corebluetooth-1"),
+            .associatedWithoutTelemetry
+        )
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(lifecycle: .paused, associatedVehicle: "corebluetooth-1"),
+            .paused
+        )
+        XCTAssertEqual(
+            RideMapSummaryView.IndicatorState.state(lifecycle: nil, associatedVehicle: nil),
+            .unavailable
+        )
+    }
+
     func testBmsScreenPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("bms.screen.subtitle"), "CutOut · BMS")
         XCTAssertEqual(localizedAppText("bms.unknown.temperature_sensors"), "sensors")

@@ -99,9 +99,9 @@ struct RideMapCanvasView: View {
                     coordinate: coordinate(for: last)
                 ) {
                     RideMapRouteMarker(
-                        title: localizedAppText(
-                            showsEndMarker ? "ride_map.end_marker" : "ride_map.current_marker"
-                        ),
+                        title: showsEndMarker
+                            ? localizedAppText("ride_map.end_marker")
+                            : "",
                         color: showsEndMarker ? PevColors.red : PevColors.green
                     )
                     .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
@@ -259,12 +259,14 @@ private struct RideMapRouteMarker: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Text(title.uppercased())
-                .font(.caption2.weight(.black))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(.black.opacity(0.78), in: .rect(cornerRadius: 5))
+            if title.isEmpty == false {
+                Text(title.uppercased())
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.78), in: .rect(cornerRadius: 5))
+            }
 
             ZStack {
                 Circle()
@@ -279,6 +281,6 @@ private struct RideMapRouteMarker: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
+        .accessibilityLabel(title.isEmpty ? localizedAppText("ride_map.current_marker") : title)
     }
 }

@@ -91,7 +91,7 @@ struct RideMapLiveContentView: View {
 
                 RideMapRouteTruthView(
                     points: points,
-                    rustSegmentCount: snapshot?.segmentCount,
+                    rustSegmentCount: snapshot?.segmentCount ?? 0,
                     decision: lastDecision,
                     showsRecordedBounds: snapshot?.state != .recording
                 )
@@ -219,6 +219,7 @@ struct RideMapLiveContentView: View {
 
     private func recenterOnLatestPoint() {
         guard let point = points.last else { return }
+        followsLatestPoint = true
         isApplyingCamera = true
         mapPosition = routeRegion(centeredOn: point)
     }

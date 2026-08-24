@@ -72,8 +72,12 @@ struct RideMapHistoryListView: View {
 
     private func rideSubtitle(for ride: MobileRideMapHistorySummaryDto) -> String {
         let distance = distanceText(for: ride.summary)
-        let points = ride.summary.pointCount.formatted()
-        return "\(distance) · \(points) points"
+        return "\(distance) · \(Self.pointCountText(ride.summary.pointCount))"
+    }
+
+    static func pointCountText(_ count: UInt64) -> String {
+        let key = count == 1 ? "ride_map.point_count.one" : "ride_map.point_count.other"
+        return localizedAppText(key, count)
     }
 
     private func rideTitle(for ride: MobileRideMapHistorySummaryDto) -> String {

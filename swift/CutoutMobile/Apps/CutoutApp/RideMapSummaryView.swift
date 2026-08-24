@@ -8,6 +8,38 @@ struct RideMapSummaryView: View {
     let speed: SpeedReadout
     let vehicleName: String?
 
+    enum IndicatorState: Equatable {
+        case associatedWithoutTelemetry
+        case gpsOnly
+        case paused
+        case terminal
+        case unavailable
+
+        static func state(
+            lifecycle: MobileRideMapStateDto?,
+            associatedVehicle: String?
+        ) -> Self {
+            guard let lifecycle else { return .unavailable }
+            switch lifecycle {
+            case .recording:
+                return associatedVehicle == nil
+                    ? .gpsOnly
+                    : .associatedWithoutTelemetry
+            case .paused:
+                return .paused
+            case .stopped, .saved, .discarded:
+                return .terminal
+            }
+        }
+
+        static func state(for snapshot: MobileRideMapSnapshotDto?) -> Self {
+            state(
+                lifecycle: snapshot?.state,
+                associatedVehicle: snapshot?.associatedVehicle
+            )
+        }
+    }
+
     @MainActor
     static func speedText(for speed: SpeedReadout) -> String {
         guard speed.millimetersPerSecond != nil else {
@@ -23,7 +55,7 @@ struct RideMapSummaryView: View {
 
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(snapshot.state == .recording ? PevColors.green : PevColors.yellow)
+                        .fill(indicatorColor(for: Self.IndicatorState.state(for: snapshot)))
                         .frame(width: 8, height: 8)
                     Text(vehicleName ?? snapshot.associatedVehicle ?? localizedAppText("ride_map.gps_only"))
                         .font(.caption.weight(.semibold))
@@ -56,6 +88,15 @@ struct RideMapSummaryView: View {
     private func durationText(for snapshot: MobileRideMapSnapshotDto) -> String {
         Duration.seconds(Double(snapshot.summary.durationMilliseconds) / 1_000)
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
+    }
+
+    private func indicatorColor(for state: IndicatorState) -> Color {
+        switch state {
+        case .associatedWithoutTelemetry, .gpsOnly, .paused:
+            PevColors.yellow
+        case .terminal, .unavailable:
+            PevColors.muted
+        }
     }
 
     @ViewBuilder
