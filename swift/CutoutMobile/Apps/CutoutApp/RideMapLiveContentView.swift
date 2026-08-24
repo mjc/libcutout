@@ -9,6 +9,7 @@ struct RideMapLiveContentView: View {
     let routeID: String
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
+    let speed: SpeedReadout
     let vehicleName: String?
     let storageError: String?
     let mapError: MobileRideMapError?
@@ -100,7 +101,7 @@ struct RideMapLiveContentView: View {
                         .foregroundStyle(PevColors.muted)
                         .accessibilityIdentifier("ride-map.live-truncated")
                 }
-                RideMapSummaryView(snapshot: snapshot, vehicleName: vehicleName)
+                RideMapSummaryView(snapshot: snapshot, speed: speed, vehicleName: vehicleName)
                 RideMapControlsView(
                     state: snapshot?.state,
                     isDiscardConfirmationPresented: $isDiscardConfirmationPresented,

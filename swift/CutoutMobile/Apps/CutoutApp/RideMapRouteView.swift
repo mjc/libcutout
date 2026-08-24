@@ -86,6 +86,7 @@ struct RideMapRouteView: View {
             routeID: model.rideMapSnapshot?.rideId ?? "live",
             snapshot: model.rideMapSnapshot,
             availability: model.rideMapAvailability,
+            speed: model.speed,
             vehicleName: model.rideMapVehicleName,
             storageError: model.rideMapStorageError,
             mapError: model.rideMapError,
@@ -144,6 +145,7 @@ struct RideMapRouteView: View {
             select: { model.selectRideMapHistory($0) },
             load: { model.loadRideMapHistory(selecting: initialHistoryID) },
             loadFullRide: { model.loadFullRideMapHistory() },
+            vehicleName: model.rideMapVehicleName(for:),
             close: closeDetail ?? { dismiss() }
         )
     }

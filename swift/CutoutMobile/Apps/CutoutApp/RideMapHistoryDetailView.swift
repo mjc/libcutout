@@ -12,9 +12,20 @@ struct RideMapHistoryDetailView: View {
     let select: (String) -> Void
     let load: () -> Void
     let loadFullRide: () -> Void
+    let vehicleName: (String?) -> String?
     let close: () -> Void
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
+
+    static func resolvedVehicleLabel(
+        associatedVehicle: String?,
+        candidateVehicle: String?,
+        resolve: (String) -> String?,
+        fallback: String
+    ) -> String {
+        let identity = associatedVehicle ?? candidateVehicle
+        return identity.flatMap(resolve) ?? identity ?? fallback
+    }
 
     private var selectedRide: MobileRideMapHistorySummaryDto? {
         guard let initialHistoryID else { return nil }
@@ -62,6 +73,8 @@ struct RideMapHistoryDetailView: View {
                     RideMapHistoryDetailSummary(
                         distance: distanceText(for: ride.summary),
                         duration: durationText(for: ride.summary),
+                        recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
+                        vehicle: vehicleLabel(for: ride),
                         points: points,
                         pointsTruncated: pointsTruncated,
                         segmentCount: ride.segmentCount,
@@ -106,6 +119,24 @@ struct RideMapHistoryDetailView: View {
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
     }
 
+    private func recordedAtText(for milliseconds: UInt64) -> String {
+        Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+            .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
+    }
+
+    private func vehicleLabel(for ride: MobileRideMapHistorySummaryDto) -> String {
+        let identity = ride.associatedVehicle ?? ride.candidateVehicle
+        let label = Self.resolvedVehicleLabel(
+            associatedVehicle: ride.associatedVehicle,
+            candidateVehicle: ride.candidateVehicle,
+            resolve: { vehicleName($0) },
+            fallback: localizedAppText("ride_map.gps_only")
+        )
+        return vehicleName(identity) == nil && identity != nil
+            ? localizedAppText("ride_map.associated_vehicle", label)
+            : label
+    }
+
     private func shareText(for ride: MobileRideMapHistorySummaryDto) -> String {
         let distance = distanceText(for: ride.summary)
         let duration = durationText(for: ride.summary)
@@ -117,6 +148,8 @@ struct RideMapHistoryDetailView: View {
 private struct RideMapHistoryDetailSummary: View {
     let distance: String
     let duration: String
+    let recordedAt: String
+    let vehicle: String
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
     let segmentCount: UInt64
@@ -147,6 +180,14 @@ private struct RideMapHistoryDetailSummary: View {
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("ride-map.detail-error")
                 }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(recordedAt)
+                        .font(.subheadline.weight(.semibold))
+                    Text(vehicle)
+                        .font(.caption)
+                        .foregroundStyle(PevColors.muted)
+                }
+                .accessibilityElement(children: .combine)
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     RideMapDetailMetric(
                         value: distance,

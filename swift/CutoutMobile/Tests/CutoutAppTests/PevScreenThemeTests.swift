@@ -5,6 +5,17 @@ import CutoutMobileFFI
 
 @MainActor
 final class PevScreenThemeTests: XCTestCase {
+    func testRideMapSpeedMetricUsesTypedValueOrExplicitUnavailableCopy() {
+        XCTAssertEqual(
+            RideMapSummaryView.speedText(for: SpeedReadout(millimetersPerSecond: nil)),
+            "N/A"
+        )
+        XCTAssertEqual(
+            RideMapSummaryView.speedText(for: SpeedReadout(millimetersPerSecond: 12_070)),
+            "27.0 mph"
+        )
+    }
+
     func testBmsScreenPresentationUsesTheAppCatalog() {
         XCTAssertEqual(localizedAppText("bms.screen.subtitle"), "CutOut · BMS")
         XCTAssertEqual(localizedAppText("bms.unknown.temperature_sensors"), "sensors")

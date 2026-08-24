@@ -5,7 +5,16 @@ import SwiftUI
 
 struct RideMapSummaryView: View {
     let snapshot: MobileRideMapSnapshotDto?
+    let speed: SpeedReadout
     let vehicleName: String?
+
+    @MainActor
+    static func speedText(for speed: SpeedReadout) -> String {
+        guard speed.millimetersPerSecond != nil else {
+            return localizedAppText("ride_map.speed_unavailable")
+        }
+        return "\(speed.displayValue) \(speed.displayUnit)"
+    }
 
     var body: some View {
         if let snapshot {
@@ -72,7 +81,7 @@ struct RideMapSummaryView: View {
             label: localizedAppText("ride_map.metric_elapsed")
         )
         RideMapMetric(
-            value: localizedAppText("ride_map.speed_unavailable"),
+            value: Self.speedText(for: speed),
             label: localizedAppText("ride_map.metric_speed")
         )
     }

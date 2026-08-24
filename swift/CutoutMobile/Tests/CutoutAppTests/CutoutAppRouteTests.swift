@@ -153,6 +153,28 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(offsets.start.width, -offsets.end.width)
     }
 
+    @MainActor
+    func testRideDetailResolvesPersistedVehicleNamesBeforeIdentityFallback() {
+        XCTAssertEqual(
+            RideMapHistoryDetailView.resolvedVehicleLabel(
+                associatedVehicle: "corebluetooth-1",
+                candidateVehicle: "candidate-1",
+                resolve: { $0 == "corebluetooth-1" ? "NF2557" : nil },
+                fallback: "GPS-only ride"
+            ),
+            "NF2557"
+        )
+        XCTAssertEqual(
+            RideMapHistoryDetailView.resolvedVehicleLabel(
+                associatedVehicle: nil,
+                candidateVehicle: "candidate-1",
+                resolve: { _ in nil },
+                fallback: "GPS-only ride"
+            ),
+            "candidate-1"
+        )
+    }
+
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
         XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs.isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs.isEmpty)
