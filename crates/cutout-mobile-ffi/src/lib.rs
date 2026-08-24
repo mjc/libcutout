@@ -2070,6 +2070,14 @@ pub struct MobileAeroSpeedSettingDto {
     pub kilometres_per_hour: u8,
 }
 
+impl From<CoreAeroSpeedSetting> for MobileAeroSpeedSettingDto {
+    fn from(setting: CoreAeroSpeedSetting) -> Self {
+        Self {
+            kilometres_per_hour: setting.kilometres_per_hour(),
+        }
+    }
+}
+
 /// NOSFET/Veteran PWM warning percentage.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileAeroPwmPercentDto {
@@ -2434,6 +2442,45 @@ pub struct MobileLightSettingStateDto {
 
     /// Typed refusal reason, when the write was refused.
     pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+/// Typed NOSFET/Veteran speed-setting lifecycle state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSpeedSettingStateDto {
+    /// Current lifecycle phase.
+    pub kind: MobileSettingStateKindDto,
+
+    /// Most recent current speed, when known.
+    pub current: Option<MobileAeroSpeedSettingDto>,
+
+    /// Requested speed, when a write is pending or terminal.
+    pub requested: Option<MobileAeroSpeedSettingDto>,
+
+    /// Provenance for the current value.
+    pub source: MobileSettingValueSourceDto,
+
+    /// Monotonic time at which the write was accepted.
+    pub submitted_at_ms: Option<u64>,
+
+    /// Monotonic time at which matching readback arrived.
+    pub confirmed_at_ms: Option<u64>,
+
+    /// Typed refusal reason, when the write was refused.
+    pub refusal_reason: Option<MobileControlRefusalReasonDto>,
+}
+
+impl MobileAeroSpeedSettingStateDto {
+    fn unknown() -> Self {
+        Self {
+            kind: MobileSettingStateKindDto::Unknown,
+            current: None,
+            requested: None,
+            source: MobileSettingValueSourceDto::Unknown,
+            submitted_at_ms: None,
+            confirmed_at_ms: None,
+            refusal_reason: None,
+        }
+    }
 }
 
 impl MobileLightSettingStateDto {
@@ -3139,6 +3186,8 @@ where
 #[derive(Clone, Copy, Debug, Default)]
 struct MobileEucSettingTrackers {
     headlight: MobileSettingTracker<CoreLightState>,
+    aero_tiltback_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
+    aero_alarm_speed: MobileSettingTracker<CoreAeroSpeedSetting>,
     pedal_mode: MobileSettingTracker<CorePedalMode>,
     roll_angle: MobileSettingTracker<CoreRollAngle>,
     speed_alarm_mode: MobileSettingTracker<CoreSpeedAlarmMode>,
@@ -3150,6 +3199,8 @@ impl MobileEucSettingTrackers {
     fn observe_step(&mut self, input: &MobileSessionInputDto, result: &MobileSessionStepResultDto) {
         let now = input.monotonic_ms.into_core();
         self.headlight.observe_step(input.kind, now);
+        self.aero_tiltback_speed.observe_step(input.kind, now);
+        self.aero_alarm_speed.observe_step(input.kind, now);
         self.pedal_mode.observe_step(input.kind, now);
         self.roll_angle.observe_step(input.kind, now);
         self.speed_alarm_mode.observe_step(input.kind, now);
@@ -3159,6 +3210,17 @@ impl MobileEucSettingTrackers {
         match input.command {
             Some(MobileCommandDto::SetLights(requested)) => {
                 self.headlight.observe_write(requested.into(), now, result);
+            }
+            Some(MobileCommandDto::SetAeroTiltbackSpeed(requested)) => {
+                if let Some(requested) = CoreAeroSpeedSetting::new(requested.kilometres_per_hour) {
+                    self.aero_tiltback_speed
+                        .observe_write(requested, now, result);
+                }
+            }
+            Some(MobileCommandDto::SetAeroAlarmSpeed(requested)) => {
+                if let Some(requested) = CoreAeroSpeedSetting::new(requested.kilometres_per_hour) {
+                    self.aero_alarm_speed.observe_write(requested, now, result);
+                }
             }
             Some(MobileCommandDto::SetPedalMode(requested)) => {
                 self.pedal_mode.observe_write(requested.into(), now, result);
@@ -3186,6 +3248,18 @@ impl MobileEucSettingTrackers {
             };
             if let Some(light_state) = readback.euc_garage.light_state {
                 self.headlight.observe_readback(light_state.into(), now);
+            }
+            if let Some(entry) =
+                settings_entry(&readback.entries, VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH)
+                    .and_then(aero_speed_setting_from_entry)
+            {
+                self.aero_tiltback_speed.observe_readback(entry, now);
+            }
+            if let Some(entry) =
+                settings_entry(&readback.entries, VETERAN_FIELD_SPEED_ALERT_DECI_KMH)
+                    .and_then(aero_speed_setting_from_entry)
+            {
+                self.aero_alarm_speed.observe_readback(entry, now);
             }
             if let Some(pedal_mode) = readback
                 .euc_garage
@@ -3217,6 +3291,14 @@ impl MobileEucSettingTrackers {
 
     fn headlight(&self) -> MobileLightSettingStateDto {
         mobile_light_setting_state(self.headlight.state)
+    }
+
+    fn aero_tiltback_speed(&self) -> MobileAeroSpeedSettingStateDto {
+        mobile_aero_speed_setting_state(self.aero_tiltback_speed.state)
+    }
+
+    fn aero_alarm_speed(&self) -> MobileAeroSpeedSettingStateDto {
+        mobile_aero_speed_setting_state(self.aero_alarm_speed.state)
     }
 
     fn pedal_mode(&self) -> MobilePedalModeSettingStateDto {
@@ -3260,6 +3342,72 @@ fn observe_setting_write<Value>(
         }
         Some(_) => state.fail(),
     }
+}
+
+fn mobile_aero_speed_setting_state(
+    state: CoreSettingState<CoreAeroSpeedSetting>,
+) -> MobileAeroSpeedSettingStateDto {
+    let mut snapshot = MobileAeroSpeedSettingStateDto::unknown();
+    match state {
+        CoreSettingState::Unknown => {}
+        CoreSettingState::Current(value) => {
+            snapshot.kind = MobileSettingStateKindDto::Current;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+        }
+        CoreSettingState::Pending {
+            current,
+            requested,
+            submitted_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Pending;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+            snapshot.submitted_at_ms = Some(submitted_at.as_milliseconds());
+        }
+        CoreSettingState::Confirmed {
+            value,
+            confirmed_at,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Confirmed;
+            snapshot.current = Some(value.value.into());
+            snapshot.source = value.source.into();
+            snapshot.confirmed_at_ms = Some(confirmed_at.as_milliseconds());
+        }
+        CoreSettingState::Refused {
+            current,
+            requested,
+            reason,
+        } => {
+            snapshot.kind = MobileSettingStateKindDto::Refused;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+            snapshot.refusal_reason = Some(reason.into());
+        }
+        CoreSettingState::TimedOut { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::TimedOut;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = Some(requested.into());
+        }
+        CoreSettingState::Failed { current, requested } => {
+            snapshot.kind = MobileSettingStateKindDto::Failed;
+            snapshot.current = current.map(|value| value.value.into());
+            snapshot.source = current
+                .map_or(CoreSettingValueSource::Unknown, |value| value.source)
+                .into();
+            snapshot.requested = requested.map(Into::into);
+        }
+    }
+    snapshot
 }
 
 fn mobile_light_setting_state(
@@ -10351,6 +10499,12 @@ fn settings_entry(
         .find(|entry| entry.field.id == field_id)
 }
 
+fn aero_speed_setting_from_entry(entry: MobileSettingsEntryDto) -> Option<CoreAeroSpeedSetting> {
+    let deci_kmh = u8::try_from(entry.field.value).ok()?;
+    (deci_kmh % 10 == 0).then_some(())?;
+    CoreAeroSpeedSetting::new(deci_kmh / 10)
+}
+
 fn begode_pedal_mode(settings_bits: u16) -> MobilePedalModeDto {
     let raw_mode = (settings_bits >> 13) & 0x03;
     mobile_pedal_mode(
@@ -10764,6 +10918,16 @@ impl AeroBenignControlSession {
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
+    }
+
+    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
+    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_tiltback_speed()
+    }
+
+    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
+    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_alarm_speed()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -12254,6 +12418,16 @@ impl FalconBenignControlSession {
     /// Returns the Rust-owned headlight write lifecycle state.
     pub fn headlight_state(&self) -> MobileLightSettingStateDto {
         self.lock_settings().headlight()
+    }
+
+    /// Returns the Rust-owned Aero tilt-back speed lifecycle state.
+    pub fn aero_tiltback_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_tiltback_speed()
+    }
+
+    /// Returns the Rust-owned Aero alarm-speed lifecycle state.
+    pub fn aero_alarm_speed_state(&self) -> MobileAeroSpeedSettingStateDto {
+        self.lock_settings().aero_alarm_speed()
     }
 
     /// Returns the Rust-owned pedal-mode setting lifecycle state.
@@ -15354,6 +15528,91 @@ mod tests {
         assert!(result.outputs.iter().any(|output| {
             output.kind == MobileSessionOutputKindDto::Write && output.bytes == b"SETh"
         }));
+    }
+
+    #[test]
+    fn aero_wrapper_tracks_tiltback_write_until_readback() {
+        let session = AeroBenignControlSession::new();
+        assert!(session.arm_settings_writes(RideOperatingState::Parked, ms(0)));
+
+        let result = session.ingest_checked(MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(0),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroTiltbackSpeed(
+                MobileAeroSpeedSettingDto {
+                    kilometres_per_hour: 21,
+                },
+            )),
+        });
+
+        assert_eq!(result.error, None);
+        assert!(result.outputs.iter().any(|output| {
+            output.kind == MobileSessionOutputKindDto::Write && output.bytes.starts_with(b"LdAp")
+        }));
+        assert_eq!(
+            session.aero_tiltback_speed_state().requested,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 21,
+            })
+        );
+    }
+
+    #[test]
+    fn aero_speed_tracker_confirms_tiltback_from_typed_readback() {
+        let mut trackers = MobileEucSettingTrackers::default();
+        let input = MobileSessionInputDto {
+            kind: MobileSessionInputKindDto::Command,
+            monotonic_ms: ms(10),
+            max_write_len: None,
+            channel: Vec::new(),
+            bytes: Vec::new(),
+            command: Some(MobileCommandDto::SetAeroTiltbackSpeed(
+                MobileAeroSpeedSettingDto {
+                    kilometres_per_hour: 21,
+                },
+            )),
+        };
+        let result = MobileSessionStepResultDto {
+            outputs: vec![MobileSessionOutputDto {
+                kind: MobileSessionOutputKindDto::SettingsReadback,
+                channel: Vec::new(),
+                bytes: Vec::new(),
+                ingest: None,
+                settings_readback: Some(MobileSettingsReadbackDto::from(
+                    SettingsReadback::available([
+                        Some(SettingsEntry {
+                            field: RawFieldValue::new(VETERAN_FIELD_SPEED_TILTBACK_DECI_KMH, 210),
+                            source: ValueSource::Reported,
+                            quality: ValueQuality::Known,
+                            verification: VerificationStatus::HardwareVerified,
+                        }),
+                        None,
+                        None,
+                        None,
+                    ]),
+                )),
+                fault_history_readback: None,
+                bms_snapshot: None,
+                raw_telemetry: None,
+                veteran_protocol_model_id: Some(43),
+            }],
+            error: None,
+        };
+
+        trackers.observe_step(&input, &result);
+
+        let state = trackers.aero_tiltback_speed();
+        assert_eq!(state.kind, MobileSettingStateKindDto::Confirmed);
+        assert_eq!(
+            state.current,
+            Some(MobileAeroSpeedSettingDto {
+                kilometres_per_hour: 21,
+            })
+        );
+        assert_eq!(state.confirmed_at_ms, Some(10));
     }
 
     #[test]
