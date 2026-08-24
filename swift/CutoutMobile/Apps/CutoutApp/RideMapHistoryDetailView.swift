@@ -9,6 +9,7 @@ struct RideMapHistoryDetailView: View {
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
     let error: MobileRideMapError?
+    let isLoading: Bool
     let select: (String) -> Void
     let load: () -> Void
     let retry: () -> Void
@@ -56,8 +57,8 @@ struct RideMapHistoryDetailView: View {
 
     private var isRouteLoading: Bool {
         guard error == nil else { return false }
-        guard let selectedRide else { return initialHistoryID != nil }
-        return selectedRide.summary.pointCount > 0 && points.isEmpty
+        guard selectedRide != nil else { return initialHistoryID != nil }
+        return isLoading
     }
 
     var body: some View {

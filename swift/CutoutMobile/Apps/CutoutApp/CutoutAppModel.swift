@@ -50,6 +50,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryVehicleFilter: String?
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistoryPointsTruncated = false
+    private(set) var rideMapHistoryRouteLoading = false
     private(set) var selectedRideMapHistoryID: String?
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
@@ -370,6 +371,7 @@ final class CutoutAppModel {
         }
         rideMapHistoryPoints = []
         rideMapHistoryPointsTruncated = false
+        rideMapHistoryRouteLoading = false
         loadRideMapHistory()
         return true
     }
@@ -381,6 +383,7 @@ final class CutoutAppModel {
         // older route request repopulate points after the new page arrives.
         rideMapHistorySelectionTask?.cancel()
         rideMapHistoryLoading = true
+        rideMapHistoryRouteLoading = false
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         let state = core.rideMapStateHandle
         let filter = rideMapHistoryFilter
@@ -410,6 +413,7 @@ final class CutoutAppModel {
                     self.selectedRideMapHistoryID = nil
                     self.rideMapHistoryPoints = []
                     self.rideMapHistoryPointsTruncated = false
+                    self.rideMapHistoryRouteLoading = false
                     return
                 }
                 self.selectRideMapHistory(selectedID)
@@ -419,6 +423,7 @@ final class CutoutAppModel {
                 // Preserve the last good page so a transient storage failure does not
                 // turn an otherwise usable history screen into an empty state.
                 self.rideMapError = Self.mapRideMapError(error)
+                self.rideMapHistoryRouteLoading = false
             }
         }
     }
@@ -486,7 +491,10 @@ final class CutoutAppModel {
     }
 
     private func selectRideMapHistory(_ rideID: String, previewLimit: Int?) {
-        guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
+        guard rideMapHistory.contains(where: { $0.rideId == rideID }) else {
+            rideMapHistoryRouteLoading = false
+            return
+        }
         rideMapHistorySelectionTask?.cancel()
         if selectedRideMapHistoryID != rideID {
             rideMapHistoryPoints = []
@@ -494,6 +502,7 @@ final class CutoutAppModel {
         selectedRideMapHistoryID = rideID
         rideMapError = nil
         rideMapHistoryPointsTruncated = false
+        rideMapHistoryRouteLoading = true
         let state = core.rideMapStateHandle
         let pointBatchLimit = Self.rideMapPointBatchLimit
         rideMapHistorySelectionTask = Task { [weak self] in
@@ -533,11 +542,13 @@ final class CutoutAppModel {
                 self.rideMapError = nil
                 self.rideMapHistoryPoints = result.0
                 self.rideMapHistoryPointsTruncated = result.1
+                self.rideMapHistoryRouteLoading = false
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapError = Self.mapRideMapError(error)
                 self.rideMapHistoryPoints = []
                 self.rideMapHistoryPointsTruncated = false
+                self.rideMapHistoryRouteLoading = false
             }
         }
     }

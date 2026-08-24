@@ -13,6 +13,7 @@ struct RideMapHistoryContentView: View {
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
     let isLoading: Bool
+    let isRouteLoading: Bool
     let error: MobileRideMapError?
     let selectedRideID: String?
     let dateFilter: CutoutAppModel.RideMapHistoryDateFilter
@@ -51,6 +52,11 @@ struct RideMapHistoryContentView: View {
     @MainActor
     static func uniqueVehicleIdentities(_ identities: [String]) -> [String] {
         Array(Set(identities)).sorted()
+    }
+
+    @MainActor
+    static func selectedRouteIsLoading(routeLoading: Bool, hasSelectedRide: Bool) -> Bool {
+        routeLoading && hasSelectedRide
     }
 
     private func vehicleLabel(for identity: String) -> String {
@@ -264,8 +270,11 @@ struct RideMapHistoryContentView: View {
     }
 
     private var isSelectedRouteLoading: Bool {
-        guard let selectedRide else { return false }
-        return isLoading && points.isEmpty && selectedRide.summary.pointCount > 0
+        guard selectedRide != nil else { return false }
+        return Self.selectedRouteIsLoading(
+            routeLoading: isRouteLoading,
+            hasSelectedRide: true
+        )
     }
 
     private var isSelectedRouteError: Bool {

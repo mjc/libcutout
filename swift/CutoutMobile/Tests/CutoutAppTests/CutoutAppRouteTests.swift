@@ -258,6 +258,28 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideHistoryRouteLoadingIsVisibleAfterThePageAlreadyLoaded() {
+        XCTAssertTrue(
+            RideMapHistoryContentView.selectedRouteIsLoading(
+                routeLoading: true,
+                hasSelectedRide: true
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryContentView.selectedRouteIsLoading(
+                routeLoading: true,
+                hasSelectedRide: false
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryContentView.selectedRouteIsLoading(
+                routeLoading: false,
+                hasSelectedRide: true
+            )
+        )
+    }
+
+    @MainActor
     func testRideDetailShowsAverageSpeedWhenDistanceAndDurationExist() {
         XCTAssertEqual(
             RideMapHistoryDetailView.averageSpeedText(
