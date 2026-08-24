@@ -10173,6 +10173,10 @@ public struct MobileRideMapCoreSnapshotDto: Equatable, Hashable {
      */
     public var summary: MobileRideMapCoreSummaryDto
     /**
+     * Rust-owned number of admitted route segments.
+     */
+    public var segmentCount: UInt64
+    /**
      * Associated vehicle platform identifier, when available.
      */
     public var associatedVehicle: String?
@@ -10190,11 +10194,15 @@ public struct MobileRideMapCoreSnapshotDto: Equatable, Hashable {
          * Current route summary.
          */summary: MobileRideMapCoreSummaryDto,
         /**
+         * Rust-owned number of admitted route segments.
+         */segmentCount: UInt64,
+        /**
          * Associated vehicle platform identifier, when available.
          */associatedVehicle: String?) {
         self.rideId = rideId
         self.state = state
         self.summary = summary
+        self.segmentCount = segmentCount
         self.associatedVehicle = associatedVehicle
     }
 
@@ -10217,6 +10225,7 @@ public struct FfiConverterTypeMobileRideMapCoreSnapshotDto: FfiConverterRustBuff
                 rideId: FfiConverterString.read(from: &buf),
                 state: FfiConverterTypeMobileRideLifecycleStateDto.read(from: &buf),
                 summary: FfiConverterTypeMobileRideMapCoreSummaryDto.read(from: &buf),
+                segmentCount: FfiConverterUInt64.read(from: &buf),
                 associatedVehicle: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -10225,6 +10234,7 @@ public struct FfiConverterTypeMobileRideMapCoreSnapshotDto: FfiConverterRustBuff
         FfiConverterString.write(value.rideId, into: &buf)
         FfiConverterTypeMobileRideLifecycleStateDto.write(value.state, into: &buf)
         FfiConverterTypeMobileRideMapCoreSummaryDto.write(value.summary, into: &buf)
+        FfiConverterUInt64.write(value.segmentCount, into: &buf)
         FfiConverterOptionString.write(value.associatedVehicle, into: &buf)
     }
 }

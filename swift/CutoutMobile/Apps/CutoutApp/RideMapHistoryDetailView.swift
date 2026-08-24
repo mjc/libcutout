@@ -64,6 +64,7 @@ struct RideMapHistoryDetailView: View {
                         duration: durationText(for: ride.summary),
                         points: points,
                         pointsTruncated: pointsTruncated,
+                        segmentCount: ride.segmentCount,
                         error: error,
                         isLoading: isRouteLoading,
                         loadFullRide: loadFullRide,
@@ -118,6 +119,7 @@ private struct RideMapHistoryDetailSummary: View {
     let duration: String
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
+    let segmentCount: UInt64
     let error: MobileRideMapError?
     let isLoading: Bool
     let loadFullRide: () -> Void
@@ -159,7 +161,12 @@ private struct RideMapHistoryDetailSummary: View {
                         label: localizedAppText("ride_map.metric_speed")
                     )
                 }
-                RideMapRouteTruthView(points: points, decision: nil, showsRecordedBounds: true)
+                RideMapRouteTruthView(
+                    points: points,
+                    rustSegmentCount: segmentCount,
+                    decision: nil,
+                    showsRecordedBounds: true
+                )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated"))
                         .font(.caption)

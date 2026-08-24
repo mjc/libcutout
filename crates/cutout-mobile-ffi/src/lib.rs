@@ -3186,6 +3186,8 @@ pub struct MobileRideMapCoreSnapshotDto {
     pub state: MobileRideLifecycleStateDto,
     /// Current route summary.
     pub summary: MobileRideMapCoreSummaryDto,
+    /// Rust-owned number of admitted route segments.
+    pub segment_count: u64,
     /// Associated vehicle platform identifier, when available.
     pub associated_vehicle: Option<String>,
 }
@@ -4644,6 +4646,7 @@ impl MobileRideMapCoreInner {
                 .map_or_else(String::new, |id| id.value.clone()),
             state,
             summary: self.summary(),
+            segment_count: self.recorder.segment_count(),
             associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
         }
     }

@@ -90,6 +90,7 @@ struct RideMapLiveContentView: View {
 
                 RideMapRouteTruthView(
                     points: points,
+                    rustSegmentCount: snapshot?.segmentCount,
                     decision: lastDecision,
                     showsRecordedBounds: snapshot?.state != .recording
                 )

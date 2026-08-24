@@ -352,6 +352,16 @@ impl RideMapRecorder {
         self.segment_id
     }
 
+    /// Returns the Rust-owned number of route segments admitted to the ride.
+    #[must_use]
+    pub const fn segment_count(&self) -> u64 {
+        if self.summary.point_count() == 0 {
+            0
+        } else {
+            self.segment_id.value().saturating_add(1)
+        }
+    }
+
     /// Returns the projected canonical points.
     #[must_use]
     pub fn points(&self) -> &[RideMapPoint] {
@@ -683,6 +693,7 @@ mod tests {
         let first = sample(1_001, 40.0);
         assert_eq!(recorder.check_sample(&first), LocationAdmission::Accepted);
         recorder.record_sample(first);
+        assert_eq!(recorder.segment_count(), 1);
         assert_eq!(recorder.check_sample(&first), LocationAdmission::Duplicate);
         assert_eq!(
             recorder.observe_vehicle("pev-1", 1_002),
@@ -694,6 +705,7 @@ mod tests {
         recorder.apply_transition(RideLifecycleState::Active);
         assert_eq!(recorder.current_segment_id().value(), 1);
         assert!(recorder.record_sample(sample(1_003, 40.001)));
+        assert_eq!(recorder.segment_count(), 2);
         assert_eq!(
             recorder
                 .points()
@@ -766,6 +778,7 @@ mod tests {
         assert_eq!(recorder.check_sample(&second), LocationAdmission::Accepted);
         assert!(recorder.record_sample(second));
         assert_eq!(recorder.current_segment_id().value(), 1);
+        assert_eq!(recorder.segment_count(), 2);
         assert_eq!(recorder.summary().distance_millimetres(), 0);
     }
 

@@ -4,6 +4,7 @@ import SwiftUI
 
 struct RideMapRouteTruthView: View {
     let points: [MobileRideMapPointDto]
+    let rustSegmentCount: UInt64?
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
 
@@ -34,6 +35,9 @@ struct RideMapRouteTruthView: View {
     }
 
     private var segmentCount: UInt64 {
+        if let rustSegmentCount {
+            return rustSegmentCount
+        }
         var count: UInt64 = 0
         var previous: UInt64?
         for point in points where point.segmentId != previous {

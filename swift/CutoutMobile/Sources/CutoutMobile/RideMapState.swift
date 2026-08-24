@@ -68,6 +68,7 @@ public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
     public var rideId: String
     public var state: MobileRideMapStateDto
     public var summary: MobileRideMapSummaryDto
+    public var segmentCount: UInt64
     public var associatedVehicle: String?
 }
 
@@ -312,6 +313,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 distanceMeters: snapshot.summary.distanceMeters,
                 durationMilliseconds: snapshot.summary.durationMilliseconds
             ),
+            segmentCount: snapshot.segmentCount,
             associatedVehicle: snapshot.associatedVehicle
         )
     }
