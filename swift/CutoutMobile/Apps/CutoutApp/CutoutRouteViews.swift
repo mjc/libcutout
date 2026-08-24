@@ -381,10 +381,28 @@ struct EucTuneRouteView: View {
 
 private struct EucAeroSettingsControls: View {
     let model: CutoutAppModel
-    @State private var tiltbackSpeed: Int = 20
-    @State private var pwmPercent: Int = 60
-    @State private var alarmSpeed: Int = 20
-    @State private var angleTenths: Int = 0
+    @State private var tiltbackSpeed: Int
+    @State private var pwmPercent: Int
+    @State private var alarmSpeed: Int
+    @State private var angleTenths: Int
+    @State private var seededTiltback = false
+    @State private var seededPwm = false
+    @State private var seededAlarm = false
+    @State private var seededAngle = false
+
+    @MainActor
+    init(model: CutoutAppModel) {
+        self.model = model
+        let values = AeroSettingsFormValues(model: model)
+        _tiltbackSpeed = State(initialValue: values.tiltbackSpeed)
+        _pwmPercent = State(initialValue: values.pwmPercent)
+        _alarmSpeed = State(initialValue: values.alarmSpeed)
+        _angleTenths = State(initialValue: values.angleTenths)
+        _seededTiltback = State(initialValue: values.tiltback != nil)
+        _seededPwm = State(initialValue: values.pwm != nil)
+        _seededAlarm = State(initialValue: values.alarm != nil)
+        _seededAngle = State(initialValue: values.angle != nil)
+    }
 
     var body: some View {
         Section {
@@ -433,6 +451,74 @@ private struct EucAeroSettingsControls: View {
         } footer: {
             Text(localizedAppText("settings.aero.footer"))
         }
+        .onChange(of: model.aeroTiltbackSpeedState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroPwmPercentState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroAlarmSpeedState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+        .onChange(of: model.aeroAngleAdjustmentState?.current, initial: true) { _, _ in
+            seedFromDeviceIfNeeded()
+        }
+    }
+
+    private func seedFromDeviceIfNeeded() {
+        if !seededTiltback, let current = model.aeroTiltbackSpeedState?.current {
+            tiltbackSpeed = Int(current.kilometresPerHour)
+            seededTiltback = true
+        }
+        if !seededPwm, let current = model.aeroPwmPercentState?.current {
+            pwmPercent = Int(current.percent)
+            seededPwm = true
+        }
+        if !seededAlarm, let current = model.aeroAlarmSpeedState?.current {
+            alarmSpeed = Int(current.kilometresPerHour)
+            seededAlarm = true
+        }
+        if !seededAngle, let current = model.aeroAngleAdjustmentState?.current {
+            angleTenths = Int(current.tenthsOfDegree)
+            seededAngle = true
+        }
+    }
+}
+
+struct AeroSettingsFormValues: Equatable {
+    let tiltbackSpeed: Int
+    let pwmPercent: Int
+    let alarmSpeed: Int
+    let angleTenths: Int
+    let tiltback: AeroSpeedSetting?
+    let pwm: AeroPwmPercent?
+    let alarm: AeroSpeedSetting?
+    let angle: AeroAngleAdjustment?
+
+    init(
+        tiltback: AeroSpeedSetting?,
+        pwm: AeroPwmPercent?,
+        alarm: AeroSpeedSetting?,
+        angle: AeroAngleAdjustment?
+    ) {
+        self.tiltback = tiltback
+        self.pwm = pwm
+        self.alarm = alarm
+        self.angle = angle
+        tiltbackSpeed = Int(tiltback?.kilometresPerHour ?? 20)
+        pwmPercent = Int(pwm?.percent ?? 60)
+        alarmSpeed = Int(alarm?.kilometresPerHour ?? 20)
+        angleTenths = Int(angle?.tenthsOfDegree ?? 0)
+    }
+
+    @MainActor
+    init(model: CutoutAppModel) {
+        self.init(
+            tiltback: model.aeroTiltbackSpeedState?.current,
+            pwm: model.aeroPwmPercentState?.current,
+            alarm: model.aeroAlarmSpeedState?.current,
+            angle: model.aeroAngleAdjustmentState?.current
+        )
     }
 }
 

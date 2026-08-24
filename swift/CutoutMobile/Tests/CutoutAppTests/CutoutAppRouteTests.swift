@@ -3,6 +3,34 @@ import XCTest
 import CutoutMobile
 
 final class CutoutAppRouteTests: XCTestCase {
+    func testAeroSettingsFormUsesCurrentValuesWhenAvailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: AeroSpeedSetting(kilometresPerHour: 31),
+            pwm: AeroPwmPercent(percent: 74),
+            alarm: AeroSpeedSetting(kilometresPerHour: 42),
+            angle: AeroAngleAdjustment(tenthsOfDegree: -12)
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 31)
+        XCTAssertEqual(values.pwmPercent, 74)
+        XCTAssertEqual(values.alarmSpeed, 42)
+        XCTAssertEqual(values.angleTenths, -12)
+    }
+
+    func testAeroSettingsFormKeepsSafeDefaultsWhenValuesAreUnavailable() {
+        let values = AeroSettingsFormValues(
+            tiltback: nil,
+            pwm: nil,
+            alarm: nil,
+            angle: nil
+        )
+
+        XCTAssertEqual(values.tiltbackSpeed, 20)
+        XCTAssertEqual(values.pwmPercent, 60)
+        XCTAssertEqual(values.alarmSpeed, 20)
+        XCTAssertEqual(values.angleTenths, 0)
+    }
+
     func testScreenRoutesMatchTopLevelSections() {
         XCTAssertEqual(CutoutAppRoute.route(for: .eucRide), .eucRide)
         XCTAssertEqual(CutoutAppRoute.route(for: .vescRide), .vescRide)
