@@ -125,6 +125,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.headlightOn)
         XCTAssertEqual(model.headlightCommandStatus, .sentWithoutConfirmation)
         XCTAssertEqual(model.headlightControlTitle, "High beam")
+        XCTAssertEqual(driver.aeroHighBeamStates, [.on])
         XCTAssertEqual(
             model.headlightStatusText,
             "Command sent. This wheel does not report high-beam state."
