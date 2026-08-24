@@ -223,20 +223,20 @@ struct RideMapLiveContentView: View {
         guard let point = points.last else { return }
         followsLatestPoint = true
         isApplyingCamera = true
-        mapPosition = routeRegion(centeredOn: point)
+        mapPosition = .region(Self.routeRegion(centeredOn: point, points: points))
     }
 
-    private func routeRegion(centeredOn latest: MobileRideMapPointDto) -> MapCameraPosition {
-        guard let region = RideMapCanvasView.region(for: points) else {
-            return .region(MKCoordinateRegion(
-                center: CLLocationCoordinate2D(
-                    latitude: latest.latitudeDegrees,
-                    longitude: latest.longitudeDegrees
-                ),
-                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-            ))
-        }
-        return .region(region)
+    static func routeRegion(
+        centeredOn latest: MobileRideMapPointDto,
+        points: [MobileRideMapPointDto]
+    ) -> MKCoordinateRegion {
+        let center = CLLocationCoordinate2D(
+            latitude: latest.latitudeDegrees,
+            longitude: latest.longitudeDegrees
+        )
+        let span = RideMapCanvasView.region(for: points)?.span
+            ?? MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+        return MKCoordinateRegion(center: center, span: span)
     }
 }
 
