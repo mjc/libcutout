@@ -3101,6 +3101,16 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func listRides(cursor: MobileRideCursorDto?, limit: UInt32) throws  -> MobileRidePageDto
 
     /**
+     * Lists one bounded page of ride history using Rust-owned filters.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, filter, limit, worker, or stored page is
+     * invalid.
+     */
+    func listRidesFiltered(cursor: MobileRideCursorDto?, filter: MobileRideHistoryFilterDto, limit: UInt32) throws  -> MobileRidePageDto
+
+    /**
      * Queries indexed map points intersecting a WGS84 bounding box.
      *
      * # Errors
@@ -3605,6 +3615,25 @@ open func listRides(cursor: MobileRideCursorDto?, limit: UInt32)throws  -> Mobil
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_list_rides(
             self.uniffiCloneHandle(),
         FfiConverterOptionTypeMobileRideCursorDto.lower(cursor),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+    /**
+     * Lists one bounded page of ride history using Rust-owned filters.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, filter, limit, worker, or stored page is
+     * invalid.
+     */
+open func listRidesFiltered(cursor: MobileRideCursorDto?, filter: MobileRideHistoryFilterDto, limit: UInt32)throws  -> MobileRidePageDto  {
+    return try  FfiConverterTypeMobileRidePageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_list_rides_filtered(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeMobileRideCursorDto.lower(cursor),
+        FfiConverterTypeMobileRideHistoryFilterDto_lower(filter),
         FfiConverterUInt32.lower(limit),$0
     )
 })
@@ -9802,6 +9831,67 @@ public func FfiConverterTypeMobileRideCursorDto_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeMobileRideCursorDto_lower(_ value: MobileRideCursorDto) -> RustBuffer {
     return FfiConverterTypeMobileRideCursorDto.lower(value)
+}
+
+
+/**
+ * Rust-owned filters for bounded ride-history queries.
+ */
+public struct MobileRideHistoryFilterDto: Equatable, Hashable {
+    public var createdAfterMilliseconds: UInt64?
+    public var vehicleIdentity: String?
+    public var searchText: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(createdAfterMilliseconds: UInt64?, vehicleIdentity: String?, searchText: String?) {
+        self.createdAfterMilliseconds = createdAfterMilliseconds
+        self.vehicleIdentity = vehicleIdentity
+        self.searchText = searchText
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryFilterDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryFilterDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryFilterDto {
+        return
+            try MobileRideHistoryFilterDto(
+                createdAfterMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                vehicleIdentity: FfiConverterOptionString.read(from: &buf),
+                searchText: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryFilterDto, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt64.write(value.createdAfterMilliseconds, into: &buf)
+        FfiConverterOptionString.write(value.vehicleIdentity, into: &buf)
+        FfiConverterOptionString.write(value.searchText, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryFilterDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryFilterDto {
+    return try FfiConverterTypeMobileRideHistoryFilterDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryFilterDto_lower(_ value: MobileRideHistoryFilterDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryFilterDto.lower(value)
 }
 
 
@@ -23788,6 +23878,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 9190) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides_filtered() != 39055) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 20830) {

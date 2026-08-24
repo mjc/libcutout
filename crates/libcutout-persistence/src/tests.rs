@@ -12,8 +12,8 @@ use rusqlite::Connection;
 use cutout_ride_maps::RideLifecycleState;
 
 use super::{
-    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideId, RideSource, StorageError,
-    VoltageSagModelRecord,
+    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
+    RideSource, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -975,6 +975,77 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .unwrap();
     assert_eq!(second.points().len(), 1);
     assert_eq!(second.points()[0].sequence(), 2);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-filtered-history-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let first = database.create_ride(RideSource::Live, 10).unwrap();
+    let second = database.create_ride(RideSource::Live, 20).unwrap();
+    for ride in [first, second] {
+        database.transition(ride, RideEvent::Start).unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+    }
+    database.save_device_name("device-a", "NF2557", 30).unwrap();
+    database
+        .update_ride_map_metadata(first, None, Some("device-a"), None, None)
+        .unwrap();
+
+    let date_filtered = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(Some(15), None, None),
+        )
+        .unwrap();
+    assert_eq!(
+        date_filtered
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![second]
+    );
+
+    let vehicle_filtered = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(None, Some("device-a"), None),
+        )
+        .unwrap();
+    assert_eq!(
+        vehicle_filtered
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
+
+    let name_searched = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(None, None, Some("nf2557")),
+        )
+        .unwrap();
+    assert_eq!(
+        name_searched
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

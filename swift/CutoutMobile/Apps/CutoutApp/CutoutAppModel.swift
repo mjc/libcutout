@@ -18,6 +18,11 @@ final class CutoutAppModel {
         case history
     }
 
+    enum RideMapHistoryDateFilter: String {
+        case last30Days
+        case allTime
+    }
+
     // Keep this within the Rust persistence query limit (max 500).
     private static let rideMapPointBatchLimit: UInt32 = 500
     private static let rideMapPreviewPointLimit = 4_096
@@ -41,6 +46,8 @@ final class CutoutAppModel {
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
     private(set) var rideMapHistoryCanLoadMore = false
     var rideMapHistorySearchText = ""
+    private(set) var rideMapHistoryDateFilter = RideMapHistoryDateFilter.last30Days
+    private(set) var rideMapHistoryVehicleFilter: String?
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var selectedRideMapHistoryID: String?
@@ -149,6 +156,7 @@ final class CutoutAppModel {
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
     private var rideMapHistoryCursor: MobileRideCursorDto?
+    private var rideMapHistoryQueryDateAfterMilliseconds: UInt64?
     private var rideMapHistoryLoadTask: Task<Void, Never>?
     private var rideMapHistoryPageTask: Task<Void, Never>?
     private var rideMapHistorySelectionTask: Task<Void, Never>?
@@ -353,12 +361,15 @@ final class CutoutAppModel {
 
     func loadRideMapHistory(selecting requestedRideID: String? = nil) {
         rideMapHistoryLoadTask?.cancel()
+        rideMapHistoryPageTask?.cancel()
         rideMapHistoryLoading = true
+        rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         let state = core.rideMapStateHandle
+        let filter = rideMapHistoryFilter
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    let page = try state.storedHistoryPage(cursor: nil, limit: 50)
+                    let page = try state.storedHistoryPage(cursor: nil, limit: 50, filter: filter)
                     var summaries = page.summaries
                     if let requestedRideID,
                        summaries.contains(where: { $0.rideId == requestedRideID }) == false,
@@ -399,10 +410,11 @@ final class CutoutAppModel {
         rideMapHistoryPageTask?.cancel()
         let state = core.rideMapStateHandle
         let cursor = rideMapHistoryCursor
+        let filter = rideMapHistoryFilter
         rideMapHistoryPageTask = Task { [weak self] in
             do {
                 let page = try await Task.detached(priority: .userInitiated) {
-                    try state.storedHistoryPage(cursor: cursor, limit: 50)
+                    try state.storedHistoryPage(cursor: cursor, limit: 50, filter: filter)
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistory.append(contentsOf: page.summaries)
@@ -417,18 +429,33 @@ final class CutoutAppModel {
     }
 
     var filteredRideMapHistory: [MobileRideMapHistorySummaryDto] {
-        let query = rideMapHistorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return rideMapHistory }
-        return rideMapHistory.filter { ride in
-            let dateText = Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000)
-                .formatted(date: .abbreviated, time: .shortened)
-            return ride.rideId.localizedCaseInsensitiveContains(query)
-                || ride.associatedVehicle?.localizedCaseInsensitiveContains(query) == true
-                || ride.candidateVehicle?.localizedCaseInsensitiveContains(query) == true
-                || rideMapVehicleName(for: ride.associatedVehicle)?.localizedCaseInsensitiveContains(query) == true
-                || rideMapVehicleName(for: ride.candidateVehicle)?.localizedCaseInsensitiveContains(query) == true
-                || dateText.localizedCaseInsensitiveContains(query)
-        }
+        rideMapHistory
+    }
+
+    func setRideMapHistoryDateFilter(_ filter: RideMapHistoryDateFilter) {
+        guard rideMapHistoryDateFilter != filter else { return }
+        rideMapHistoryDateFilter = filter
+        loadRideMapHistory()
+    }
+
+    func setRideMapHistoryVehicleFilter(_ identity: String?) {
+        guard rideMapHistoryVehicleFilter != identity else { return }
+        rideMapHistoryVehicleFilter = identity
+        loadRideMapHistory()
+    }
+
+    private var historyDateAfterMilliseconds: UInt64? {
+        guard rideMapHistoryDateFilter == .last30Days else { return nil }
+        let milliseconds = Date().addingTimeInterval(-30 * 24 * 60 * 60).timeIntervalSince1970 * 1_000
+        return milliseconds.isFinite && milliseconds > 0 ? UInt64(milliseconds) : 0
+    }
+
+    private var rideMapHistoryFilter: MobileRideHistoryFilterDto {
+        MobileRideHistoryFilterDto(
+            createdAfterMilliseconds: rideMapHistoryQueryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
+            vehicleIdentity: rideMapHistoryVehicleFilter,
+            searchText: rideMapHistorySearchText
+        )
     }
 
     func selectRideMapHistory(_ rideID: String) {

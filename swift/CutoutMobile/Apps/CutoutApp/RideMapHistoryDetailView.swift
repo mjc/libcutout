@@ -34,7 +34,7 @@ struct RideMapHistoryDetailView: View {
                 ZStack {
                 RideMapCanvasView(
                     points: points,
-                    routeID: initialHistoryID ?? "history-detail",
+                    routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
                     showsStartMarker: true,
                     showsEndMarker: true,
                     fitsRouteOnChange: true,

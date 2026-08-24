@@ -3275,6 +3275,14 @@ pub struct MobileRideCursorDto {
     pub ride_id: MobileRideIdDto,
 }
 
+/// Rust-owned filters for bounded ride-history queries.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryFilterDto {
+    pub created_after_milliseconds: Option<u64>,
+    pub vehicle_identity: Option<String>,
+    pub search_text: Option<String>,
+}
+
 /// One bounded ride-history projection.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideRecordDto {
@@ -3686,6 +3694,14 @@ fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideD
     persistence::QueryLimit::new(value).map_err(map_ride_database_error)
 }
 
+fn mobile_history_query(filter: &MobileRideHistoryFilterDto) -> persistence::RideHistoryQuery {
+    persistence::RideHistoryQuery::new(
+        filter.created_after_milliseconds,
+        filter.vehicle_identity.as_deref(),
+        filter.search_text.as_deref(),
+    )
+}
+
 fn mobile_pevcap_preview(
     preview: &persistence::PevcapImportPreview,
 ) -> MobilePevcapImportPreviewDto {
@@ -3813,6 +3829,29 @@ impl RideDatabaseHandle {
         cursor: Option<MobileRideCursorDto>,
         limit: u32,
     ) -> Result<MobileRidePageDto, MobileRideDatabaseError> {
+        self.list_rides_filtered(
+            cursor,
+            MobileRideHistoryFilterDto {
+                created_after_milliseconds: None,
+                vehicle_identity: None,
+                search_text: None,
+            },
+            limit,
+        )
+    }
+
+    /// Lists one bounded page of ride history using Rust-owned filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the cursor, filter, limit, worker, or stored page is
+    /// invalid.
+    pub fn list_rides_filtered(
+        &self,
+        cursor: Option<MobileRideCursorDto>,
+        filter: MobileRideHistoryFilterDto,
+        limit: u32,
+    ) -> Result<MobileRidePageDto, MobileRideDatabaseError> {
         let cursor = cursor
             .map(|cursor| {
                 parse_mobile_ride_id(&cursor.ride_id).map(|ride_id| {
@@ -3822,13 +3861,9 @@ impl RideDatabaseHandle {
             .transpose()?;
         let limit = mobile_query_limit(limit)?;
         self.inner
-            .list_rides(cursor, limit)
+            .list_rides_filtered(cursor, limit, mobile_history_query(&filter))
             .map(|page| MobileRidePageDto {
-                rides: page
-                    .rides()
-                    .iter()
-                    .map(mobile_ride_record_dto)
-                    .collect(),
+                rides: page.rides().iter().map(mobile_ride_record_dto).collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileRideCursorDto {
                     created_at_milliseconds: cursor.created_at_milliseconds(),
                     ride_id: MobileRideIdDto {

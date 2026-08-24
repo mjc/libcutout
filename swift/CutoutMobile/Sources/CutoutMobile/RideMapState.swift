@@ -255,13 +255,19 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func storedHistoryPage(
         cursor: MobileRideCursorDto?,
-        limit: UInt32
+        limit: UInt32,
+        filter: MobileRideHistoryFilterDto? = nil
     ) throws -> MobileRideMapHistoryPageDto {
         guard let database else {
             return MobileRideMapHistoryPageDto(summaries: [], nextCursor: nil)
         }
         do {
-            let page = try database.listRides(cursor: cursor, limit: limit)
+            let filter = filter ?? MobileRideHistoryFilterDto(
+                createdAfterMilliseconds: nil,
+                vehicleIdentity: nil,
+                searchText: nil
+            )
+            let page = try database.listRidesFiltered(cursor: cursor, filter: filter, limit: limit)
             let summaries = page.rides.map(mapHistorySummary)
             return MobileRideMapHistoryPageDto(
                 summaries: summaries,

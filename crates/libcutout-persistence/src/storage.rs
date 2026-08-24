@@ -136,6 +136,54 @@ impl RideCursor {
     }
 }
 
+/// Rust-owned filters for bounded ride-history queries.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RideHistoryQuery {
+    created_after_ms: Option<u64>,
+    vehicle_identity: Option<String>,
+    search_text: Option<String>,
+}
+
+impl RideHistoryQuery {
+    /// Creates a query from optional date, vehicle-identity, and user search filters.
+    #[must_use]
+    pub fn new(
+        created_after_milliseconds: Option<u64>,
+        vehicle_identity: Option<&str>,
+        search_text: Option<&str>,
+    ) -> Self {
+        Self {
+            created_after_ms: created_after_milliseconds,
+            vehicle_identity: vehicle_identity
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            search_text: search_text
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+        }
+    }
+
+    /// Returns the inclusive lower creation-time bound.
+    #[must_use]
+    pub const fn created_after_milliseconds(&self) -> Option<u64> {
+        self.created_after_ms
+    }
+
+    /// Returns the stable platform identity filter.
+    #[must_use]
+    pub fn vehicle_identity(&self) -> Option<&str> {
+        self.vehicle_identity.as_deref()
+    }
+
+    /// Returns the normalized user search text.
+    #[must_use]
+    pub fn search_text(&self) -> Option<&str> {
+        self.search_text.as_deref()
+    }
+}
+
 /// Bounded ride-history projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RideRecord {
@@ -1503,9 +1551,24 @@ impl RideDatabase {
         cursor: Option<RideCursor>,
         limit: QueryLimit,
     ) -> Result<RidePage, StorageError> {
+        self.list_rides_filtered(cursor, limit, RideHistoryQuery::default())
+    }
+
+    /// Lists one bounded page of visible rides with Rust-owned history filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the page.
+    pub fn list_rides_filtered(
+        &self,
+        cursor: Option<RideCursor>,
+        limit: QueryLimit,
+        query: RideHistoryQuery,
+    ) -> Result<RidePage, StorageError> {
         self.request(move |reply| Command::ListRides {
             cursor,
             limit,
+            query,
             reply,
         })
     }
@@ -1765,6 +1828,7 @@ enum Command {
     ListRides {
         cursor: Option<RideCursor>,
         limit: QueryLimit,
+        query: RideHistoryQuery,
         reply: Reply<RidePage>,
     },
     RoutePoints {
@@ -2040,9 +2104,10 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             Command::ListRides {
                 cursor,
                 limit,
+                query,
                 reply,
             } => {
-                let _ = reply.send(list_rides(&connection, cursor, limit));
+                let _ = reply.send(list_rides(&connection, cursor, limit, &query));
             }
             Command::RoutePoints {
                 ride_id,
@@ -3805,10 +3870,7 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
         .ok_or(StorageError::NotFound)
 }
 
-fn find_ride(
-    connection: &Connection,
-    ride_id: RideId,
-) -> Result<Option<RideRecord>, StorageError> {
+fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
     connection
         .query_row(
             "SELECT id, source, state, created_at_ms, updated_at_ms,
@@ -3837,32 +3899,61 @@ fn list_rides(
     connection: &Connection,
     cursor: Option<RideCursor>,
     limit: QueryLimit,
+    query: &RideHistoryQuery,
 ) -> Result<RidePage, StorageError> {
     let fetch_limit = i64::from(limit.get()) + 1;
+    let created_after = query
+        .created_after_ms
+        .map(|value| i64::try_from(value).unwrap_or(i64::MAX));
+    let vehicle_identity = query.vehicle_identity.as_deref();
+    let search_text = query
+        .search_text
+        .as_deref()
+        .map(|value| format!("%{}%", value.to_lowercase()));
+    let base_sql = "SELECT rides.id, rides.source, rides.state, rides.created_at_ms, rides.updated_at_ms,
+                           CASE
+                               WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        IS NULL
+                                   OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        < rides.created_at_ms
+                                   THEN 0
+                               ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        - rides.created_at_ms
+                           END,
+                           rides.point_count, rides.distance_mm,
+                           (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                           rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
+                           rides.last_telemetry_at_ms
+                    FROM rides
+                    LEFT JOIN devices AS associated_device
+                        ON associated_device.platform_identifier = rides.associated_vehicle
+                    LEFT JOIN devices AS candidate_device
+                        ON candidate_device.platform_identifier = rides.candidate_vehicle
+                    WHERE rides.state NOT IN ('draft', 'discarded')
+                      AND (?1 IS NULL OR rides.created_at_ms >= ?1)
+                      AND (?2 IS NULL OR rides.associated_vehicle = ?2 OR rides.candidate_vehicle = ?2)
+                      AND (?3 IS NULL OR
+                           lower(rides.id) LIKE ?3
+                           OR lower(COALESCE(rides.associated_vehicle, '')) LIKE ?3
+                           OR lower(COALESCE(rides.candidate_vehicle, '')) LIKE ?3
+                           OR lower(COALESCE(associated_device.display_name, '')) LIKE ?3
+                           OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?3
+                           OR CAST(rides.created_at_ms AS TEXT) LIKE ?3
+                           OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3)";
     let mut rides = Vec::new();
     if let Some(cursor) = cursor {
-        let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms,
-                    CASE
-                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 IS NULL
-                            OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 < created_at_ms
-                            THEN 0
-                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 - created_at_ms
-                    END,
-                    point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
-             FROM rides
-             WHERE state NOT IN ('draft', 'discarded')
-               AND (created_at_ms < ?1 OR (created_at_ms = ?1 AND id < ?2))
-             ORDER BY created_at_ms DESC, id DESC
-             LIMIT ?3",
-        )?;
+        let sql = format!(
+            "{base_sql}
+                      AND (rides.created_at_ms < ?4 OR (rides.created_at_ms = ?4 AND rides.id < ?5))
+                    ORDER BY rides.created_at_ms DESC, rides.id DESC
+                    LIMIT ?6"
+        );
+        let mut statement = connection.prepare(&sql)?;
         let rows = statement.query_map(
             params![
+                created_after,
+                vehicle_identity,
+                search_text.as_deref(),
                 cursor.created_at_ms,
                 cursor.ride_id.uuid().to_string(),
                 fetch_limit
@@ -3873,25 +3964,21 @@ fn list_rides(
             rides.push(row?);
         }
     } else {
-        let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms,
-                    CASE
-                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 IS NULL
-                            OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 < created_at_ms
-                            THEN 0
-                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 - created_at_ms
-                    END,
-                    point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
-             FROM rides WHERE state NOT IN ('draft', 'discarded')
-             ORDER BY created_at_ms DESC, id DESC
-             LIMIT ?1",
+        let sql = format!(
+            "{base_sql}
+                    ORDER BY rides.created_at_ms DESC, rides.id DESC
+                    LIMIT ?4"
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                created_after,
+                vehicle_identity,
+                search_text.as_deref(),
+                fetch_limit
+            ],
+            ride_record_from_row,
         )?;
-        let rows = statement.query_map([fetch_limit], ride_record_from_row)?;
         for row in rows {
             rides.push(row?);
         }

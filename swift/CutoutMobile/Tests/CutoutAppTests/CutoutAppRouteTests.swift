@@ -138,7 +138,7 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.navigationPath(for: .rideMap), [.rideMap])
         XCTAssertEqual(
             CutoutAppRoute.navigationPath(for: .rideMapDetail(rideID: "ride-1")),
-            [.rideMapDetail(rideID: "ride-1")]
+            [.rideMap, .rideMapDetail(rideID: "ride-1")]
         )
     }
 

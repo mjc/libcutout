@@ -94,7 +94,14 @@ enum CutoutAppRoute: Hashable {
     }
 
     static func navigationPath(for route: CutoutAppRoute) -> [CutoutAppRoute] {
-        route == .devicePicker ? [] : [route]
+        switch route {
+        case .devicePicker:
+            []
+        case let .rideMapDetail(rideID):
+            [.rideMap, .rideMapDetail(rideID: rideID)]
+        default:
+            [route]
+        }
     }
 
     var navigationTabs: [PevScreenTab] {

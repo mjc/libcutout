@@ -113,17 +113,21 @@ struct RideMapRouteView: View {
             isLoading: model.rideMapHistoryLoading,
             error: model.rideMapError,
             selectedRideID: model.selectedRideMapHistoryID,
+            dateFilter: model.rideMapHistoryDateFilter,
+            vehicleFilter: model.rideMapHistoryVehicleFilter,
             select: { rideID in
                 model.rideMapMode = .history
                 model.selectRideMapHistory(rideID)
                 openHistory?(rideID)
             },
-            load: { model.loadRideMapHistory() },
+            load: { model.loadRideMapHistory(selecting: model.selectedRideMapHistoryID) },
             loadMore: { model.loadMoreRideMapHistory() },
             returnToLive: {
                 mode = .live
                 model.rideMapMode = .live
             },
+            setDateFilter: { model.setRideMapHistoryDateFilter($0) },
+            setVehicleFilter: { model.setRideMapHistoryVehicleFilter($0) },
             currentVehicleIdentity: model.rideMapVehicleIdentity,
             currentVehicleName: model.rideMapVehicleName,
             vehicleName: model.rideMapVehicleName(for:)

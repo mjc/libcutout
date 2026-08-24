@@ -15,29 +15,20 @@ struct RideMapHistoryContentView: View {
     let isLoading: Bool
     let error: MobileRideMapError?
     let selectedRideID: String?
+    let dateFilter: CutoutAppModel.RideMapHistoryDateFilter
+    let vehicleFilter: String?
     let select: (String) -> Void
     let load: () -> Void
     let loadMore: () -> Void
     let returnToLive: () -> Void
+    let setDateFilter: (CutoutAppModel.RideMapHistoryDateFilter) -> Void
+    let setVehicleFilter: (String?) -> Void
     let currentVehicleIdentity: String?
     let currentVehicleName: String?
     let vehicleName: (String?) -> String?
 
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
-    @State private var dateFilter = DateFilter.last30Days
-    @State private var vehicleFilter: String?
-    private enum DateFilter: String {
-        case last30Days
-        case allTime
-
-        var title: String {
-            switch self {
-            case .last30Days: localizedAppText("ride_map.history_last_30_days")
-            case .allTime: localizedAppText("ride_map.history_all_time")
-            }
-        }
-    }
 
     private struct VehicleOption: Hashable, Identifiable {
         let identity: String
@@ -63,18 +54,6 @@ struct RideMapHistoryContentView: View {
             ?? identity
     }
 
-    private var filteredRides: [MobileRideMapHistorySummaryDto] {
-        let cutoff = Date().addingTimeInterval(-30 * 24 * 60 * 60)
-        return rides.filter { ride in
-            let dateMatches = dateFilter == .allTime
-                || Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000) >= cutoff
-            let vehicleMatches = vehicleFilter == nil
-                || ride.associatedVehicle == vehicleFilter
-                || ride.candidateVehicle == vehicleFilter
-            return dateMatches && vehicleMatches
-        }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             if isLoading && rides.isEmpty {
@@ -82,11 +61,11 @@ struct RideMapHistoryContentView: View {
                     .tint(PevColors.yellow)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .padding(24)
-            } else if filteredRides.isEmpty {
+            } else if rides.isEmpty {
                 emptyState
             } else {
                 HStack(spacing: 8) {
-                    filterMenu(kind: .date, title: dateFilter.title, systemImage: "calendar")
+                    filterMenu(kind: .date, title: dateFilterTitle, systemImage: "calendar")
                     filterMenu(
                         kind: .vehicle,
                         title: vehicleFilter.map(vehicleLabel)
@@ -143,7 +122,7 @@ struct RideMapHistoryContentView: View {
                     }
 
                     RideMapHistoryListView(
-                        rides: filteredRides,
+                        rides: rides,
                         canLoadMore: canLoadMore,
                         selectedRideID: selectedRideID,
                         select: select,
@@ -167,6 +146,7 @@ struct RideMapHistoryContentView: View {
             }
         }
         .onAppear { loadHistoryIfNeeded() }
+        .onChange(of: searchText) { _, _ in load() }
         // Search belongs to the screen container so it stays attached to the
         // Map navigation context instead of the inner fixed-height list.
         .searchable(text: $searchText)
@@ -214,12 +194,18 @@ struct RideMapHistoryContentView: View {
         Menu {
             switch kind {
             case .date:
-                Button(DateFilter.last30Days.title) { dateFilter = .last30Days }
-                Button(DateFilter.allTime.title) { dateFilter = .allTime }
+                Button(localizedAppText("ride_map.history_last_30_days")) {
+                    setDateFilter(.last30Days)
+                }
+                Button(localizedAppText("ride_map.history_all_time")) {
+                    setDateFilter(.allTime)
+                }
             case .vehicle:
-                Button(localizedAppText("ride_map.history_all_vehicles")) { vehicleFilter = nil }
+                Button(localizedAppText("ride_map.history_all_vehicles")) {
+                    setVehicleFilter(nil)
+                }
                 ForEach(vehicleOptions) { vehicle in
-                    Button(vehicle.label) { vehicleFilter = vehicle.identity }
+                    Button(vehicle.label) { setVehicleFilter(vehicle.identity) }
                 }
             }
         } label: {
@@ -233,6 +219,15 @@ struct RideMapHistoryContentView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .modifier(RideMapFilterSurface())
+    }
+
+    private var dateFilterTitle: String {
+        switch dateFilter {
+        case .last30Days:
+            localizedAppText("ride_map.history_last_30_days")
+        case .allTime:
+            localizedAppText("ride_map.history_all_time")
+        }
     }
 }
 
