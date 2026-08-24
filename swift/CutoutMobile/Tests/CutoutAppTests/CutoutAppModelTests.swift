@@ -161,6 +161,34 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryReloadPreservesTheSelectedRideWhenItStillMatches() {
+        XCTAssertEqual(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: nil,
+                currentID: "ride-2",
+                summaryIDs: ["ride-1", "ride-2"]
+            ),
+            "ride-2"
+        )
+        XCTAssertEqual(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: "ride-3",
+                currentID: "ride-2",
+                summaryIDs: ["ride-1", "ride-3"]
+            ),
+            "ride-3"
+        )
+        XCTAssertEqual(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: nil,
+                currentID: "ride-missing",
+                summaryIDs: ["ride-1", "ride-2"]
+            ),
+            "ride-1"
+        )
+    }
+
+    @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

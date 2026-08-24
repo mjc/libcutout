@@ -387,6 +387,7 @@ final class CutoutAppModel {
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
         let state = core.rideMapStateHandle
         let filter = rideMapHistoryFilter
+        let existingSelectedID = selectedRideMapHistoryID
         rideMapHistoryLoadTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
@@ -406,9 +407,11 @@ final class CutoutAppModel {
                 self.rideMapHistoryCursor = result.1
                 self.rideMapHistoryCanLoadMore = result.1 != nil
                 self.rideMapError = nil
-                let selectedID = requestedRideID.flatMap { requestedID in
-                    result.0.first(where: { $0.rideId == requestedID })?.rideId
-                } ?? result.0.first?.rideId
+                let selectedID = Self.preferredHistorySelection(
+                    requestedID: requestedRideID,
+                    currentID: existingSelectedID,
+                    summaries: result.0
+                )
                 guard let selectedID else {
                     self.selectedRideMapHistoryID = nil
                     self.rideMapHistoryPoints = []
@@ -426,6 +429,31 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
             }
         }
+    }
+
+    @MainActor
+    static func preferredHistorySelection(
+        requestedID: String?,
+        currentID: String?,
+        summaries: [MobileRideMapHistorySummaryDto]
+    ) -> String? {
+        preferredHistorySelection(
+            requestedID: requestedID,
+            currentID: currentID,
+            summaryIDs: summaries.map(\.rideId)
+        )
+    }
+
+    @MainActor
+    static func preferredHistorySelection(
+        requestedID: String?,
+        currentID: String?,
+        summaryIDs: [String]
+    ) -> String? {
+        if let requestedID {
+            return summaryIDs.first(where: { $0 == requestedID }) ?? summaryIDs.first
+        }
+        return summaryIDs.first(where: { $0 == currentID }) ?? summaryIDs.first
     }
 
     func loadMoreRideMapHistory() {
