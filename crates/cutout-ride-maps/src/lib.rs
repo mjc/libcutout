@@ -21,9 +21,10 @@ mod summary;
 pub use summary::{DistanceMillimetres, RidePointCount, RideSummary, distance_between_millimetres};
 mod recording;
 pub use recording::{
-    MAX_LIVE_ROUTE_POINTS, RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId,
-    RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
-    VehicleAssociation, VehicleIdentity, VehicleIdentityError,
+    MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideMapMetadata, RideMapPoint,
+    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideSegmentCount, RouteTelemetryState,
+    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
+    VehicleIdentityError,
 };
 
 #[cfg(test)]

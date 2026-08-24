@@ -4697,7 +4697,7 @@ impl MobileRideMapCoreInner {
         MobileRideMapCoreSummaryDto {
             point_count,
             distance_meters,
-            duration_milliseconds: self.recorder.duration_milliseconds(),
+            duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
         }
     }
 
@@ -4709,7 +4709,7 @@ impl MobileRideMapCoreInner {
                 .map_or_else(String::new, |id| id.value.clone()),
             state,
             summary: self.summary(),
-            segment_count: self.recorder.segment_count(),
+            segment_count: self.recorder.segment_count().as_u64(),
             associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
         }
     }
@@ -4722,7 +4722,8 @@ impl MobileRideMapCoreInner {
         let mut snapshot = self.snapshot(state);
         snapshot.summary.duration_milliseconds = self
             .recorder
-            .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds));
+            .duration_milliseconds_at(ride_maps::MonotonicMilliseconds::new(at_milliseconds))
+            .as_u64();
         snapshot
     }
 
@@ -5252,26 +5253,22 @@ impl MobileRideMapCore {
         }
 
         let start = after_cursor.map_or(state.recorder.first_point_sequence(), |cursor| {
-            cursor.saturating_add(1)
+            ride_maps::RidePointSequence::new(cursor.saturating_add(1))
         });
+        let first_point_sequence = state.recorder.first_point_sequence();
         let mut points: Vec<_> = state
             .recorder
             .points()
             .iter()
             .copied()
             .enumerate()
-            .map(|(offset, sample)| {
-                (
-                    state.recorder.first_point_sequence() + offset as u64,
-                    sample,
-                )
-            })
+            .map(|(offset, sample)| (first_point_sequence.saturating_add(offset as u64), sample))
             .filter(|(sequence, _)| *sequence >= start)
             .take(page_size as usize + 1)
             .map(|(sequence, sample)| {
                 MobileRideMapCoreInner::point_from_location(
                     mobile_ride_location_dto(sample.sample()),
-                    sequence,
+                    sequence.as_u64(),
                     sample.segment_id(),
                     sample.telemetry_state(),
                 )
