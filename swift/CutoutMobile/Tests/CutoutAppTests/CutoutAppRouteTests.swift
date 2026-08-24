@@ -164,6 +164,20 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapMarkerPolicyScalesForAccessibilityText() {
+        let coordinate = CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903)
+        let regular = RideMapCanvasView.markerOffsets(for: [coordinate, coordinate], dynamicTypeSize: .large)
+        let accessibility = RideMapCanvasView.markerOffsets(
+            for: [coordinate, coordinate],
+            dynamicTypeSize: .accessibility1
+        )
+
+        XCTAssertEqual(RideMapCanvasView.markerTitleLineLimit(for: .large), 1)
+        XCTAssertEqual(RideMapCanvasView.markerTitleLineLimit(for: .accessibility1), 2)
+        XCTAssertGreaterThan(abs(accessibility.start.width), abs(regular.start.width))
+    }
+
+    @MainActor
     func testRideMapOnlyUsesRecordedBoundsForTerminalStates() {
         XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .recording))
         XCTAssertFalse(RideMapLiveContentView.showsRecordedBounds(for: .paused))

@@ -25,27 +25,34 @@ struct RideMapCanvasView: View {
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var segmentPaths = [SegmentPath]()
     @State private var renderedKey: PathKey?
     @State private var fittedRouteID: String?
 
     static func markerOffsets(
-        for coordinates: [CLLocationCoordinate2D]
+        for coordinates: [CLLocationCoordinate2D],
+        dynamicTypeSize: DynamicTypeSize = .large
     ) -> (start: CGSize, end: CGSize) {
+        let scale: CGFloat = dynamicTypeSize.isAccessibilitySize ? 1.5 : 1
         guard let first = coordinates.first, let last = coordinates.last, coordinates.count > 1 else {
             guard coordinates.isEmpty == false else { return (.zero, .zero) }
             return (
-                CGSize(width: -36, height: -18),
-                CGSize(width: 36, height: 18)
+                CGSize(width: -36 * scale, height: -18 * scale),
+                CGSize(width: 36 * scale, height: 18 * scale)
             )
         }
         let distance = CLLocation(latitude: first.latitude, longitude: first.longitude)
             .distance(from: CLLocation(latitude: last.latitude, longitude: last.longitude))
         guard distance < 80 else { return (.zero, .zero) }
         return (
-            CGSize(width: -56, height: -24),
-            CGSize(width: 56, height: 24)
+            CGSize(width: -56 * scale, height: -24 * scale),
+            CGSize(width: 56 * scale, height: 24 * scale)
         )
+    }
+
+    static func markerTitleLineLimit(for dynamicTypeSize: DynamicTypeSize) -> Int {
+        dynamicTypeSize.isAccessibilitySize ? 2 : 1
     }
 
     static func region(for points: [MobileRideMapPointDto]) -> MKCoordinateRegion? {
@@ -75,7 +82,7 @@ struct RideMapCanvasView: View {
     var body: some View {
         let endpointOffsets = Self.markerOffsets(for: points.map {
             CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
-        })
+        }, dynamicTypeSize: dynamicTypeSize)
 
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
@@ -260,19 +267,21 @@ struct RideMapCanvasView: View {
 private struct RideMapRouteMarker: View {
     let title: String
     let color: Color
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(spacing: 3) {
             if title.isEmpty == false {
                 Text(title)
-                    .font(.caption2.weight(.black))
+                    .font((dynamicTypeSize.isAccessibilitySize ? Font.caption : Font.caption2).weight(.black))
                     .textCase(.uppercase)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(.black.opacity(0.78), in: .rect(cornerRadius: 5))
-                    .lineLimit(1)
+                    .lineLimit(RideMapCanvasView.markerTitleLineLimit(for: dynamicTypeSize))
                     .minimumScaleFactor(0.75)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             ZStack {
