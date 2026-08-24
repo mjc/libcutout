@@ -41,11 +41,16 @@ struct RideMapHistoryContentView: View {
     }
 
     private var vehicleOptions: [VehicleOption] {
-        Dictionary(uniqueKeysWithValues: rides
-            .flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
-            .map { ($0, VehicleOption(identity: $0, label: vehicleLabel(for: $0))) })
-            .values
-            .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+        Self.uniqueVehicleIdentities(
+            rides.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+        )
+        .map { VehicleOption(identity: $0, label: vehicleLabel(for: $0)) }
+        .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+    }
+
+    @MainActor
+    static func uniqueVehicleIdentities(_ identities: [String]) -> [String] {
+        Array(Set(identities)).sorted()
     }
 
     private func vehicleLabel(for identity: String) -> String {

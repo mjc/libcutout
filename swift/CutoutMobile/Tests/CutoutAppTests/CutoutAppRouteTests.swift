@@ -222,6 +222,18 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideHistoryVehicleOptionsDeduplicateRepeatedIdentitiesWithoutCollapsingNames() {
+        XCTAssertEqual(
+            RideMapHistoryContentView.uniqueVehicleIdentities([
+                "corebluetooth-a",
+                "corebluetooth-a",
+                "corebluetooth-b"
+            ]),
+            ["corebluetooth-a", "corebluetooth-b"]
+        )
+    }
+
+    @MainActor
     func testRideDetailShowsAverageSpeedWhenDistanceAndDurationExist() {
         XCTAssertEqual(
             RideMapHistoryDetailView.averageSpeedText(
