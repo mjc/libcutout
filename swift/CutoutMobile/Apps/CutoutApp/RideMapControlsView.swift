@@ -14,7 +14,7 @@ struct RideMapControlsView: View {
     var body: some View {
         switch state {
         case .recording:
-            HStack(spacing: 12) {
+            adaptiveControls {
                 Button(action: pause) {
                     Label(localizedAppText("ride_map.pause"), systemImage: "pause.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -25,7 +25,7 @@ struct RideMapControlsView: View {
                 stopButton(prominent: true)
             }
         case .paused:
-            HStack(spacing: 12) {
+            adaptiveControls {
                 Button(action: resume) {
                     Label(localizedAppText("ride_map.resume"), systemImage: "play.fill")
                         .frame(maxWidth: .infinity, minHeight: 48)
@@ -36,7 +36,7 @@ struct RideMapControlsView: View {
                 stopButton(prominent: false)
             }
         case .stopped:
-            HStack(spacing: 12) {
+            adaptiveControls {
                 Button(action: save) {
                     Label(localizedAppText("ride_map.save"), systemImage: "checkmark.circle.fill")
                 }
@@ -53,6 +53,20 @@ struct RideMapControlsView: View {
             }
         case .saved, .discarded, nil:
             startButton
+        }
+    }
+
+    @ViewBuilder
+    private func adaptiveControls<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                content()
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
         }
     }
 
