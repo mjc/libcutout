@@ -176,6 +176,9 @@ pub struct RideMapRecorder {
     segment_id: RideMapSegmentId,
     segment_started: bool,
     last_monotonic_milliseconds: u64,
+    paused_at_milliseconds: Option<u64>,
+    paused_duration_milliseconds: u64,
+    completed_duration_milliseconds: u64,
 }
 
 impl Default for RideMapRecorder {
@@ -201,6 +204,9 @@ impl RideMapRecorder {
             segment_id: RideMapSegmentId::new(0),
             segment_started: false,
             last_monotonic_milliseconds: 0,
+            paused_at_milliseconds: None,
+            paused_duration_milliseconds: 0,
+            completed_duration_milliseconds: 0,
         }
     }
 
@@ -277,6 +283,17 @@ impl RideMapRecorder {
             points.drain(..excess);
         }
         let first_point_sequence = summary.point_count().saturating_sub(points.len() as u64);
+        let last_monotonic_milliseconds = points.last().map_or(created_at_milliseconds, |point| {
+            point.sample().monotonic_milliseconds()
+        });
+        let completed_duration_milliseconds = if matches!(
+            state,
+            RideLifecycleState::Active | RideLifecycleState::Paused
+        ) {
+            0
+        } else {
+            last_monotonic_milliseconds.saturating_sub(created_at_milliseconds)
+        };
         Self {
             state: Some(state),
             created_at_milliseconds,
@@ -284,9 +301,11 @@ impl RideMapRecorder {
             associated_vehicle: metadata.associated_vehicle,
             associated_at_milliseconds: metadata.associated_at_milliseconds,
             last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
-            last_monotonic_milliseconds: points.last().map_or(created_at_milliseconds, |point| {
-                point.sample().monotonic_milliseconds()
-            }),
+            last_monotonic_milliseconds,
+            paused_at_milliseconds: (state == RideLifecycleState::Paused)
+                .then_some(last_monotonic_milliseconds),
+            paused_duration_milliseconds: 0,
+            completed_duration_milliseconds,
             segment_id: points
                 .last()
                 .map_or(RideMapSegmentId::new(0), |point| point.segment_id()),
@@ -360,8 +379,29 @@ impl RideMapRecorder {
     /// Returns elapsed recording time using the latest accepted monotonic sample.
     #[must_use]
     pub const fn duration_milliseconds(&self) -> u64 {
-        self.last_monotonic_milliseconds
+        self.duration_milliseconds_at(self.last_monotonic_milliseconds)
+    }
+
+    /// Returns active elapsed recording time at the supplied monotonic timestamp.
+    #[must_use]
+    pub const fn duration_milliseconds_at(&self, at_milliseconds: u64) -> u64 {
+        match self.state {
+            Some(RideLifecycleState::Active) => self.active_duration_at(at_milliseconds),
+            Some(RideLifecycleState::Paused) => {
+                let paused_at = match self.paused_at_milliseconds {
+                    Some(value) => value,
+                    None => at_milliseconds,
+                };
+                self.active_duration_at(paused_at)
+            }
+            _ => self.completed_duration_milliseconds,
+        }
+    }
+
+    const fn active_duration_at(&self, at_milliseconds: u64) -> u64 {
+        at_milliseconds
             .saturating_sub(self.created_at_milliseconds)
+            .saturating_sub(self.paused_duration_milliseconds)
     }
 
     /// Starts a new recording projection.
@@ -376,13 +416,12 @@ impl RideMapRecorder {
     ) -> Result<(), TransitionError> {
         if !matches!(
             self.state,
-            None
-                | Some(
-                    RideLifecycleState::Stopped
-                        | RideLifecycleState::Interrupted
-                        | RideLifecycleState::Saved
-                        | RideLifecycleState::Discarded,
-                )
+            None | Some(
+                RideLifecycleState::Stopped
+                    | RideLifecycleState::Interrupted
+                    | RideLifecycleState::Saved
+                    | RideLifecycleState::Discarded,
+            )
         ) {
             return Err(TransitionError::Invalid);
         }
@@ -398,6 +437,9 @@ impl RideMapRecorder {
         self.summary = RideSummary::from_stored(0, 0);
         self.segment_id = RideMapSegmentId::new(0);
         self.segment_started = true;
+        self.paused_at_milliseconds = None;
+        self.paused_duration_milliseconds = 0;
+        self.completed_duration_milliseconds = 0;
         Ok(())
     }
 
@@ -415,10 +457,39 @@ impl RideMapRecorder {
 
     /// Applies a previously validated lifecycle state.
     pub fn apply_transition(&mut self, state: RideLifecycleState) {
+        self.apply_transition_at(state, self.last_monotonic_milliseconds);
+    }
+
+    /// Applies a previously validated lifecycle state at a monotonic timestamp.
+    pub fn apply_transition_at(&mut self, state: RideLifecycleState, at_milliseconds: u64) {
+        let at_milliseconds = at_milliseconds
+            .max(self.created_at_milliseconds)
+            .max(self.last_monotonic_milliseconds);
+        match (self.state, state) {
+            (Some(RideLifecycleState::Active), RideLifecycleState::Paused) => {
+                self.paused_at_milliseconds = Some(at_milliseconds);
+            }
+            (Some(RideLifecycleState::Paused), RideLifecycleState::Active) => {
+                if let Some(paused_at) = self.paused_at_milliseconds.take() {
+                    self.paused_duration_milliseconds = self
+                        .paused_duration_milliseconds
+                        .saturating_add(at_milliseconds.saturating_sub(paused_at));
+                }
+            }
+            (
+                Some(RideLifecycleState::Active | RideLifecycleState::Paused),
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+            ) => {
+                self.completed_duration_milliseconds =
+                    self.duration_milliseconds_at(at_milliseconds);
+            }
+            _ => {}
+        }
         if self.state == Some(RideLifecycleState::Paused) && state == RideLifecycleState::Active {
             self.segment_id = self.segment_id.next();
             self.segment_started = true;
         }
+        self.last_monotonic_milliseconds = self.last_monotonic_milliseconds.max(at_milliseconds);
         self.state = Some(state);
     }
 
@@ -630,6 +701,22 @@ mod tests {
                 .map(|point| point.segment_id().value()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn duration_ticks_without_location_and_excludes_paused_time() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(1_000, None).expect("starts");
+        assert_eq!(recorder.duration_milliseconds_at(5_000), 4_000);
+
+        recorder.apply_transition_at(RideLifecycleState::Paused, 5_000);
+        assert_eq!(recorder.duration_milliseconds_at(10_000), 4_000);
+
+        recorder.apply_transition_at(RideLifecycleState::Active, 12_000);
+        assert_eq!(recorder.duration_milliseconds_at(15_000), 7_000);
+
+        recorder.apply_transition_at(RideLifecycleState::Stopped, 17_000);
+        assert_eq!(recorder.duration_milliseconds_at(20_000), 9_000);
     }
 
     #[test]

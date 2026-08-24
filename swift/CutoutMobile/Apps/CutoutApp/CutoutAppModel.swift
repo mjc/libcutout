@@ -265,17 +265,32 @@ final class CutoutAppModel {
 
     @discardableResult
     func pauseRideMap() -> Bool {
-        applyRideMapCommand { try core.rideMapStateHandle.pause() }
+        applyRideMapCommand {
+            try core.rideMapStateHandle.pause(atMs: currentMonotonicTime.rawValue)
+        }
     }
 
     @discardableResult
     func resumeRideMap() -> Bool {
-        applyRideMapCommand { try core.rideMapStateHandle.resume() }
+        applyRideMapCommand {
+            try core.rideMapStateHandle.resume(atMs: currentMonotonicTime.rawValue)
+        }
     }
 
     @discardableResult
     func stopRideMap() -> Bool {
-        applyRideMapCommand { try core.rideMapStateHandle.stop() }
+        applyRideMapCommand {
+            try core.rideMapStateHandle.stop(atMs: currentMonotonicTime.rawValue)
+        }
+    }
+
+    func refreshRideMapDuration() {
+        guard let snapshot = core.rideMapStateHandle.currentSnapshot(atMs: currentMonotonicTime.rawValue),
+              snapshot.state == .recording
+        else {
+            return
+        }
+        rideMapSnapshot = snapshot
     }
 
     @discardableResult

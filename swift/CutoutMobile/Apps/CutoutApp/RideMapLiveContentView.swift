@@ -19,6 +19,7 @@ struct RideMapLiveContentView: View {
     let stop: () -> Void
     let start: () -> Void
     let discard: () -> Void
+    let refreshDuration: () -> Void
 
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
@@ -109,6 +110,17 @@ struct RideMapLiveContentView: View {
         ) {
             Button(localizedAppText("ride_map.discard"), role: .destructive, action: discard)
             Button(localizedAppText("common.cancel"), role: .cancel) {}
+        }
+        .task(id: snapshot?.state) {
+            guard snapshot?.state == .recording else { return }
+            while Task.isCancelled == false {
+                refreshDuration()
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return
+                }
+            }
         }
     }
 

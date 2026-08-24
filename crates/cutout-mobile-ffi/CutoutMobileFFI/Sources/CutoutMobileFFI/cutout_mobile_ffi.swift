@@ -2428,6 +2428,11 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func currentSnapshot()  -> MobileRideMapCoreSnapshotDto?
 
     /**
+     * Returns the active ride snapshot evaluated at the supplied monotonic timestamp.
+     */
+    func currentSnapshotAt(atMs: UInt64)  -> MobileRideMapCoreSnapshotDto?
+
+    /**
      * Discards the stopped ride and removes it from the active projection.
      *
      * # Errors
@@ -2485,7 +2490,7 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
-    func pause() throws  -> MobileRideMapCoreSnapshotDto
+    func pause(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Returns a bounded page of active route points.
@@ -2506,7 +2511,7 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
-    func resume() throws  -> MobileRideMapCoreSnapshotDto
+    func resume(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Saves a stopped ride and removes it from the active projection.
@@ -2533,7 +2538,7 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Returns an error when no open ride exists or durable storage rejects the transition.
      */
-    func stop() throws  -> MobileRideMapCoreSnapshotDto
+    func stop(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
 }
 /**
@@ -2621,6 +2626,18 @@ open func currentSnapshot() -> MobileRideMapCoreSnapshotDto?  {
     return try!  FfiConverterOptionTypeMobileRideMapCoreSnapshotDto.lift(try! rustCall() {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_current_snapshot(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the active ride snapshot evaluated at the supplied monotonic timestamp.
+     */
+open func currentSnapshotAt(atMs: UInt64) -> MobileRideMapCoreSnapshotDto?  {
+    return try!  FfiConverterOptionTypeMobileRideMapCoreSnapshotDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_current_snapshot_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
     )
 })
 }
@@ -2729,10 +2746,11 @@ open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)thro
      *
      * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
-open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
+open func pause(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_pause(
-            self.uniffiCloneHandle(),$0
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
     )
 })
 }
@@ -2764,10 +2782,11 @@ open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideM
      *
      * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
-open func resume()throws  -> MobileRideMapCoreSnapshotDto  {
+open func resume(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_resume(
-            self.uniffiCloneHandle(),$0
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
     )
 })
 }
@@ -2811,10 +2830,11 @@ open func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?)throws  -> Mo
      *
      * Returns an error when no open ride exists or durable storage rejects the transition.
      */
-open func stop()throws  -> MobileRideMapCoreSnapshotDto  {
+open func stop(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_stop(
-            self.uniffiCloneHandle(),$0
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
     )
 })
 }
@@ -23510,6 +23530,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_current_snapshot() != 8028) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_current_snapshot_at() != 56599) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_discard() != 21602) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23528,13 +23551,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_vehicle_connection() != 22849) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 1853) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 56385) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 13770) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_save() != 34044) {
@@ -23543,7 +23566,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_start_gps_only() != 59010) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 50377) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 2338) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 60604) {

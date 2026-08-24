@@ -61,6 +61,10 @@ final class RideMapStateTests: XCTestCase {
         let state = MobileRideMapState()
 
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: "pev-1")
+        XCTAssertEqual(
+            state.currentSnapshot(atMs: 1_100)?.summary.durationMilliseconds,
+            1_000
+        )
         let decision = try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
@@ -95,7 +99,7 @@ final class RideMapStateTests: XCTestCase {
                 segmentStarted: false
             )
         )
-        let stopped = try state.stop()
+        let stopped = try state.stop(atMs: 2_000)
         XCTAssertEqual(stopped.state, .stopped)
         XCTAssertEqual(point.sequence, 0)
         XCTAssertEqual(stopped.summary.pointCount, 2)

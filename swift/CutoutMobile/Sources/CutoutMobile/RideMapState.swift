@@ -133,6 +133,10 @@ public final class MobileRideMapState: @unchecked Sendable {
         core.currentSnapshot().map(mapSnapshot)
     }
 
+    public func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
+        core.currentSnapshotAt(atMs: atMs).map(mapSnapshot)
+    }
+
     public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
         do {
             return mapSnapshot(try core.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
@@ -155,16 +159,16 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    public func pause() throws -> MobileRideMapSnapshotDto {
-        try transition { try core.pause() }
+    public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try transition { try core.pause(atMs: atMs) }
     }
 
-    public func resume() throws -> MobileRideMapSnapshotDto {
-        try transition { try core.resume() }
+    public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try transition { try core.resume(atMs: atMs) }
     }
 
-    public func stop() throws -> MobileRideMapSnapshotDto {
-        try transition { try core.stop() }
+    public func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try transition { try core.stop(atMs: atMs) }
     }
 
     public func save() throws -> MobileRideMapSnapshotDto {

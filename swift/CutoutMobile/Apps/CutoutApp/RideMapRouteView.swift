@@ -73,7 +73,8 @@ struct RideMapRouteView: View {
             save: { _ = model.saveRideMap() },
             stop: { _ = model.stopRideMap() },
             start: { _ = model.startGpsOnlyRide() },
-            discard: { _ = model.discardRideMap() }
+            discard: { _ = model.discardRideMap() },
+            refreshDuration: { model.refreshRideMapDuration() }
         )
     }
 
