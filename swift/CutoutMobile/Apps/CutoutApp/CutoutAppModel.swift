@@ -395,6 +395,9 @@ final class CutoutAppModel {
     func selectRideMapHistory(_ rideID: String) {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else { return }
         rideMapHistoryTask?.cancel()
+        if selectedRideMapHistoryID != rideID {
+            rideMapHistoryPoints = []
+        }
         selectedRideMapHistoryID = rideID
         rideMapError = nil
         rideMapHistoryPointsTruncated = false

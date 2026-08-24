@@ -14,6 +14,20 @@ struct RideMapHistoryDetailView: View {
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var isApplyingCamera = false
 
+    private var selectedRide: MobileRideMapHistorySummaryDto? {
+        guard let initialHistoryID else { return nil }
+        return rides.first(where: { $0.rideId == initialHistoryID })
+    }
+
+    private var selectionTaskID: [String] {
+        [initialHistoryID ?? ""] + rides.map(\.rideId)
+    }
+
+    private var isRouteLoading: Bool {
+        guard let selectedRide else { return initialHistoryID != nil }
+        return selectedRide.summary.pointCount > 0 && points.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
@@ -33,71 +47,44 @@ struct RideMapHistoryDetailView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
 
-            RideMapCanvasView(
-                points: points,
-                routeID: initialHistoryID ?? "history-detail",
-                showsEndMarker: true,
-                fitsRouteOnChange: true,
-                mapPosition: $mapPosition,
-                isApplyingCamera: $isApplyingCamera,
-                cameraDidChange: {}
-            )
+            ZStack {
+                RideMapCanvasView(
+                    points: points,
+                    routeID: initialHistoryID ?? "history-detail",
+                    showsEndMarker: true,
+                    fitsRouteOnChange: true,
+                    mapPosition: $mapPosition,
+                    isApplyingCamera: $isApplyingCamera,
+                    cameraDidChange: {}
+                )
+
+                if isRouteLoading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .tint(PevColors.yellow)
+                        Text(localizedAppText("ride_map.history_loading"))
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .accessibilityIdentifier("ride-map.detail-loading")
+                }
+            }
             .frame(minHeight: 360, maxHeight: .infinity)
 
-            if let ride = rides.first(where: { $0.rideId == initialHistoryID }) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        RideMapDetailMetric(
-                            value: distanceText(for: ride.summary),
-                            label: localizedAppText("ride_map.metric_distance")
-                        )
-                        RideMapDetailMetric(
-                            value: durationText(for: ride.summary),
-                            label: localizedAppText("ride_map.metric_elapsed")
-                        )
-                        RideMapDetailMetric(
-                            value: "—",
-                            label: localizedAppText("ride_map.metric_speed")
-                        )
-                    }
-                    RideMapRouteTruthView(points: points, decision: nil)
-                    if pointsTruncated {
-                        Text(localizedAppText("ride_map.history_truncated"))
-                            .font(.caption)
-                            .foregroundStyle(PevColors.muted)
-                            .accessibilityIdentifier("ride-map.detail-truncated")
-                    }
-
-                    HStack(spacing: 10) {
-                        Button("Show full ride") {
-                            mapPosition = .automatic
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(PevColors.primaryText)
-
-                        Button {
-                            // Export/share is owned by LIBCU-411; keep the affordance
-                            // visible without inventing a second export path here.
-                        } label: {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(PevColors.primaryText)
-                        .disabled(true)
-                    }
-                }
-                .font(.subheadline)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(PevColors.cardFill, in: UnevenRoundedRectangle(
-                    topLeadingRadius: 28,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: 28
-                ))
+            if let ride = selectedRide {
+                RideMapHistoryDetailSummary(
+                    distance: distanceText(for: ride.summary),
+                    duration: durationText(for: ride.summary),
+                    points: points,
+                    pointsTruncated: pointsTruncated,
+                    isLoading: isRouteLoading,
+                    mapPosition: $mapPosition
+                )
             }
         }
-        .task(id: rides.map(\.rideId)) { loadSelectionIfNeeded() }
+        .task(id: selectionTaskID) { loadSelectionIfNeeded() }
         .accessibilityIdentifier("ride-map.detail")
     }
 
@@ -121,6 +108,79 @@ struct RideMapHistoryDetailView: View {
     private func durationText(for summary: MobileRideMapSummaryDto) -> String {
         Duration.seconds(Double(summary.durationMilliseconds) / 1_000)
             .formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
+    }
+}
+
+private struct RideMapHistoryDetailSummary: View {
+    let distance: String
+    let duration: String
+    let points: [MobileRideMapPointDto]
+    let pointsTruncated: Bool
+    let isLoading: Bool
+    @Binding var mapPosition: MapCameraPosition
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if isLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .tint(PevColors.yellow)
+                    Text(localizedAppText("ride_map.history_loading"))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(PevColors.muted)
+                }
+                .accessibilityIdentifier("ride-map.detail-summary-loading")
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    RideMapDetailMetric(
+                        value: distance,
+                        label: localizedAppText("ride_map.metric_distance")
+                    )
+                    RideMapDetailMetric(
+                        value: duration,
+                        label: localizedAppText("ride_map.metric_elapsed")
+                    )
+                    RideMapDetailMetric(
+                        value: "—",
+                        label: localizedAppText("ride_map.metric_speed")
+                    )
+                }
+                RideMapRouteTruthView(points: points, decision: nil)
+                if pointsTruncated {
+                    Text(localizedAppText("ride_map.history_truncated"))
+                        .font(.caption)
+                        .foregroundStyle(PevColors.muted)
+                        .accessibilityIdentifier("ride-map.detail-truncated")
+                }
+
+                HStack(spacing: 10) {
+                    Button("Show full ride") {
+                        mapPosition = .automatic
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(PevColors.primaryText)
+
+                    Button {
+                        // Export/share is owned by LIBCU-411; keep the affordance
+                        // visible without inventing a second export path here.
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(PevColors.primaryText)
+                    .disabled(true)
+                }
+            }
+        }
+        .font(.subheadline)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(PevColors.cardFill, in: UnevenRoundedRectangle(
+            topLeadingRadius: 28,
+            bottomLeadingRadius: 0,
+            bottomTrailingRadius: 0,
+            topTrailingRadius: 28
+        ))
     }
 }
 

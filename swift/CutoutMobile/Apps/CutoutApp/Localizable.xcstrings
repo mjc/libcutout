@@ -745,6 +745,10 @@
       "comment" : "History route warning when the bounded UI point preview is incomplete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }
     },
+    "ride_map.history_loading" : {
+      "comment" : "Historical ride detail state while the selected route is being loaded.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading ride…" } } }
+    },
     "ride_map.history_load_more" : {
       "comment" : "History pagination control that loads the next durable page.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Load more rides" } } }
