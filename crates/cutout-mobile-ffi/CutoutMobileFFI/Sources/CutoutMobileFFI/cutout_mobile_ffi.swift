@@ -2437,6 +2437,15 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func discard() throws  -> MobileRideMapCoreSnapshotDto
 
     /**
+     * Ensures a live map ride exists for a connected vehicle and associates it.
+     *
+     * A fresh connection starts a new live ride when no open ride exists. An already-open
+     * GPS-only ride is associated with this vehicle, preserving the route recorded before the
+     * Bluetooth connection was available.
+     */
+    func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
      * Admits one Core Location sample into the active recording.
      *
      * # Errors
@@ -2627,6 +2636,23 @@ open func discard()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_discard(
             self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Ensures a live map ride exists for a connected vehicle and associates it.
+     *
+     * A fresh connection starts a new live ride when no open ride exists. An already-open
+     * GPS-only ride is associated with this vehicle, preserving the route recorded before the
+     * Bluetooth connection was available.
+     */
+open func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_ensure_recording_for_vehicle(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterUInt64.lower(atMs),$0
     )
 })
 }
@@ -23485,6 +23511,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_discard() != 21602) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ensure_recording_for_vehicle() != 43853) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 25961) {
