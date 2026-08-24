@@ -722,6 +722,11 @@ public final class CutoutSessionCore: NSObject {
         setStationarySetting("set_begode_led_mode", command: .setBegodeLedMode(mode))
     }
 
+    @discardableResult
+    public func resetTripMeter() -> SettingCommandResult {
+        setStationarySetting("reset_trip_meter", command: .resetTripMeter)
+    }
+
     private func setStationarySetting(
         _ name: String,
         command: DeviceCommand

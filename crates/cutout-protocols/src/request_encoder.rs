@@ -88,6 +88,7 @@ impl AeroControlEncoder {
             DeviceCommand::SetPedalMode(PedalMode::Hard) => b"SETh".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Medium) => b"SETm".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Soft) => b"SETs".as_slice(),
+            DeviceCommand::ResetTripMeter => b"CLEARMETER".as_slice(),
             _ => return None,
         };
         Some(EncodedControl {
@@ -298,6 +299,7 @@ impl VescRequestEncoder {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -370,6 +372,7 @@ impl VescCanTarget {
             | CommandKind::RequestBatteryInfo
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
+            | CommandKind::ResetTripMeter
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -429,6 +432,16 @@ mod tests {
             None
         );
         assert_eq!(AeroControlEncoder::encode(DeviceCommand::SoundHorn), None);
+    }
+
+    #[test]
+    fn aero_control_encoder_resets_the_trip_meter_with_the_documented_command() {
+        let reset = AeroControlEncoder::encode(DeviceCommand::ResetTripMeter)
+            .expect("trip reset is a supported Aero settings write");
+
+        assert_eq!(reset.command, CommandKind::ResetTripMeter);
+        assert_eq!(reset.payload.as_slice(), b"CLEARMETER");
+        assert_eq!(reset.mode, WriteMode::WithoutResponse);
     }
 
     #[test]

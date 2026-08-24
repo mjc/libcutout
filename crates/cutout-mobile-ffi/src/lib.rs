@@ -2015,6 +2015,9 @@ pub enum MobileCommandDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the NOSFET Aero trip meter; stationary-only.
+    ResetTripMeter,
+
     /// Set the device lights.
     SetLights(MobileLightStateDto),
 
@@ -2263,6 +2266,9 @@ pub struct MobileEucSettingsCapabilitiesDto {
 
     /// Separate taillight write support.
     pub taillight: MobileSettingWriteSupportDto,
+
+    /// NOSFET Aero trip-meter reset support.
+    pub reset_trip_meter: MobileSettingWriteSupportDto,
 }
 
 impl MobileEucSettingsCapabilitiesDto {
@@ -2277,6 +2283,7 @@ impl MobileEucSettingsCapabilitiesDto {
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
+            reset_trip_meter: MobileSettingWriteSupportDto::Supported,
         }
     }
 
@@ -2291,6 +2298,7 @@ impl MobileEucSettingsCapabilitiesDto {
             acceleration_assist: MobileSettingWriteSupportDto::Unsupported,
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
+            reset_trip_meter: MobileSettingWriteSupportDto::Unsupported,
         }
     }
 }
@@ -10793,6 +10801,7 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             MobileCommandDto::RequestSettings => Self::RequestSettings,
+            MobileCommandDto::ResetTripMeter => Self::ResetTripMeter,
             MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
             MobileCommandDto::SetPedalMode(mode) => {
                 Self::SetPedalMode(CorePedalMode::from(mode).into())
@@ -10838,6 +10847,7 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestDiagnostics => Some(MobileCommandDto::RequestDiagnostics),
         CommandKindDto::RequestFaultHistory => Some(MobileCommandDto::RequestFaultHistory),
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
+        CommandKindDto::ResetTripMeter => Some(MobileCommandDto::ResetTripMeter),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
         CommandKindDto::SetAccelerationAssist
         | CommandKindDto::SetLights

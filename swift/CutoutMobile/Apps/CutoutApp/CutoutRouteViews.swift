@@ -120,6 +120,7 @@ struct EucPackRouteView: View {
 
 struct EucTuneRouteView: View {
     let model: CutoutAppModel
+    @State private var showingTripResetConfirmation = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
@@ -175,6 +176,28 @@ struct EucTuneRouteView: View {
                         if model.begodeLedModeControlAvailable {
                             Text(localizedAppText("settings.begode_led_mode.footer"))
                         }
+                    }
+                }
+
+                if model.resetTripMeterControlAvailable {
+                    Section {
+                        Button(localizedAppText("settings.trip_meter.reset"), role: .destructive) {
+                            showingTripResetConfirmation = true
+                        }
+                        .disabled(model.phase != .live)
+                        .accessibilityIdentifier("settings.control.resetTripMeter")
+                    } footer: {
+                        Text(localizedAppText("settings.trip_meter.footer"))
+                    }
+                    .confirmationDialog(
+                        localizedAppText("settings.trip_meter.confirm_title"),
+                        isPresented: $showingTripResetConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button(localizedAppText("settings.trip_meter.reset"), role: .destructive) {
+                            _ = model.resetTripMeter()
+                        }
+                        Button(localizedAppText("app.command.cancel"), role: .cancel) {}
                     }
                 }
 

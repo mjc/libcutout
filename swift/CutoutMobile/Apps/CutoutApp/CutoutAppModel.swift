@@ -223,6 +223,10 @@ final class CutoutAppModel {
         core.settingsCapabilities?.begodeLedMode == .supported
     }
 
+    var resetTripMeterControlAvailable: Bool {
+        core.settingsCapabilities?.resetTripMeter == .supported
+    }
+
     var accelerationAssistState: AccelerationAssistSettingState? {
         core.accelerationAssistState
     }
@@ -1403,6 +1407,11 @@ final class CutoutAppModel {
     func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult {
         guard begodeLedModeControlAvailable else { return .failed }
         return core.setBegodeLedMode(mode)
+    }
+
+    func resetTripMeter() -> SettingCommandResult {
+        guard resetTripMeterControlAvailable else { return .failed }
+        return core.resetTripMeter()
     }
 
     private func applyHeadlightSubmission(

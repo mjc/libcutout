@@ -3070,6 +3070,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         pedalModes.append(mode)
         return .accepted
     }
+    func resetTripMeter() -> SettingCommandResult { .accepted }
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
         rollAngles.append(angle)
         return .accepted

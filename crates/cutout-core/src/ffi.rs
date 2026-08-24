@@ -224,6 +224,9 @@ pub enum CommandKindDto {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
     /// Set the device lights.
     SetLights,
 
@@ -268,6 +271,7 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestDiagnostics => Self::RequestDiagnostics,
             CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
+            CommandKind::ResetTripMeter => Self::ResetTripMeter,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
             CommandKind::SetRollAngle => Self::SetRollAngle,
@@ -306,6 +310,9 @@ pub enum DeviceCommandDto {
 
     /// Request current settings without changing device state.
     RequestSettings,
+
+    /// Reset the device trip meter.
+    ResetTripMeter,
 
     /// Set the device lights.
     SetLights(LightStateDto),
@@ -354,6 +361,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestDiagnostics => Self::RequestDiagnostics,
             DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
+            DeviceCommand::ResetTripMeter => Self::ResetTripMeter,
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
@@ -383,6 +391,7 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestDiagnostics => Self::RequestDiagnostics,
             DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
+            DeviceCommandDto::ResetTripMeter => Self::ResetTripMeter,
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),

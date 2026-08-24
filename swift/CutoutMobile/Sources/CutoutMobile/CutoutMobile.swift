@@ -1573,6 +1573,7 @@ public struct BegodeLedMode: Equatable, Hashable, Sendable {
 }
 
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
+    public let resetTripMeter: SettingWriteSupport
     public let pedalMode: SettingWriteSupport
     public let rollAngle: SettingWriteSupport
     public let speedAlarmMode: SettingWriteSupport
@@ -1584,6 +1585,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let begodeLedMode: SettingWriteSupport
 
     public init(
+        resetTripMeter: SettingWriteSupport = .unsupported,
         pedalMode: SettingWriteSupport,
         rollAngle: SettingWriteSupport = .unsupported,
         speedAlarmMode: SettingWriteSupport = .unsupported,
@@ -1594,6 +1596,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         begodeBeeperVolume: SettingWriteSupport = .unsupported,
         begodeLedMode: SettingWriteSupport = .unsupported
     ) {
+        self.resetTripMeter = resetTripMeter
         self.pedalMode = pedalMode
         self.rollAngle = rollAngle
         self.speedAlarmMode = speedAlarmMode
@@ -1606,6 +1609,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
+        self.resetTripMeter = SettingWriteSupport(dto.resetTripMeter)
         self.pedalMode = SettingWriteSupport(dto.pedalMode)
         self.rollAngle = SettingWriteSupport(dto.rollAngle)
         self.speedAlarmMode = SettingWriteSupport(dto.speedAlarmMode)
@@ -1638,6 +1642,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestDiagnostics
     case requestFaultHistory
     case requestSettings
+    case resetTripMeter
     case setLights(LightState)
     case setPedalMode(PedalMode.Kind)
     case setRollAngle(RollAngle.Kind)
@@ -1665,6 +1670,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestFaultHistory
         case .requestSettings:
             self = .requestSettings
+        case .resetTripMeter:
+            self = .resetTripMeter
         case .setLights(let state):
             self = .setLights(LightState(state))
         case .setPedalMode(let mode):
@@ -1704,6 +1711,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestFaultHistory
         case .requestSettings:
             .requestSettings
+        case .resetTripMeter:
+            .resetTripMeter
         case .setLights(let state):
             .setLights(state.dto)
         case .setPedalMode(let mode):

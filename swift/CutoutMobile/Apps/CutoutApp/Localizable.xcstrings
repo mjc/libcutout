@@ -13,6 +13,10 @@
       "comment" : "App command menu that contains navigation destinations.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Navigate" } } }
     },
+    "app.command.cancel" : {
+      "comment" : "Generic cancel action label.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } }
+    },
     "navigation.section.tune" : {
       "comment" : "Title for the EUC settings and tuning section.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tune" } } }
@@ -68,6 +72,18 @@
     "settings.lights.title" : {
       "comment" : "Section title for EUC light settings.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Lights" } } }
+    },
+    "settings.trip_meter.reset" : {
+      "comment" : "Button that sends the documented NOSFET Aero trip-meter reset command.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset trip meter" } } }
+    },
+    "settings.trip_meter.footer" : {
+      "comment" : "Safety guidance for resetting the NOSFET Aero trip meter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Available on NOSFET Aero while parked or below 500 mm/s." } } }
+    },
+    "settings.trip_meter.confirm_title" : {
+      "comment" : "Confirmation title shown before resetting the NOSFET Aero trip meter.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset the trip meter?" } } }
     },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",

@@ -43,6 +43,7 @@ protocol CutoutSessionDriving: AnyObject {
     func setBegodeMaxSpeed(_ speed: BegodeMaxSpeed) -> SettingCommandResult
     func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
     func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
+    func resetTripMeter() -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

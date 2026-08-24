@@ -1255,7 +1255,10 @@ impl SupportsBenignControls for NosfetAeroModel {
 
 impl SupportsSettingsWrites for NosfetAeroModel {
     const WRITE_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([CommandKind::SetPedalMode]);
+        Capabilities::from_supported_commands([
+            CommandKind::SetPedalMode,
+            CommandKind::ResetTripMeter,
+        ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
 
@@ -1452,6 +1455,7 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestFirmwareInfo
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
+        | CommandKind::ResetTripMeter
         | CommandKind::SetAccelerationAssist
         | CommandKind::SetLights
         | CommandKind::SetPedalMode
@@ -4211,6 +4215,36 @@ mod tests {
             item,
             SessionOutput::Transport(TransportAction::Write { bytes, .. })
                 if bytes.as_slice() == b"SETh"
+        )));
+    }
+
+    #[test]
+    fn aero_stationary_settings_session_writes_documented_trip_reset() {
+        let mut session = StationarySettingsWriteSession::<NosfetAeroModel, false>::default();
+        let mut output = Vec::new();
+        session.arm(
+            StationarySettingsPolicy {
+                model: NosfetAeroModel::MODEL,
+                arm_duration: Duration::from_milliseconds(100),
+            }
+            .arm(RideOperatingState::Parked, ms(10))
+            .expect("parked state arms settings writes"),
+        );
+        session.handle(
+            SessionInput::Tick {
+                monotonic_ms: ms(10),
+            },
+            &mut output,
+        );
+        session.handle(
+            SessionInput::Command(DeviceCommand::ResetTripMeter),
+            &mut output,
+        );
+
+        assert!(output.iter().any(|item| matches!(
+            item,
+            SessionOutput::Transport(TransportAction::Write { bytes, .. })
+                if bytes.as_slice() == b"CLEARMETER"
         )));
     }
 

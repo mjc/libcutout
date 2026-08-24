@@ -281,6 +281,9 @@ pub enum DeviceCommand {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter; this command is stationary-only.
+    ResetTripMeter,
+
     /// Set the device lights.
     SetLights(LightState),
 
@@ -330,6 +333,7 @@ impl DeviceCommand {
             Self::RequestDiagnostics => CommandKind::RequestDiagnostics,
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
+            Self::ResetTripMeter => CommandKind::ResetTripMeter,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SetRollAngle(_) => CommandKind::SetRollAngle,
@@ -469,6 +473,9 @@ pub enum CommandKind {
     /// Request current settings without changing device state.
     RequestSettings,
 
+    /// Reset the device trip meter.
+    ResetTripMeter,
+
     /// Set the device lights.
     SetLights,
 
@@ -516,7 +523,8 @@ impl CommandKind {
             | Self::RequestFaultHistory
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
-            Self::SetPedalMode
+            Self::ResetTripMeter
+            | Self::SetPedalMode
             | Self::SetRollAngle
             | Self::SetSpeedAlarmMode
             | Self::SetBegodeMaxSpeed
@@ -8565,6 +8573,7 @@ mod tests {
                     | DeviceCommand::RequestDiagnostics
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
+                    | DeviceCommand::ResetTripMeter
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SetRollAngle(_)
