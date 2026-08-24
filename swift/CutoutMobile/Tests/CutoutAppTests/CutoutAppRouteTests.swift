@@ -176,6 +176,18 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(CutoutAppRoute.rideMap.availableNavigationTabs.isEmpty)
     }
 
+    func testConnectedMapRouteKeepsTheRideNavigationTabsVisible() {
+        let eucTabs = CutoutAppRoute.rideMap
+            .availableNavigationTabs(for: .electricUnicycle)
+        XCTAssertEqual(eucTabs.map(\.id), [.ride, .pack, .map])
+        XCTAssertEqual(eucTabs.filter(\.isSelected).map(\.id), [.map])
+
+        let vescTabs = CutoutAppRoute.rideMapDetail(rideID: "ride-1")
+            .availableNavigationTabs(for: .vescOnewheel)
+        XCTAssertEqual(vescTabs.map(\.id), [.ride, .debug, .map])
+        XCTAssertTrue(CutoutAppRoute.rideMap.availableNavigationTabs(for: nil).isEmpty)
+    }
+
     func testNestedPackRouteSurvivesSharedTabRendering() {
         let nestedPackRoute = CutoutAppRoute.eucPack(.bmsCellDetail(7))
         let tabs = nestedPackRoute.availableNavigationTabs

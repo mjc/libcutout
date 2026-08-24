@@ -113,7 +113,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private func destinationContent(for destination: CutoutAppRoute) -> some View {
-        if destination == .capture || destination == .rideMap || isRideMapDetail(destination) {
+        if destination == .capture || (isRideMapDestination(destination) && model.selectedConnectionRoute == nil) {
             ZStack {
                 PevColors.pageBackground
                     .ignoresSafeArea()
@@ -148,6 +148,10 @@ struct ContentView: View {
     private func isRideMapDetail(_ destination: CutoutAppRoute) -> Bool {
         if case .rideMapDetail = destination { return true }
         return false
+    }
+
+    private func isRideMapDestination(_ destination: CutoutAppRoute) -> Bool {
+        destination == .rideMap || isRideMapDetail(destination)
     }
 
     private func connectedDestination(for destination: CutoutAppRoute) -> some View {
@@ -219,7 +223,7 @@ struct ContentView: View {
     }
 
     private var availableTabs: [PevScreenTab] {
-        route.availableNavigationTabs
+        route.availableNavigationTabs(for: model.selectedConnectionRoute)
     }
 
     private var tabSelection: Binding<PevScreenTabID> {
@@ -239,8 +243,8 @@ struct ContentView: View {
 
     private var tabAccent: Color {
         #if os(iOS)
-        switch route {
-        case .vescRide, .vescDebug:
+        switch model.selectedConnectionRoute {
+        case .vescOnewheel:
             Color(uiColor: UIColor { traits in
                 traits.userInterfaceStyle == .dark
                     ? .systemPurple

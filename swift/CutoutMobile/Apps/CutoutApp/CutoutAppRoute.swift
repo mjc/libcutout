@@ -116,6 +116,31 @@ enum CutoutAppRoute: Hashable {
         navigationTabs.filter { $0.isEnabled && $0.destinationTarget != nil }
     }
 
+    func availableNavigationTabs(for connectionRoute: DevicePickerConnectionRoute?) -> [PevScreenTab] {
+        switch self {
+        case .rideMap, .rideMapDetail:
+            guard let connectionRoute else { return [] }
+            let tabs = switch connectionRoute {
+            case .electricUnicycle:
+                PevRideTabs.eucRideTabs()
+            case .vescOnewheel:
+                PevRideTabs.vescRideTabs()
+            }
+            return tabs.map { tab in
+                PevScreenTab(
+                    id: tab.id,
+                    title: tab.title,
+                    isSelected: tab.id == .map,
+                    destinationScreenID: tab.destinationScreenID,
+                    destinationTarget: tab.destinationTarget,
+                    disabledReason: tab.disabledReason
+                )
+            }.filter { $0.isEnabled && $0.destinationTarget != nil }
+        default:
+            return availableNavigationTabs
+        }
+    }
+
     func destination(for tab: PevScreenTab) -> CutoutAppRoute? {
         guard let target = tab.destinationTarget else { return nil }
         if tab.id == .pack, case .eucPack = self { return self }
