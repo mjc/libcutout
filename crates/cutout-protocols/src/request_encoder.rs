@@ -142,6 +142,31 @@ impl AeroControlEncoder {
             mode: WriteMode::WithoutResponse,
         })
     }
+
+    /// Encodes the paired `LeaperKim` high-beam frames.
+    #[must_use]
+    pub fn encode_settings_sequence(command: DeviceCommand) -> Option<EncodedControlSequence> {
+        let state = match command {
+            DeviceCommand::SetAeroHighBeam(LightState::On) => 1,
+            DeviceCommand::SetAeroHighBeam(LightState::Off) => 0,
+            _ => return None,
+        };
+        let mut steps = ArrayVec::new();
+        for (magic, payload_head) in [
+            (*b"LkAp", [0x01, 0x80, 0x80]),
+            (*b"LdAp", [0x01, 0x00, 0x80]),
+        ] {
+            steps.push(EncodedControlStep {
+                delay_ms: 0,
+                payload: aero_binary_frame(magic, &payload_head, state)?,
+                mode: WriteMode::WithoutResponse,
+            });
+        }
+        Some(EncodedControlSequence {
+            command: command.kind(),
+            steps,
+        })
+    }
 }
 
 fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<WritePayload> {
@@ -362,6 +387,7 @@ impl VescRequestEncoder {
             | CommandKind::SetAeroPwmPercent
             | CommandKind::SetAeroAlarmSpeed
             | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -439,6 +465,7 @@ impl VescCanTarget {
             | CommandKind::SetAeroPwmPercent
             | CommandKind::SetAeroAlarmSpeed
             | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -557,6 +584,37 @@ mod tests {
             assert_eq!(&encoded.payload.as_slice()[5..body_len], body);
             let expected_crc = crc32(&encoded.payload.as_slice()[..body_len]).to_be_bytes();
             assert_eq!(&encoded.payload.as_slice()[body_len..], &expected_crc);
+        }
+    }
+
+    #[test]
+    fn aero_high_beam_encodes_the_documented_lkap_and_ldap_pair() {
+        let sequence = AeroControlEncoder::encode_settings_sequence(
+            DeviceCommand::SetAeroHighBeam(LightState::On),
+        )
+        .expect("Aero high beam sequence encodes");
+
+        assert_eq!(sequence.command, CommandKind::SetAeroHighBeam);
+        assert_eq!(sequence.steps.len(), 2);
+        assert_eq!(sequence.steps[0].delay_ms, 0);
+        assert_eq!(sequence.steps[1].delay_ms, 0);
+        assert_eq!(&sequence.steps[0].payload.as_slice()[..5], b"LkAp\r");
+        assert_eq!(&sequence.steps[1].payload.as_slice()[..5], b"LdAp\r");
+        assert_eq!(
+            &sequence.steps[0].payload.as_slice()[5..9],
+            &[1, 0x80, 0x80, 1]
+        );
+        assert_eq!(
+            &sequence.steps[1].payload.as_slice()[5..9],
+            &[1, 0, 0x80, 1]
+        );
+
+        for step in sequence.steps {
+            let frame_len = usize::from(step.payload.as_slice()[4]);
+            let crc_offset = frame_len - 4;
+            let expected_crc = crc32(&step.payload.as_slice()[..crc_offset]).to_be_bytes();
+            assert_eq!(&step.payload.as_slice()[crc_offset..], &expected_crc);
+            assert_eq!(step.mode, WriteMode::WithoutResponse);
         }
     }
 

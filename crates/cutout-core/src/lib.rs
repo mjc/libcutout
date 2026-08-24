@@ -296,6 +296,9 @@ pub enum DeviceCommand {
     /// Set the NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
     SetAeroAngleAdjustment(AeroAngleAdjustment),
 
+    /// Set the NOSFET/Veteran high beam through its paired binary frames.
+    SetAeroHighBeam(LightState),
+
     /// Set the device lights.
     SetLights(LightState),
 
@@ -350,6 +353,7 @@ impl DeviceCommand {
             Self::SetAeroPwmPercent(_) => CommandKind::SetAeroPwmPercent,
             Self::SetAeroAlarmSpeed(_) => CommandKind::SetAeroAlarmSpeed,
             Self::SetAeroAngleAdjustment(_) => CommandKind::SetAeroAngleAdjustment,
+            Self::SetAeroHighBeam(_) => CommandKind::SetAeroHighBeam,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SetRollAngle(_) => CommandKind::SetRollAngle,
@@ -569,6 +573,9 @@ pub enum CommandKind {
     /// Set the NOSFET/Veteran pedal-zero angle adjustment.
     SetAeroAngleAdjustment,
 
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam,
+
     /// Set the device lights.
     SetLights,
 
@@ -621,6 +628,7 @@ impl CommandKind {
             | Self::SetAeroPwmPercent
             | Self::SetAeroAlarmSpeed
             | Self::SetAeroAngleAdjustment
+            | Self::SetAeroHighBeam
             | Self::SetPedalMode
             | Self::SetRollAngle
             | Self::SetSpeedAlarmMode
@@ -8675,6 +8683,7 @@ mod tests {
                     | DeviceCommand::SetAeroPwmPercent(_)
                     | DeviceCommand::SetAeroAlarmSpeed(_)
                     | DeviceCommand::SetAeroAngleAdjustment(_)
+                    | DeviceCommand::SetAeroHighBeam(_)
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SetRollAngle(_)

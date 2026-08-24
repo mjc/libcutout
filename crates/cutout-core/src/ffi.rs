@@ -239,6 +239,9 @@ pub enum CommandKindDto {
     /// Set the NOSFET/Veteran pedal-zero angle adjustment.
     SetAeroAngleAdjustment,
 
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam,
+
     /// Set the device lights.
     SetLights,
 
@@ -288,6 +291,7 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::SetAeroPwmPercent => Self::SetAeroPwmPercent,
             CommandKind::SetAeroAlarmSpeed => Self::SetAeroAlarmSpeed,
             CommandKind::SetAeroAngleAdjustment => Self::SetAeroAngleAdjustment,
+            CommandKind::SetAeroHighBeam => Self::SetAeroHighBeam,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
             CommandKind::SetRollAngle => Self::SetRollAngle,
@@ -342,6 +346,9 @@ pub enum DeviceCommandDto {
     /// Set the NOSFET/Veteran pedal-zero angle adjustment.
     SetAeroAngleAdjustment(AeroAngleAdjustment),
 
+    /// Set the NOSFET/Veteran high beam.
+    SetAeroHighBeam(LightState),
+
     /// Set the device lights.
     SetLights(LightStateDto),
 
@@ -394,6 +401,7 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
             DeviceCommand::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
             DeviceCommand::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
+            DeviceCommand::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state),
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
@@ -428,6 +436,7 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
             DeviceCommandDto::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
             DeviceCommandDto::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
+            DeviceCommandDto::SetAeroHighBeam(state) => Self::SetAeroHighBeam(state),
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),

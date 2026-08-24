@@ -41,6 +41,7 @@ impl AeroProbe {
             | CommandKind::SetAeroPwmPercent
             | CommandKind::SetAeroAlarmSpeed
             | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -102,6 +103,7 @@ impl FalconProbe {
             | CommandKind::SetAeroPwmPercent
             | CommandKind::SetAeroAlarmSpeed
             | CommandKind::SetAeroAngleAdjustment
+            | CommandKind::SetAeroHighBeam
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
