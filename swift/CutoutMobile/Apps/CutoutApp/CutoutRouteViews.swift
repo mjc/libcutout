@@ -264,6 +264,14 @@ struct EucTuneRouteView: View {
                 if let capabilities = model.settingsCapabilities {
                     Section {
                         EucSettingCapabilityRow(
+                            id: "aeroHighBeam",
+                            title: localizedAppText("settings.high_beam.title"),
+                            support: capabilities.aeroHighBeam,
+                            state: model.aeroHighBeamState?.kind,
+                            confirmedAt: model.aeroHighBeamState?.confirmedAt,
+                            now: model.currentMonotonicTime
+                        )
+                        EucSettingCapabilityRow(
                             id: "pedalMode",
                             title: localizedAppText("settings.pedal_mode.title"),
                             support: capabilities.pedalMode,

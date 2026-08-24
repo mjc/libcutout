@@ -328,6 +328,9 @@ public final class CutoutSessionCore: NSObject {
     public var headlightState: LightSettingState? {
         onBleQueue { liveOwner?.headlightState }
     }
+    public var aeroHighBeamState: LightSettingState? {
+        onBleQueue { liveOwner?.aeroHighBeamState }
+    }
     public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
         onBleQueue { liveOwner?.aeroTiltbackSpeedState }
     }
@@ -702,6 +705,11 @@ public final class CutoutSessionCore: NSObject {
                 return .failed
             }
         }
+    }
+
+    @discardableResult
+    public func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
+        setStationarySetting("set_aero_high_beam", command: .setAeroHighBeam(state))
     }
 
     @discardableResult

@@ -2960,6 +2960,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     var protocolIdentityCandidate: DevicePickerDiscoveryCandidate?
     var electricUnicycleModel: ElectricUnicycleModel?
     var headlightState: LightSettingState?
+    var aeroHighBeamState: LightSettingState?
     var aeroTiltbackSpeedState: AeroSpeedSettingState?
     var aeroPwmPercentState: AeroPwmSettingState?
     var aeroAlarmSpeedState: AeroSpeedSettingState?
@@ -2987,6 +2988,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var disconnectCount = 0
     private(set) var resetRideMapLocationAdmissionCount = 0
     private(set) var headlightStates = [LightState]()
+    private(set) var aeroHighBeamStates = [LightState]()
     private(set) var pedalModes = [PedalMode.Kind]()
     private(set) var rollAngles = [RollAngle.Kind]()
     private(set) var speedAlarmModes = [SpeedAlarmMode.Kind]()
@@ -2995,6 +2997,8 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var begodeLedModes = [BegodeLedMode]()
     var headlightWriteSucceeds = false
     var headlightCommandResult: SettingCommandResult = .accepted
+    var aeroHighBeamWriteSucceeds = false
+    var aeroHighBeamCommandResult: SettingCommandResult = .accepted
     var pedalModeCommandResult: SettingCommandResult = .accepted
     var nowValue: UInt64 = 0
 
@@ -3066,6 +3070,17 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     func setLights(_ state: LightState) -> SettingCommandResult {
         guard headlightWriteSucceeds else { return .failed }
         guard headlightCommandResult == .accepted else { return headlightCommandResult }
+        headlightStates.append(state)
+        return .accepted
+    }
+    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult {
+        let succeeds = aeroHighBeamWriteSucceeds || headlightWriteSucceeds
+        guard succeeds else { return .failed }
+        let commandResult = aeroHighBeamWriteSucceeds
+            ? aeroHighBeamCommandResult
+            : headlightCommandResult
+        guard commandResult == .accepted else { return commandResult }
+        aeroHighBeamStates.append(state)
         headlightStates.append(state)
         return .accepted
     }

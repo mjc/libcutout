@@ -203,6 +203,10 @@ final class CutoutAppModel {
         core.aeroAngleAdjustmentState
     }
 
+    var aeroHighBeamState: LightSettingState? {
+        core.aeroHighBeamState
+    }
+
     var pedalModeState: PedalModeSettingState? {
         core.pedalModeState
     }
@@ -257,6 +261,10 @@ final class CutoutAppModel {
 
     var aeroAngleAdjustmentControlAvailable: Bool {
         core.settingsCapabilities?.aeroAngleAdjustment == .supported
+    }
+
+    var aeroHighBeamControlAvailable: Bool {
+        core.settingsCapabilities?.aeroHighBeam == .supported
     }
 
     var accelerationAssistState: AccelerationAssistSettingState? {
@@ -447,7 +455,15 @@ final class CutoutAppModel {
     private static let headlightConfirmationTimeout = MonotonicMilliseconds(2_000)
 
     private var headlightWriteSupport: SettingWriteSupport? {
-        core.settingsCapabilities?.headlight
+        core.electricUnicycleModel == .aero
+            ? core.settingsCapabilities?.aeroHighBeam
+            : core.settingsCapabilities?.headlight
+    }
+
+    private var coreHeadlightState: LightSettingState? {
+        core.electricUnicycleModel == .aero
+            ? (core.aeroHighBeamState ?? core.headlightState)
+            : core.headlightState
     }
 
     convenience init() {
@@ -1402,7 +1418,10 @@ final class CutoutAppModel {
             )
             return .failed
         }
-        return applyHeadlightSubmission(core.setLights(state), for: state)
+        let result = core.electricUnicycleModel == .aero
+            ? core.setAeroHighBeam(state)
+            : core.setLights(state)
+        return applyHeadlightSubmission(result, for: state)
     }
 
     @discardableResult
@@ -1495,7 +1514,7 @@ final class CutoutAppModel {
     }
 
     private func recordHeadlightCommand(_ state: LightState, sentAt: MonotonicMilliseconds) {
-        guard core.headlightState == nil else { return }
+        guard coreHeadlightState == nil else { return }
         fallbackHeadlightState = LightSettingState(
             kind: .pending,
             current: displayedHeadlightState,
@@ -1505,7 +1524,7 @@ final class CutoutAppModel {
         )
     }
     private var effectiveHeadlightState: LightSettingState? {
-        core.headlightState ?? fallbackHeadlightState
+        coreHeadlightState ?? fallbackHeadlightState
     }
 
     private var displayedHeadlightState: LightState? {
@@ -1517,7 +1536,8 @@ final class CutoutAppModel {
     }
 
     private func updateFallbackHeadlightState(from readback: SettingsReadback?) {
-        guard core.headlightState == nil else { return }
+        guard core.electricUnicycleModel != .aero else { return }
+        guard coreHeadlightState == nil else { return }
         guard let reportedState = readback?.eucGarageSettings.lightState else {
             if fallbackHeadlightState?.kind == .pending {
                 fallbackHeadlightState = LightSettingState(

@@ -1693,6 +1693,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let speedAlarmMode: SettingWriteSupport
     public let accelerationAssist: SettingWriteSupport
     public let headlight: SettingWriteSupport
+    public let aeroHighBeam: SettingWriteSupport
     public let taillight: SettingWriteSupport
     public let begodeMaxSpeed: SettingWriteSupport
     public let begodeBeeperVolume: SettingWriteSupport
@@ -1709,6 +1710,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         speedAlarmMode: SettingWriteSupport = .unsupported,
         accelerationAssist: SettingWriteSupport,
         headlight: SettingWriteSupport,
+        aeroHighBeam: SettingWriteSupport = .unsupported,
         taillight: SettingWriteSupport,
         begodeMaxSpeed: SettingWriteSupport = .unsupported,
         begodeBeeperVolume: SettingWriteSupport = .unsupported,
@@ -1724,6 +1726,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.speedAlarmMode = speedAlarmMode
         self.accelerationAssist = accelerationAssist
         self.headlight = headlight
+        self.aeroHighBeam = aeroHighBeam
         self.taillight = taillight
         self.begodeMaxSpeed = begodeMaxSpeed
         self.begodeBeeperVolume = begodeBeeperVolume
@@ -1741,6 +1744,7 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.speedAlarmMode = SettingWriteSupport(dto.speedAlarmMode)
         self.accelerationAssist = SettingWriteSupport(dto.accelerationAssist)
         self.headlight = SettingWriteSupport(dto.headlight)
+        self.aeroHighBeam = SettingWriteSupport(dto.aeroHighBeam)
         self.taillight = SettingWriteSupport(dto.taillight)
         self.begodeMaxSpeed = SettingWriteSupport(dto.begodeMaxSpeed)
         self.begodeBeeperVolume = SettingWriteSupport(dto.begodeBeeperVolume)
@@ -1777,6 +1781,7 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case setAeroPwmPercent(AeroPwmPercent)
     case setAeroAlarmSpeed(AeroSpeedSetting)
     case setAeroAngleAdjustment(AeroAngleAdjustment)
+    case setAeroHighBeam(LightState)
     case setLights(LightState)
     case setPedalMode(PedalMode.Kind)
     case setRollAngle(RollAngle.Kind)
@@ -1814,6 +1819,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .setAeroAlarmSpeed(AeroSpeedSetting(speed))
         case .setAeroAngleAdjustment(let angle):
             self = .setAeroAngleAdjustment(AeroAngleAdjustment(angle))
+        case .setAeroHighBeam(let state):
+            self = .setAeroHighBeam(LightState(state))
         case .setLights(let state):
             self = .setLights(LightState(state))
         case .setPedalMode(let mode):
@@ -1863,6 +1870,8 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .setAeroAlarmSpeed(speed.dto)
         case .setAeroAngleAdjustment(let angle):
             .setAeroAngleAdjustment(angle.dto)
+        case .setAeroHighBeam(let state):
+            .setAeroHighBeam(state.dto)
         case .setLights(let state):
             .setLights(state.dto)
         case .setPedalMode(let mode):
@@ -5553,6 +5562,15 @@ public final class ElectricUnicycleSession: @unchecked Sendable {
         }
     }
 
+    public var aeroHighBeamState: LightSettingState {
+        switch inner {
+        case .aero(let session):
+            LightSettingState(session.aeroHighBeamState())
+        case .falcon(let session):
+            LightSettingState(session.aeroHighBeamState())
+        }
+    }
+
     public var aeroTiltbackSpeedState: AeroSpeedSettingState {
         switch inner {
         case .aero(let session):
@@ -6137,6 +6155,15 @@ public enum CoreBluetoothSession: Sendable {
         }
     }
 
+    public var aeroHighBeamState: LightSettingState? {
+        switch self {
+        case .electricUnicycle(let session):
+            session.aeroHighBeamState
+        case .vescOnewheel:
+            nil
+        }
+    }
+
     public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
         switch self {
         case .electricUnicycle(let session):
@@ -6370,6 +6397,10 @@ public final class CoreBluetoothSessionRunner: @unchecked Sendable {
 
     public var headlightState: LightSettingState? {
         session.headlightState
+    }
+
+    public var aeroHighBeamState: LightSettingState? {
+        session.aeroHighBeamState
     }
 
     public var aeroTiltbackSpeedState: AeroSpeedSettingState? {
@@ -6622,6 +6653,10 @@ public final class CoreBluetoothLiveSessionOwner: @unchecked Sendable {
 
     public var headlightState: LightSettingState? {
         runner.headlightState
+    }
+
+    public var aeroHighBeamState: LightSettingState? {
+        runner.aeroHighBeamState
     }
 
     public var aeroTiltbackSpeedState: AeroSpeedSettingState? {

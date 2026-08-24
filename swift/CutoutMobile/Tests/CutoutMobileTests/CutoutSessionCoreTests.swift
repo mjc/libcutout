@@ -1311,6 +1311,8 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let falcon = try ElectricUnicycleSession(model: .falcon)
 
         XCTAssertEqual(aero.settingsCapabilities.headlight, .supported)
+        XCTAssertEqual(aero.settingsCapabilities.aeroHighBeam, .supported)
+        XCTAssertEqual(falcon.settingsCapabilities.aeroHighBeam, .unsupported)
         XCTAssertEqual(falcon.settingsCapabilities.headlight, .supported)
         XCTAssertEqual(aero.settingsCapabilities.taillight, .unsupported)
         XCTAssertEqual(aero.settingsCapabilities.pedalMode, .supported)
@@ -1361,12 +1363,19 @@ func testVescRideSnapshotProjectsBatteryLevelAndUpdateTime() throws {
         let session = try ElectricUnicycleSession(model: .aero)
 
         XCTAssertEqual(session.headlightState.kind, .unknown)
+        XCTAssertEqual(session.aeroHighBeamState.kind, .unknown)
 
         _ = try session.perform(.setLights(.on), at: MonotonicMilliseconds(10))
 
         XCTAssertEqual(session.headlightState.kind, .pending)
         XCTAssertEqual(session.headlightState.requested, .on)
         XCTAssertEqual(session.headlightState.submittedAt, MonotonicMilliseconds(10))
+
+        XCTAssertThrowsError(
+            try session.perform(.setAeroHighBeam(.on), at: MonotonicMilliseconds(10))
+        )
+        XCTAssertEqual(session.aeroHighBeamState.kind, .refused)
+        XCTAssertEqual(session.aeroHighBeamState.requested, .on)
     }
 
     func testElectricUnicycleSessionExposesAeroSettingStates() throws {

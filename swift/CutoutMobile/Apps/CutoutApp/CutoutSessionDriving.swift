@@ -21,6 +21,7 @@ protocol CutoutSessionDriving: AnyObject {
     var electricUnicycleModel: ElectricUnicycleModel? { get }
     var settingsCapabilities: EucSettingsCapabilities? { get }
     var headlightState: LightSettingState? { get }
+    var aeroHighBeamState: LightSettingState? { get }
     var aeroTiltbackSpeedState: AeroSpeedSettingState? { get }
     var aeroPwmPercentState: AeroPwmSettingState? { get }
     var aeroAlarmSpeedState: AeroSpeedSettingState? { get }
@@ -41,6 +42,7 @@ protocol CutoutSessionDriving: AnyObject {
     func flushCapture() async -> Bool
     func disconnectAndScan()
     func setLights(_ state: LightState) -> SettingCommandResult
+    func setAeroHighBeam(_ state: LightState) -> SettingCommandResult
     func setPedalMode(_ mode: PedalMode.Kind) -> SettingCommandResult
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult
     func setSpeedAlarmMode(_ mode: SpeedAlarmMode.Kind) -> SettingCommandResult
