@@ -3045,6 +3045,10 @@ pub enum MobileRideLocationAdmissionDto {
     Duplicate,
     /// Sample was older than the latest durable sample.
     OutOfOrder,
+    /// Sample accuracy exceeded the Rust admission threshold.
+    AccuracyTooLow,
+    /// Sample implied an unrealistic travel speed.
+    UnrealisticJump,
 }
 
 impl From<ride_maps::LocationAdmission> for MobileRideLocationAdmissionDto {
@@ -3053,8 +3057,204 @@ impl From<ride_maps::LocationAdmission> for MobileRideLocationAdmissionDto {
             ride_maps::LocationAdmission::Accepted => Self::Accepted,
             ride_maps::LocationAdmission::Duplicate => Self::Duplicate,
             ride_maps::LocationAdmission::OutOfOrder => Self::OutOfOrder,
+            ride_maps::LocationAdmission::AccuracyTooLow => Self::AccuracyTooLow,
+            ride_maps::LocationAdmission::UnrealisticJump => Self::UnrealisticJump,
         }
     }
+}
+
+/// Error returned by the Rust-owned live map recording core.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
+pub enum MobileRideMapCoreErrorDto {
+    /// A live ride is already open.
+    #[error("a ride is already recording")]
+    AlreadyRecording,
+    /// No live ride is open.
+    #[error("no active ride")]
+    NoActiveRide,
+    /// The requested lifecycle event is not valid for the current state.
+    #[error("invalid ride transition")]
+    InvalidTransition,
+    /// The supplied location values are invalid.
+    #[error("invalid location")]
+    InvalidLocation,
+    /// The canonical database rejected the operation.
+    #[error("ride map storage failure: {0}")]
+    Storage(String),
+}
+
+/// Telemetry provenance projected onto a live route point.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapCoreTelemetryStateDto {
+    /// No vehicle telemetry has been associated with the recording.
+    GpsOnly,
+    /// A vehicle is associated, but no fresh telemetry sample is available.
+    AssociatedNoTelemetry,
+    /// A fresh vehicle telemetry sample is available.
+    AssociatedFresh,
+    /// The associated vehicle telemetry has gone stale.
+    AssociatedStale,
+}
+
+/// Result of observing a confirmed vehicle telemetry timestamp.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapTelemetryObservationDto {
+    /// The timestamp became the newest telemetry evidence.
+    Observed,
+    /// The timestamp was already observed.
+    AlreadyObserved,
+    /// The ride has no confirmed association.
+    NotAssociated,
+    /// The timestamp moved backwards.
+    TimestampOutOfOrder,
+    /// The ride is not open for telemetry.
+    RideNotOpen,
+}
+
+impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservationDto {
+    fn from(observation: ride_maps::TelemetryObservation) -> Self {
+        match observation {
+            ride_maps::TelemetryObservation::Observed => Self::Observed,
+            ride_maps::TelemetryObservation::AlreadyObserved => Self::AlreadyObserved,
+            ride_maps::TelemetryObservation::NotAssociated => Self::NotAssociated,
+            ride_maps::TelemetryObservation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
+            _ => Self::RideNotOpen,
+        }
+    }
+}
+
+impl From<ride_maps::RouteTelemetryState> for MobileRideMapCoreTelemetryStateDto {
+    fn from(state: ride_maps::RouteTelemetryState) -> Self {
+        match state {
+            ride_maps::RouteTelemetryState::GpsOnly => Self::GpsOnly,
+            ride_maps::RouteTelemetryState::AssociatedNoTelemetry => Self::AssociatedNoTelemetry,
+            ride_maps::RouteTelemetryState::AssociatedFresh => Self::AssociatedFresh,
+            _ => Self::AssociatedStale,
+        }
+    }
+}
+
+/// One Rust-owned live route point.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCorePointDto {
+    /// Stable sequence within the ride.
+    pub sequence: u64,
+    /// Segment sequence within the ride.
+    pub segment_id: u64,
+    /// Latitude in WGS84 decimal degrees.
+    pub latitude_degrees: f64,
+    /// Longitude in WGS84 decimal degrees.
+    pub longitude_degrees: f64,
+    /// Wall-clock Unix timestamp in milliseconds.
+    pub wall_clock_unix_ms: u64,
+    /// Monotonic timestamp in milliseconds.
+    pub monotonic_ms: u64,
+    /// Horizontal accuracy in metres.
+    pub horizontal_accuracy_meters: f64,
+    /// Vehicle telemetry provenance.
+    pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
+}
+
+/// One bounded page of Rust-owned live route points.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCorePointBatchDto {
+    /// Points after the supplied cursor.
+    pub points: Vec<MobileRideMapCorePointDto>,
+    /// Cursor for the next page, when more points remain.
+    pub next_cursor: Option<u64>,
+    /// Whether another page is available.
+    pub has_more: bool,
+}
+
+/// Summary projected for an active map recording.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCoreSummaryDto {
+    /// Number of accepted route points.
+    pub point_count: u64,
+    /// Accumulated route distance in metres.
+    pub distance_meters: f64,
+    /// Elapsed recording duration in milliseconds.
+    pub duration_milliseconds: u64,
+}
+
+/// Snapshot of the Rust-owned live map recording.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapCoreSnapshotDto {
+    /// Rust-created ride identifier.
+    pub ride_id: String,
+    /// Current durable lifecycle state.
+    pub state: MobileRideLifecycleStateDto,
+    /// Current route summary.
+    pub summary: MobileRideMapCoreSummaryDto,
+    /// Associated vehicle platform identifier, when available.
+    pub associated_vehicle: Option<String>,
+}
+
+/// Result of associating a connected vehicle with the active recording.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapCoreAssociationDto {
+    /// The connection was associated with the recording.
+    Associated,
+    /// The same connection was already associated.
+    AlreadyAssociated,
+    /// The recording has no candidate vehicle to reconcile.
+    CandidateMissing,
+    /// The connected identity conflicts with the candidate identity.
+    IdentityMismatch,
+    /// The connection timestamp moved backwards.
+    TimestampOutOfOrder,
+    /// No recording is currently open.
+    RideNotOpen,
+}
+
+impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
+    fn from(association: ride_maps::VehicleAssociation) -> Self {
+        match association {
+            ride_maps::VehicleAssociation::Associated => Self::Associated,
+            ride_maps::VehicleAssociation::AlreadyAssociated => Self::AlreadyAssociated,
+            ride_maps::VehicleAssociation::CandidateMissing => Self::CandidateMissing,
+            ride_maps::VehicleAssociation::IdentityMismatch => Self::IdentityMismatch,
+            ride_maps::VehicleAssociation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
+            _ => Self::RideNotOpen,
+        }
+    }
+}
+
+/// Result of admitting one Core Location sample into the live recording.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapDecisionReasonDto {
+    /// The ride is paused, stopped, or otherwise not recording.
+    RideNotRecording,
+    /// The sample repeats the latest accepted location.
+    DuplicateLocation,
+    /// The sample timestamp is not newer than the latest accepted sample.
+    TimestampOutOfOrder,
+    /// The reported horizontal accuracy exceeds the admission threshold.
+    AccuracyTooLow,
+    /// The sample implies an impossible travel speed.
+    UnrealisticJump,
+}
+
+/// Result of admitting one Core Location sample into the live recording.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapCoreDecisionDto {
+    /// The location was accepted into the canonical route.
+    Accepted {
+        /// The resulting route point.
+        point: MobileRideMapCorePointDto,
+        /// Whether this point starts a new route segment.
+        segment_started: bool,
+    },
+    /// The location was rejected as invalid input.
+    Rejected {
+        /// Stable admission reason.
+        reason: MobileRideMapDecisionReasonDto,
+    },
+    /// The location was ignored because the ride is not recording.
+    Ignored {
+        /// Stable admission reason.
+        reason: MobileRideMapDecisionReasonDto,
+    },
 }
 
 /// Durable ride summary projection.
@@ -3081,7 +3281,13 @@ pub struct MobileRideRecordDto {
     pub state: MobileRideLifecycleStateDto,
     pub created_at_milliseconds: u64,
     pub updated_at_milliseconds: u64,
+    pub duration_milliseconds: u64,
     pub summary: MobileRideSummaryDto,
+    pub segment_count: u64,
+    pub candidate_vehicle: Option<String>,
+    pub associated_vehicle: Option<String>,
+    pub associated_at_milliseconds: Option<u64>,
+    pub last_telemetry_at_milliseconds: Option<u64>,
 }
 
 /// One bounded page of ride-history projections.
@@ -3101,7 +3307,9 @@ pub struct MobileRoutePointCursorDto {
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRoutePointDto {
     pub sequence: u64,
+    pub segment_id: u64,
     pub location: MobileRideLocationDto,
+    pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
 }
 
 /// One bounded page of canonical route points.
@@ -3353,7 +3561,10 @@ pub enum MobileRideDatabaseError {
     StorageFailure,
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "matches and consumes the storage error enum"
+)]
 fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDatabaseError {
     match error {
         persistence::StorageError::InvalidPath => MobileRideDatabaseError::InvalidPath,
@@ -3544,18 +3755,15 @@ pub fn open_ride_database(
 }
 
 #[uniffi::export]
-#[allow(
-    clippy::missing_errors_doc,
-    clippy::must_use_candidate,
-    clippy::needless_pass_by_value
-)]
 impl RideDatabaseHandle {
     /// Returns the stable identity of the process-wide database service.
+    #[must_use]
     pub fn service_id(&self) -> String {
         self.inner.service_id().to_string()
     }
 
     /// Returns the bounded startup recovery state captured while acquiring this service.
+    #[must_use]
     pub fn bootstrap_snapshot(&self) -> MobileBootstrapSnapshotDto {
         MobileBootstrapSnapshotDto {
             recovered_rides: self
@@ -3571,6 +3779,10 @@ impl RideDatabaseHandle {
     }
 
     /// Lists one bounded page of ride history in stable newest-first order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the cursor, limit, worker, or stored page is invalid.
     pub fn list_rides(
         &self,
         cursor: Option<MobileRideCursorDto>,
@@ -3600,10 +3812,16 @@ impl RideDatabaseHandle {
                             state: ride.state().into(),
                             created_at_milliseconds: ride.created_at_milliseconds(),
                             updated_at_milliseconds: ride.updated_at_milliseconds(),
+                            duration_milliseconds: ride.duration_milliseconds(),
                             summary: MobileRideSummaryDto {
                                 point_count: summary.point_count(),
                                 distance_millimetres: summary.distance_millimetres(),
                             },
+                            segment_count: ride.segment_count(),
+                            candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
+                            associated_vehicle: ride.associated_vehicle().map(str::to_owned),
+                            associated_at_milliseconds: ride.associated_at_milliseconds(),
+                            last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds(),
                         }
                     })
                     .collect(),
@@ -3618,6 +3836,11 @@ impl RideDatabaseHandle {
     }
 
     /// Loads one bounded page of canonical route points in stable sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn route_points(
         &self,
         ride_id: MobileRideIdDto,
@@ -3635,7 +3858,9 @@ impl RideDatabaseHandle {
                     .iter()
                     .map(|point| MobileRoutePointDto {
                         sequence: point.sequence(),
+                        segment_id: point.segment_id(),
                         location: mobile_ride_location_dto(point.sample()),
+                        telemetry_state: point.telemetry_state().into(),
                     })
                     .collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileRoutePointCursorDto {
@@ -3646,6 +3871,10 @@ impl RideDatabaseHandle {
     }
 
     /// Returns runtime `SQLite` capabilities.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot report capabilities.
     pub fn capabilities(&self) -> Result<MobileSqliteCapabilitiesDto, MobileRideDatabaseError> {
         self.inner
             .capabilities()
@@ -3667,6 +3896,10 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a stable database error when the path, encoding, replay, or limits are invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary path strings"
+    )]
     pub fn preflight_pevcap(
         &self,
         path: String,
@@ -3679,6 +3912,14 @@ impl RideDatabaseHandle {
     }
 
     /// Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the preview changed or the import cannot be committed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns the confirmation DTO"
+    )]
     pub fn confirm_pevcap_import(
         &self,
         preview: MobilePevcapImportPreviewDto,
@@ -3698,6 +3939,14 @@ impl RideDatabaseHandle {
     }
 
     /// Creates an indexed trail definition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the trail cannot be stored or indexed.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn create_trail(&self, name: String) -> Result<MobileTrailIdDto, MobileRideDatabaseError> {
         self.inner
             .create_trail(&name)
@@ -3708,6 +3957,11 @@ impl RideDatabaseHandle {
     }
 
     /// Appends and spatially indexes one trail segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the trail or spatial index rejects the segment.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn append_trail_segment(
         &self,
         trail_id: MobileTrailIdDto,
@@ -3724,6 +3978,10 @@ impl RideDatabaseHandle {
     }
 
     /// Queries indexed trail segments intersecting a WGS84 bounding box.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
     pub fn trail_segments_in_bounds(
         &self,
         bounds: MobileGeoBoundsDto,
@@ -3766,6 +4024,14 @@ impl RideDatabaseHandle {
     }
 
     /// Stores and spatially indexes one charging/food map point.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the point or spatial index rejects the value.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn create_map_point(
         &self,
         name: String,
@@ -3779,6 +4045,10 @@ impl RideDatabaseHandle {
     }
 
     /// Queries indexed map points intersecting a WGS84 bounding box.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
     pub fn map_points_in_bounds(
         &self,
         bounds: MobileGeoBoundsDto,
@@ -3810,6 +4080,10 @@ impl RideDatabaseHandle {
     }
 
     /// Rebuilds all derived spatial indexes from their canonical tables.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the spatial schema or worker is unavailable.
     pub fn rebuild_spatial_indexes(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .rebuild_spatial_indexes()
@@ -3817,6 +4091,14 @@ impl RideDatabaseHandle {
     }
 
     /// Writes a consistent `SQLite` backup to a caller-selected file.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the destination or worker cannot complete the backup.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary path strings"
+    )]
     pub fn backup_to(&self, path: String) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .backup_to(Path::new(&path))
@@ -3824,6 +4106,14 @@ impl RideDatabaseHandle {
     }
 
     /// Exports one ride summary as a versioned JSON document.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride, destination, or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary DTOs and paths"
+    )]
     pub fn export_ride_json(
         &self,
         id: MobileRideIdDto,
@@ -3836,6 +4126,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads the selected platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot read the selection.
     pub fn selected_device(&self) -> Result<Option<String>, MobileRideDatabaseError> {
         self.inner
             .selected_device()
@@ -3843,6 +4137,14 @@ impl RideDatabaseHandle {
     }
 
     /// Stores the selected platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identifier or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn save_selected_device(
         &self,
         platform_identifier: String,
@@ -3854,6 +4156,10 @@ impl RideDatabaseHandle {
     }
 
     /// Clears the selected platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot clear the selection.
     pub fn clear_selected_device(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clear_selected_device()
@@ -3861,6 +4167,14 @@ impl RideDatabaseHandle {
     }
 
     /// Loads a learned voltage-sag model for one device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identity or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn voltage_sag_model(
         &self,
         device_identity: String,
@@ -3879,6 +4193,14 @@ impl RideDatabaseHandle {
     }
 
     /// Stores a learned voltage-sag model for one device identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the model, identity, or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn save_voltage_sag_model(
         &self,
         device_identity: String,
@@ -3900,6 +4222,14 @@ impl RideDatabaseHandle {
     }
 
     /// Removes a learned voltage-sag model.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the identity or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary strings"
+    )]
     pub fn remove_voltage_sag_model(
         &self,
         device_identity: String,
@@ -3910,6 +4240,10 @@ impl RideDatabaseHandle {
     }
 
     /// Loads opaque Rust-owned ride-session marker bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot read the marker.
     pub fn ride_session_marker(&self) -> Result<Option<Vec<u8>>, MobileRideDatabaseError> {
         self.inner
             .ride_session_marker()
@@ -3917,6 +4251,14 @@ impl RideDatabaseHandle {
     }
 
     /// Stores opaque Rust-owned ride-session marker bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the marker or worker is invalid.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns opaque boundary bytes"
+    )]
     pub fn save_ride_session_marker(&self, marker: Vec<u8>) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .save_ride_session_marker(&marker)
@@ -3924,6 +4266,10 @@ impl RideDatabaseHandle {
     }
 
     /// Clears opaque Rust-owned ride-session marker bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot clear the marker.
     pub fn clear_ride_session_marker(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clear_ride_session_marker()
@@ -3931,6 +4277,10 @@ impl RideDatabaseHandle {
     }
 
     /// Creates a draft ride and returns its Rust-created identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot create the ride.
     pub fn create_ride(
         &self,
         source: MobileRideSourceDto,
@@ -3944,7 +4294,41 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    /// Persists Rust-owned map association and telemetry metadata for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the metadata or worker rejects the update.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "UniFFI owns boundary DTOs and strings"
+    )]
+    pub fn update_ride_map_metadata(
+        &self,
+        id: MobileRideIdDto,
+        candidate_vehicle: Option<String>,
+        associated_vehicle: Option<String>,
+        associated_at_milliseconds: Option<u64>,
+        last_telemetry_at_milliseconds: Option<u64>,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        self.inner
+            .update_ride_map_metadata(
+                id,
+                candidate_vehicle.as_deref(),
+                associated_vehicle.as_deref(),
+                associated_at_milliseconds,
+                last_telemetry_at_milliseconds,
+            )
+            .map_err(map_ride_database_error)
+    }
+
     /// Applies a lifecycle event to a Rust-created ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the transition or worker rejects the event.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn transition(
         &self,
         id: MobileRideIdDto,
@@ -3958,20 +4342,96 @@ impl RideDatabaseHandle {
     }
 
     /// Appends a location sample and reports duplicate/out-of-order admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the sample, ride, or worker rejects the append.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn append_location(
         &self,
         id: MobileRideIdDto,
         location: MobileRideLocationDto,
     ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
+        self.append_location_with_segment(id, location, 0)
+    }
+
+    /// Appends a location sample with its Rust-owned route segment identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the sample, ride, or worker rejects the append.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn append_location_with_segment(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+        segment_id: u64,
+    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(&id)?;
         let location = mobile_ride_location(location)?;
         self.inner
-            .append_location(id, location)
+            .append_location_with_segment(id, location, segment_id)
             .map(Into::into)
             .map_err(map_ride_database_error)
     }
 
+    /// Appends a location sample with segment and telemetry provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the sample, ride, or worker rejects the append.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn append_location_with_segment_and_telemetry(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+        segment_id: u64,
+        telemetry_state: MobileRideMapCoreTelemetryStateDto,
+    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        let location = mobile_ride_location(location)?;
+        self.inner
+            .append_location_with_segment_and_telemetry(
+                id,
+                location,
+                segment_id,
+                map_ride_telemetry_state(telemetry_state),
+            )
+            .map(Into::into)
+            .map_err(map_ride_database_error)
+    }
+
+    /// Enqueues a location sample for ordered background persistence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the durable append is rejected by the worker.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn enqueue_location_with_segment_and_telemetry(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+        segment_id: u64,
+        telemetry_state: MobileRideMapCoreTelemetryStateDto,
+    ) -> Result<(), MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        let location = mobile_ride_location(location)?;
+        self.inner
+            .enqueue_location_with_segment_and_telemetry(
+                id,
+                location,
+                segment_id,
+                map_ride_telemetry_state(telemetry_state),
+            )
+            .map_err(map_ride_database_error)
+    }
+
     /// Loads the durable summary projection for a ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride or worker cannot provide its summary.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn summary(
         &self,
         id: MobileRideIdDto,
@@ -3991,11 +4451,728 @@ impl RideDatabaseHandle {
     /// This is an explicit process-wide teardown operation. Callers must not use any
     /// `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
     /// `WorkerStopped` until the process opens a new database service.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot stop cleanly.
     pub fn shutdown(&self) -> Result<(), MobileRideDatabaseError> {
         self.inner
             .clone()
             .shutdown()
             .map_err(map_ride_database_error)
+    }
+}
+
+/// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
+/// delegate queues while the database handle keeps durable lifecycle and route writes in Rust.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRideMapCore {
+    inner: Mutex<MobileRideMapCoreInner>,
+}
+
+#[derive(Debug)]
+struct MobileRideMapCoreInner {
+    database: Option<Arc<RideDatabaseHandle>>,
+    active_ride_id: Option<MobileRideIdDto>,
+    recorder: ride_maps::RideMapRecorder,
+    initialization_error: Option<MobileRideMapCoreErrorDto>,
+}
+
+impl MobileRideMapCoreInner {
+    fn new(database: Option<Arc<RideDatabaseHandle>>) -> Self {
+        let mut state = Self {
+            database,
+            active_ride_id: None,
+            recorder: ride_maps::RideMapRecorder::new(),
+            initialization_error: None,
+        };
+        if let Err(error) = state.restore_active_ride() {
+            state.initialization_error = Some(error);
+        }
+        state
+    }
+
+    fn restore_active_ride(&mut self) -> Result<(), MobileRideMapCoreErrorDto> {
+        let Some(database) = self.database.as_ref() else {
+            return Ok(());
+        };
+        let page = database.list_rides(None, 50).map_err(map_core_error)?;
+        let Some(ride) = page.rides.into_iter().find(|ride| {
+            matches!(
+                ride.state,
+                MobileRideLifecycleStateDto::Active
+                    | MobileRideLifecycleStateDto::Paused
+                    | MobileRideLifecycleStateDto::Stopped
+                    | MobileRideLifecycleStateDto::Interrupted
+            )
+        }) else {
+            return Ok(());
+        };
+        self.active_ride_id = Some(ride.id.clone());
+        let mut cursor = None;
+        let mut samples = Vec::new();
+        loop {
+            let page = database
+                .route_points(ride.id.clone(), cursor, 500)
+                .map_err(map_core_error)?;
+            for point in page.points {
+                let sample = mobile_ride_location(point.location).map_err(map_core_error)?;
+                samples.push(ride_maps::RideMapPoint::new(
+                    sample,
+                    ride_maps::RideMapSegmentId::new(point.segment_id),
+                    map_ride_telemetry_state(point.telemetry_state),
+                ));
+            }
+            if samples.len() > ride_maps::MAX_LIVE_ROUTE_POINTS {
+                let excess = samples.len() - ride_maps::MAX_LIVE_ROUTE_POINTS;
+                samples.drain(..excess);
+            }
+            cursor = page.next_cursor;
+            if cursor.is_none() {
+                break;
+            }
+        }
+        self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary(
+            map_ride_lifecycle_state(ride.state),
+            ride.created_at_milliseconds,
+            ride_maps::RideMapMetadata {
+                candidate_vehicle: ride.candidate_vehicle,
+                associated_vehicle: ride.associated_vehicle,
+                associated_at_milliseconds: ride.associated_at_milliseconds,
+                last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds,
+            },
+            samples,
+            ride_maps::RideSummary::from_stored(
+                ride.summary.point_count,
+                ride.summary.distance_millimetres,
+            ),
+        );
+        Ok(())
+    }
+
+    fn point_from_location(
+        location: MobileRideLocationDto,
+        sequence: u64,
+        segment_id: ride_maps::RideMapSegmentId,
+        telemetry_state: ride_maps::RouteTelemetryState,
+    ) -> MobileRideMapCorePointDto {
+        MobileRideMapCorePointDto {
+            sequence,
+            segment_id: segment_id.value(),
+            latitude_degrees: location.latitude_degrees,
+            longitude_degrees: location.longitude_degrees,
+            wall_clock_unix_ms: location.wall_clock_unix_milliseconds,
+            monotonic_ms: location.monotonic_milliseconds,
+            horizontal_accuracy_meters: location
+                .horizontal_accuracy_millimetres
+                .map_or(0.0, |value| f64::from(value) / 1_000.0),
+            telemetry_state: telemetry_state.into(),
+        }
+    }
+
+    fn summary(&self, at_milliseconds: u64) -> MobileRideMapCoreSummaryDto {
+        let persisted = self.active_ride_id.as_ref().and_then(|id| {
+            self.database
+                .as_ref()
+                .and_then(|database| database.summary(id.clone()).ok())
+        });
+        let (point_count, distance_meters) = persisted.map_or_else(
+            || {
+                let summary = self.recorder.summary();
+                (
+                    summary.point_count(),
+                    millimetres_to_meters(summary.distance_millimetres()),
+                )
+            },
+            |summary| {
+                (
+                    summary.point_count,
+                    millimetres_to_meters(summary.distance_millimetres),
+                )
+            },
+        );
+        MobileRideMapCoreSummaryDto {
+            point_count,
+            distance_meters,
+            duration_milliseconds: self.recorder.duration_milliseconds_at(at_milliseconds),
+        }
+    }
+
+    fn snapshot(
+        &self,
+        state: MobileRideLifecycleStateDto,
+        at_milliseconds: u64,
+    ) -> MobileRideMapCoreSnapshotDto {
+        MobileRideMapCoreSnapshotDto {
+            ride_id: self
+                .active_ride_id
+                .as_ref()
+                .map_or_else(String::new, |id| id.value.clone()),
+            state,
+            summary: self.summary(at_milliseconds),
+            associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
+        }
+    }
+
+    fn start_gps_only(
+        &mut self,
+        at_ms: u64,
+        last_connected_vehicle: Option<String>,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        if self.recorder.state().is_some_and(|current| {
+            !matches!(
+                current,
+                ride_maps::RideLifecycleState::Stopped
+                    | ride_maps::RideLifecycleState::Interrupted
+                    | ride_maps::RideLifecycleState::Saved
+                    | ride_maps::RideLifecycleState::Discarded
+            )
+        }) {
+            return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
+        }
+        let id = if let Some(database) = self.database.as_ref() {
+            let id = database
+                .create_ride(MobileRideSourceDto::Live, at_ms)
+                .map_err(map_core_error)?;
+            database
+                .transition(id.clone(), MobileRideEventDto::Start)
+                .map_err(map_core_error)?;
+            database
+                .update_ride_map_metadata(
+                    id.clone(),
+                    last_connected_vehicle.clone(),
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(map_core_error)?;
+            id
+        } else {
+            MobileRideIdDto {
+                value: Uuid::new_v4().to_string(),
+            }
+        };
+        self.recorder
+            .start(at_ms, last_connected_vehicle)
+            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
+        self.active_ride_id = Some(id);
+        Ok(self.snapshot(MobileRideLifecycleStateDto::Active, at_ms))
+    }
+}
+
+fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
+    match state {
+        MobileRideLifecycleStateDto::Draft => ride_maps::RideLifecycleState::Draft,
+        MobileRideLifecycleStateDto::Active => ride_maps::RideLifecycleState::Active,
+        MobileRideLifecycleStateDto::Paused => ride_maps::RideLifecycleState::Paused,
+        MobileRideLifecycleStateDto::Stopped => ride_maps::RideLifecycleState::Stopped,
+        MobileRideLifecycleStateDto::Interrupted => ride_maps::RideLifecycleState::Interrupted,
+        MobileRideLifecycleStateDto::Discarded => ride_maps::RideLifecycleState::Discarded,
+        MobileRideLifecycleStateDto::Saved => ride_maps::RideLifecycleState::Saved,
+        MobileRideLifecycleStateDto::Imported => ride_maps::RideLifecycleState::Imported,
+    }
+}
+
+fn map_ride_telemetry_state(
+    state: MobileRideMapCoreTelemetryStateDto,
+) -> ride_maps::RouteTelemetryState {
+    match state {
+        MobileRideMapCoreTelemetryStateDto::GpsOnly => ride_maps::RouteTelemetryState::GpsOnly,
+        MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
+            ride_maps::RouteTelemetryState::AssociatedNoTelemetry
+        }
+        MobileRideMapCoreTelemetryStateDto::AssociatedFresh => {
+            ride_maps::RouteTelemetryState::AssociatedFresh
+        }
+        MobileRideMapCoreTelemetryStateDto::AssociatedStale => {
+            ride_maps::RouteTelemetryState::AssociatedStale
+        }
+    }
+}
+
+fn millimetres_to_meters(value: u64) -> f64 {
+    #[allow(clippy::cast_precision_loss)]
+    {
+        value as f64 / 1_000.0
+    }
+}
+
+#[allow(clippy::missing_errors_doc)]
+fn map_ride_map_error(error: &MobileRideDatabaseError) -> MobileRideMapCoreErrorDto {
+    MobileRideMapCoreErrorDto::Storage(error.to_string())
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn horizontal_accuracy_millimetres(value: f64) -> Result<u32, MobileRideMapCoreErrorDto> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(MobileRideMapCoreErrorDto::InvalidLocation);
+    }
+    let millimetres = value * 1_000.0;
+    if !millimetres.is_finite() || millimetres > f64::from(u32::MAX) {
+        return Err(MobileRideMapCoreErrorDto::InvalidLocation);
+    }
+    Ok(millimetres as u32)
+}
+
+fn empty_map_point_batch() -> MobileRideMapCorePointBatchDto {
+    MobileRideMapCorePointBatchDto {
+        points: Vec::new(),
+        next_cursor: None,
+        has_more: false,
+    }
+}
+
+#[uniffi::export]
+impl MobileRideMapCore {
+    /// Creates a Rust-owned map state without durable storage, for deterministic UI tests.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(MobileRideMapCoreInner::new(None)),
+        })
+    }
+
+    /// Creates a Rust-owned map state backed by the process-wide ride database.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_database(database: Arc<RideDatabaseHandle>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(MobileRideMapCoreInner::new(Some(database))),
+        })
+    }
+
+    /// Returns the active ride snapshot, if one exists.
+    pub fn current_snapshot(&self) -> Option<MobileRideMapCoreSnapshotDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .active_ride_id
+            .as_ref()
+            .zip(state.recorder.state())
+            .map(|(_, active)| {
+                state.snapshot(active.into(), state.recorder.duration_milliseconds())
+            })
+    }
+
+    /// Returns the active ride snapshot evaluated at the supplied monotonic timestamp.
+    pub fn current_snapshot_at(&self, at_ms: u64) -> Option<MobileRideMapCoreSnapshotDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state
+            .active_ride_id
+            .as_ref()
+            .zip(state.recorder.state())
+            .map(|(_, active)| state.snapshot(active.into(), at_ms))
+    }
+
+    /// Returns a storage error encountered while restoring the previous ride projection.
+    #[must_use]
+    pub fn initialization_error(&self) -> Option<MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.initialization_error.clone()
+    }
+
+    /// Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when another ride is open or durable storage rejects creation.
+    pub fn start_gps_only(
+        &self,
+        at_ms: u64,
+        last_connected_vehicle: Option<String>,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.start_gps_only(at_ms, last_connected_vehicle)
+    }
+
+    /// Ensures a live map ride exists for a connected vehicle and associates it.
+    ///
+    /// A fresh connection starts a new live ride when no open ride exists. An already-open
+    /// GPS-only ride is associated with this vehicle, preserving the route recorded before the
+    /// Bluetooth connection was available.
+    pub fn ensure_recording_for_vehicle(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.recorder.state().is_none_or(|current| {
+            matches!(
+                current,
+                ride_maps::RideLifecycleState::Stopped
+                    | ride_maps::RideLifecycleState::Interrupted
+                    | ride_maps::RideLifecycleState::Saved
+                    | ride_maps::RideLifecycleState::Discarded
+            )
+        }) {
+            state.start_gps_only(at_ms, Some(platform_identifier.clone()))?;
+        }
+
+        let mut staged = state.recorder.clone();
+        let association = staged.observe_vehicle(&platform_identifier, at_ms);
+        if association == ride_maps::VehicleAssociation::Associated {
+            if let (Some(database), Some(id)) =
+                (state.database.as_ref(), state.active_ride_id.clone())
+            {
+                database
+                    .update_ride_map_metadata(
+                        id,
+                        None,
+                        Some(platform_identifier),
+                        staged.associated_at_milliseconds(),
+                        staged.last_telemetry_at_milliseconds(),
+                    )
+                    .map_err(map_core_error)?;
+            }
+        }
+        state.recorder = staged;
+        let lifecycle = state
+            .recorder
+            .state()
+            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
+        Ok(state.snapshot(lifecycle.into(), at_ms))
+    }
+
+    /// Pauses the active ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active ride exists or the lifecycle transition is invalid.
+    pub fn pause(
+        &self,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.transition(MobileRideEventDto::Pause, at_ms)
+    }
+
+    /// Resumes the paused ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no paused ride exists or durable storage rejects the transition.
+    pub fn resume(
+        &self,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.transition(MobileRideEventDto::Resume, at_ms)
+    }
+
+    /// Stops the active or paused ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no open ride exists or durable storage rejects the transition.
+    pub fn stop(
+        &self,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.transition(MobileRideEventDto::Stop, at_ms)
+    }
+
+    /// Saves a stopped ride and removes it from the active projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no stopped ride exists or durable storage rejects the transition.
+    pub fn save(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let at_ms = state.recorder.duration_milliseconds();
+        let snapshot = state.transition_inner(MobileRideEventDto::Save, at_ms)?;
+        state.active_ride_id = None;
+        Ok(snapshot)
+    }
+
+    /// Discards the stopped ride and removes it from the active projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no stopped ride exists or durable storage rejects the transition.
+    pub fn discard(&self) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let at_ms = state.recorder.duration_milliseconds();
+        let snapshot = state.transition_inner(MobileRideEventDto::Discard, at_ms)?;
+        state.active_ride_id = None;
+        Ok(snapshot)
+    }
+
+    /// Associates a connected vehicle with the active recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable association metadata cannot be persisted.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn observe_vehicle_connection(
+        &self,
+        platform_identifier: String,
+        at_ms: u64,
+    ) -> Result<MobileRideMapCoreAssociationDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut staged = state.recorder.clone();
+        let association = staged.observe_vehicle(&platform_identifier, at_ms);
+        if association == ride_maps::VehicleAssociation::Associated {
+            if let (Some(database), Some(id)) =
+                (state.database.as_ref(), state.active_ride_id.clone())
+            {
+                database
+                    .update_ride_map_metadata(
+                        id,
+                        None,
+                        Some(platform_identifier.clone()),
+                        staged.associated_at_milliseconds(),
+                        staged.last_telemetry_at_milliseconds(),
+                    )
+                    .map_err(map_core_error)?;
+            }
+        }
+        state.recorder = staged;
+        Ok(association.into())
+    }
+
+    /// Records a confirmed vehicle telemetry timestamp without backfilling route points.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable telemetry metadata cannot be persisted.
+    pub fn observe_telemetry(
+        &self,
+        at_ms: u64,
+    ) -> Result<MobileRideMapTelemetryObservationDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut staged = state.recorder.clone();
+        let observation = staged.observe_telemetry(at_ms);
+        if observation == ride_maps::TelemetryObservation::Observed {
+            if let (Some(database), Some(id)) =
+                (state.database.as_ref(), state.active_ride_id.clone())
+            {
+                database
+                    .update_ride_map_metadata(
+                        id,
+                        staged.candidate_vehicle().map(str::to_owned),
+                        staged.associated_vehicle().map(str::to_owned),
+                        staged.associated_at_milliseconds(),
+                        staged.last_telemetry_at_milliseconds(),
+                    )
+                    .map_err(map_core_error)?;
+            }
+        }
+        state.recorder = staged;
+        Ok(observation.into())
+    }
+
+    /// Admits one Core Location sample into the active recording.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there is no active ride, the location is invalid, or durable
+    /// persistence rejects the sample.
+    pub fn ingest_location(
+        &self,
+        monotonic_ms: u64,
+        wall_clock_unix_ms: u64,
+        latitude_degrees: f64,
+        longitude_degrees: f64,
+        horizontal_accuracy_meters: f64,
+    ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(id) = state.active_ride_id.clone() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        if state.recorder.state() != Some(ride_maps::RideLifecycleState::Active) {
+            return Ok(MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+            });
+        }
+        let location = MobileRideLocationDto {
+            latitude_degrees,
+            longitude_degrees,
+            monotonic_milliseconds: monotonic_ms,
+            wall_clock_unix_milliseconds: wall_clock_unix_ms,
+            horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
+                horizontal_accuracy_meters,
+            )?),
+            source: MobileRideSourceDto::Live,
+        };
+        if wall_clock_unix_ms == 0 {
+            return Err(MobileRideMapCoreErrorDto::InvalidLocation);
+        }
+        let sample = mobile_ride_location(location).map_err(map_core_error)?;
+        let segment_id = state.recorder.current_segment_id();
+        match state.recorder.check_sample(&sample) {
+            ride_maps::LocationAdmission::Duplicate => {
+                return Ok(MobileRideMapCoreDecisionDto::Ignored {
+                    reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
+                });
+            }
+            ride_maps::LocationAdmission::OutOfOrder => {
+                return Ok(MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::TimestampOutOfOrder,
+                });
+            }
+            ride_maps::LocationAdmission::AccuracyTooLow => {
+                return Ok(MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::AccuracyTooLow,
+                });
+            }
+            ride_maps::LocationAdmission::UnrealisticJump => {
+                return Ok(MobileRideMapCoreDecisionDto::Rejected {
+                    reason: MobileRideMapDecisionReasonDto::UnrealisticJump,
+                });
+            }
+            ride_maps::LocationAdmission::Accepted => {}
+        }
+        let telemetry_state = state
+            .recorder
+            .telemetry_state_at(location.monotonic_milliseconds);
+        if let Some(database) = state.database.as_ref() {
+            database
+                .enqueue_location_with_segment_and_telemetry(
+                    id,
+                    location,
+                    segment_id.value(),
+                    telemetry_state.into(),
+                )
+                .map_err(map_core_error)?;
+        }
+        let sequence = state.recorder.point_count();
+        let segment_started = state.recorder.record_sample(sample);
+        let point = MobileRideMapCoreInner::point_from_location(
+            location,
+            sequence,
+            segment_id,
+            telemetry_state,
+        );
+        Ok(MobileRideMapCoreDecisionDto::Accepted {
+            point,
+            segment_started,
+        })
+    }
+
+    /// Returns a bounded page of active route points.
+    ///
+    /// Durable recordings are paged directly from `SQLite` so the bridge never materializes the
+    /// complete route just to answer a preview request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when durable route paging fails.
+    pub fn points_after(
+        &self,
+        after_cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<MobileRideMapCorePointBatchDto, MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if limit == 0 {
+            return Ok(empty_map_point_batch());
+        }
+        let page_size = limit.min(500);
+        if let (Some(database), Some(ride_id)) =
+            (state.database.as_ref(), state.active_ride_id.clone())
+        {
+            let page = database
+                .route_points(
+                    ride_id,
+                    after_cursor.map(|sequence| MobileRoutePointCursorDto { sequence }),
+                    page_size,
+                )
+                .map_err(map_core_error)?;
+            let points = page
+                .points
+                .into_iter()
+                .map(|point| {
+                    MobileRideMapCoreInner::point_from_location(
+                        point.location,
+                        point.sequence,
+                        ride_maps::RideMapSegmentId::new(point.segment_id),
+                        map_ride_telemetry_state(point.telemetry_state),
+                    )
+                })
+                .collect();
+            return Ok(MobileRideMapCorePointBatchDto {
+                points,
+                next_cursor: page.next_cursor.map(|cursor| cursor.sequence),
+                has_more: page.next_cursor.is_some(),
+            });
+        }
+
+        let start = after_cursor.map_or(state.recorder.first_point_sequence(), |cursor| {
+            cursor.saturating_add(1)
+        });
+        let mut points: Vec<_> = state
+            .recorder
+            .points()
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(offset, sample)| {
+                (
+                    state.recorder.first_point_sequence() + offset as u64,
+                    sample,
+                )
+            })
+            .filter(|(sequence, _)| *sequence >= start)
+            .take(page_size as usize + 1)
+            .map(|(sequence, sample)| {
+                MobileRideMapCoreInner::point_from_location(
+                    mobile_ride_location_dto(sample.sample()),
+                    sequence,
+                    sample.segment_id(),
+                    sample.telemetry_state(),
+                )
+            })
+            .collect();
+        let has_more = points.len() > page_size as usize;
+        if has_more {
+            points.pop();
+        }
+        let next_cursor = has_more.then(|| points.last().map_or(0, |point| point.sequence));
+        Ok(MobileRideMapCorePointBatchDto {
+            points,
+            next_cursor,
+            has_more,
+        })
+    }
+}
+
+impl MobileRideMapCoreInner {
+    fn transition_inner(
+        &mut self,
+        event: MobileRideEventDto,
+        at_milliseconds: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let Some(id) = self.active_ride_id.clone() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        let Some(current) = self.recorder.state() else {
+            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
+        };
+        let next = current
+            .apply(event.into())
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        if let Some(database) = self.database.as_ref() {
+            database.transition(id, event).map_err(map_core_error)?;
+        }
+        self.recorder.apply_transition_at(next, at_milliseconds);
+        Ok(self.snapshot(next.into(), at_milliseconds))
+    }
+}
+
+impl MobileRideMapCore {
+    fn transition(
+        &self,
+        event: MobileRideEventDto,
+        at_milliseconds: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.transition_inner(event, at_milliseconds)
+    }
+}
+
+fn map_core_error(error: MobileRideDatabaseError) -> MobileRideMapCoreErrorDto {
+    match error {
+        MobileRideDatabaseError::InvalidTransition | MobileRideDatabaseError::InvalidRideState => {
+            MobileRideMapCoreErrorDto::InvalidTransition
+        }
+        other => map_ride_map_error(&other),
     }
 }
 
@@ -11807,5 +12984,352 @@ mod tests {
         let _ = fs::remove_dir(managed_path.parent().unwrap());
         let _ = fs::remove_file(database_path);
         let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_owns_lifecycle_and_vehicle_association() {
+        let state = MobileRideMapCore::new();
+        assert_eq!(
+            state
+                .start_gps_only(1_000, Some("pev-1".to_owned()))
+                .expect("map recording starts")
+                .state,
+            MobileRideLifecycleStateDto::Active
+        );
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-1".to_owned(), 1_001)
+                .expect("connection observation succeeds"),
+            MobileRideMapCoreAssociationDto::Associated
+        );
+        state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("first segment point is accepted");
+        assert_eq!(
+            state
+                .current_snapshot_at(2_000)
+                .expect("live snapshot exists")
+                .summary
+                .duration_milliseconds,
+            1_000
+        );
+        state.pause(2_000).expect("recording pauses");
+        assert_eq!(
+            state
+                .current_snapshot_at(10_000)
+                .expect("paused snapshot exists")
+                .summary
+                .duration_milliseconds,
+            1_000
+        );
+        state.resume(3_000).expect("recording resumes");
+        assert_eq!(
+            state
+                .current_snapshot_at(4_000)
+                .expect("resumed snapshot exists")
+                .summary
+                .duration_milliseconds,
+            2_000
+        );
+        let resumed = state
+            .ingest_location(3_002, 1_700_000_003_002, 40.001, -105.0, 3.0)
+            .expect("resumed segment point is accepted");
+        assert_eq!(
+            resumed,
+            MobileRideMapCoreDecisionDto::Accepted {
+                point: MobileRideMapCorePointDto {
+                    sequence: 1,
+                    segment_id: 1,
+                    latitude_degrees: 40.001,
+                    longitude_degrees: -105.0,
+                    wall_clock_unix_ms: 1_700_000_003_002,
+                    monotonic_ms: 3_002,
+                    horizontal_accuracy_meters: 3.0,
+                    telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry,
+                },
+                segment_started: true,
+            }
+        );
+        assert_eq!(
+            state.stop(4_000).expect("recording stops").state,
+            MobileRideLifecycleStateDto::Stopped
+        );
+        assert_eq!(
+            state
+                .resume(5_000)
+                .expect_err("stopped rides cannot resume"),
+            MobileRideMapCoreErrorDto::InvalidTransition
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_associates_a_vehicle_found_during_a_gps_only_ride() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, None)
+            .expect("GPS-only recording starts");
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-found-later".to_owned(), 1_001)
+                .expect("late PEV connection is observed"),
+            MobileRideMapCoreAssociationDto::Associated
+        );
+        assert_eq!(
+            state
+                .current_snapshot()
+                .and_then(|snapshot| snapshot.associated_vehicle),
+            Some("pev-found-later".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_starts_and_associates_on_vehicle_connection() {
+        let state = MobileRideMapCore::new();
+        let snapshot = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
+            .expect("connection starts the live map ride");
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
+        assert_eq!(snapshot.associated_vehicle, Some("pev-1".to_owned()));
+        assert_eq!(snapshot.summary.point_count, 0);
+        state.stop(2_000).expect("the live map ride stops");
+        let restarted = state
+            .ensure_recording_for_vehicle("pev-1".to_owned(), 2_000)
+            .expect("a later connection starts a fresh live map ride");
+        assert_eq!(restarted.state, MobileRideLifecycleStateDto::Active);
+        assert_ne!(restarted.ride_id, snapshot.ride_id);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_keeps_the_first_confirmed_association() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, Some("pev-1".to_owned()))
+            .expect("recording starts");
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-1".to_owned(), 1_001)
+                .expect("matching connection is observed"),
+            MobileRideMapCoreAssociationDto::Associated
+        );
+        assert_eq!(
+            state
+                .observe_vehicle_connection("pev-2".to_owned(), 1_002)
+                .expect("different connection is observed"),
+            MobileRideMapCoreAssociationDto::IdentityMismatch
+        );
+        assert_eq!(
+            state
+                .current_snapshot()
+                .and_then(|snapshot| snapshot.associated_vehicle),
+            Some("pev-1".to_owned())
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_does_not_claim_association_when_storage_fails() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-association-error-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, Some("pev-1".to_owned()))
+            .expect("recording starts");
+        database.shutdown().expect("database shuts down");
+
+        assert!(matches!(
+            state.observe_vehicle_connection("pev-1".to_owned(), 1_001),
+            Err(MobileRideMapCoreErrorDto::Storage(_))
+        ));
+        assert_eq!(
+            state
+                .current_snapshot()
+                .and_then(|snapshot| snapshot.associated_vehicle),
+            None
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_retains_point_telemetry_provenance_without_backfill() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, Some("pev-1".to_owned()))
+            .expect("recording starts");
+        state
+            .ingest_location(1_001, 1_700_000_001_001, 40.0, -105.0, 3.0)
+            .expect("GPS-only point is accepted");
+        state
+            .observe_vehicle_connection("pev-1".to_owned(), 1_100)
+            .expect("vehicle associates");
+        let no_telemetry = state
+            .ingest_location(1_200, 1_700_000_001_200, 40.0, -105.0, 3.0)
+            .expect("associated point is accepted");
+        assert!(matches!(
+            no_telemetry,
+            MobileRideMapCoreDecisionDto::Accepted {
+                point: MobileRideMapCorePointDto {
+                    telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry,
+                    ..
+                },
+                ..
+            }
+        ));
+        state
+            .observe_telemetry(1_300)
+            .expect("telemetry observation returns");
+        let fresh = state
+            .ingest_location(1_400, 1_700_000_001_400, 40.0, -105.0, 3.0)
+            .expect("fresh associated point is accepted");
+        assert!(matches!(
+            fresh,
+            MobileRideMapCoreDecisionDto::Accepted {
+                point: MobileRideMapCorePointDto {
+                    telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedFresh,
+                    ..
+                },
+                ..
+            }
+        ));
+        let points = state.points_after(None, 10).unwrap();
+        assert_eq!(
+            points.points[0].telemetry_state,
+            MobileRideMapCoreTelemetryStateDto::GpsOnly
+        );
+        assert_eq!(
+            points.points[1].telemetry_state,
+            MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_persists_route_and_pages_zero_sequence() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-core-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("map database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        state
+            .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
+            .expect("first location is accepted");
+        state.pause(2_000).expect("map recording pauses");
+        state.resume(3_000).expect("map recording resumes");
+        state
+            .ingest_location(2_001, 1_700_000_002_001, 40.0, -104.999, 3.0)
+            .expect("second location is accepted");
+
+        let snapshot = state.current_snapshot().expect("active snapshot exists");
+        assert_eq!(snapshot.summary.point_count, 2);
+        let first = state.points_after(None, 1).unwrap();
+        assert_eq!(first.points.len(), 1);
+        assert_eq!(first.next_cursor, Some(0));
+        assert!(first.has_more);
+        let second = state.points_after(first.next_cursor, 1).unwrap();
+        assert_eq!(second.points[0].sequence, 1);
+        assert_eq!(second.points[0].segment_id, 1);
+        assert!(!second.has_more);
+
+        let empty = state.points_after(None, 0).unwrap();
+        assert!(empty.points.is_empty());
+        assert!(!empty.has_more);
+        assert!(empty.next_cursor.is_none());
+
+        state.stop(3_000).expect("map recording stops");
+        state.save().expect("map recording saves");
+        assert!(state.current_snapshot().is_none());
+        database.shutdown().expect("map database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_restores_an_interrupted_route_after_reopen() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-recovery-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = MobileRideMapCore::with_database(database.clone());
+            state
+                .start_gps_only(1_000, Some("pev-1".to_owned()))
+                .expect("map recording starts");
+            for index in 0..501_u64 {
+                state
+                    .ingest_location(
+                        1_000 + index * 1_000,
+                        1_700_000_000_000 + index * 1_000,
+                        40.0 + (f64::from(u32::try_from(index).expect("bounded")) * 0.000_01),
+                        -105.0,
+                        3.0,
+                    )
+                    .expect("route point is accepted");
+            }
+            database.shutdown().expect("database shuts down");
+        }
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let snapshot = state.current_snapshot().expect("interrupted ride restores");
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
+        assert_eq!(snapshot.summary.point_count, 501);
+        let last_page = state.points_after(Some(499), 10).unwrap();
+        assert_eq!(last_page.points.len(), 1);
+        assert_eq!(last_page.points[0].sequence, 500);
+        assert!(!last_page.has_more);
+        let rides = database.list_rides(None, 10).expect("recovered ride lists");
+        assert_eq!(rides.rides.len(), 1);
+        assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_reports_storage_failure_during_restore() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-recovery-error-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        database.shutdown().expect("database shuts down");
+
+        let state = MobileRideMapCore::with_database(database);
+        assert!(matches!(
+            state.initialization_error(),
+            Some(MobileRideMapCoreErrorDto::Storage(_))
+        ));
+
+        let _ = fs::remove_file(path);
     }
 }

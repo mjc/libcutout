@@ -9,13 +9,19 @@
 //! Rust-owned ride recording and geospatial domain primitives.
 
 mod coordinate;
-pub use coordinate::*;
+pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
 mod lifecycle;
-pub use lifecycle::*;
+pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
 mod location;
-pub use location::*;
+pub use location::{LocationAdmission, LocationSample, LocationSource};
 mod summary;
-pub use summary::*;
+pub use summary::{DistanceMillimetres, RideSummary, distance_between_millimetres};
+mod recording;
+pub use recording::{
+    MAX_LIVE_ROUTE_POINTS, RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId,
+    RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
+    VehicleAssociation,
+};
 
 #[cfg(test)]
 mod tests {

@@ -46,22 +46,24 @@ impl RideWriteState {
 
     pub(super) fn decide_location(
         self,
-        previous: Option<LocationSample>,
+        previous: Option<(u64, LocationSample)>,
         sample: LocationSample,
+        segment_id: u64,
         mode: LocationWriteMode,
     ) -> Result<LocationWriteDecision, RideLifecycleState> {
         if !self.accepts_location(mode) {
             return Err(self.lifecycle);
         }
 
-        let admission = sample.admission(previous.as_ref());
+        let admission = sample.admission(previous.as_ref().map(|(_, sample)| sample));
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }
 
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
-                .map(|previous| distance_between_millimetres(previous, sample))
+                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id)
+                .map(|(_, previous)| distance_between_millimetres(previous, sample))
                 .unwrap_or_default(),
             updated_at_ms: self
                 .updated_at_ms
@@ -136,7 +138,7 @@ mod tests {
         );
         assert!(matches!(
             state
-                .decide_location(None, sample, LocationWriteMode::Live)
+                .decide_location(None, sample, 0, LocationWriteMode::Live)
                 .unwrap(),
             LocationWriteDecision::Accepted {
                 updated_at_ms: 30,
