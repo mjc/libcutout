@@ -53,6 +53,7 @@ struct RideMapHistoryListView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(ride.rideId == selectedRideID ? .isSelected : [])
+                    .accessibilityValue(Self.selectionAccessibilityValue(isSelected: ride.rideId == selectedRideID))
                     .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
                 }
             }
@@ -78,6 +79,10 @@ struct RideMapHistoryListView: View {
     static func pointCountText(_ count: UInt64) -> String {
         let key = count == 1 ? "ride_map.point_count.one" : "ride_map.point_count.other"
         return localizedAppText(key, count)
+    }
+
+    static func selectionAccessibilityValue(isSelected: Bool) -> String {
+        localizedAppText(isSelected ? "ride_map.history_selected" : "ride_map.history_not_selected")
     }
 
     private func rideTitle(for ride: MobileRideMapHistorySummaryDto) -> String {

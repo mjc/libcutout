@@ -777,6 +777,14 @@
       "comment" : "Heading above the recent historical ride list.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent rides" } } }
     },
+    "ride_map.history_selected" : {
+      "comment" : "VoiceOver value for the currently selected ride-history row.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Selected" } } }
+    },
+    "ride_map.history_not_selected" : {
+      "comment" : "VoiceOver value for an unselected ride-history row.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Not selected" } } }
+    },
     "ride_map.history_last_30_days" : {
       "comment" : "History date filter for rides created in the last 30 days.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Last 30 days" } } }

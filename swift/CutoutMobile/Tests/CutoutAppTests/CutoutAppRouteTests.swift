@@ -197,6 +197,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(RideMapHistoryListView.pointCountText(2), "2 points")
     }
 
+    @MainActor
+    func testRideHistorySelectionHasAnAccessibleValue() {
+        XCTAssertEqual(RideMapHistoryListView.selectionAccessibilityValue(isSelected: true), "Selected")
+        XCTAssertEqual(RideMapHistoryListView.selectionAccessibilityValue(isSelected: false), "Not selected")
+    }
+
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {
         XCTAssertTrue(CutoutAppRoute.devicePicker.navigationTabs.isEmpty)
         XCTAssertTrue(CutoutAppRoute.capture.navigationTabs.isEmpty)
