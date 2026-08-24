@@ -39,8 +39,8 @@ struct RideMapCanvasView: View {
             .distance(from: CLLocation(latitude: last.latitude, longitude: last.longitude))
         guard distance < 80 else { return (.zero, .zero) }
         return (
-            CGSize(width: -42, height: -20),
-            CGSize(width: 42, height: 20)
+            CGSize(width: -56, height: -24),
+            CGSize(width: 56, height: 24)
         )
     }
 
