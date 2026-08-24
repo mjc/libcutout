@@ -260,12 +260,15 @@ private struct RideMapRouteMarker: View {
     var body: some View {
         VStack(spacing: 3) {
             if title.isEmpty == false {
-                Text(title.uppercased())
+                Text(title)
                     .font(.caption2.weight(.black))
+                    .textCase(.uppercase)
                     .foregroundStyle(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(.black.opacity(0.78), in: .rect(cornerRadius: 5))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
 
             ZStack {

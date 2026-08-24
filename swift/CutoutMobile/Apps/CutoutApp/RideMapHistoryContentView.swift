@@ -49,9 +49,25 @@ struct RideMapHistoryContentView: View {
     }
 
     private func vehicleLabel(for identity: String) -> String {
-        vehicleName(identity)
-            ?? (identity == currentVehicleIdentity ? currentVehicleName : nil)
-            ?? identity
+        Self.resolvedVehicleLabel(
+            identity: identity,
+            currentIdentity: currentVehicleIdentity,
+            currentName: currentVehicleName,
+            resolve: vehicleName
+        )
+    }
+
+    @MainActor
+    static func resolvedVehicleLabel(
+        identity: String,
+        currentIdentity: String?,
+        currentName: String?,
+        resolve: (String) -> String?
+    ) -> String {
+        resolve(identity)
+            .flatMap { $0.isEmpty ? nil : $0 }
+            ?? (identity == currentIdentity ? currentName : nil)
+            ?? localizedAppText("ride_map.vehicle_name_unavailable")
     }
 
     var body: some View {

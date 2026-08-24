@@ -176,6 +176,28 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideHistoryVehicleFallbackDoesNotExposePlatformIdentity() {
+        XCTAssertEqual(
+            RideMapHistoryContentView.resolvedVehicleLabel(
+                identity: "corebluetooth-1",
+                currentIdentity: nil,
+                currentName: nil,
+                resolve: { _ in nil }
+            ),
+            "Vehicle name unavailable"
+        )
+        XCTAssertEqual(
+            RideMapHistoryContentView.resolvedVehicleLabel(
+                identity: "corebluetooth-1",
+                currentIdentity: "corebluetooth-1",
+                currentName: "NF2557",
+                resolve: { _ in nil }
+            ),
+            "NF2557"
+        )
+    }
+
+    @MainActor
     func testRideDetailShowsAverageSpeedWhenDistanceAndDurationExist() {
         XCTAssertEqual(
             RideMapHistoryDetailView.averageSpeedText(
