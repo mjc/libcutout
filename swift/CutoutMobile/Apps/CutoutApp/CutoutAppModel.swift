@@ -53,6 +53,18 @@ final class CutoutAppModel {
         connectionState.selection?.title
     }
 
+    /// Stable identity/name pair used to relabel persisted ride-history vehicles.
+    /// The persisted selection is the fallback when the connection state has not rebuilt yet.
+    var rideMapVehicleIdentity: String? {
+        connectionState.selection?.platformIdentifier ?? selectedDeviceStore.platformIdentifier
+    }
+
+    var rideMapVehicleName: String? {
+        connectionState.selection?.title
+            ?? core.protocolIdentityCandidate?.displayName
+            ?? devicePickerScanState?.rows.first(where: { $0.id == rideMapVehicleIdentity })?.title
+    }
+
     var selectedConnectionRoute: DevicePickerConnectionRoute? {
         connectionState.selection?.route
     }

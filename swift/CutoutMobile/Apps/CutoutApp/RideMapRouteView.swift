@@ -97,8 +97,8 @@ struct RideMapRouteView: View {
             load: { model.loadRideMapHistory() },
             loadMore: { model.loadMoreRideMapHistory() },
             returnToLive: { mode = .live },
-            currentVehicleIdentity: model.connectionState.selection?.platformIdentifier,
-            currentVehicleName: model.selectedRideTitle
+            currentVehicleIdentity: model.rideMapVehicleIdentity,
+            currentVehicleName: model.rideMapVehicleName
         )
     }
 
