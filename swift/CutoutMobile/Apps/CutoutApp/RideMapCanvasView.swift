@@ -29,6 +29,21 @@ struct RideMapCanvasView: View {
     @State private var renderedKey: PathKey?
     @State private var fittedRouteID: String?
 
+    static func markerOffsets(
+        for coordinates: [CLLocationCoordinate2D]
+    ) -> (start: CGSize, end: CGSize) {
+        guard let first = coordinates.first, let last = coordinates.last, coordinates.count > 1 else {
+            return (.zero, .zero)
+        }
+        let distance = CLLocation(latitude: first.latitude, longitude: first.longitude)
+            .distance(from: CLLocation(latitude: last.latitude, longitude: last.longitude))
+        guard distance < 80 else { return (.zero, .zero) }
+        return (
+            CGSize(width: -42, height: -20),
+            CGSize(width: 42, height: 20)
+        )
+    }
+
     static func region(for points: [MobileRideMapPointDto]) -> MKCoordinateRegion? {
         guard let first = points.first else { return nil }
         var minimumLatitude = first.latitudeDegrees
@@ -54,6 +69,10 @@ struct RideMapCanvasView: View {
     }
 
     var body: some View {
+        let endpointOffsets = Self.markerOffsets(for: points.map {
+            CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
+        })
+
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
                 MapPolyline(coordinates: segment.coordinates)
@@ -71,6 +90,7 @@ struct RideMapCanvasView: View {
                         title: localizedAppText("ride_map.start_marker"),
                         color: PevColors.yellow
                     )
+                    .offset(x: endpointOffsets.start.width, y: endpointOffsets.start.height)
                 }
             }
             if let last = points.last, points.count > 1 {
@@ -84,6 +104,7 @@ struct RideMapCanvasView: View {
                         ),
                         color: showsEndMarker ? PevColors.red : PevColors.green
                     )
+                    .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
                 }
             }
         }

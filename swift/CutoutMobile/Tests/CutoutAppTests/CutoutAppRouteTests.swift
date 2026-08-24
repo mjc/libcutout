@@ -1,6 +1,7 @@
 import XCTest
 @testable import CutoutApp
 import CutoutMobile
+import CoreLocation
 
 final class CutoutAppRouteTests: XCTestCase {
     func testScreenRoutesMatchTopLevelSections() {
@@ -140,6 +141,16 @@ final class CutoutAppRouteTests: XCTestCase {
             CutoutAppRoute.navigationPath(for: .rideMapDetail(rideID: "ride-1")),
             [.rideMap, .rideMapDetail(rideID: "ride-1")]
         )
+    }
+
+    @MainActor
+    func testRideMapSeparatesOverlappingEndpointMarkers() {
+        let coordinate = CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903)
+        let offsets = RideMapCanvasView.markerOffsets(for: [coordinate, coordinate])
+
+        XCTAssertNotEqual(offsets.start, .zero)
+        XCTAssertNotEqual(offsets.end, .zero)
+        XCTAssertEqual(offsets.start.width, -offsets.end.width)
     }
 
     func testRouteOwnsTheSameTabsUsedByWindowCommandsAndContent() {

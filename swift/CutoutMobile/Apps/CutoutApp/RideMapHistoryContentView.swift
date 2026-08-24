@@ -101,7 +101,7 @@ struct RideMapHistoryContentView: View {
                 .frame(maxWidth: .infinity)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    if isRecording {
+                    if isRecording || isPaused {
                         HStack(spacing: 10) {
                             Circle()
                                 .fill(PevColors.green)

@@ -153,9 +153,11 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.startGpsOnlyRide())
         XCTAssertTrue(model.isRideMapRecording)
         XCTAssertTrue(model.pauseRideMap())
-        XCTAssertTrue(model.isRideMapRecording)
+        XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertTrue(model.isRideMapPaused)
         XCTAssertTrue(model.stopRideMap())
         XCTAssertFalse(model.isRideMapRecording)
+        XCTAssertFalse(model.isRideMapPaused)
     }
 
     @MainActor

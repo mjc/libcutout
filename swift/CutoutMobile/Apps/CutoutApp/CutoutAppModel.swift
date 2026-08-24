@@ -108,12 +108,11 @@ final class CutoutAppModel {
     }
 
     var isRideMapRecording: Bool {
-        switch rideMapSnapshot?.state {
-        case .recording, .paused:
-            true
-        case .stopped, .saved, .discarded, nil:
-            false
-        }
+        rideMapSnapshot?.state == .recording
+    }
+
+    var isRideMapPaused: Bool {
+        rideMapSnapshot?.state == .paused
     }
 
     var rideState: EucRideScreenState {
