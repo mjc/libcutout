@@ -15,6 +15,9 @@ struct RideMapLiveContentView: View {
     let mapError: MobileRideMapError?
     let lastDecision: MobileRideMapDecisionDto?
     let pointsTruncated: Bool
+    @Binding var mapPosition: MapCameraPosition
+    @Binding var isApplyingCamera: Bool
+    @Binding var followsLatestPoint: Bool
     let pause: () -> Void
     let resume: () -> Void
     let save: () -> Void
@@ -23,9 +26,6 @@ struct RideMapLiveContentView: View {
     let discard: () -> Void
     let refreshDuration: () -> Void
 
-    @State private var mapPosition: MapCameraPosition = .automatic
-    @State private var isApplyingCamera = false
-    @State private var followsLatestPoint = true
     @State private var isDiscardConfirmationPresented = false
 
     var body: some View {

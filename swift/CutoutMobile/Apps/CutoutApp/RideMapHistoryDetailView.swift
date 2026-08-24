@@ -14,9 +14,9 @@ struct RideMapHistoryDetailView: View {
     let retry: () -> Void
     let loadFullRide: () -> Void
     let vehicleName: (String?) -> String?
+    @Binding var mapPosition: MapCameraPosition
+    @Binding var isApplyingCamera: Bool
     let close: () -> Void
-    @State private var mapPosition: MapCameraPosition = .automatic
-    @State private var isApplyingCamera = false
 
     static func resolvedVehicleLabel(
         associatedVehicle: String?,

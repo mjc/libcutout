@@ -8,12 +8,18 @@ import UIKit
 
 struct ContentView: View {
     let model: CutoutAppModel
+    let rideMapPresentation: RideMapPresentationState
     @Binding private var navigationPath: [CutoutAppRoute]
     @AccessibilityFocusState private var focusedRoute: CutoutAppRoute?
     @State private var connectionAnnouncements = ConnectionAccessibilityAnnouncements()
 
-    init(model: CutoutAppModel, navigationPath: Binding<[CutoutAppRoute]>) {
+    init(
+        model: CutoutAppModel,
+        rideMapPresentation: RideMapPresentationState,
+        navigationPath: Binding<[CutoutAppRoute]>
+    ) {
         self.model = model
+        self.rideMapPresentation = rideMapPresentation
         _navigationPath = navigationPath
     }
 
@@ -97,6 +103,14 @@ struct ContentView: View {
 
     private func navigate(to route: CutoutAppRoute) {
         navigationPath = CutoutAppRoute.navigationPath(for: route)
+    }
+
+    private func closeRideMapDetail() {
+        guard case .rideMapDetail = navigationPath.last else {
+            navigate(to: .rideMap)
+            return
+        }
+        navigationPath.removeLast()
     }
 
     private func disconnectAndReturnToPicker() {
@@ -198,16 +212,17 @@ struct ContentView: View {
         case .capture:
             CaptureRouteView(model: model, finishCapture: finishCaptureAndReturnToPicker)
         case .rideMap:
-            RideMapRouteView(model: model, { rideID in
+            RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history
                 navigate(to: .rideMapDetail(rideID: rideID))
             }, showBackButton: model.selectedConnectionRoute == nil, back: { navigate(to: .devicePicker) })
         case let .rideMapDetail(rideID):
             RideMapRouteView(
                 model: model,
+                presentation: rideMapPresentation,
                 initialHistoryID: rideID,
                 detailOnly: true,
-                closeDetail: { navigate(to: .rideMap) }
+                closeDetail: closeRideMapDetail
             )
         case .devicePicker:
             EmptyView()

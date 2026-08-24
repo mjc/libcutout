@@ -1,10 +1,24 @@
 import SwiftUI
 import MapKit
+import Observation
 import CutoutMobile
 import CutoutMobileFFI
 
+@MainActor
+@Observable
+final class RideMapPresentationState {
+    var liveMapPosition: MapCameraPosition = .automatic
+    var historyMapPosition: MapCameraPosition = .automatic
+    var detailMapPosition: MapCameraPosition = .automatic
+    var liveIsApplyingCamera = false
+    var historyIsApplyingCamera = false
+    var detailIsApplyingCamera = false
+    var followsLatestPoint = true
+}
+
 struct RideMapRouteView: View {
     @Bindable var model: CutoutAppModel
+    @Bindable var presentation: RideMapPresentationState
     private let openHistory: ((String) -> Void)?
     private let closeDetail: (() -> Void)?
     private let initialHistoryID: String?
@@ -12,11 +26,9 @@ struct RideMapRouteView: View {
     private let showBackButton: Bool
     private let back: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
-    @State private var historyMapPosition: MapCameraPosition = .automatic
-    @State private var historyIsApplyingCamera = false
-
     init(
         model: CutoutAppModel,
+        presentation: RideMapPresentationState,
         _ openHistory: ((String) -> Void)? = nil,
         initialHistoryID: String? = nil,
         detailOnly: Bool = false,
@@ -25,6 +37,7 @@ struct RideMapRouteView: View {
         back: (() -> Void)? = nil
     ) {
         self._model = Bindable(wrappedValue: model)
+        self._presentation = Bindable(wrappedValue: presentation)
         self.openHistory = openHistory
         self.closeDetail = closeDetail
         self.initialHistoryID = initialHistoryID
@@ -91,6 +104,9 @@ struct RideMapRouteView: View {
             mapError: model.rideMapError,
             lastDecision: model.rideMapLastDecision,
             pointsTruncated: model.rideMapLivePointsTruncated,
+            mapPosition: $presentation.liveMapPosition,
+            isApplyingCamera: $presentation.liveIsApplyingCamera,
+            followsLatestPoint: $presentation.followsLatestPoint,
             pause: { _ = model.pauseRideMap() },
             resume: { _ = model.resumeRideMap() },
             save: { _ = model.saveRideMap() },
@@ -130,8 +146,8 @@ struct RideMapRouteView: View {
             currentVehicleIdentity: model.rideMapVehicleIdentity,
             currentVehicleName: model.rideMapVehicleName,
             vehicleName: model.rideMapVehicleName(for:),
-            mapPosition: $historyMapPosition,
-            isApplyingCamera: $historyIsApplyingCamera
+            mapPosition: $presentation.historyMapPosition,
+            isApplyingCamera: $presentation.historyIsApplyingCamera
         )
     }
 
@@ -147,6 +163,8 @@ struct RideMapRouteView: View {
             retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
             loadFullRide: { model.loadFullRideMapHistory() },
             vehicleName: model.rideMapVehicleName(for:),
+            mapPosition: $presentation.detailMapPosition,
+            isApplyingCamera: $presentation.detailIsApplyingCamera,
             close: closeDetail ?? { dismiss() }
         )
     }

@@ -781,6 +781,10 @@
       "comment" : "Heading above the recent historical ride list.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent rides" } } }
     },
+    "ride_map.untitled_ride" : {
+      "comment" : "Fallback historical ride title when its recorded timestamp cannot be formatted; never expose the ride UUID.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Ride" } } }
+    },
     "ride_map.history_selected" : {
       "comment" : "VoiceOver value for the currently selected ride-history row.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Selected" } } }

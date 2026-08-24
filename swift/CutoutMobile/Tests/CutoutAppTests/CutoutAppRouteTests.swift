@@ -154,6 +154,21 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapPresentationStateSurvivesRouteRecreation() {
+        let presentation = RideMapPresentationState()
+
+        presentation.followsLatestPoint = false
+        presentation.liveIsApplyingCamera = true
+        presentation.historyIsApplyingCamera = true
+        presentation.detailIsApplyingCamera = true
+
+        XCTAssertFalse(presentation.followsLatestPoint)
+        XCTAssertTrue(presentation.liveIsApplyingCamera)
+        XCTAssertTrue(presentation.historyIsApplyingCamera)
+        XCTAssertTrue(presentation.detailIsApplyingCamera)
+    }
+
+    @MainActor
     func testRideDetailResolvesPersistedVehicleNamesBeforeIdentityFallback() {
         XCTAssertEqual(
             RideMapHistoryDetailView.resolvedVehicleLabel(
