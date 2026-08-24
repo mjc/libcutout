@@ -15,50 +15,47 @@ struct RideMapHistoryListView: View {
                 .font(.title3.weight(.bold))
                 .accessibilityAddTraits(.isHeader)
 
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 8) {
-                    ForEach(rides, id: \.rideId) { ride in
-                        Button {
-                            select(ride.rideId)
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
-                                    .font(.title3)
-                                    .foregroundStyle(ride.rideId == selectedRideID ? PevColors.yellow : PevColors.muted)
-                                    .frame(width: 30)
+            LazyVStack(spacing: 8) {
+                ForEach(rides, id: \.rideId) { ride in
+                    Button {
+                        select(ride.rideId)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                                .font(.title3)
+                                .foregroundStyle(ride.rideId == selectedRideID ? PevColors.yellow : PevColors.muted)
+                                .frame(width: 30)
 
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(rideTitle(for: ride))
-                                        .font(.headline)
-                                        .lineLimit(1)
-                                    Text(rideSubtitle(for: ride))
-                                        .font(.subheadline)
-                                        .foregroundStyle(PevColors.muted)
-                                        .lineLimit(1)
-                                }
-
-                                Spacer(minLength: 8)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.bold))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(rideTitle(for: ride))
+                                    .font(.headline)
+                                    .lineLimit(1)
+                                Text(rideSubtitle(for: ride))
+                                    .font(.subheadline)
                                     .foregroundStyle(PevColors.muted)
+                                    .lineLimit(1)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(
-                                ride.rideId == selectedRideID
-                                    ? PevColors.yellow.opacity(0.13)
-                                    : PevColors.pageBackground.opacity(0.55),
-                                in: .rect(cornerRadius: 16)
-                            )
+
+                            Spacer(minLength: 8)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(PevColors.muted)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(ride.rideId == selectedRideID ? .isSelected : [])
-                        .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            ride.rideId == selectedRideID
+                                ? PevColors.yellow.opacity(0.13)
+                                : PevColors.pageBackground.opacity(0.55),
+                            in: .rect(cornerRadius: 16)
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(ride.rideId == selectedRideID ? .isSelected : [])
+                    .accessibilityIdentifier("ride-map.history-\(ride.rideId)")
                 }
             }
-            .frame(minHeight: 120, maxHeight: 320)
             if canLoadMore {
                 Button(localizedAppText("ride_map.history_load_more"), action: loadMore)
                     .buttonStyle(.bordered)

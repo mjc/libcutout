@@ -55,94 +55,94 @@ struct RideMapHistoryContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            if isLoading && rides.isEmpty {
-                ProgressView(localizedAppText("ride_map.history_loading"))
-                    .tint(PevColors.yellow)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .padding(24)
-            } else if rides.isEmpty {
-                emptyState
-            } else {
-                HStack(spacing: 8) {
-                    filterMenu(kind: .date, title: dateFilterTitle, systemImage: "calendar")
-                    filterMenu(
-                        kind: .vehicle,
-                        title: vehicleFilter.map(vehicleLabel)
-                            ?? localizedAppText("ride_map.history_all_vehicles"),
-                        systemImage: "car"
-                    )
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-
-                if error != nil {
-                    Label(localizedAppText("ride_map.command_failed"), systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                        .accessibilityIdentifier("ride-map.history-error")
-                }
-
-                RideMapCanvasView(
-                    points: points,
-                    routeID: selectedRideID ?? "history",
-                    showsStartMarker: true,
-                    showsEndMarker: true,
-                    fitsRouteOnChange: true,
-                    mapPosition: $mapPosition,
-                    isApplyingCamera: $isApplyingCamera,
-                    cameraDidChange: {}
-                )
-                // Keep the map as the fixed visual hero; the ride list remains
-                // a distinct bottom sheet instead of being pushed off-screen.
-                .frame(height: 340)
-                .frame(maxWidth: .infinity)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    if isRecording || isPaused {
-                        HStack(spacing: 10) {
-                            Circle()
-                                .fill(PevColors.green)
-                                .frame(width: 9, height: 9)
-                            Text(isPaused
-                                ? localizedAppText("ride_map.history_paused")
-                                : localizedAppText("ride_map.history_recording_continues"))
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(PevColors.green)
-                            Spacer()
-                            Button(localizedAppText("ride_map.return_live"), action: returnToLive)
-                                .font(.subheadline.weight(.semibold))
-                                .buttonStyle(.plain)
-                                .foregroundStyle(PevColors.green)
-                                .accessibilityIdentifier("ride-map.return-live")
-                        }
-                        .accessibilityIdentifier("ride-map.history-recording-banner")
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                if isLoading && rides.isEmpty {
+                    ProgressView(localizedAppText("ride_map.history_loading"))
+                        .tint(PevColors.yellow)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                        .padding(24)
+                } else if rides.isEmpty {
+                    emptyState
+                } else {
+                    HStack(spacing: 8) {
+                        filterMenu(kind: .date, title: dateFilterTitle, systemImage: "calendar")
+                        filterMenu(
+                            kind: .vehicle,
+                            title: vehicleFilter.map(vehicleLabel)
+                                ?? localizedAppText("ride_map.history_all_vehicles"),
+                            systemImage: "car"
+                        )
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
 
-                    RideMapHistoryListView(
-                        rides: rides,
-                        canLoadMore: canLoadMore,
-                        selectedRideID: selectedRideID,
-                        select: select,
-                        loadMore: loadMore
-                    )
-                    if pointsTruncated {
-                        Text(localizedAppText("ride_map.history_truncated"))
+                    if error != nil {
+                        Label(localizedAppText("ride_map.command_failed"), systemImage: "exclamationmark.triangle")
                             .font(.caption)
-                            .foregroundStyle(PevColors.muted)
-                            .accessibilityIdentifier("ride-map.history-truncated")
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                            .accessibilityIdentifier("ride-map.history-error")
                     }
+
+                    RideMapCanvasView(
+                        points: points,
+                        routeID: selectedRideID ?? "history",
+                        showsStartMarker: true,
+                        showsEndMarker: true,
+                        fitsRouteOnChange: true,
+                        mapPosition: $mapPosition,
+                        isApplyingCamera: $isApplyingCamera,
+                        cameraDidChange: {}
+                    )
+                    .frame(height: 340)
+                    .frame(maxWidth: .infinity)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        if isRecording || isPaused {
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(PevColors.green)
+                                    .frame(width: 9, height: 9)
+                                Text(isPaused
+                                    ? localizedAppText("ride_map.history_paused")
+                                    : localizedAppText("ride_map.history_recording_continues"))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(PevColors.green)
+                                Spacer()
+                                Button(localizedAppText("ride_map.return_live"), action: returnToLive)
+                                    .font(.subheadline.weight(.semibold))
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(PevColors.green)
+                                    .accessibilityIdentifier("ride-map.return-live")
+                            }
+                            .accessibilityIdentifier("ride-map.history-recording-banner")
+                        }
+
+                        RideMapHistoryListView(
+                            rides: rides,
+                            canLoadMore: canLoadMore,
+                            selectedRideID: selectedRideID,
+                            select: select,
+                            loadMore: loadMore
+                        )
+                        if pointsTruncated {
+                            Text(localizedAppText("ride_map.history_truncated"))
+                                .font(.caption)
+                                .foregroundStyle(PevColors.muted)
+                                .accessibilityIdentifier("ride-map.history-truncated")
+                        }
+                    }
+                    .padding(16)
+                    .background(PevColors.cardFill, in: UnevenRoundedRectangle(
+                        topLeadingRadius: 28,
+                        bottomLeadingRadius: 0,
+                        bottomTrailingRadius: 0,
+                        topTrailingRadius: 28
+                    ))
+                    .padding(.bottom, 8)
                 }
-                .padding(16)
-                .background(PevColors.cardFill, in: UnevenRoundedRectangle(
-                    topLeadingRadius: 28,
-                    bottomLeadingRadius: 0,
-                    bottomTrailingRadius: 0,
-                    topTrailingRadius: 28
-                ))
-                .padding(.bottom, 8)
             }
         }
         .onAppear { loadHistoryIfNeeded() }
