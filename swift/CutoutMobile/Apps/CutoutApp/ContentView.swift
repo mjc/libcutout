@@ -174,6 +174,14 @@ struct ContentView: View {
         destination == .rideMap || isRideMapDetail(destination)
     }
 
+    @MainActor
+    static func usesConnectedMapShell(
+        for destination: CutoutAppRoute,
+        isConnected: Bool
+    ) -> Bool {
+        destination == .rideMap && isConnected
+    }
+
     private func connectedDestination(for destination: CutoutAppRoute) -> some View {
         ZStack {
             PevColors.pageBackground
@@ -202,7 +210,19 @@ struct ContentView: View {
         ZStack {
             PevColors.pageBackground
                 .ignoresSafeArea()
-            routedContent(for: destination)
+            if Self.usesConnectedMapShell(
+                for: destination,
+                isConnected: model.selectedConnectionRoute != nil
+            ) {
+                PevAppShell(
+                    sectionTitle: appSectionTitle(for: destination),
+                    disconnect: disconnectAndReturnToPicker
+                ) {
+                    routedContent(for: destination)
+                }
+            } else {
+                routedContent(for: destination)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .accessibilityElement(children: .contain)
@@ -232,7 +252,10 @@ struct ContentView: View {
             RideMapRouteView(model: model, presentation: rideMapPresentation, { rideID in
                 model.rideMapMode = .history
                 navigate(to: .rideMapDetail(rideID: rideID))
-            }, showBackButton: model.selectedConnectionRoute == nil, back: { navigate(to: .devicePicker) })
+            },
+            showsNavigationHeader: model.selectedConnectionRoute == nil,
+            showBackButton: model.selectedConnectionRoute == nil,
+            back: { navigate(to: .devicePicker) })
         case let .rideMapDetail(rideID):
             RideMapRouteView(
                 model: model,

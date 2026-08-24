@@ -23,6 +23,7 @@ struct RideMapRouteView: View {
     private let closeDetail: (() -> Void)?
     private let initialHistoryID: String?
     private let detailOnly: Bool
+    private let showsNavigationHeader: Bool
     private let showBackButton: Bool
     private let back: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
@@ -32,6 +33,7 @@ struct RideMapRouteView: View {
         _ openHistory: ((String) -> Void)? = nil,
         initialHistoryID: String? = nil,
         detailOnly: Bool = false,
+        showsNavigationHeader: Bool = true,
         closeDetail: (() -> Void)? = nil,
         showBackButton: Bool = false,
         back: (() -> Void)? = nil
@@ -42,6 +44,7 @@ struct RideMapRouteView: View {
         self.closeDetail = closeDetail
         self.initialHistoryID = initialHistoryID
         self.detailOnly = detailOnly
+        self.showsNavigationHeader = showsNavigationHeader
         self.showBackButton = showBackButton
         self.back = back
     }
@@ -51,7 +54,9 @@ struct RideMapRouteView: View {
             if detailOnly {
                 detailContent
             } else {
-                RideMapNavigationHeader(showBackButton: showBackButton, back: back)
+                if showsNavigationHeader {
+                    RideMapNavigationHeader(showBackButton: showBackButton, back: back)
+                }
 
                 Picker(localizedAppText("navigation.section.map"), selection: $model.rideMapMode) {
                     Text(localizedAppText("ride_map.mode.live")).tag(CutoutAppModel.RideMapMode.live)

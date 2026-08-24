@@ -368,6 +368,18 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.eucRide.destination(for: mapTab), .rideMap)
     }
 
+    @MainActor
+    func testConnectedMapUsesSessionChromeWhileHomeMapKeepsItsOwnHeader() {
+        XCTAssertTrue(ContentView.usesConnectedMapShell(for: .rideMap, isConnected: true))
+        XCTAssertFalse(ContentView.usesConnectedMapShell(for: .rideMap, isConnected: false))
+        XCTAssertFalse(
+            ContentView.usesConnectedMapShell(
+                for: .rideMapDetail(rideID: "ride-1"),
+                isConnected: true
+            )
+        )
+    }
+
     func testOnlyLivePhaseOpensTheRideSurface() {
         XCTAssertFalse(SessionConnectionPhase.connecting(model: .falcon).opensRideScreen)
         XCTAssertFalse(SessionConnectionPhase.discoveringServices.opensRideScreen)
