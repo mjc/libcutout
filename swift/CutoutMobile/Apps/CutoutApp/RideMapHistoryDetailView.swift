@@ -62,69 +62,83 @@ struct RideMapHistoryDetailView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            VStack(spacing: 0) {
-                ZStack {
-                RideMapCanvasView(
-                    points: points,
-                    routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
-                    showsStartMarker: true,
-                    showsEndMarker: true,
-                    fitsRouteOnChange: true,
-                    mapPosition: $mapPosition,
-                    isApplyingCamera: $isApplyingCamera,
-                    cameraDidChange: {}
-                )
-
-                if isRouteLoading {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .tint(PevColors.yellow)
-                        Text(localizedAppText("ride_map.history_loading"))
-                            .font(.subheadline.weight(.semibold))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .modifier(RideMapLoadingSurface())
-                    .accessibilityIdentifier("ride-map.detail-loading")
-                }
-                }
-                .frame(height: max(320, proxy.size.height * 0.58))
-
-                if let ride = selectedRide {
-                    RideMapHistoryDetailSummary(
-                        distance: distanceText(for: ride.summary),
-                        duration: durationText(for: ride.summary),
-                        averageSpeed: Self.averageSpeedText(
-                            distanceMeters: ride.summary.distanceMeters,
-                            durationMilliseconds: ride.summary.durationMilliseconds
-                        ),
-                        recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
-                        vehicle: vehicleLabel(for: ride),
-                        points: points,
-                        pointsTruncated: pointsTruncated,
-                        segmentCount: ride.segmentCount,
-                        error: error,
-                        isLoading: isRouteLoading,
-                        loadFullRide: loadFullRide,
-                        shareText: shareText(for: ride),
-                        mapPosition: $mapPosition
-                    )
-                } else if initialHistoryID != nil {
-                    VStack(spacing: 12) {
-                        ContentUnavailableView(
-                            error == nil
-                                ? localizedAppText("ride_map.history_empty")
-                                : localizedAppText("ride_map.detail_error_title"),
-                            systemImage: error == nil ? "map" : "exclamationmark.triangle"
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    ZStack {
+                        RideMapCanvasView(
+                            points: points,
+                            routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
+                            showsStartMarker: true,
+                            showsEndMarker: true,
+                            fitsRouteOnChange: true,
+                            mapPosition: $mapPosition,
+                            isApplyingCamera: $isApplyingCamera,
+                            cameraDidChange: {}
                         )
-                        if error != nil {
-                            Button(localizedAppText("ride_map.history_retry"), action: retry)
-                                .buttonStyle(.borderedProminent)
-                                .tint(PevColors.yellow)
-                                .accessibilityIdentifier("ride-map.detail-retry")
+
+                        if isRouteLoading {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .tint(PevColors.yellow)
+                                Text(localizedAppText("ride_map.history_loading"))
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .modifier(RideMapLoadingSurface())
+                            .accessibilityIdentifier("ride-map.detail-loading")
+                        } else if error != nil {
+                            ContentUnavailableView(
+                                localizedAppText("ride_map.detail_error_title"),
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            .accessibilityIdentifier("ride-map.detail-map-error")
+                        } else if selectedRide?.summary.pointCount == 0 {
+                            ContentUnavailableView(
+                                localizedAppText("ride_map.no_points"),
+                                systemImage: "location.slash"
+                            )
+                            .accessibilityIdentifier("ride-map.detail-no-points")
                         }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(height: min(max(proxy.size.height * 0.58, 240), 520))
+
+                    if let ride = selectedRide {
+                        RideMapHistoryDetailSummary(
+                            distance: distanceText(for: ride.summary),
+                            duration: durationText(for: ride.summary),
+                            averageSpeed: Self.averageSpeedText(
+                                distanceMeters: ride.summary.distanceMeters,
+                                durationMilliseconds: ride.summary.durationMilliseconds
+                            ),
+                            recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
+                            vehicle: vehicleLabel(for: ride),
+                            points: points,
+                            pointsTruncated: pointsTruncated,
+                            segmentCount: ride.segmentCount,
+                            error: error,
+                            isLoading: isRouteLoading,
+                            loadFullRide: loadFullRide,
+                            shareText: shareText(for: ride),
+                            mapPosition: $mapPosition
+                        )
+                    } else if initialHistoryID != nil {
+                        VStack(spacing: 12) {
+                            ContentUnavailableView(
+                                error == nil
+                                    ? localizedAppText("ride_map.history_empty")
+                                    : localizedAppText("ride_map.detail_error_title"),
+                                systemImage: error == nil ? "map" : "exclamationmark.triangle"
+                            )
+                            if error != nil {
+                                Button(localizedAppText("ride_map.history_retry"), action: retry)
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(PevColors.yellow)
+                                    .accessibilityIdentifier("ride-map.detail-retry")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }
