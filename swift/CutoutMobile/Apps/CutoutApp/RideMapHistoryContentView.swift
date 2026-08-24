@@ -106,16 +106,51 @@ struct RideMapHistoryContentView: View {
                             .accessibilityIdentifier("ride-map.history-error")
                     }
 
-                    RideMapCanvasView(
-                        points: points,
-                        routeID: selectedRideID ?? "history",
-                        showsStartMarker: true,
-                        showsEndMarker: true,
-                        fitsRouteOnChange: true,
-                        mapPosition: $mapPosition,
-                        isApplyingCamera: $isApplyingCamera,
-                        cameraDidChange: {}
-                    )
+                    ZStack {
+                        RideMapCanvasView(
+                            points: points,
+                            routeID: selectedRideID ?? "history",
+                            showsStartMarker: true,
+                            showsEndMarker: true,
+                            fitsRouteOnChange: true,
+                            mapPosition: $mapPosition,
+                            isApplyingCamera: $isApplyingCamera,
+                            cameraDidChange: {}
+                        )
+
+                        if isSelectedRouteLoading {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .tint(PevColors.yellow)
+                                Text(localizedAppText("ride_map.history_loading"))
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(PevColors.cardFill, in: Capsule())
+                            .overlay {
+                                Capsule().stroke(PevColors.cardStroke, lineWidth: 1)
+                            }
+                            .accessibilityIdentifier("ride-map.history-map-loading")
+                        } else if isSelectedRouteError {
+                            Label(
+                                localizedAppText("ride_map.command_failed"),
+                                systemImage: "exclamationmark.triangle"
+                            )
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(PevColors.cardFill, in: Capsule())
+                            .accessibilityIdentifier("ride-map.history-map-error")
+                        } else if isSelectedRouteEmpty {
+                            ContentUnavailableView(
+                                localizedAppText("ride_map.no_points"),
+                                systemImage: "location.slash"
+                            )
+                            .accessibilityIdentifier("ride-map.history-map-empty")
+                        }
+                    }
                     .frame(height: 340)
                     .frame(maxWidth: .infinity)
 
@@ -214,6 +249,25 @@ struct RideMapHistoryContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("ride-map.history-empty")
+    }
+
+    private var selectedRide: MobileRideMapHistorySummaryDto? {
+        guard let selectedRideID else { return nil }
+        return rides.first { $0.rideId == selectedRideID }
+    }
+
+    private var isSelectedRouteLoading: Bool {
+        guard let selectedRide else { return false }
+        return isLoading && points.isEmpty && selectedRide.summary.pointCount > 0
+    }
+
+    private var isSelectedRouteError: Bool {
+        selectedRide != nil && points.isEmpty && error != nil
+    }
+
+    private var isSelectedRouteEmpty: Bool {
+        guard let selectedRide else { return false }
+        return !isLoading && error == nil && selectedRide.summary.pointCount == 0
     }
 
     private var historyErrorState: some View {
