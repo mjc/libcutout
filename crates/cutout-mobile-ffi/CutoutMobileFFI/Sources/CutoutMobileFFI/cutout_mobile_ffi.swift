@@ -2490,7 +2490,12 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
-    func pause(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+    func pause() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Evaluates the pause transition at the supplied monotonic timestamp.
+     */
+    func pauseAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Returns a bounded page of active route points.
@@ -2511,7 +2516,12 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
-    func resume(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+    func resume() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Evaluates the resume transition at the supplied monotonic timestamp.
+     */
+    func resumeAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
     /**
      * Saves a stopped ride and removes it from the active projection.
@@ -2538,7 +2548,12 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * Returns an error when no open ride exists or durable storage rejects the transition.
      */
-    func stop(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+    func stop() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Evaluates the stop transition at the supplied monotonic timestamp.
+     */
+    func stopAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
 }
 /**
@@ -2746,9 +2761,20 @@ open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)thro
      *
      * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
-open func pause(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_pause(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Evaluates the pause transition at the supplied monotonic timestamp.
+     */
+open func pauseAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_pause_at(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(atMs),$0
     )
@@ -2782,9 +2808,20 @@ open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideM
      *
      * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
-open func resume(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+open func resume()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_resume(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Evaluates the resume transition at the supplied monotonic timestamp.
+     */
+open func resumeAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_resume_at(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(atMs),$0
     )
@@ -2830,9 +2867,20 @@ open func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?)throws  -> Mo
      *
      * Returns an error when no open ride exists or durable storage rejects the transition.
      */
-open func stop(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+open func stop()throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_stop(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Evaluates the stop transition at the supplied monotonic timestamp.
+     */
+open func stopAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_stop_at(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(atMs),$0
     )
@@ -3008,6 +3056,15 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func createTrail(name: String) throws  -> MobileTrailIdDto
 
     /**
+     * Loads a stored display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
+     */
+    func deviceName(platformIdentifier: String) throws  -> String?
+
+    /**
      * Enqueues a location sample for ordered background persistence.
      *
      * # Errors
@@ -3087,6 +3144,15 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
      */
     func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32) throws  -> MobileRoutePointPageDto
+
+    /**
+     * Stores a display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity, display name, or worker is invalid.
+     */
+    func saveDeviceName(platformIdentifier: String, displayName: String, updatedAtMilliseconds: UInt64) throws
 
     /**
      * Stores opaque Rust-owned ride-session marker bytes.
@@ -3453,6 +3519,22 @@ open func createTrail(name: String)throws  -> MobileTrailIdDto  {
 }
 
     /**
+     * Loads a stored display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
+     */
+open func deviceName(platformIdentifier: String)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_device_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),$0
+    )
+})
+}
+
+    /**
      * Enqueues a location sample for ordered background persistence.
      *
      * # Errors
@@ -3598,6 +3680,23 @@ open func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto
         FfiConverterUInt32.lower(limit),$0
     )
 })
+}
+
+    /**
+     * Stores a display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity, display name, or worker is invalid.
+     */
+open func saveDeviceName(platformIdentifier: String, displayName: String, updatedAtMilliseconds: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_device_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterString.lower(displayName),
+        FfiConverterUInt64.lower(updatedAtMilliseconds),$0
+    )
+}
 }
 
     /**
@@ -23551,13 +23650,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_vehicle_connection() != 22849) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 56385) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 1853) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause_at() != 12063) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 13770) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume_at() != 16735) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_save() != 34044) {
@@ -23566,7 +23671,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_start_gps_only() != 59010) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 2338) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 50377) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop_at() != 19031) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 60604) {
@@ -23608,6 +23716,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 6712) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_device_name() != 19773) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry() != 31825) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23633,6 +23744,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_route_points() != 59770) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_device_name() != 57501) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_ride_session_marker() != 52189) {

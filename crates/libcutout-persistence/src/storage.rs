@@ -28,7 +28,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -1036,6 +1036,45 @@ impl RideDatabase {
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::ClearSelectedDevice { reply })
     }
+    /// Stores the display name associated with a platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the identity or display name is empty or the worker cannot
+    /// commit the device record.
+    pub fn save_device_name(
+        &self,
+        platform_identifier: &str,
+        display_name: &str,
+        updated_at_ms: u64,
+    ) -> Result<(), StorageError> {
+        let platform_identifier = platform_identifier.trim();
+        let display_name = display_name.trim();
+        if platform_identifier.is_empty() || display_name.is_empty() {
+            return Err(StorageError::InvalidStoredValue {
+                field: "device name",
+                value: "empty".to_owned(),
+            });
+        }
+        self.request(move |reply| Command::SaveDeviceName {
+            platform_identifier: platform_identifier.to_owned(),
+            display_name: display_name.to_owned(),
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Loads a persisted display name for a platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the worker cannot query the device record.
+    pub fn device_name(&self, platform_identifier: &str) -> Result<Option<String>, StorageError> {
+        self.request(move |reply| Command::DeviceName {
+            platform_identifier: platform_identifier.to_owned(),
+            reply,
+        })
+    }
 
     /// Stores a learned voltage-sag model for one device identity.
     ///
@@ -1577,6 +1616,16 @@ enum Command {
         last_telemetry_at_ms: Option<u64>,
         reply: Reply<()>,
     },
+    SaveDeviceName {
+        platform_identifier: String,
+        display_name: String,
+        updated_at_ms: u64,
+        reply: Reply<()>,
+    },
+    DeviceName {
+        platform_identifier: String,
+        reply: Reply<Option<String>>,
+    },
     SaveSelectedDevice {
         platform_identifier: String,
         updated_at_ms: u64,
@@ -1758,6 +1807,25 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     &platform_identifier,
                     updated_at_ms,
                 ));
+            }
+            Command::SaveDeviceName {
+                platform_identifier,
+                display_name,
+                updated_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(save_device_name(
+                    &connection,
+                    &platform_identifier,
+                    &display_name,
+                    updated_at_ms,
+                ));
+            }
+            Command::DeviceName {
+                platform_identifier,
+                reply,
+            } => {
+                let _ = reply.send(device_name(&connection, &platform_identifier));
             }
             Command::SelectedDevice { reply } => {
                 let _ = reply.send(selected_device(&connection));
@@ -2082,7 +2150,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 8;
+                PRAGMA user_version = 9;
                  COMMIT;",
             )?;
         }
@@ -2138,6 +2206,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         5 => migrate_v5_to_current(connection)?,
         6 => migrate_v6_to_current(connection)?,
         7 => migrate_v7_to_current(connection)?,
+        8 => migrate_v8_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -2182,6 +2251,11 @@ fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
         CREATE TABLE selected_device (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        CREATE TABLE devices (
+            platform_identifier TEXT PRIMARY KEY NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
         );
         CREATE TABLE voltage_sag_models (
@@ -2342,7 +2416,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-        PRAGMA user_version = 8;
+        PRAGMA user_version = 9;
         ",
     )?;
     transaction.commit()?;
@@ -2456,6 +2530,22 @@ fn migrate_v7_to_current(connection: &mut Connection) -> Result<(), StorageError
         COMMIT;
         ",
     )?;
+    migrate_v8_to_current(connection)
+}
+
+fn migrate_v8_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    connection.execute_batch(
+        "
+        BEGIN IMMEDIATE;
+        CREATE TABLE devices (
+            platform_identifier TEXT PRIMARY KEY NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 512),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        PRAGMA user_version = 9;
+        COMMIT;
+        ",
+    )?;
     Ok(())
 }
 
@@ -2468,6 +2558,7 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
     for table in [
         "rides",
         "ride_points",
+        "devices",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
@@ -3364,6 +3455,35 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
 fn clear_selected_device(connection: &Connection) -> Result<(), StorageError> {
     connection.execute("DELETE FROM selected_device WHERE id = 1", [])?;
     Ok(())
+}
+fn save_device_name(
+    connection: &Connection,
+    platform_identifier: &str,
+    display_name: &str,
+    updated_at_ms: u64,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(platform_identifier) DO UPDATE SET display_name = excluded.display_name,
+             updated_at_ms = excluded.updated_at_ms",
+        params![platform_identifier, display_name, updated_at_ms],
+    )?;
+    Ok(())
+}
+
+fn device_name(
+    connection: &Connection,
+    platform_identifier: &str,
+) -> Result<Option<String>, StorageError> {
+    connection
+        .query_row(
+            "SELECT display_name FROM devices WHERE platform_identifier = ?1",
+            params![platform_identifier],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
 }
 
 fn save_voltage_sag_model(

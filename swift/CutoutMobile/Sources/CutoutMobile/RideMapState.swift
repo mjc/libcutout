@@ -160,15 +160,15 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try core.pause(atMs: atMs) }
+        try transition { try core.pauseAt(atMs: atMs) }
     }
 
     public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try core.resume(atMs: atMs) }
+        try transition { try core.resumeAt(atMs: atMs) }
     }
 
     public func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try core.stop(atMs: atMs) }
+        try transition { try core.stopAt(atMs: atMs) }
     }
 
     public func save() throws -> MobileRideMapSnapshotDto {

@@ -254,6 +254,13 @@ fn database_persists_migrated_mobile_state() {
         database.selected_device().unwrap().as_deref(),
         Some("ios-local-aero")
     );
+    database
+        .save_device_name("ios-local-aero", "NF2557", 43)
+        .unwrap();
+    assert_eq!(
+        database.device_name("ios-local-aero").unwrap().as_deref(),
+        Some("NF2557")
+    );
     let model = VoltageSagModelRecord {
         schema_version: 1,
         effective_resistance_milliohms: 37,
@@ -271,6 +278,10 @@ fn database_persists_migrated_mobile_state() {
     assert_eq!(
         reopened.selected_device().unwrap().as_deref(),
         Some("ios-local-aero")
+    );
+    assert_eq!(
+        reopened.device_name("ios-local-aero").unwrap().as_deref(),
+        Some("NF2557")
     );
     assert_eq!(reopened.voltage_sag_model("device-1").unwrap(), Some(model));
     assert_eq!(reopened.ride_session_marker().unwrap(), Some(vec![1, 2, 3]));
@@ -688,7 +699,15 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 8);
+        assert_eq!(current_version, 9);
+        let devices_table: String = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(devices_table, "devices");
         let pevcap_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pevcap_imports'",

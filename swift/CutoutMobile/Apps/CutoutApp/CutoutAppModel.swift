@@ -61,6 +61,10 @@ final class CutoutAppModel {
 
     var rideMapVehicleName: String? {
         if let identity = rideMapVehicleIdentity,
+           let persisted = selectedDeviceStore.displayName(for: identity) {
+            return persisted
+        }
+        if let identity = rideMapVehicleIdentity,
            let candidate = core.protocolIdentityCandidate,
            candidate.platformIdentifier == identity,
            candidate.displayName != identity,
@@ -68,7 +72,6 @@ final class CutoutAppModel {
             return candidate.displayName
         }
         return connectionState.selection?.title
-            ?? core.protocolIdentityCandidate?.displayName
             ?? devicePickerScanState?.rows.first(where: { $0.id == rideMapVehicleIdentity })?.title
     }
 
@@ -559,7 +562,10 @@ final class CutoutAppModel {
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
-            selectedDeviceStore.save(platformIdentifier: platformIdentifier)
+            selectedDeviceStore.save(
+                platformIdentifier: platformIdentifier,
+                displayName: selectedRow.title
+            )
             hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
@@ -796,6 +802,16 @@ final class CutoutAppModel {
             liveActivityGlyph = .electricUnicycle
             syncLiveActivity()
             return
+        }
+        if let candidate,
+           let identity = rideMapVehicleIdentity,
+           candidate.platformIdentifier == identity,
+           candidate.displayName != identity,
+           !candidate.displayName.isEmpty {
+            selectedDeviceStore.save(
+                platformIdentifier: identity,
+                displayName: candidate.displayName
+            )
         }
         if let model = candidate?.support.electricUnicycleModel {
             liveActivityIdentity = .model(model)
