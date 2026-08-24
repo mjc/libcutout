@@ -4,7 +4,6 @@ import SwiftUI
 
 struct RideMapHistoryListView: View {
     let rides: [MobileRideMapHistorySummaryDto]
-    @Binding var searchText: String
     let canLoadMore: Bool
     let selectedRideID: String?
     let select: (String) -> Void
@@ -67,7 +66,6 @@ struct RideMapHistoryListView: View {
                     .padding(.vertical, 8)
             }
         }
-        .searchable(text: $searchText)
     }
 
     private func distanceText(for summary: MobileRideMapSummaryDto) -> String {

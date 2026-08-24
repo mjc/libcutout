@@ -144,7 +144,6 @@ struct RideMapHistoryContentView: View {
 
                     RideMapHistoryListView(
                         rides: filteredRides,
-                        searchText: $searchText,
                         canLoadMore: canLoadMore,
                         selectedRideID: selectedRideID,
                         select: select,
@@ -168,6 +167,9 @@ struct RideMapHistoryContentView: View {
             }
         }
         .onAppear { loadHistoryIfNeeded() }
+        // Search belongs to the screen container so it stays attached to the
+        // Map navigation context instead of the inner fixed-height list.
+        .searchable(text: $searchText)
         // Connected Map is rendered underneath a floating TabView. Keep the
         // selected route, list rows, and truncation notice above that chrome;
         // the same inset is harmless on the home-route presentation.
