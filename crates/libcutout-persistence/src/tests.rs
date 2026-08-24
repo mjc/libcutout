@@ -12,8 +12,8 @@ use rusqlite::Connection;
 use cutout_ride_maps::RideLifecycleState;
 
 use super::{
-    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideSource, StorageError,
-    VoltageSagModelRecord,
+    GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
+    RideSource, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -139,7 +139,7 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
 
     let reopened = RideDatabase::open(&path).unwrap();
     let summary = reopened.summary(ride).unwrap();
-    assert_eq!(summary.point_count(), 2);
+    assert_eq!(summary.point_count().as_u64(), 2);
     reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -254,6 +254,13 @@ fn database_persists_migrated_mobile_state() {
         database.selected_device().unwrap().as_deref(),
         Some("ios-local-aero")
     );
+    database
+        .save_device_name("ios-local-aero", "NF2557", 43)
+        .unwrap();
+    assert_eq!(
+        database.device_name("ios-local-aero").unwrap().as_deref(),
+        Some("NF2557")
+    );
     let model = VoltageSagModelRecord {
         schema_version: 1,
         effective_resistance_milliohms: 37,
@@ -271,6 +278,10 @@ fn database_persists_migrated_mobile_state() {
     assert_eq!(
         reopened.selected_device().unwrap().as_deref(),
         Some("ios-local-aero")
+    );
+    assert_eq!(
+        reopened.device_name("ios-local-aero").unwrap().as_deref(),
+        Some("NF2557")
     );
     assert_eq!(reopened.voltage_sag_model("device-1").unwrap(), Some(model));
     assert_eq!(reopened.ride_session_marker().unwrap(), Some(vec![1, 2, 3]));
@@ -344,7 +355,7 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     assert_eq!(first.location_count, 1);
     assert_eq!(first.outcome, PevcapImportOutcome::RideAndCapture);
     let ride_id = first.ride_id.unwrap();
-    assert_eq!(database.summary(ride_id).unwrap().point_count(), 1);
+    assert_eq!(database.summary(ride_id).unwrap().point_count().as_u64(), 1);
     assert!(first.managed_artifact_path.exists());
     assert!(
         first
@@ -688,7 +699,15 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 8);
+        assert_eq!(current_version, 9);
+        let devices_table: String = connection
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(devices_table, "devices");
         let pevcap_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'pevcap_imports'",
@@ -926,6 +945,9 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .unwrap();
     assert_eq!(second.rides().len(), 1);
     assert_eq!(second.rides()[0].id(), rides[0]);
+    let selected = database.find_ride(rides[0]).unwrap().expect("saved ride");
+    assert_eq!(selected.id(), rides[0]);
+    assert!(database.find_ride(RideId::new()).unwrap().is_none());
 
     let ride = database.create_ride(RideSource::Live, 40).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
@@ -953,6 +975,77 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .unwrap();
     assert_eq!(second.points().len(), 1);
     assert_eq!(second.points()[0].sequence(), 2);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-filtered-history-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let first = database.create_ride(RideSource::Live, 10).unwrap();
+    let second = database.create_ride(RideSource::Live, 20).unwrap();
+    for ride in [first, second] {
+        database.transition(ride, RideEvent::Start).unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+    }
+    database.save_device_name("device-a", "NF2557", 30).unwrap();
+    database
+        .update_ride_map_metadata(first, None, Some("device-a"), None, None)
+        .unwrap();
+
+    let date_filtered = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(Some(15), None, None),
+        )
+        .unwrap();
+    assert_eq!(
+        date_filtered
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![second]
+    );
+
+    let vehicle_filtered = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(None, Some("device-a"), None),
+        )
+        .unwrap();
+    assert_eq!(
+        vehicle_filtered
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
+
+    let name_searched = database
+        .list_rides_filtered(
+            None,
+            QueryLimit::new(10).unwrap(),
+            RideHistoryQuery::new(None, None, Some("nf2557")),
+        )
+        .unwrap();
+    assert_eq!(
+        name_searched
+            .rides()
+            .iter()
+            .map(RideRecord::id)
+            .collect::<Vec<_>>(),
+        vec![first]
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

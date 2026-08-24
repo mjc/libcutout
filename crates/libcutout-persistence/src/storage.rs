@@ -28,7 +28,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 8;
+const CURRENT_SCHEMA_VERSION: i64 = 9;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -133,6 +133,54 @@ impl RideCursor {
     #[must_use]
     pub const fn ride_id(self) -> RideId {
         self.ride_id
+    }
+}
+
+/// Rust-owned filters for bounded ride-history queries.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RideHistoryQuery {
+    created_after_ms: Option<u64>,
+    vehicle_identity: Option<String>,
+    search_text: Option<String>,
+}
+
+impl RideHistoryQuery {
+    /// Creates a query from optional date, vehicle-identity, and user search filters.
+    #[must_use]
+    pub fn new(
+        created_after_milliseconds: Option<u64>,
+        vehicle_identity: Option<&str>,
+        search_text: Option<&str>,
+    ) -> Self {
+        Self {
+            created_after_ms: created_after_milliseconds,
+            vehicle_identity: vehicle_identity
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+            search_text: search_text
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+        }
+    }
+
+    /// Returns the inclusive lower creation-time bound.
+    #[must_use]
+    pub const fn created_after_milliseconds(&self) -> Option<u64> {
+        self.created_after_ms
+    }
+
+    /// Returns the stable platform identity filter.
+    #[must_use]
+    pub fn vehicle_identity(&self) -> Option<&str> {
+        self.vehicle_identity.as_deref()
+    }
+
+    /// Returns the normalized user search text.
+    #[must_use]
+    pub fn search_text(&self) -> Option<&str> {
+        self.search_text.as_deref()
     }
 }
 
@@ -1036,6 +1084,45 @@ impl RideDatabase {
     pub fn clear_selected_device(&self) -> Result<(), StorageError> {
         self.request(|reply| Command::ClearSelectedDevice { reply })
     }
+    /// Stores the display name associated with a platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the identity or display name is empty or the worker cannot
+    /// commit the device record.
+    pub fn save_device_name(
+        &self,
+        platform_identifier: &str,
+        display_name: &str,
+        updated_at_ms: u64,
+    ) -> Result<(), StorageError> {
+        let platform_identifier = platform_identifier.trim();
+        let display_name = display_name.trim();
+        if platform_identifier.is_empty() || display_name.is_empty() {
+            return Err(StorageError::InvalidStoredValue {
+                field: "device name",
+                value: "empty".to_owned(),
+            });
+        }
+        self.request(move |reply| Command::SaveDeviceName {
+            platform_identifier: platform_identifier.to_owned(),
+            display_name: display_name.to_owned(),
+            updated_at_ms,
+            reply,
+        })
+    }
+
+    /// Loads a persisted display name for a platform-local device identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage error when the worker cannot query the device record.
+    pub fn device_name(&self, platform_identifier: &str) -> Result<Option<String>, StorageError> {
+        self.request(move |reply| Command::DeviceName {
+            platform_identifier: platform_identifier.to_owned(),
+            reply,
+        })
+    }
 
     /// Stores a learned voltage-sag model for one device identity.
     ///
@@ -1445,6 +1532,15 @@ impl RideDatabase {
         self.request(move |reply| Command::Summary { ride_id, reply })
     }
 
+    /// Loads one visible ride record by its stable identifier without paging through history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the record.
+    pub fn find_ride(&self, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
+        self.request(move |reply| Command::FindRide { ride_id, reply })
+    }
+
     /// Lists one bounded page of visible rides in stable newest-first order.
     ///
     /// # Errors
@@ -1455,9 +1551,24 @@ impl RideDatabase {
         cursor: Option<RideCursor>,
         limit: QueryLimit,
     ) -> Result<RidePage, StorageError> {
+        self.list_rides_filtered(cursor, limit, RideHistoryQuery::default())
+    }
+
+    /// Lists one bounded page of visible rides with Rust-owned history filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the page.
+    pub fn list_rides_filtered(
+        &self,
+        cursor: Option<RideCursor>,
+        limit: QueryLimit,
+        query: RideHistoryQuery,
+    ) -> Result<RidePage, StorageError> {
         self.request(move |reply| Command::ListRides {
             cursor,
             limit,
+            query,
             reply,
         })
     }
@@ -1576,6 +1687,16 @@ enum Command {
         associated_at_ms: Option<u64>,
         last_telemetry_at_ms: Option<u64>,
         reply: Reply<()>,
+    },
+    SaveDeviceName {
+        platform_identifier: String,
+        display_name: String,
+        updated_at_ms: u64,
+        reply: Reply<()>,
+    },
+    DeviceName {
+        platform_identifier: String,
+        reply: Reply<Option<String>>,
     },
     SaveSelectedDevice {
         platform_identifier: String,
@@ -1700,9 +1821,14 @@ enum Command {
         ride_id: RideId,
         reply: Reply<RideSummary>,
     },
+    FindRide {
+        ride_id: RideId,
+        reply: Reply<Option<RideRecord>>,
+    },
     ListRides {
         cursor: Option<RideCursor>,
         limit: QueryLimit,
+        query: RideHistoryQuery,
         reply: Reply<RidePage>,
     },
     RoutePoints {
@@ -1758,6 +1884,25 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     &platform_identifier,
                     updated_at_ms,
                 ));
+            }
+            Command::SaveDeviceName {
+                platform_identifier,
+                display_name,
+                updated_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(save_device_name(
+                    &connection,
+                    &platform_identifier,
+                    &display_name,
+                    updated_at_ms,
+                ));
+            }
+            Command::DeviceName {
+                platform_identifier,
+                reply,
+            } => {
+                let _ = reply.send(device_name(&connection, &platform_identifier));
             }
             Command::SelectedDevice { reply } => {
                 let _ = reply.send(selected_device(&connection));
@@ -1953,12 +2098,16 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
             }
+            Command::FindRide { ride_id, reply } => {
+                let _ = reply.send(find_ride(&connection, ride_id));
+            }
             Command::ListRides {
                 cursor,
                 limit,
+                query,
                 reply,
             } => {
-                let _ = reply.send(list_rides(&connection, cursor, limit));
+                let _ = reply.send(list_rides(&connection, cursor, limit, &query));
             }
             Command::RoutePoints {
                 ride_id,
@@ -2082,7 +2231,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 8;
+                PRAGMA user_version = 9;
                  COMMIT;",
             )?;
         }
@@ -2138,6 +2287,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         5 => migrate_v5_to_current(connection)?,
         6 => migrate_v6_to_current(connection)?,
         7 => migrate_v7_to_current(connection)?,
+        8 => migrate_v8_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -2182,6 +2332,11 @@ fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
         CREATE TABLE selected_device (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        CREATE TABLE devices (
+            platform_identifier TEXT PRIMARY KEY NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
         );
         CREATE TABLE voltage_sag_models (
@@ -2342,7 +2497,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-        PRAGMA user_version = 8;
+        PRAGMA user_version = 9;
         ",
     )?;
     transaction.commit()?;
@@ -2456,6 +2611,22 @@ fn migrate_v7_to_current(connection: &mut Connection) -> Result<(), StorageError
         COMMIT;
         ",
     )?;
+    migrate_v8_to_current(connection)
+}
+
+fn migrate_v8_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    connection.execute_batch(
+        "
+        BEGIN IMMEDIATE;
+        CREATE TABLE devices (
+            platform_identifier TEXT PRIMARY KEY NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+            display_name TEXT NOT NULL CHECK (length(display_name) BETWEEN 1 AND 512),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+        );
+        PRAGMA user_version = 9;
+        COMMIT;
+        ",
+    )?;
     Ok(())
 }
 
@@ -2468,6 +2639,7 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
     for table in [
         "rides",
         "ride_points",
+        "devices",
         "selected_device",
         "voltage_sag_models",
         "ride_session_marker",
@@ -3365,6 +3537,35 @@ fn clear_selected_device(connection: &Connection) -> Result<(), StorageError> {
     connection.execute("DELETE FROM selected_device WHERE id = 1", [])?;
     Ok(())
 }
+fn save_device_name(
+    connection: &Connection,
+    platform_identifier: &str,
+    display_name: &str,
+    updated_at_ms: u64,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(platform_identifier) DO UPDATE SET display_name = excluded.display_name,
+             updated_at_ms = excluded.updated_at_ms",
+        params![platform_identifier, display_name, updated_at_ms],
+    )?;
+    Ok(())
+}
+
+fn device_name(
+    connection: &Connection,
+    platform_identifier: &str,
+) -> Result<Option<String>, StorageError> {
+    connection
+        .query_row(
+            "SELECT display_name FROM devices WHERE platform_identifier = ?1",
+            params![platform_identifier],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
 
 fn save_voltage_sag_model(
     connection: &Connection,
@@ -3633,8 +3834,8 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
             sequence,
             segment_id,
             telemetry_state.storage_value(),
-            sample.monotonic_milliseconds(),
-            sample.wall_clock_unix_milliseconds(),
+            sample.monotonic_milliseconds().as_u64(),
+            sample.wall_clock_unix_milliseconds().as_u64(),
             sample.coordinate().latitude().as_i32(),
             sample.coordinate().longitude().as_i32(),
             sample.horizontal_accuracy_millimetres(),
@@ -3660,7 +3861,7 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
             params![ride_id.uuid().to_string()],
             |row| {
                 Ok(RideSummary::from_stored(
-                    row.get::<_, u64>(0)?,
+                    row.get::<_, u64>(0)?.into(),
                     row.get::<_, u64>(1)?,
                 ))
             },
@@ -3669,15 +3870,9 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
         .ok_or(StorageError::NotFound)
 }
 
-fn list_rides(
-    connection: &Connection,
-    cursor: Option<RideCursor>,
-    limit: QueryLimit,
-) -> Result<RidePage, StorageError> {
-    let fetch_limit = i64::from(limit.get()) + 1;
-    let mut rides = Vec::new();
-    if let Some(cursor) = cursor {
-        let mut statement = connection.prepare(
+fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
+    connection
+        .query_row(
             "SELECT id, source, state, created_at_ms, updated_at_ms,
                     CASE
                         WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
@@ -3692,13 +3887,73 @@ fn list_rides(
                     (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
                     candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
              FROM rides
-             WHERE state NOT IN ('draft', 'discarded')
-               AND (created_at_ms < ?1 OR (created_at_ms = ?1 AND id < ?2))
-             ORDER BY created_at_ms DESC, id DESC
-             LIMIT ?3",
-        )?;
+             WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
+            params![ride_id.uuid().to_string()],
+            ride_record_from_row,
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
+fn list_rides(
+    connection: &Connection,
+    cursor: Option<RideCursor>,
+    limit: QueryLimit,
+    query: &RideHistoryQuery,
+) -> Result<RidePage, StorageError> {
+    let fetch_limit = i64::from(limit.get()) + 1;
+    let created_after = query
+        .created_after_ms
+        .map(|value| i64::try_from(value).unwrap_or(i64::MAX));
+    let vehicle_identity = query.vehicle_identity.as_deref();
+    let search_text = query
+        .search_text
+        .as_deref()
+        .map(|value| format!("%{}%", value.to_lowercase()));
+    let base_sql = "SELECT rides.id, rides.source, rides.state, rides.created_at_ms, rides.updated_at_ms,
+                           CASE
+                               WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        IS NULL
+                                   OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        < rides.created_at_ms
+                                   THEN 0
+                               ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        - rides.created_at_ms
+                           END,
+                           rides.point_count, rides.distance_mm,
+                           (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
+                           rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
+                           rides.last_telemetry_at_ms
+                    FROM rides
+                    LEFT JOIN devices AS associated_device
+                        ON associated_device.platform_identifier = rides.associated_vehicle
+                    LEFT JOIN devices AS candidate_device
+                        ON candidate_device.platform_identifier = rides.candidate_vehicle
+                    WHERE rides.state NOT IN ('draft', 'discarded')
+                      AND (?1 IS NULL OR rides.created_at_ms >= ?1)
+                      AND (?2 IS NULL OR rides.associated_vehicle = ?2 OR rides.candidate_vehicle = ?2)
+                      AND (?3 IS NULL OR
+                           lower(rides.id) LIKE ?3
+                           OR lower(COALESCE(rides.associated_vehicle, '')) LIKE ?3
+                           OR lower(COALESCE(rides.candidate_vehicle, '')) LIKE ?3
+                           OR lower(COALESCE(associated_device.display_name, '')) LIKE ?3
+                           OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?3
+                           OR CAST(rides.created_at_ms AS TEXT) LIKE ?3
+                           OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3)";
+    let mut rides = Vec::new();
+    if let Some(cursor) = cursor {
+        let sql = format!(
+            "{base_sql}
+                      AND (rides.created_at_ms < ?4 OR (rides.created_at_ms = ?4 AND rides.id < ?5))
+                    ORDER BY rides.created_at_ms DESC, rides.id DESC
+                    LIMIT ?6"
+        );
+        let mut statement = connection.prepare(&sql)?;
         let rows = statement.query_map(
             params![
+                created_after,
+                vehicle_identity,
+                search_text.as_deref(),
                 cursor.created_at_ms,
                 cursor.ride_id.uuid().to_string(),
                 fetch_limit
@@ -3709,25 +3964,21 @@ fn list_rides(
             rides.push(row?);
         }
     } else {
-        let mut statement = connection.prepare(
-            "SELECT id, source, state, created_at_ms, updated_at_ms,
-                    CASE
-                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 IS NULL
-                            OR (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 < created_at_ms
-                            THEN 0
-                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 - created_at_ms
-                    END,
-                    point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
-             FROM rides WHERE state NOT IN ('draft', 'discarded')
-             ORDER BY created_at_ms DESC, id DESC
-             LIMIT ?1",
+        let sql = format!(
+            "{base_sql}
+                    ORDER BY rides.created_at_ms DESC, rides.id DESC
+                    LIMIT ?4"
+        );
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                created_after,
+                vehicle_identity,
+                search_text.as_deref(),
+                fetch_limit
+            ],
+            ride_record_from_row,
         )?;
-        let rows = statement.query_map([fetch_limit], ride_record_from_row)?;
         for row in rows {
             rides.push(row?);
         }
@@ -3775,7 +4026,7 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         created_at_ms: row.get(3)?,
         updated_at_ms: row.get(4)?,
         duration_ms: row.get(5)?,
-        summary: RideSummary::from_stored(row.get(6)?, row.get(7)?),
+        summary: RideSummary::from_stored(row.get::<_, u64>(6)?.into(), row.get(7)?),
         segment_count: row.get(8)?,
         candidate_vehicle: row.get(9)?,
         associated_vehicle: row.get(10)?,
@@ -3855,7 +4106,13 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
                 }),
             )
         })?,
-        sample: LocationSample::new(coordinate, row.get(3)?, row.get(4)?, row.get(7)?, source),
+        sample: LocationSample::new(
+            coordinate,
+            row.get::<_, u64>(3)?,
+            row.get::<_, u64>(4)?,
+            row.get(7)?,
+            source,
+        ),
     })
 }
 
