@@ -753,6 +753,7 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
+        ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier)
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
         setPhase(.discoveringServices)
@@ -2112,6 +2113,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
         hasObservedRideMapConnection = false
+        ensureRideMapRecordingForConnection(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {
@@ -2132,6 +2134,19 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             if outcome == .associated {
                 publishRideMapSnapshot()
             }
+        } catch {
+            publishRideMapError(error)
+        }
+    }
+
+    private func ensureRideMapRecordingForConnection(platformIdentifier: String) {
+        guard selectedRoute != nil else { return }
+        do {
+            let snapshot = try rideMapState.ensureRecordingForVehicle(
+                platformIdentifier: platformIdentifier,
+                atMs: clock.now().rawValue
+            )
+            publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
         } catch {
             publishRideMapError(error)
         }

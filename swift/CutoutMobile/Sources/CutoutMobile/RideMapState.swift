@@ -141,6 +141,20 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    public func ensureRecordingForVehicle(
+        platformIdentifier: String,
+        atMs: UInt64
+    ) throws -> MobileRideMapSnapshotDto {
+        do {
+            return mapSnapshot(try core.ensureRecordingForVehicle(
+                platformIdentifier: platformIdentifier,
+                atMs: atMs
+            ))
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func pause() throws -> MobileRideMapSnapshotDto {
         try transition { try core.pause() }
     }

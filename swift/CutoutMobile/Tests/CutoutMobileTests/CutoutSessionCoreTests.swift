@@ -253,6 +253,32 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(core.displayState.speed.millimetersPerSecond, 8_000)
     }
 
+    func testScriptedConnectedSessionStartsAndAssociatesTheLiveRideMap() {
+        let live = expectation(description: "scripted session reaches live")
+        let core = CutoutSessionCore(
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: TelemetrySnapshot(speed: speedValue(8_000)),
+                startsLive: true,
+                connectionDelayMilliseconds: 0
+            )
+        )
+        core.onPhaseChange = { phase in
+            if phase == .live {
+                live.fulfill()
+            }
+        }
+
+        core.start()
+
+        wait(for: [live], timeout: 1)
+        XCTAssertEqual(core.rideMapStateHandle.currentSnapshot()?.state, .recording)
+        XCTAssertEqual(
+            core.rideMapStateHandle.currentSnapshot()?.associatedVehicle,
+            scriptedVescCandidate.platformIdentifier
+        )
+    }
+
     func testScriptedBluetoothUnavailableSessionPublishesNoPickerRows() {
         assertScriptedInitialBluetoothState(
             .unavailable,
