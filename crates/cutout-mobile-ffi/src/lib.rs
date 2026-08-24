@@ -1525,38 +1525,6 @@ pub fn mobile_conflicting_discovery_candidate(
     }
 }
 
-/// Resolve a provisional EUC session model hint from a user-visible device label.
-#[must_use]
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "UniFFI exports owned strings"
-)]
-#[uniffi::export]
-pub fn mobile_electric_unicycle_model_hint_from_device_kind(
-    device_kind: String,
-) -> Option<DiscoveryElectricUnicycleModel> {
-    mobile_electric_unicycle_model_hint(&device_kind.to_ascii_lowercase())
-}
-
-fn mobile_electric_unicycle_model_hint(lower_name: &str) -> Option<DiscoveryElectricUnicycleModel> {
-    match lower_name {
-        name if ["falcon", "begode", "gotway"]
-            .into_iter()
-            .any(|needle| name.contains(needle)) =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        }
-        name if ["aero", "nosfet", "veteran"]
-            .into_iter()
-            .any(|needle| name.contains(needle))
-            || name.starts_with("nf") =>
-        {
-            Some(DiscoveryElectricUnicycleModel::Aero)
-        }
-        _ => None,
-    }
-}
-
 /// Build a mobile discovery candidate from Begode/Gotway protocol identity evidence.
 #[must_use]
 #[allow(
@@ -13486,18 +13454,6 @@ mod tests {
             Some("Read-only protocol probe recommended".to_owned())
         );
         assert_eq!(candidate.detail, "Read-only protocol probe recommended");
-    }
-
-    #[test]
-    fn mobile_device_kind_hint_routes_typed_falcon_label() {
-        assert_eq!(
-            mobile_electric_unicycle_model_hint_from_device_kind("EUC falcon".to_owned()),
-            Some(DiscoveryElectricUnicycleModel::Falcon)
-        );
-        assert_eq!(
-            mobile_electric_unicycle_model_hint_from_device_kind("scooter foo bar".to_owned()),
-            None
-        );
     }
 
     #[test]
