@@ -483,7 +483,6 @@ public final class CutoutSessionCore: NSObject {
 #endif
         _ = locationManager
         updateRideMapAvailability(locationManager.authorizationStatus)
-        startLocationUpdatesIfAuthorized(locationManager)
         return onBleQueue {
             guard central == nil else {
                 return
@@ -753,7 +752,6 @@ public final class CutoutSessionCore: NSObject {
 
         self.selectedRoute = route
         self.selectedModel = selectedModel
-        ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier)
         testScriptWorkItem?.cancel()
         testScriptUpdateWorkItem?.cancel()
         setPhase(.discoveringServices)
@@ -2113,7 +2111,6 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
         hasObservedRideMapConnection = false
-        ensureRideMapRecordingForConnection(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {
@@ -2134,19 +2131,6 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             if outcome == .associated {
                 publishRideMapSnapshot()
             }
-        } catch {
-            publishRideMapError(error)
-        }
-    }
-
-    private func ensureRideMapRecordingForConnection(platformIdentifier: String) {
-        guard selectedRoute != nil else { return }
-        do {
-            let snapshot = try rideMapState.ensureRecordingForVehicle(
-                platformIdentifier: platformIdentifier,
-                atMs: clock.now().rawValue
-            )
-            publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
         } catch {
             publishRideMapError(error)
         }
@@ -2603,20 +2587,6 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         publishOnMain { self.onRideMapAvailabilityChange?(availability) }
     }
 
-    private func startLocationUpdatesIfAuthorized(_ manager: CLLocationManager) {
-        switch manager.authorizationStatus {
-        case .authorizedAlways:
-            manager.startUpdatingLocation()
-        case .authorizedWhenInUse:
-            requestAlwaysLocationAuthorizationIfNeeded()
-            manager.startUpdatingLocation()
-        case .notDetermined, .denied, .restricted:
-            break
-        @unknown default:
-            break
-        }
-    }
-
     private func requestAlwaysLocationAuthorizationIfNeeded() {
         guard !didRequestAlwaysLocationAuthorization else { return }
         didRequestAlwaysLocationAuthorization = true
@@ -2629,9 +2599,10 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         case .notDetermined:
             manager.requestWhenInUseAuthorization()
         case .authorizedAlways:
-            startLocationUpdatesIfAuthorized(manager)
+            manager.startUpdatingLocation()
         case .authorizedWhenInUse:
-            startLocationUpdatesIfAuthorized(manager)
+            requestAlwaysLocationAuthorizationIfNeeded()
+            manager.startUpdatingLocation()
         case .denied, .restricted:
             break
         @unknown default:

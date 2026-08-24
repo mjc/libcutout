@@ -4609,48 +4609,6 @@ impl MobileRideMapCoreInner {
             associated_vehicle: self.recorder.associated_vehicle().map(str::to_owned),
         }
     }
-
-    fn start_gps_only(
-        &mut self,
-        at_ms: u64,
-        last_connected_vehicle: Option<String>,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        if self.recorder.state().is_some_and(|current| {
-            !matches!(
-                current,
-                ride_maps::RideLifecycleState::Saved | ride_maps::RideLifecycleState::Discarded
-            )
-        }) {
-            return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
-        }
-        let id = if let Some(database) = self.database.as_ref() {
-            let id = database
-                .create_ride(MobileRideSourceDto::Live, at_ms)
-                .map_err(map_core_error)?;
-            database
-                .transition(id.clone(), MobileRideEventDto::Start)
-                .map_err(map_core_error)?;
-            database
-                .update_ride_map_metadata(
-                    id.clone(),
-                    last_connected_vehicle.clone(),
-                    None,
-                    None,
-                    None,
-                )
-                .map_err(map_core_error)?;
-            id
-        } else {
-            MobileRideIdDto {
-                value: Uuid::new_v4().to_string(),
-            }
-        };
-        self.recorder
-            .start(at_ms, last_connected_vehicle)
-            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
-        self.active_ride_id = Some(id);
-        Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
-    }
 }
 
 fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
@@ -4763,47 +4721,42 @@ impl MobileRideMapCore {
         last_connected_vehicle: Option<String>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        state.start_gps_only(at_ms, last_connected_vehicle)
-    }
-
-    /// Ensures a live map ride exists for a connected vehicle and associates it.
-    ///
-    /// A fresh connection starts a new live ride when no open ride exists. An already-open
-    /// GPS-only ride is associated with this vehicle, preserving the route recorded before the
-    /// Bluetooth connection was available.
-    pub fn ensure_recording_for_vehicle(
-        &self,
-        platform_identifier: String,
-        at_ms: u64,
-    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        if state.recorder.state().is_none() {
-            state.start_gps_only(at_ms, Some(platform_identifier.clone()))?;
+        if state.recorder.state().is_some_and(|current| {
+            !matches!(
+                current,
+                ride_maps::RideLifecycleState::Saved | ride_maps::RideLifecycleState::Discarded
+            )
+        }) {
+            return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
         }
-
-        let mut staged = state.recorder.clone();
-        let association = staged.observe_vehicle(&platform_identifier, at_ms);
-        if association == ride_maps::VehicleAssociation::Associated {
-            if let (Some(database), Some(id)) =
-                (state.database.as_ref(), state.active_ride_id.clone())
-            {
-                database
-                    .update_ride_map_metadata(
-                        id,
-                        None,
-                        Some(platform_identifier),
-                        staged.associated_at_milliseconds(),
-                        staged.last_telemetry_at_milliseconds(),
-                    )
-                    .map_err(map_core_error)?;
+        let id = if let Some(database) = state.database.as_ref() {
+            let id = database
+                .create_ride(MobileRideSourceDto::Live, at_ms)
+                .map_err(map_core_error)?;
+            database
+                .transition(id.clone(), MobileRideEventDto::Start)
+                .map_err(map_core_error)?;
+            database
+                .update_ride_map_metadata(
+                    id.clone(),
+                    last_connected_vehicle.clone(),
+                    None,
+                    None,
+                    None,
+                )
+                .map_err(map_core_error)?;
+            id
+        } else {
+            MobileRideIdDto {
+                value: Uuid::new_v4().to_string(),
             }
-        }
-        state.recorder = staged;
-        let lifecycle = state
+        };
+        state
             .recorder
-            .state()
-            .ok_or(MobileRideMapCoreErrorDto::NoActiveRide)?;
-        Ok(state.snapshot(lifecycle.into()))
+            .start(at_ms, last_connected_vehicle)
+            .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
+        state.active_ride_id = Some(id);
+        Ok(state.snapshot(MobileRideLifecycleStateDto::Active))
     }
 
     /// Pauses the active ride.
@@ -12997,7 +12950,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_ride_map_core_associates_a_vehicle_found_during_a_gps_only_ride() {
+    fn mobile_ride_map_core_does_not_associate_without_a_candidate() {
         let state = MobileRideMapCore::new();
         state
             .start_gps_only(1_000, None)
@@ -13006,25 +12959,14 @@ mod tests {
             state
                 .observe_vehicle_connection("pev-found-later".to_owned(), 1_001)
                 .expect("late PEV connection is observed"),
-            MobileRideMapCoreAssociationDto::Associated
+            MobileRideMapCoreAssociationDto::CandidateMissing
         );
         assert_eq!(
             state
                 .current_snapshot()
                 .and_then(|snapshot| snapshot.associated_vehicle),
-            Some("pev-found-later".to_owned())
+            None
         );
-    }
-
-    #[test]
-    fn mobile_ride_map_core_starts_and_associates_on_vehicle_connection() {
-        let state = MobileRideMapCore::new();
-        let snapshot = state
-            .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
-            .expect("connection starts the live map ride");
-        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Active);
-        assert_eq!(snapshot.associated_vehicle, Some("pev-1".to_owned()));
-        assert_eq!(snapshot.summary.point_count, 0);
     }
 
     #[test]
