@@ -18,7 +18,7 @@ pub use location::{
     WallClockUnixMilliseconds,
 };
 mod summary;
-pub use summary::{DistanceMillimetres, RideSummary, distance_between_millimetres};
+pub use summary::{DistanceMillimetres, RidePointCount, RideSummary, distance_between_millimetres};
 mod recording;
 pub use recording::{
     MAX_LIVE_ROUTE_POINTS, RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId,
@@ -30,8 +30,8 @@ pub use recording::{
 mod tests {
     use super::{
         Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
-        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideSummary, TransitionError,
-        VehicleIdentity, WallClockUnixMilliseconds,
+        MonotonicMilliseconds, RideEvent, RideLifecycleState, RidePointCount, RideSummary,
+        TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
     };
 
     #[test]
@@ -94,9 +94,17 @@ mod tests {
             LocationSource::Live,
         );
         let summary = RideSummary::from_samples(&[first, second]);
-        assert_eq!(summary.point_count(), 2);
+        assert_eq!(summary.point_count().as_u64(), 2);
         assert!(summary.distance_millimetres() > 80_000);
         assert!(summary.distance_millimetres() < 100_000);
+    }
+
+    #[test]
+    fn ride_point_count_keeps_count_arithmetic_typed_and_saturating() {
+        let count = RidePointCount::from_usize(3);
+        assert_eq!(count.saturating_add(RidePointCount::new(2)).as_u64(), 5);
+        assert_eq!(count.saturating_sub(RidePointCount::new(4)).as_u64(), 0);
+        assert!(RidePointCount::default().is_zero());
     }
 
     #[test]

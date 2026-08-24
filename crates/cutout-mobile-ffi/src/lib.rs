@@ -3637,7 +3637,7 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
         updated_at_milliseconds: ride.updated_at_milliseconds(),
         duration_milliseconds: ride.duration_milliseconds(),
         summary: MobileRideSummaryDto {
-            point_count: summary.point_count(),
+            point_count: summary.point_count().as_u64(),
             distance_millimetres: summary.distance_millimetres(),
         },
         segment_count: ride.segment_count(),
@@ -4533,7 +4533,7 @@ impl RideDatabaseHandle {
         self.inner
             .summary(id)
             .map(|summary| MobileRideSummaryDto {
-                point_count: summary.point_count(),
+                point_count: summary.point_count().as_u64(),
                 distance_millimetres: summary.distance_millimetres(),
             })
             .map_err(map_ride_database_error)
@@ -4646,7 +4646,7 @@ impl MobileRideMapCoreInner {
             },
             samples,
             ride_maps::RideSummary::from_stored(
-                ride.summary.point_count,
+                ride_maps::RidePointCount::new(ride.summary.point_count),
                 ride.summary.distance_millimetres,
             ),
         );
@@ -4683,7 +4683,7 @@ impl MobileRideMapCoreInner {
             || {
                 let summary = self.recorder.summary();
                 (
-                    summary.point_count(),
+                    summary.point_count().as_u64(),
                     millimetres_to_meters(summary.distance_millimetres()),
                 )
             },

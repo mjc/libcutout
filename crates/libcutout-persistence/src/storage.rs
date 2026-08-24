@@ -3861,7 +3861,7 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
             params![ride_id.uuid().to_string()],
             |row| {
                 Ok(RideSummary::from_stored(
-                    row.get::<_, u64>(0)?,
+                    row.get::<_, u64>(0)?.into(),
                     row.get::<_, u64>(1)?,
                 ))
             },
@@ -4026,7 +4026,7 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         created_at_ms: row.get(3)?,
         updated_at_ms: row.get(4)?,
         duration_ms: row.get(5)?,
-        summary: RideSummary::from_stored(row.get(6)?, row.get(7)?),
+        summary: RideSummary::from_stored(row.get::<_, u64>(6)?.into(), row.get(7)?),
         segment_count: row.get(8)?,
         candidate_vehicle: row.get(9)?,
         associated_vehicle: row.get(10)?,

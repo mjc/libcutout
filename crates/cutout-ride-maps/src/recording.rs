@@ -1,6 +1,6 @@
 use crate::{
     LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent, RideLifecycleState,
-    RideSummary, TransitionError, distance_between_millimetres,
+    RidePointCount, RideSummary, TransitionError, distance_between_millimetres,
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
@@ -252,7 +252,7 @@ impl RideMapRecorder {
             last_telemetry_at_milliseconds: None,
             points: Vec::new(),
             first_point_sequence: 0,
-            summary: RideSummary::from_stored(0, 0),
+            summary: RideSummary::from_stored(RidePointCount::new(0), 0),
             segment_id: RideMapSegmentId::new(0),
             segment_started: false,
             last_monotonic_milliseconds: MonotonicMilliseconds::new(0),
@@ -291,7 +291,7 @@ impl RideMapRecorder {
         last_telemetry_at_milliseconds: Option<MonotonicMilliseconds>,
         points: Vec<RideMapPoint>,
     ) -> Self {
-        let point_count = points.len() as u64;
+        let point_count = RidePointCount::from_usize(points.len());
         let distance_millimetres = points
             .windows(2)
             .filter(|pair| pair[0].segment_id() == pair[1].segment_id())
@@ -334,7 +334,10 @@ impl RideMapRecorder {
             let excess = points.len() - MAX_LIVE_ROUTE_POINTS;
             points.drain(..excess);
         }
-        let first_point_sequence = summary.point_count().saturating_sub(points.len() as u64);
+        let first_point_sequence = summary
+            .point_count()
+            .saturating_sub(RidePointCount::from_usize(points.len()))
+            .as_u64();
         let last_monotonic_milliseconds = points.last().map_or(created_at_milliseconds, |point| {
             point.sample().monotonic_milliseconds()
         });
@@ -409,7 +412,7 @@ impl RideMapRecorder {
     /// Returns the Rust-owned number of route segments admitted to the ride.
     #[must_use]
     pub const fn segment_count(&self) -> u64 {
-        if self.summary.point_count() == 0 {
+        if self.summary.point_count().is_zero() {
             0
         } else {
             self.segment_id.value().saturating_add(1)
@@ -431,7 +434,7 @@ impl RideMapRecorder {
     /// Returns the total number of accepted points, including points evicted from the live tail.
     #[must_use]
     pub const fn point_count(&self) -> u64 {
-        self.summary.point_count()
+        self.summary.point_count().as_u64()
     }
 
     /// Returns the point count, distance, and duration projection.
@@ -498,7 +501,7 @@ impl RideMapRecorder {
         self.last_telemetry_at_milliseconds = None;
         self.points.clear();
         self.first_point_sequence = 0;
-        self.summary = RideSummary::from_stored(0, 0);
+        self.summary = RideSummary::from_stored(RidePointCount::new(0), 0);
         self.segment_id = RideMapSegmentId::new(0);
         self.segment_started = true;
         self.paused_at_milliseconds = None;
@@ -699,7 +702,9 @@ impl RideMapRecorder {
             })
         };
         self.summary = RideSummary::from_stored(
-            self.summary.point_count().saturating_add(1),
+            self.summary
+                .point_count()
+                .saturating_add(RidePointCount::new(1)),
             self.summary.distance_millimetres().saturating_add(distance),
         );
         self.last_monotonic_milliseconds = sample.monotonic_milliseconds();
@@ -715,7 +720,8 @@ impl RideMapRecorder {
         self.first_point_sequence = self
             .summary
             .point_count()
-            .saturating_sub(self.points.len() as u64);
+            .saturating_sub(RidePointCount::from_usize(self.points.len()))
+            .as_u64();
         self.segment_started = false;
         segment_started
     }
