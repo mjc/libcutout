@@ -18,7 +18,9 @@ use std::{
 
 use cutout_core::{
     AccelerationAssistState as CoreAccelerationAssistState, AccelerationAssistStateDto,
-    ActivityProjectionState as CoreActivityProjectionState, AngleReadingDto,
+    ActivityProjectionState as CoreActivityProjectionState,
+    AeroAngleAdjustment as CoreAeroAngleAdjustment, AeroPwmPercent as CoreAeroPwmPercent,
+    AeroSpeedSetting as CoreAeroSpeedSetting, AngleReadingDto,
     BatteryCurrent as CoreBatteryCurrent, BatteryCurrentReadingDto, BatteryInfoDto,
     BatteryLevel as CoreBatteryLevel, BatteryLevelBasis, BatteryLevelReadingDto,
     BatteryPageKindDto, BatteryReadbackAvailabilityDto, BatteryReadbackDto,
@@ -2018,6 +2020,18 @@ pub enum MobileCommandDto {
     /// Reset the NOSFET Aero trip meter; stationary-only.
     ResetTripMeter,
 
+    /// Set NOSFET/Veteran tilt-back speed in whole km/h.
+    SetAeroTiltbackSpeed(MobileAeroSpeedSettingDto),
+
+    /// Set NOSFET/Veteran PWM warning percentage.
+    SetAeroPwmPercent(MobileAeroPwmPercentDto),
+
+    /// Set NOSFET/Veteran speed alarm in whole km/h.
+    SetAeroAlarmSpeed(MobileAeroSpeedSettingDto),
+
+    /// Set NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+    SetAeroAngleAdjustment(MobileAeroAngleAdjustmentDto),
+
     /// Set the device lights.
     SetLights(MobileLightStateDto),
 
@@ -2047,6 +2061,27 @@ pub enum MobileCommandDto {
 
     /// Sound a horn or alert.
     SoundHorn,
+}
+
+/// NOSFET/Veteran speed setting in whole km/h.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroSpeedSettingDto {
+    /// Whole kilometres per hour, in the wheel's 1..=99 range.
+    pub kilometres_per_hour: u8,
+}
+
+/// NOSFET/Veteran PWM warning percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroPwmPercentDto {
+    /// PWM percentage, from 0 through 100.
+    pub percent: u8,
+}
+
+/// NOSFET/Veteran pedal-zero angle adjustment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileAeroAngleAdjustmentDto {
+    /// Signed tenths of a degree, from -100 through 100.
+    pub tenths_of_degree: i8,
 }
 
 /// Mobile DTO light state.
@@ -2269,6 +2304,18 @@ pub struct MobileEucSettingsCapabilitiesDto {
 
     /// NOSFET Aero trip-meter reset support.
     pub reset_trip_meter: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran tilt-back speed write support.
+    pub aero_tiltback_speed: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran PWM warning write support.
+    pub aero_pwm_percent: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran speed-alarm write support.
+    pub aero_alarm_speed: MobileSettingWriteSupportDto,
+
+    /// NOSFET/Veteran pedal-zero angle write support.
+    pub aero_angle_adjustment: MobileSettingWriteSupportDto,
 }
 
 impl MobileEucSettingsCapabilitiesDto {
@@ -2284,6 +2331,10 @@ impl MobileEucSettingsCapabilitiesDto {
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
             reset_trip_meter: MobileSettingWriteSupportDto::Supported,
+            aero_tiltback_speed: MobileSettingWriteSupportDto::Supported,
+            aero_pwm_percent: MobileSettingWriteSupportDto::Supported,
+            aero_alarm_speed: MobileSettingWriteSupportDto::Supported,
+            aero_angle_adjustment: MobileSettingWriteSupportDto::Supported,
         }
     }
 
@@ -2299,6 +2350,10 @@ impl MobileEucSettingsCapabilitiesDto {
             headlight: MobileSettingWriteSupportDto::Supported,
             taillight: MobileSettingWriteSupportDto::Unsupported,
             reset_trip_meter: MobileSettingWriteSupportDto::Unsupported,
+            aero_tiltback_speed: MobileSettingWriteSupportDto::Unsupported,
+            aero_pwm_percent: MobileSettingWriteSupportDto::Unsupported,
+            aero_alarm_speed: MobileSettingWriteSupportDto::Unsupported,
+            aero_angle_adjustment: MobileSettingWriteSupportDto::Unsupported,
         }
     }
 }
@@ -10802,6 +10857,30 @@ impl From<MobileCommandDto> for DeviceCommandDto {
             MobileCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             MobileCommandDto::RequestSettings => Self::RequestSettings,
             MobileCommandDto::ResetTripMeter => Self::ResetTripMeter,
+            MobileCommandDto::SetAeroTiltbackSpeed(speed) => {
+                CoreAeroSpeedSetting::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroTiltbackSpeed,
+                )
+            }
+            MobileCommandDto::SetAeroPwmPercent(percent) => {
+                CoreAeroPwmPercent::new(percent.percent).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroPwmPercent,
+                )
+            }
+            MobileCommandDto::SetAeroAlarmSpeed(speed) => {
+                CoreAeroSpeedSetting::new(speed.kilometres_per_hour).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroAlarmSpeed,
+                )
+            }
+            MobileCommandDto::SetAeroAngleAdjustment(angle) => {
+                CoreAeroAngleAdjustment::new(angle.tenths_of_degree).map_or(
+                    DeviceCommandDto::RequestSettings,
+                    DeviceCommandDto::SetAeroAngleAdjustment,
+                )
+            }
             MobileCommandDto::SetLights(state) => Self::SetLights(state.into()),
             MobileCommandDto::SetPedalMode(mode) => {
                 Self::SetPedalMode(CorePedalMode::from(mode).into())
@@ -10849,7 +10928,11 @@ fn mobile_command_from_command_kind(command: CommandKindDto) -> Option<MobileCom
         CommandKindDto::RequestSettings => Some(MobileCommandDto::RequestSettings),
         CommandKindDto::ResetTripMeter => Some(MobileCommandDto::ResetTripMeter),
         CommandKindDto::SoundHorn => Some(MobileCommandDto::SoundHorn),
-        CommandKindDto::SetAccelerationAssist
+        CommandKindDto::SetAeroTiltbackSpeed
+        | CommandKindDto::SetAeroPwmPercent
+        | CommandKindDto::SetAeroAlarmSpeed
+        | CommandKindDto::SetAeroAngleAdjustment
+        | CommandKindDto::SetAccelerationAssist
         | CommandKindDto::SetLights
         | CommandKindDto::SetPedalMode
         | CommandKindDto::SetRollAngle

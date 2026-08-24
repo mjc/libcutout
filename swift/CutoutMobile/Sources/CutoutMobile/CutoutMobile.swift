@@ -1572,6 +1572,60 @@ public struct BegodeLedMode: Equatable, Hashable, Sendable {
     }
 }
 
+/// NOSFET/Veteran speed setting in the captured 1...99 km/h wire range.
+public struct AeroSpeedSetting: Equatable, Hashable, Sendable {
+    public let kilometresPerHour: UInt8
+
+    public init?(kilometresPerHour: UInt8) {
+        guard (1...99).contains(Int(kilometresPerHour)) else { return nil }
+        self.kilometresPerHour = kilometresPerHour
+    }
+
+    fileprivate init(_ dto: MobileAeroSpeedSettingDto) {
+        self.kilometresPerHour = dto.kilometresPerHour
+    }
+
+    fileprivate var dto: MobileAeroSpeedSettingDto {
+        MobileAeroSpeedSettingDto(kilometresPerHour: kilometresPerHour)
+    }
+}
+
+/// NOSFET/Veteran PWM warning percentage.
+public struct AeroPwmPercent: Equatable, Hashable, Sendable {
+    public let percent: UInt8
+
+    public init?(percent: UInt8) {
+        guard percent <= 100 else { return nil }
+        self.percent = percent
+    }
+
+    fileprivate init(_ dto: MobileAeroPwmPercentDto) {
+        self.percent = dto.percent
+    }
+
+    fileprivate var dto: MobileAeroPwmPercentDto {
+        MobileAeroPwmPercentDto(percent: percent)
+    }
+}
+
+/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+public struct AeroAngleAdjustment: Equatable, Hashable, Sendable {
+    public let tenthsOfDegree: Int8
+
+    public init?(tenthsOfDegree: Int8) {
+        guard (-100...100).contains(Int(tenthsOfDegree)) else { return nil }
+        self.tenthsOfDegree = tenthsOfDegree
+    }
+
+    fileprivate init(_ dto: MobileAeroAngleAdjustmentDto) {
+        self.tenthsOfDegree = dto.tenthsOfDegree
+    }
+
+    fileprivate var dto: MobileAeroAngleAdjustmentDto {
+        MobileAeroAngleAdjustmentDto(tenthsOfDegree: tenthsOfDegree)
+    }
+}
+
 public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let resetTripMeter: SettingWriteSupport
     public let pedalMode: SettingWriteSupport
@@ -1583,6 +1637,10 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
     public let begodeMaxSpeed: SettingWriteSupport
     public let begodeBeeperVolume: SettingWriteSupport
     public let begodeLedMode: SettingWriteSupport
+    public let aeroTiltbackSpeed: SettingWriteSupport
+    public let aeroPwmPercent: SettingWriteSupport
+    public let aeroAlarmSpeed: SettingWriteSupport
+    public let aeroAngleAdjustment: SettingWriteSupport
 
     public init(
         resetTripMeter: SettingWriteSupport = .unsupported,
@@ -1594,7 +1652,11 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         taillight: SettingWriteSupport,
         begodeMaxSpeed: SettingWriteSupport = .unsupported,
         begodeBeeperVolume: SettingWriteSupport = .unsupported,
-        begodeLedMode: SettingWriteSupport = .unsupported
+        begodeLedMode: SettingWriteSupport = .unsupported,
+        aeroTiltbackSpeed: SettingWriteSupport = .unsupported,
+        aeroPwmPercent: SettingWriteSupport = .unsupported,
+        aeroAlarmSpeed: SettingWriteSupport = .unsupported,
+        aeroAngleAdjustment: SettingWriteSupport = .unsupported
     ) {
         self.resetTripMeter = resetTripMeter
         self.pedalMode = pedalMode
@@ -1606,6 +1668,10 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.begodeMaxSpeed = begodeMaxSpeed
         self.begodeBeeperVolume = begodeBeeperVolume
         self.begodeLedMode = begodeLedMode
+        self.aeroTiltbackSpeed = aeroTiltbackSpeed
+        self.aeroPwmPercent = aeroPwmPercent
+        self.aeroAlarmSpeed = aeroAlarmSpeed
+        self.aeroAngleAdjustment = aeroAngleAdjustment
     }
 
     fileprivate init(_ dto: MobileEucSettingsCapabilitiesDto) {
@@ -1619,6 +1685,10 @@ public struct EucSettingsCapabilities: Equatable, Hashable, Sendable {
         self.begodeMaxSpeed = SettingWriteSupport(dto.begodeMaxSpeed)
         self.begodeBeeperVolume = SettingWriteSupport(dto.begodeBeeperVolume)
         self.begodeLedMode = SettingWriteSupport(dto.begodeLedMode)
+        self.aeroTiltbackSpeed = SettingWriteSupport(dto.aeroTiltbackSpeed)
+        self.aeroPwmPercent = SettingWriteSupport(dto.aeroPwmPercent)
+        self.aeroAlarmSpeed = SettingWriteSupport(dto.aeroAlarmSpeed)
+        self.aeroAngleAdjustment = SettingWriteSupport(dto.aeroAngleAdjustment)
     }
 }
 
@@ -1643,6 +1713,10 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
     case requestFaultHistory
     case requestSettings
     case resetTripMeter
+    case setAeroTiltbackSpeed(AeroSpeedSetting)
+    case setAeroPwmPercent(AeroPwmPercent)
+    case setAeroAlarmSpeed(AeroSpeedSetting)
+    case setAeroAngleAdjustment(AeroAngleAdjustment)
     case setLights(LightState)
     case setPedalMode(PedalMode.Kind)
     case setRollAngle(RollAngle.Kind)
@@ -1672,6 +1746,14 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             self = .requestSettings
         case .resetTripMeter:
             self = .resetTripMeter
+        case .setAeroTiltbackSpeed(let speed):
+            self = .setAeroTiltbackSpeed(AeroSpeedSetting(speed))
+        case .setAeroPwmPercent(let percent):
+            self = .setAeroPwmPercent(AeroPwmPercent(percent))
+        case .setAeroAlarmSpeed(let speed):
+            self = .setAeroAlarmSpeed(AeroSpeedSetting(speed))
+        case .setAeroAngleAdjustment(let angle):
+            self = .setAeroAngleAdjustment(AeroAngleAdjustment(angle))
         case .setLights(let state):
             self = .setLights(LightState(state))
         case .setPedalMode(let mode):
@@ -1713,6 +1795,14 @@ public enum DeviceCommand: Equatable, Hashable, Sendable {
             .requestSettings
         case .resetTripMeter:
             .resetTripMeter
+        case .setAeroTiltbackSpeed(let speed):
+            .setAeroTiltbackSpeed(speed.dto)
+        case .setAeroPwmPercent(let percent):
+            .setAeroPwmPercent(percent.dto)
+        case .setAeroAlarmSpeed(let speed):
+            .setAeroAlarmSpeed(speed.dto)
+        case .setAeroAngleAdjustment(let angle):
+            .setAeroAngleAdjustment(angle.dto)
         case .setLights(let state):
             .setLights(state.dto)
         case .setPedalMode(let mode):

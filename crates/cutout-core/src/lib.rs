@@ -284,6 +284,18 @@ pub enum DeviceCommand {
     /// Reset the device trip meter; this command is stationary-only.
     ResetTripMeter,
 
+    /// Set the NOSFET/Veteran tilt-back speed in whole km/h.
+    SetAeroTiltbackSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran PWM warning percentage.
+    SetAeroPwmPercent(AeroPwmPercent),
+
+    /// Set the NOSFET/Veteran speed alarm in whole km/h.
+    SetAeroAlarmSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+    SetAeroAngleAdjustment(AeroAngleAdjustment),
+
     /// Set the device lights.
     SetLights(LightState),
 
@@ -334,6 +346,10 @@ impl DeviceCommand {
             Self::RequestFaultHistory => CommandKind::RequestFaultHistory,
             Self::RequestSettings => CommandKind::RequestSettings,
             Self::ResetTripMeter => CommandKind::ResetTripMeter,
+            Self::SetAeroTiltbackSpeed(_) => CommandKind::SetAeroTiltbackSpeed,
+            Self::SetAeroPwmPercent(_) => CommandKind::SetAeroPwmPercent,
+            Self::SetAeroAlarmSpeed(_) => CommandKind::SetAeroAlarmSpeed,
+            Self::SetAeroAngleAdjustment(_) => CommandKind::SetAeroAngleAdjustment,
             Self::SetLights(_) => CommandKind::SetLights,
             Self::SetPedalMode(_) => CommandKind::SetPedalMode,
             Self::SetRollAngle(_) => CommandKind::SetRollAngle,
@@ -375,6 +391,71 @@ pub enum LightState {
 
     /// Begode strobe/running-light mode.
     Strobe,
+}
+
+/// NOSFET/Veteran speed setting accepted by the documented binary frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroSpeedSetting(u8);
+
+impl AeroSpeedSetting {
+    /// Creates a speed setting in the wheel's documented 1..=99 km/h range.
+    #[must_use]
+    pub const fn new(kilometres_per_hour: u8) -> Option<Self> {
+        match kilometres_per_hour {
+            1..=99 => Some(Self(kilometres_per_hour)),
+            _ => None,
+        }
+    }
+
+    /// Returns the whole-kilometres-per-hour wire value.
+    #[must_use]
+    pub const fn kilometres_per_hour(self) -> u8 {
+        self.0
+    }
+}
+
+/// NOSFET/Veteran PWM warning percentage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroPwmPercent(u8);
+
+impl AeroPwmPercent {
+    /// Creates a PWM percentage in the documented 0..=100 range.
+    #[must_use]
+    pub const fn new(percent: u8) -> Option<Self> {
+        if percent <= 100 {
+            Some(Self(percent))
+        } else {
+            None
+        }
+    }
+
+    /// Returns the percentage wire value.
+    #[must_use]
+    pub const fn percent(self) -> u8 {
+        self.0
+    }
+}
+
+/// NOSFET/Veteran pedal-zero angle adjustment in tenths of a degree.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AeroAngleAdjustment(i8);
+
+impl AeroAngleAdjustment {
+    /// Creates an angle adjustment in the captured -10.0..=10.0 degree range.
+    #[must_use]
+    pub const fn new(tenths_of_degree: i8) -> Option<Self> {
+        if tenths_of_degree < -100 || tenths_of_degree > 100 {
+            None
+        } else {
+            Some(Self(tenths_of_degree))
+        }
+    }
+
+    /// Returns the signed tenths-of-a-degree wire value.
+    #[must_use]
+    pub const fn tenths_of_degree(self) -> i8 {
+        self.0
+    }
 }
 
 /// Begode max-speed setting accepted by the documented `W` submenu.
@@ -476,6 +557,18 @@ pub enum CommandKind {
     /// Reset the device trip meter.
     ResetTripMeter,
 
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed,
+
+    /// Set the NOSFET/Veteran PWM warning percentage.
+    SetAeroPwmPercent,
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed,
+
+    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    SetAeroAngleAdjustment,
+
     /// Set the device lights.
     SetLights,
 
@@ -524,6 +617,10 @@ impl CommandKind {
             | Self::RequestSettings => SafetyClass::ReadOnly,
             Self::SetLights | Self::SetTaillight | Self::SoundHorn => SafetyClass::BenignControl,
             Self::ResetTripMeter
+            | Self::SetAeroTiltbackSpeed
+            | Self::SetAeroPwmPercent
+            | Self::SetAeroAlarmSpeed
+            | Self::SetAeroAngleAdjustment
             | Self::SetPedalMode
             | Self::SetRollAngle
             | Self::SetSpeedAlarmMode
@@ -8574,6 +8671,10 @@ mod tests {
                     | DeviceCommand::RequestFaultHistory
                     | DeviceCommand::RequestSettings
                     | DeviceCommand::ResetTripMeter
+                    | DeviceCommand::SetAeroTiltbackSpeed(_)
+                    | DeviceCommand::SetAeroPwmPercent(_)
+                    | DeviceCommand::SetAeroAlarmSpeed(_)
+                    | DeviceCommand::SetAeroAngleAdjustment(_)
                     | DeviceCommand::SetLights(_)
                     | DeviceCommand::SetPedalMode(_)
                     | DeviceCommand::SetRollAngle(_)

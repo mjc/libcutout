@@ -37,6 +37,10 @@ impl AeroProbe {
             CommandKind::RequestSettings => Some(Self::Settings),
             CommandKind::RequestDiagnostics
             | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -94,6 +98,10 @@ impl FalconProbe {
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode

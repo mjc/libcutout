@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use crc32fast::hash as crc32;
 use cutout_core::{
     CommandKind, DeviceCommand, LightState, PedalMode, PendingProbe, RequestKey, RequestTarget,
     RollAngle, SpeedAlarmMode, VescControllerId, WriteMode, WritePayload,
@@ -89,6 +90,50 @@ impl AeroControlEncoder {
             DeviceCommand::SetPedalMode(PedalMode::Medium) => b"SETm".as_slice(),
             DeviceCommand::SetPedalMode(PedalMode::Soft) => b"SETs".as_slice(),
             DeviceCommand::ResetTripMeter => b"CLEARMETER".as_slice(),
+            DeviceCommand::SetAeroTiltbackSpeed(speed) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        speed.kilometres_per_hour(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroPwmPercent(percent) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LdAp",
+                        &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        percent.percent(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroAlarmSpeed(speed) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        speed.kilometres_per_hour(),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
+            DeviceCommand::SetAeroAngleAdjustment(angle) => {
+                return Some(EncodedControl {
+                    command: command.kind(),
+                    payload: aero_binary_frame(
+                        *b"LkAp",
+                        &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80],
+                        u8::from_ne_bytes(angle.tenths_of_degree().to_ne_bytes()),
+                    )?,
+                    mode: WriteMode::WithoutResponse,
+                });
+            }
             _ => return None,
         };
         Some(EncodedControl {
@@ -97,6 +142,19 @@ impl AeroControlEncoder {
             mode: WriteMode::WithoutResponse,
         })
     }
+}
+
+fn aero_binary_frame(magic: [u8; 4], payload_head: &[u8], value: u8) -> Option<WritePayload> {
+    let length = payload_head.len() + 10;
+    let length = u8::try_from(length).ok()?;
+    let mut frame = ArrayVec::<u8, 18>::new();
+    frame.try_extend_from_slice(&magic).ok()?;
+    frame.push(length);
+    frame.try_extend_from_slice(payload_head).ok()?;
+    frame.push(value);
+    let crc = crc32(frame.as_slice()).to_be_bytes();
+    frame.try_extend_from_slice(&crc).ok()?;
+    Some(request_payload(frame.as_slice()))
 }
 
 /// Begode Falcon benign-control encoder.
@@ -300,6 +358,10 @@ impl VescRequestEncoder {
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -373,6 +435,10 @@ impl VescCanTarget {
             | CommandKind::RequestFaultHistory
             | CommandKind::RequestSettings
             | CommandKind::ResetTripMeter
+            | CommandKind::SetAeroTiltbackSpeed
+            | CommandKind::SetAeroPwmPercent
+            | CommandKind::SetAeroAlarmSpeed
+            | CommandKind::SetAeroAngleAdjustment
             | CommandKind::SetAccelerationAssist
             | CommandKind::SetLights
             | CommandKind::SetPedalMode
@@ -442,6 +508,56 @@ mod tests {
         assert_eq!(reset.command, CommandKind::ResetTripMeter);
         assert_eq!(reset.payload.as_slice(), b"CLEARMETER");
         assert_eq!(reset.mode, WriteMode::WithoutResponse);
+    }
+
+    #[test]
+    fn aero_binary_settings_match_the_captured_frame_shapes_and_crc() {
+        let cases = [
+            (
+                DeviceCommand::SetAeroTiltbackSpeed(
+                    cutout_core::AeroSpeedSetting::new(21).expect("21 km/h fits"),
+                ),
+                *b"LdAp",
+                17,
+                &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 21][..],
+            ),
+            (
+                DeviceCommand::SetAeroPwmPercent(
+                    cutout_core::AeroPwmPercent::new(64).expect("64 percent fits"),
+                ),
+                *b"LdAp",
+                18,
+                &[0x01, 0x02, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 64][..],
+            ),
+            (
+                DeviceCommand::SetAeroAlarmSpeed(
+                    cutout_core::AeroSpeedSetting::new(20).expect("20 km/h fits"),
+                ),
+                *b"LkAp",
+                17,
+                &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 20][..],
+            ),
+            (
+                DeviceCommand::SetAeroAngleAdjustment(
+                    cutout_core::AeroAngleAdjustment::new(-36).expect("-3.6 degrees fits"),
+                ),
+                *b"LkAp",
+                16,
+                &[0x01, 0x80, 0x80, 0x80, 0x80, 0x80, 220][..],
+            ),
+        ];
+
+        for (command, magic, length, body) in cases {
+            let encoded = AeroControlEncoder::encode(command).expect("Aero setting encodes");
+            assert_eq!(encoded.command, command.kind());
+            assert_eq!(encoded.mode, WriteMode::WithoutResponse);
+            assert_eq!(&encoded.payload.as_slice()[..4], &magic);
+            assert_eq!(encoded.payload.as_slice()[4], length);
+            let body_len = usize::from(length) - 4;
+            assert_eq!(&encoded.payload.as_slice()[5..body_len], body);
+            let expected_crc = crc32(&encoded.payload.as_slice()[..body_len]).to_be_bytes();
+            assert_eq!(&encoded.payload.as_slice()[body_len..], &expected_crc);
+        }
     }
 
     #[test]

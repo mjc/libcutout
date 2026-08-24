@@ -85,6 +85,34 @@
       "comment" : "Confirmation title shown before resetting the NOSFET Aero trip meter.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Reset the trip meter?" } } }
     },
+    "settings.aero.title" : {
+      "comment" : "Section title for captured NOSFET Aero binary settings writes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Aero controls" } } }
+    },
+    "settings.aero.footer" : {
+      "comment" : "Safety note for NOSFET Aero settings writes.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Writes are available only while parked; verify each change on the wheel." } } }
+    },
+    "settings.aero.send" : {
+      "comment" : "Button that sends a selected NOSFET Aero setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Send" } } }
+    },
+    "settings.aero.tiltback.title" : {
+      "comment" : "NOSFET Aero tilt-back speed setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Tilt-back" } } }
+    },
+    "settings.aero.pwm.title" : {
+      "comment" : "NOSFET Aero PWM warning setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "PWM warning" } } }
+    },
+    "settings.aero.alarm.title" : {
+      "comment" : "NOSFET Aero alarm speed setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Alarm speed" } } }
+    },
+    "settings.aero.angle.title" : {
+      "comment" : "NOSFET Aero pedal-zero angle adjustment setting.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Angle adjustment" } } }
+    },
     "settings.capabilities.title" : {
       "comment" : "Section title for settings that are not currently editable.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Other settings" } } }

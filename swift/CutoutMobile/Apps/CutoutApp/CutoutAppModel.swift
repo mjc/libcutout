@@ -227,6 +227,22 @@ final class CutoutAppModel {
         core.settingsCapabilities?.resetTripMeter == .supported
     }
 
+    var aeroTiltbackSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.aeroTiltbackSpeed == .supported
+    }
+
+    var aeroPwmPercentControlAvailable: Bool {
+        core.settingsCapabilities?.aeroPwmPercent == .supported
+    }
+
+    var aeroAlarmSpeedControlAvailable: Bool {
+        core.settingsCapabilities?.aeroAlarmSpeed == .supported
+    }
+
+    var aeroAngleAdjustmentControlAvailable: Bool {
+        core.settingsCapabilities?.aeroAngleAdjustment == .supported
+    }
+
     var accelerationAssistState: AccelerationAssistSettingState? {
         core.accelerationAssistState
     }
@@ -1412,6 +1428,26 @@ final class CutoutAppModel {
     func resetTripMeter() -> SettingCommandResult {
         guard resetTripMeterControlAvailable else { return .failed }
         return core.resetTripMeter()
+    }
+
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroTiltbackSpeedControlAvailable else { return .failed }
+        return core.setAeroTiltbackSpeed(speed)
+    }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult {
+        guard aeroPwmPercentControlAvailable else { return .failed }
+        return core.setAeroPwmPercent(percent)
+    }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult {
+        guard aeroAlarmSpeedControlAvailable else { return .failed }
+        return core.setAeroAlarmSpeed(speed)
+    }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult {
+        guard aeroAngleAdjustmentControlAvailable else { return .failed }
+        return core.setAeroAngleAdjustment(angle)
     }
 
     private func applyHeadlightSubmission(

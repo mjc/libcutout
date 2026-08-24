@@ -1254,11 +1254,14 @@ impl SupportsBenignControls for NosfetAeroModel {
 }
 
 impl SupportsSettingsWrites for NosfetAeroModel {
-    const WRITE_CAPABILITIES: Capabilities =
-        Capabilities::from_supported_commands([
-            CommandKind::SetPedalMode,
-            CommandKind::ResetTripMeter,
-        ]);
+    const WRITE_CAPABILITIES: Capabilities = Capabilities::from_supported_commands([
+        CommandKind::SetPedalMode,
+        CommandKind::ResetTripMeter,
+        CommandKind::SetAeroTiltbackSpeed,
+        CommandKind::SetAeroPwmPercent,
+        CommandKind::SetAeroAlarmSpeed,
+        CommandKind::SetAeroAngleAdjustment,
+    ]);
     const MAX_SETTINGS_SPEED: Option<cutout_core::Speed> =
         Some(cutout_core::Speed::from_millimetres_per_second(500));
 
@@ -1456,6 +1459,10 @@ fn unavailable_readback_response(kind: CommandKind) -> Option<ReadOnlyResponse> 
         | CommandKind::RequestTelemetry
         | CommandKind::RequestDiagnostics
         | CommandKind::ResetTripMeter
+        | CommandKind::SetAeroTiltbackSpeed
+        | CommandKind::SetAeroPwmPercent
+        | CommandKind::SetAeroAlarmSpeed
+        | CommandKind::SetAeroAngleAdjustment
         | CommandKind::SetAccelerationAssist
         | CommandKind::SetLights
         | CommandKind::SetPedalMode

@@ -44,6 +44,10 @@ protocol CutoutSessionDriving: AnyObject {
     func setBegodeBeeperVolume(_ volume: BegodeBeeperVolume) -> SettingCommandResult
     func setBegodeLedMode(_ mode: BegodeLedMode) -> SettingCommandResult
     func resetTripMeter() -> SettingCommandResult
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult
     func now() -> MonotonicMilliseconds
 
     func resetRideMapLocationAdmission()

@@ -1,21 +1,21 @@
 use crate::{
-    AccelerationAssistState, Angle, BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind,
-    BatteryPageMetadata, BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability,
-    BegodeBeeperVolume, BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode,
-    CommandKind, ControlRefusal, ControlRefusalReason, DeviceCommand, DeviceEvent,
-    DiagnosticDetail, DiagnosticError, DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity,
-    Distance, DutyCycle, FaultCode, FaultHistoryAvailability, FaultHistoryEntry,
-    FaultHistoryReadback, FirmwareInfo, FootpadContactState, FootpadTelemetry,
-    IgnoredNotificationEvidence, IgnoredNotificationReason, LightState, Measured,
-    MonotonicTimestamp, NotificationByteLen, NotificationEvidence, NotificationIngestOutcome,
-    ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes, ParserError, ParserFrameLen,
-    ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power, ProtocolFamily, ProtocolTag,
-    RawFieldValue, RawTelemetryReadback, ReadOnlyResponse, ReservedPayloadEvidence,
-    RideOperatingMode, RideOperatingState, RideStopReason, RideWarning, RollAngle, SafetyClass,
-    SemanticEventCount, SessionInput, SessionOutput, SettingsEntry, SettingsReadback,
-    SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta, TelemetrySnapshot,
-    Temperature, TransportAction, TransportWriteLimit, ValueQuality, ValueSource,
-    VerificationStatus, Voltage, WriteMode,
+    AccelerationAssistState, AeroAngleAdjustment, AeroPwmPercent, AeroSpeedSetting, Angle,
+    BatteryCurrent, BatteryInfo, BatteryLevel, BatteryPageKind, BatteryPageMetadata,
+    BatteryPagePayload, BatteryReadback, BatteryReadbackAvailability, BegodeBeeperVolume,
+    BegodeLedModeSetting, BegodeMaxSpeed, BmsPackCurrents, ChargeMode, CommandKind, ControlRefusal,
+    ControlRefusalReason, DeviceCommand, DeviceEvent, DiagnosticDetail, DiagnosticError,
+    DiagnosticErrorKind, DiagnosticReadback, DiagnosticSeverity, Distance, DutyCycle, FaultCode,
+    FaultHistoryAvailability, FaultHistoryEntry, FaultHistoryReadback, FirmwareInfo,
+    FootpadContactState, FootpadTelemetry, IgnoredNotificationEvidence, IgnoredNotificationReason,
+    LightState, Measured, MonotonicTimestamp, NotificationByteLen, NotificationEvidence,
+    NotificationIngestOutcome, ParserDiagnosticCount, ParserDiagnostics, ParserDroppedBytes,
+    ParserError, ParserFrameLen, ParserGapEvidence, PayloadBodyLen, PedalMode, PhaseCurrent, Power,
+    ProtocolFamily, ProtocolTag, RawFieldValue, RawTelemetryReadback, ReadOnlyResponse,
+    ReservedPayloadEvidence, RideOperatingMode, RideOperatingState, RideStopReason, RideWarning,
+    RollAngle, SafetyClass, SemanticEventCount, SessionInput, SessionOutput, SettingsEntry,
+    SettingsReadback, SettingsReadbackAvailability, Speed, SpeedAlarmMode, TelemetryDelta,
+    TelemetrySnapshot, Temperature, TransportAction, TransportWriteLimit, ValueQuality,
+    ValueSource, VerificationStatus, Voltage, WriteMode,
 };
 
 /// UniFFI-ready owned read-only output.
@@ -227,6 +227,18 @@ pub enum CommandKindDto {
     /// Reset the device trip meter.
     ResetTripMeter,
 
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed,
+
+    /// Set the NOSFET/Veteran PWM warning percentage.
+    SetAeroPwmPercent,
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed,
+
+    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    SetAeroAngleAdjustment,
+
     /// Set the device lights.
     SetLights,
 
@@ -272,6 +284,10 @@ impl From<CommandKind> for CommandKindDto {
             CommandKind::RequestFaultHistory => Self::RequestFaultHistory,
             CommandKind::RequestSettings => Self::RequestSettings,
             CommandKind::ResetTripMeter => Self::ResetTripMeter,
+            CommandKind::SetAeroTiltbackSpeed => Self::SetAeroTiltbackSpeed,
+            CommandKind::SetAeroPwmPercent => Self::SetAeroPwmPercent,
+            CommandKind::SetAeroAlarmSpeed => Self::SetAeroAlarmSpeed,
+            CommandKind::SetAeroAngleAdjustment => Self::SetAeroAngleAdjustment,
             CommandKind::SetLights => Self::SetLights,
             CommandKind::SetPedalMode => Self::SetPedalMode,
             CommandKind::SetRollAngle => Self::SetRollAngle,
@@ -313,6 +329,18 @@ pub enum DeviceCommandDto {
 
     /// Reset the device trip meter.
     ResetTripMeter,
+
+    /// Set the NOSFET/Veteran tilt-back speed.
+    SetAeroTiltbackSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran PWM warning percentage.
+    SetAeroPwmPercent(AeroPwmPercent),
+
+    /// Set the NOSFET/Veteran speed alarm.
+    SetAeroAlarmSpeed(AeroSpeedSetting),
+
+    /// Set the NOSFET/Veteran pedal-zero angle adjustment.
+    SetAeroAngleAdjustment(AeroAngleAdjustment),
 
     /// Set the device lights.
     SetLights(LightStateDto),
@@ -362,6 +390,10 @@ impl From<DeviceCommand> for DeviceCommandDto {
             DeviceCommand::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommand::RequestSettings => Self::RequestSettings,
             DeviceCommand::ResetTripMeter => Self::ResetTripMeter,
+            DeviceCommand::SetAeroTiltbackSpeed(speed) => Self::SetAeroTiltbackSpeed(speed),
+            DeviceCommand::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
+            DeviceCommand::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
+            DeviceCommand::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
             DeviceCommand::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommand::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommand::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),
@@ -392,6 +424,10 @@ impl From<DeviceCommandDto> for DeviceCommand {
             DeviceCommandDto::RequestFaultHistory => Self::RequestFaultHistory,
             DeviceCommandDto::RequestSettings => Self::RequestSettings,
             DeviceCommandDto::ResetTripMeter => Self::ResetTripMeter,
+            DeviceCommandDto::SetAeroTiltbackSpeed(speed) => Self::SetAeroTiltbackSpeed(speed),
+            DeviceCommandDto::SetAeroPwmPercent(percent) => Self::SetAeroPwmPercent(percent),
+            DeviceCommandDto::SetAeroAlarmSpeed(speed) => Self::SetAeroAlarmSpeed(speed),
+            DeviceCommandDto::SetAeroAngleAdjustment(angle) => Self::SetAeroAngleAdjustment(angle),
             DeviceCommandDto::SetLights(state) => Self::SetLights(state.into()),
             DeviceCommandDto::SetPedalMode(mode) => Self::SetPedalMode(mode.into()),
             DeviceCommandDto::SetRollAngle(angle) => Self::SetRollAngle(angle.into()),

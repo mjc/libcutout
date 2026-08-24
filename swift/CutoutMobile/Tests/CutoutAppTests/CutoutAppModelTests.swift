@@ -3071,6 +3071,13 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         return .accepted
     }
     func resetTripMeter() -> SettingCommandResult { .accepted }
+    func setAeroTiltbackSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+
+    func setAeroPwmPercent(_ percent: AeroPwmPercent) -> SettingCommandResult { .accepted }
+
+    func setAeroAlarmSpeed(_ speed: AeroSpeedSetting) -> SettingCommandResult { .accepted }
+
+    func setAeroAngleAdjustment(_ angle: AeroAngleAdjustment) -> SettingCommandResult { .accepted }
     func setRollAngle(_ angle: RollAngle.Kind) -> SettingCommandResult {
         rollAngles.append(angle)
         return .accepted
