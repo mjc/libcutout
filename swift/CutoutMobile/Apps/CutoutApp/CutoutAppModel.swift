@@ -276,7 +276,7 @@ final class CutoutAppModel {
                 self.rideMapLivePointsTruncated = result.1
             } catch {
                 guard !Task.isCancelled, let self else { return }
-                self.rideMapError = error as? MobileRideMapError
+                self.rideMapError = Self.mapRideMapError(error)
                 self.rideMapPoints = []
             }
         }
@@ -563,7 +563,7 @@ final class CutoutAppModel {
             }
             return true
         } catch {
-            rideMapError = error as? MobileRideMapError
+            rideMapError = Self.mapRideMapError(error)
             return false
         }
     }

@@ -168,6 +168,12 @@ struct RideMapHistoryContentView: View {
             }
         }
         .onAppear { loadHistoryIfNeeded() }
+        // Connected Map is rendered underneath a floating TabView. Keep the
+        // selected route, list rows, and truncation notice above that chrome;
+        // the same inset is harmless on the home-route presentation.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 92)
+        }
     }
 
     private var emptyState: some View {

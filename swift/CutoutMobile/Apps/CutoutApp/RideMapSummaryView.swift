@@ -10,20 +10,7 @@ struct RideMapSummaryView: View {
     var body: some View {
         if let snapshot {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    RideMapMetric(
-                        value: distanceText(for: snapshot),
-                        label: localizedAppText("ride_map.metric_distance")
-                    )
-                    RideMapMetric(
-                        value: durationText(for: snapshot),
-                        label: localizedAppText("ride_map.metric_elapsed")
-                    )
-                    RideMapMetric(
-                        value: localizedAppText("ride_map.speed_unavailable"),
-                        label: localizedAppText("ride_map.metric_speed")
-                    )
-                }
+                metricRow(for: snapshot)
 
                 HStack(spacing: 8) {
                     Circle()
@@ -61,6 +48,34 @@ struct RideMapSummaryView: View {
         Duration.seconds(Double(snapshot.summary.durationMilliseconds) / 1_000)
             .formatted(.units(allowed: [.hours, .minutes, .seconds], width: .abbreviated))
     }
+
+    @ViewBuilder
+    private func metricRow(for snapshot: MobileRideMapSnapshotDto) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                metrics(for: snapshot)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                metrics(for: snapshot)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func metrics(for snapshot: MobileRideMapSnapshotDto) -> some View {
+        RideMapMetric(
+            value: distanceText(for: snapshot),
+            label: localizedAppText("ride_map.metric_distance")
+        )
+        RideMapMetric(
+            value: durationText(for: snapshot),
+            label: localizedAppText("ride_map.metric_elapsed")
+        )
+        RideMapMetric(
+            value: localizedAppText("ride_map.speed_unavailable"),
+            label: localizedAppText("ride_map.metric_speed")
+        )
+    }
 }
 
 private struct RideMapMetric: View {
@@ -71,8 +86,8 @@ private struct RideMapMetric: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(value)
                 .font(.title2.weight(.bold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(PevColors.muted)

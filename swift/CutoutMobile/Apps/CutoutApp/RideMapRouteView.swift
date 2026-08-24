@@ -136,6 +136,7 @@ struct RideMapRouteView: View {
             rides: model.rideMapHistory,
             points: model.rideMapHistoryPoints,
             pointsTruncated: model.rideMapHistoryPointsTruncated,
+            error: model.rideMapError,
             select: { model.selectRideMapHistory($0) },
             load: { model.loadRideMapHistory(selecting: initialHistoryID) },
             loadFullRide: { model.loadFullRideMapHistory() },

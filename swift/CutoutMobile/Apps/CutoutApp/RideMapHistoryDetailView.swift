@@ -8,6 +8,7 @@ struct RideMapHistoryDetailView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
+    let error: MobileRideMapError?
     let select: (String) -> Void
     let load: () -> Void
     let loadFullRide: () -> Void
@@ -63,6 +64,7 @@ struct RideMapHistoryDetailView: View {
                         duration: durationText(for: ride.summary),
                         points: points,
                         pointsTruncated: pointsTruncated,
+                        error: error,
                         isLoading: isRouteLoading,
                         loadFullRide: loadFullRide,
                         shareText: shareText(for: ride),
@@ -116,6 +118,7 @@ private struct RideMapHistoryDetailSummary: View {
     let duration: String
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
+    let error: MobileRideMapError?
     let isLoading: Bool
     let loadFullRide: () -> Void
     let shareText: String
@@ -133,6 +136,15 @@ private struct RideMapHistoryDetailSummary: View {
                 }
                 .accessibilityIdentifier("ride-map.detail-summary-loading")
             } else {
+                if error != nil {
+                    Label(
+                        localizedAppText("ride_map.command_failed"),
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("ride-map.detail-error")
+                }
                 HStack(alignment: .firstTextBaseline, spacing: 0) {
                     RideMapDetailMetric(
                         value: distance,
