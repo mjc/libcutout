@@ -2894,12 +2894,82 @@ pub struct MobilePhoneLocationSampleDto {
     pub latitude_degrees: f64,
     pub longitude_degrees: f64,
     pub altitude_meters: f64,
-    pub horizontal_accuracy_meters: f64,
-    pub vertical_accuracy_meters: f64,
-    pub speed_meters_per_second: f64,
-    pub speed_accuracy_meters_per_second: f64,
-    pub course_degrees: f64,
-    pub course_accuracy_degrees: f64,
+    pub horizontal_accuracy_meters: Option<f64>,
+    pub vertical_accuracy_meters: Option<f64>,
+    pub speed_meters_per_second: Option<f64>,
+    pub speed_accuracy_meters_per_second: Option<f64>,
+    pub course_degrees: Option<f64>,
+    pub course_accuracy_degrees: Option<f64>,
+}
+
+impl MobilePhoneLocationSampleDto {
+    /// Normalizes Core Location's negative and non-finite sentinel values at the Rust boundary.
+    ///
+    /// Coordinates, altitude, and wall time are required for a usable sample. Optional metrics
+    /// remain attached when valid, so an unavailable speed or course never discards a good fix.
+    fn canonical(self) -> Option<Self> {
+        let valid_coordinate = self.latitude_degrees.is_finite()
+            && (-90.0..=90.0).contains(&self.latitude_degrees)
+            && self.longitude_degrees.is_finite()
+            && (-180.0..=180.0).contains(&self.longitude_degrees);
+        if self.wall_clock_unix_ms == 0 || !self.altitude_meters.is_finite() || !valid_coordinate {
+            return None;
+        }
+        Some(Self {
+            horizontal_accuracy_meters: non_negative_finite(self.horizontal_accuracy_meters),
+            vertical_accuracy_meters: non_negative_finite(self.vertical_accuracy_meters),
+            speed_meters_per_second: non_negative_finite(self.speed_meters_per_second),
+            speed_accuracy_meters_per_second: non_negative_finite(
+                self.speed_accuracy_meters_per_second,
+            ),
+            course_degrees: self.course_degrees.and_then(|value| {
+                value
+                    .is_finite()
+                    .then_some(value)
+                    .filter(|value| (0.0..360.0).contains(value))
+            }),
+            course_accuracy_degrees: non_negative_finite(self.course_accuracy_degrees),
+            ..self
+        })
+    }
+
+    fn ride_location(
+        self,
+        monotonic_ms: u64,
+    ) -> Result<MobileRideLocationDto, MobileRideMapCoreErrorDto> {
+        let horizontal_accuracy_meters = self
+            .horizontal_accuracy_meters
+            .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?;
+        Ok(MobileRideLocationDto {
+            latitude_degrees: self.latitude_degrees,
+            longitude_degrees: self.longitude_degrees,
+            monotonic_milliseconds: monotonic_ms,
+            wall_clock_unix_milliseconds: self.wall_clock_unix_ms,
+            horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
+                horizontal_accuracy_meters,
+            )?),
+            source: MobileRideSourceDto::Live,
+        })
+    }
+
+    fn pevcap_location(self) -> PevcapPhoneLocation {
+        PevcapPhoneLocation {
+            wall_clock_unix_ms: self.wall_clock_unix_ms,
+            latitude_degrees: self.latitude_degrees,
+            longitude_degrees: self.longitude_degrees,
+            altitude_meters: self.altitude_meters,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
+            vertical_accuracy_meters: self.vertical_accuracy_meters,
+            speed_meters_per_second: self.speed_meters_per_second,
+            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
+            course_degrees: self.course_degrees,
+            course_accuracy_degrees: self.course_accuracy_degrees,
+        }
+    }
+}
+
+fn non_negative_finite(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 /// Rust-owned phone location snapshot returned to the mobile UI and capture path.
@@ -5637,6 +5707,30 @@ impl MobileRideMapCore {
         })
     }
 
+    /// Queues one normalized Core Location sample for durable ride admission.
+    ///
+    /// Unlike the legacy scalar convenience method, this boundary preserves typed absence for
+    /// optional Core Location metrics and rejects invalid required fields before admission.
+    pub fn ingest_location_sample(
+        &self,
+        monotonic_ms: u64,
+        sample: MobilePhoneLocationSampleDto,
+    ) -> Result<MobileRideMapCoreDecisionDto, MobileRideMapCoreErrorDto> {
+        let sample = sample
+            .canonical()
+            .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?;
+        let location = sample.ride_location(monotonic_ms)?;
+        self.ingest_location(
+            monotonic_ms,
+            location.wall_clock_unix_milliseconds,
+            location.latitude_degrees,
+            location.longitude_degrees,
+            sample
+                .horizontal_accuracy_meters
+                .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?,
+        )
+    }
+
     /// Returns durable outcomes for queued location writes without waiting for `SQLite`.
     ///
     /// The returned decisions are ordered by the bounded write queue. An empty result means that
@@ -5852,6 +5946,9 @@ impl MobilePhoneLocationState {
     }
 
     pub fn ingest(&self, sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto {
+        let Some(sample) = sample.canonical() else {
+            return self.current_snapshot();
+        };
         *self
             .latest_sample
             .lock()
@@ -7810,19 +7907,8 @@ impl MobilePevcapCaptureBuilder {
         if let Some(telemetry) = telemetry {
             record = record.with_telemetry(raw_telemetry_from_mobile(telemetry));
         }
-        if let Some(location) = phone_location {
-            record = record.with_phone_location(PevcapPhoneLocation {
-                wall_clock_unix_ms: location.wall_clock_unix_ms,
-                latitude_degrees: location.latitude_degrees,
-                longitude_degrees: location.longitude_degrees,
-                altitude_meters: location.altitude_meters,
-                horizontal_accuracy_meters: location.horizontal_accuracy_meters,
-                vertical_accuracy_meters: location.vertical_accuracy_meters,
-                speed_meters_per_second: location.speed_meters_per_second,
-                speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
-                course_degrees: location.course_degrees,
-                course_accuracy_degrees: location.course_accuracy_degrees,
-            });
+        if let Some(location) = phone_location.and_then(MobilePhoneLocationSampleDto::canonical) {
+            record = record.with_phone_location(location.pevcap_location());
         }
         self.send_record(record)
     }
@@ -8127,12 +8213,10 @@ fn phone_location_snapshot(
 }
 
 fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedReading> {
-    if !sample.speed_meters_per_second.is_finite() || sample.speed_meters_per_second < 0.0 {
-        return None;
-    }
+    let speed_meters_per_second = sample.speed_meters_per_second?;
     Some(SpeedReading {
         value: Speed {
-            value: round_f64_to_i32(sample.speed_meters_per_second * 1_000.0),
+            value: round_f64_to_i32(speed_meters_per_second * 1_000.0),
         },
         source: MobileValueSourceDto::Reported,
         quality: MobileValueQualityDto::Known,
@@ -12868,13 +12952,49 @@ mod tests {
             latitude_degrees: 39.739_235_8,
             longitude_degrees: -104.990_251,
             altitude_meters: 1_609.344,
-            horizontal_accuracy_meters: 0.8,
-            vertical_accuracy_meters: 1.2,
-            speed_meters_per_second: 4.470_400_25,
-            speed_accuracy_meters_per_second: 0.25,
-            course_degrees: 271.5,
-            course_accuracy_degrees: 3.0,
+            horizontal_accuracy_meters: Some(0.8),
+            vertical_accuracy_meters: Some(1.2),
+            speed_meters_per_second: Some(4.470_400_25),
+            speed_accuracy_meters_per_second: Some(0.25),
+            course_degrees: Some(271.5),
+            course_accuracy_degrees: Some(3.0),
         }
+    }
+
+    #[test]
+    fn phone_location_boundary_normalizes_core_location_sentinels_without_losing_fix() {
+        let sample = MobilePhoneLocationSampleDto {
+            horizontal_accuracy_meters: Some(-1.0),
+            vertical_accuracy_meters: Some(f64::NAN),
+            speed_meters_per_second: Some(-1.0),
+            speed_accuracy_meters_per_second: Some(-1.0),
+            course_degrees: Some(-1.0),
+            course_accuracy_degrees: Some(-1.0),
+            ..capture_phone_location_fixture()
+        };
+
+        let canonical = sample.canonical().expect("coordinates remain usable");
+        assert_eq!(canonical.horizontal_accuracy_meters, None);
+        assert_eq!(canonical.vertical_accuracy_meters, None);
+        assert_eq!(canonical.speed_meters_per_second, None);
+        assert_eq!(canonical.speed_accuracy_meters_per_second, None);
+        assert_eq!(canonical.course_degrees, None);
+        assert_eq!(canonical.course_accuracy_degrees, None);
+
+        let snapshot = MobilePhoneLocationState::default().ingest(sample);
+        assert_eq!(snapshot.latest_sample, Some(canonical));
+        assert_eq!(snapshot.gps_speed, None);
+    }
+
+    #[test]
+    fn phone_location_boundary_rejects_invalid_required_fields() {
+        let mut sample = capture_phone_location_fixture();
+        sample.latitude_degrees = f64::NAN;
+        assert_eq!(sample.canonical(), None);
+
+        let mut sample = capture_phone_location_fixture();
+        sample.wall_clock_unix_ms = 0;
+        assert_eq!(sample.canonical(), None);
     }
 
     #[test]
@@ -12957,10 +13077,7 @@ mod tests {
             location.latitude_degrees.to_bits(),
             39.739_235_8_f64.to_bits()
         );
-        assert_eq!(
-            location.speed_meters_per_second.to_bits(),
-            4.470_400_25_f64.to_bits()
-        );
+        assert_eq!(location.speed_meters_per_second, Some(4.470_400_25_f64));
         assert_eq!(capture.header.advertised_services.len(), 1);
         assert_eq!(capture.header.gatt_fingerprints.len(), 1);
         let identity = capture
@@ -13746,6 +13863,29 @@ mod tests {
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_uses_canonical_phone_location_boundary() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+
+        let invalid_accuracy = MobilePhoneLocationSampleDto {
+            horizontal_accuracy_meters: None,
+            ..capture_phone_location_fixture()
+        };
+        assert_eq!(
+            state.ingest_location_sample(1_001, invalid_accuracy),
+            Err(MobileRideMapCoreErrorDto::InvalidLocation)
+        );
+
+        let valid = capture_phone_location_fixture();
+        assert!(matches!(
+            state.ingest_location_sample(1_002, valid),
+            Ok(MobileRideMapCoreDecisionDto::Accepted { .. })
+        ));
     }
 
     #[test]
