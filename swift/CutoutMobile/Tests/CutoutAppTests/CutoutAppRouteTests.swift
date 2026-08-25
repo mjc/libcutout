@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 @testable import CutoutApp
 @testable import CutoutMobile
@@ -688,6 +689,39 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLightingRouteModelPublishesPresetChanges() throws {
+        let suiteName = "CutoutAppRouteTests.lightingPresets"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(
+            persistence.ensureRecord(
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+            )
+        )
+        let model = LightingRouteModel(
+            session: TestLightingSession(),
+            persistence: persistence
+        )
+        model.setPower(true)
+        model.markConfirmed()
+
+        let flag = ObservationFlag()
+        withObservationTracking {
+            _ = model.presets
+        } onChange: {
+            flag.value = true
+        }
+
+        model.savePreset(named: "Night")
+
+        XCTAssertTrue(flag.value)
+        XCTAssertEqual(model.presets.map(\.name), ["Night"])
+    }
+
+    @MainActor
     func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async {
         let fake = TestLightingSession()
         let model = LightingRouteModel(session: fake)
@@ -854,6 +888,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(model.peripheralName, "MELK-OC21 6A")
         XCTAssertEqual(model.peripheralIdentifier, "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
     }
+}
+
+private final class ObservationFlag: @unchecked Sendable {
+    var value = false
 }
 
 private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
