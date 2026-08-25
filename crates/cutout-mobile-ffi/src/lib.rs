@@ -4623,6 +4623,30 @@ impl RideDatabaseHandle {
     }
 }
 
+impl RideDatabaseHandle {
+    fn latest_route_map_points(
+        &self,
+        ride_id: MobileRideIdDto,
+    ) -> Result<Vec<ride_maps::RideMapPoint>, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        self.inner
+            .latest_route_points(ride_id)
+            .map(|points| {
+                points
+                    .into_iter()
+                    .map(|point| {
+                        ride_maps::RideMapPoint::new(
+                            point.sample(),
+                            ride_maps::RideMapSegmentId::new(point.segment_id()),
+                            point.telemetry_state(),
+                        )
+                    })
+                    .collect()
+            })
+            .map_err(map_ride_database_error)
+    }
+}
+
 /// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
 /// delegate queues while the database handle keeps durable lifecycle and route writes in Rust.
 #[derive(Debug, uniffi::Object)]
@@ -4671,21 +4695,9 @@ impl MobileRideMapCoreInner {
         let monotonic_created_at_milliseconds = database
             .monotonic_created_at_milliseconds(&ride.id)
             .map_err(map_core_error)?;
-        let persisted_ride_id = parse_mobile_ride_id(&ride.id).map_err(map_core_error)?;
-        let samples: Vec<ride_maps::RideMapPoint> = database
-            .inner
-            .latest_route_points(persisted_ride_id)
-            .map_err(map_ride_database_error)
-            .map_err(map_core_error)?
-            .into_iter()
-            .map(|point| {
-                ride_maps::RideMapPoint::new(
-                    point.sample(),
-                    ride_maps::RideMapSegmentId::new(point.segment_id()),
-                    point.telemetry_state(),
-                )
-            })
-            .collect();
+        let samples = database
+            .latest_route_map_points(ride.id.clone())
+            .map_err(map_core_error)?;
         self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary_and_timing(
             map_ride_lifecycle_state(ride.state),
             ride_maps::MonotonicMilliseconds::new(
