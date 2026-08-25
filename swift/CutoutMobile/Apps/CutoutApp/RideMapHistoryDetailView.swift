@@ -11,6 +11,7 @@ struct RideMapHistoryDetailView: View {
     let historyError: MobileRideMapError?
     let routeError: MobileRideMapError?
     let isLoading: Bool
+    let selectedHistoryID: String?
     let select: (String) -> Void
     let load: () -> Void
     let retry: () -> Void
@@ -47,6 +48,20 @@ struct RideMapHistoryDetailView: View {
         }
         let milesPerHour = metersPerSecond * 2.236_936_292_054_4
         return "\(milesPerHour.formatted(.number.precision(.fractionLength(1)))) mph"
+    }
+
+    @MainActor
+    static func shouldSelectHistory(
+        initialHistoryID: String?,
+        selectedHistoryID: String?,
+        availableHistoryIDs: [String]
+    ) -> Bool {
+        guard let initialHistoryID,
+              availableHistoryIDs.contains(initialHistoryID)
+        else {
+            return false
+        }
+        return selectedHistoryID != initialHistoryID
     }
 
     private var selectedRide: MobileRideMapHistorySummaryDto? {
@@ -156,6 +171,13 @@ struct RideMapHistoryDetailView: View {
             return
         }
         if rides.contains(where: { $0.rideId == initialHistoryID }) {
+            guard Self.shouldSelectHistory(
+                initialHistoryID: initialHistoryID,
+                selectedHistoryID: selectedHistoryID,
+                availableHistoryIDs: rides.map(\.rideId)
+            ) else {
+                return
+            }
             select(initialHistoryID)
         } else {
             load()

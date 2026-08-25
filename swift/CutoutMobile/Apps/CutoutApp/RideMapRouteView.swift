@@ -175,6 +175,7 @@ struct RideMapRouteView: View {
             historyError: model.rideMapHistoryError,
             routeError: model.rideMapHistoryRouteError,
             isLoading: model.rideMapHistoryRouteLoading,
+            selectedHistoryID: model.selectedRideMapHistoryID,
             select: { model.selectRideMapHistory($0) },
             load: { model.loadRideMapHistory(selecting: initialHistoryID) },
             retry: { model.loadRideMapHistory(selecting: initialHistoryID) },

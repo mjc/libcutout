@@ -374,6 +374,31 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideHistoryDetailDoesNotReselectAnAlreadySelectedRide() {
+        XCTAssertFalse(
+            RideMapHistoryDetailView.shouldSelectHistory(
+                initialHistoryID: "ride-1",
+                selectedHistoryID: "ride-1",
+                availableHistoryIDs: ["ride-1", "ride-2"]
+            )
+        )
+        XCTAssertTrue(
+            RideMapHistoryDetailView.shouldSelectHistory(
+                initialHistoryID: "ride-1",
+                selectedHistoryID: "ride-2",
+                availableHistoryIDs: ["ride-1", "ride-2"]
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryDetailView.shouldSelectHistory(
+                initialHistoryID: "ride-1",
+                selectedHistoryID: nil,
+                availableHistoryIDs: ["ride-2"]
+            )
+        )
+    }
+
+    @MainActor
     func testRideDetailShowsAverageSpeedWhenDistanceAndDurationExist() {
         XCTAssertEqual(
             RideMapHistoryDetailView.averageSpeedText(
