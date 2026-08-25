@@ -5385,27 +5385,21 @@ impl MobileRideMapCoreInner {
         &mut self,
         event: MobileRideEventDto,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
-        let Some(id) = self.active_ride_id.clone() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let Some(current) = self.recorder.state() else {
-            return Err(MobileRideMapCoreErrorDto::NoActiveRide);
-        };
-        let next = current
-            .apply(event.into())
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        if let Some(database) = self.database.as_ref() {
-            database
-                .transition(id, event.into())
-                .map_err(map_core_error)?;
-        }
-        self.recorder.apply_transition(next);
-        Ok(self.snapshot(next.into()))
+        self.transition_inner_with_timestamp(event, None)
     }
+
     fn transition_inner_at(
         &mut self,
         event: MobileRideEventDto,
         at_milliseconds: u64,
+    ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
+        self.transition_inner_with_timestamp(event, Some(at_milliseconds))
+    }
+
+    fn transition_inner_with_timestamp(
+        &mut self,
+        event: MobileRideEventDto,
+        at_milliseconds: Option<u64>,
     ) -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto> {
         let Some(id) = self.active_ride_id.clone() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
@@ -5413,17 +5407,26 @@ impl MobileRideMapCoreInner {
         let Some(current) = self.recorder.state() else {
             return Err(MobileRideMapCoreErrorDto::NoActiveRide);
         };
+        let lifecycle_event = event.into();
         let next = current
-            .apply(event.into())
+            .apply(lifecycle_event)
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         if let Some(database) = self.database.as_ref() {
-            database
-                .transition_at(id, event.into(), at_milliseconds)
-                .map_err(map_core_error)?;
+            match at_milliseconds {
+                Some(at) => database
+                    .transition_at(id, event, at)
+                    .map_err(map_core_error)?,
+                None => database.transition(id, event).map_err(map_core_error)?,
+            };
         }
-        self.recorder
-            .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
-        Ok(self.snapshot_at(next.into(), at_milliseconds))
+        if let Some(at) = at_milliseconds {
+            self.recorder
+                .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at));
+            Ok(self.snapshot_at(next.into(), at))
+        } else {
+            self.recorder.apply_transition(next);
+            Ok(self.snapshot(next.into()))
+        }
     }
 }
 
