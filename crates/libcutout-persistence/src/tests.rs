@@ -145,6 +145,41 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
 }
 
 #[test]
+fn current_database_repairs_monotonic_ride_creation_times() {
+    let _guard = test_guard();
+    let mut connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO rides
+             (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+             VALUES (?1, 'live', 'saved', 1_000, 1_700_000_002_000, 2, 1)",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_points
+             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+              latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+             VALUES (?1, 0, 0, 0, 1_000, 1_700_000_001_000, 400000000, -105000000, NULL, 'live')",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+
+    crate::storage::repair_legacy_ride_creation_times(&mut connection).unwrap();
+
+    let created_at_ms: u64 = connection
+        .query_row(
+            "SELECT created_at_ms FROM rides WHERE id = ?1",
+            ["00000000-0000-0000-0000-000000000001"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(created_at_ms, 1_700_000_001_000);
+}
+
+#[test]
 fn ride_updates_follow_domain_timestamps_without_regressing() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

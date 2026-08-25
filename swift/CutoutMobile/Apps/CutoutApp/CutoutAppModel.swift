@@ -385,6 +385,11 @@ final class CutoutAppModel {
         rideMapHistoryLoading = true
         rideMapHistoryRouteLoading = false
         rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
+        if let rideMapStorageError {
+            rideMapHistoryLoading = false
+            rideMapError = .Storage(rideMapStorageError)
+            return
+        }
         let state = core.rideMapStateHandle
         let filter = rideMapHistoryFilter
         let existingSelectedID = selectedRideMapHistoryID

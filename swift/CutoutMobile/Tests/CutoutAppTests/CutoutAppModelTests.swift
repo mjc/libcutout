@@ -145,6 +145,18 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryStorageFailureDoesNotLookLikeAnEmptyHistory() async {
+        let driver = SessionDriverSpy(rows: [], rideMapStorageError: "database unavailable")
+        let model = CutoutAppModel(core: driver)
+
+        model.loadRideMapHistory()
+        await Task.yield()
+
+        XCTAssertEqual(model.rideMapError, .Storage("database unavailable"))
+        XCTAssertFalse(model.rideMapHistoryLoading)
+    }
+
+    @MainActor
     func testRideMapRecordingProjectionStaysActiveWhileHistoryIsSelected() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -2151,7 +2163,7 @@ private actor FailingLiveActivityManager: LiveActivityRideLifecycleManaging {
 private final class SessionDriverSpy: CutoutSessionDriving {
     let rideSessionStateHandle = CutoutSessionStateHandle()
     let rideMapStateHandle = MobileRideMapState()
-    let rideMapStorageError: String? = nil
+    let rideMapStorageError: String?
     let rideMapAvailability: MobileRideMapAvailability = .ready
     var onDisplayStateChange: ((RideDisplayState) -> Void)?
     var onPhaseChange: ((SessionConnectionPhase) -> Void)?
@@ -2187,13 +2199,15 @@ private final class SessionDriverSpy: CutoutSessionDriving {
         pairingSucceeds: Bool = true,
         flushSucceeds: Bool = true,
         restoredPlatformIdentifier: String? = nil,
-        notifyBluetoothRestorationOnStart: Bool = true
+        notifyBluetoothRestorationOnStart: Bool = true,
+        rideMapStorageError: String? = nil
     ) {
         scanState = DevicePickerScanState(status: .scanning, rows: rows)
         self.pairingSucceeds = pairingSucceeds
         self.flushSucceeds = flushSucceeds
         self.restoredPlatformIdentifier = restoredPlatformIdentifier
         self.notifyBluetoothRestorationOnStart = notifyBluetoothRestorationOnStart
+        self.rideMapStorageError = rideMapStorageError
     }
 
     func start() {

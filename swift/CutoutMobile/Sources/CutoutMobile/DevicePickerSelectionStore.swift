@@ -46,10 +46,22 @@ public struct DevicePickerSelectionStore {
         let trimmed = platformIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if let database,
-           let persisted = try? database.deviceName(platformIdentifier: trimmed) {
+           let persisted = try? database.deviceName(platformIdentifier: trimmed),
+           !persisted.isEmpty {
             return persisted
         }
-        return defaults.string(forKey: Self.deviceNameKeyPrefix + trimmed)
+        if let legacy = defaults.string(forKey: Self.deviceNameKeyPrefix + trimmed),
+           let normalized = normalizedDisplayName(legacy, platformIdentifier: trimmed) {
+            if let database {
+                _ = try? database.saveDeviceName(
+                    platformIdentifier: trimmed,
+                    displayName: normalized,
+                    updatedAtMilliseconds: UInt64(Date().timeIntervalSince1970 * 1_000)
+                )
+            }
+            return normalized
+        }
+        return nil
     }
 
     public func save(platformIdentifier: String, displayName: String? = nil) {

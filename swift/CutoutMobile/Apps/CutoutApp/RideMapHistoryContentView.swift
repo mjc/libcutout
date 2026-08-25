@@ -221,10 +221,14 @@ struct RideMapHistoryContentView: View {
         // character. A task keyed to the text cancels stale queries and also
         // reloads when the user clears the field.
         .task(id: searchText) {
-            do {
-                try await Task.sleep(for: .milliseconds(250))
-            } catch {
-                return
+            if searchText.isEmpty {
+                guard rides.isEmpty, !isLoading else { return }
+            } else {
+                do {
+                    try await Task.sleep(for: .milliseconds(250))
+                } catch {
+                    return
+                }
             }
             guard Task.isCancelled == false else { return }
             load()

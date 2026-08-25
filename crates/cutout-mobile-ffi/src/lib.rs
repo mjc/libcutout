@@ -13,7 +13,7 @@ use std::{
         mpsc::{Receiver, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use cutout_core::{
@@ -4745,7 +4745,7 @@ impl MobileRideMapCoreInner {
         }
         let id = if let Some(database) = self.database.as_ref() {
             let id = database
-                .create_ride(MobileRideSourceDto::Live, at_ms)
+                .create_ride(MobileRideSourceDto::Live, wall_clock_unix_milliseconds())
                 .map_err(map_core_error)?;
             database
                 .transition(id.clone(), MobileRideEventDto::Start)
@@ -4776,6 +4776,14 @@ impl MobileRideMapCoreInner {
         self.active_ride_id = Some(id);
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
+}
+
+fn wall_clock_unix_milliseconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .unwrap_or(u64::MAX)
 }
 
 fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
@@ -13411,6 +13419,8 @@ mod tests {
         state.stop().expect("map recording stops");
         state.save().expect("map recording saves");
         assert!(state.current_snapshot().is_none());
+        let rides = database.list_rides(None, 1).expect("saved ride lists");
+        assert!(rides.rides[0].created_at_milliseconds >= 100_000_000_000);
         database.shutdown().expect("map database shuts down");
         let _ = fs::remove_file(path);
     }

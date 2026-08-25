@@ -2170,12 +2170,42 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
     migrate(connection)?;
+    repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
     recover_abandoned_pevcap_imports(connection)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
     })
+}
+
+/// Repairs rides created with a monotonic timestamp before the durable wall-clock boundary was
+/// enforced. The update is idempotent and uses the first persisted wall-clock sample when one is
+/// available, otherwise the durable update time.
+pub(crate) fn repair_legacy_ride_creation_times(
+    connection: &mut Connection,
+) -> Result<(), StorageError> {
+    const MIN_UNIX_MILLISECONDS: u64 = 100_000_000_000;
+
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "UPDATE rides
+         SET created_at_ms = COALESCE(
+             (
+                 SELECT MIN(wall_clock_ms)
+                 FROM ride_points
+                 WHERE ride_points.ride_id = rides.id
+                   AND wall_clock_ms >= ?1
+                   AND wall_clock_ms <= rides.updated_at_ms
+             ),
+             updated_at_ms
+         )
+         WHERE created_at_ms < ?1
+           AND updated_at_ms >= ?1",
+        [MIN_UNIX_MILLISECONDS],
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), StorageError> {
@@ -2298,7 +2328,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
+pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "
         CREATE TABLE rides (
