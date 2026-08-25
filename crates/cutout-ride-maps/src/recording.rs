@@ -833,6 +833,17 @@ impl RideMapRecorder {
 
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
+        let telemetry_state = self.telemetry_state_at(sample.monotonic_milliseconds());
+        self.record_sample_with_telemetry_state(sample, telemetry_state)
+    }
+
+    /// Records a sample after durable storage has accepted it, preserving its admission-time
+    /// telemetry provenance.
+    pub fn record_sample_with_telemetry_state(
+        &mut self,
+        sample: LocationSample,
+        telemetry_state: RouteTelemetryState,
+    ) -> bool {
         let next_segment_id = self.segment_id_for_sample(&sample);
         let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
@@ -855,11 +866,8 @@ impl RideMapRecorder {
             self.summary.distance().saturating_add(distance).as_u64(),
         );
         self.last_monotonic_milliseconds = sample.monotonic_milliseconds();
-        self.points.push(RideMapPoint::new(
-            sample,
-            self.segment_id,
-            self.telemetry_state_at(sample.monotonic_milliseconds()),
-        ));
+        self.points
+            .push(RideMapPoint::new(sample, self.segment_id, telemetry_state));
         if self.points.len() > MAX_LIVE_ROUTE_POINTS {
             let excess = self.points.len() - MAX_LIVE_ROUTE_POINTS;
             self.points.drain(..excess);

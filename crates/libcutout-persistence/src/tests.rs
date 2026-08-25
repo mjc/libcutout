@@ -250,6 +250,39 @@ fn queued_location_reports_worker_rejection() {
 }
 
 #[test]
+fn async_location_write_reports_completion_without_waiting() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+
+    let pending = database
+        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .unwrap();
+    let result = loop {
+        if let Some(result) = pending.try_result().unwrap() {
+            break result;
+        }
+        std::thread::yield_now();
+    };
+    assert!(matches!(result, Ok(LocationAdmission::Accepted)));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn ride_history_duration_is_derived_from_rust_monotonic_state() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

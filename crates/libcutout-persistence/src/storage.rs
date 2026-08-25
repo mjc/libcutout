@@ -4,7 +4,8 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_LIVE_ROUTE_POINTS,
-    RideEvent, RideLifecycleState, RideSummary, RouteTelemetryState, TransitionError,
+    RideEvent, RideLifecycleState, RideMapRecorder, RideMapSegmentId, RideSummary,
+    RouteTelemetryState, TransitionError,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -35,6 +36,13 @@ const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
+
+#[derive(Clone, Copy)]
+struct PevcapRoutePoint {
+    sample: LocationSample,
+    segment_id: RideMapSegmentId,
+    telemetry_state: RouteTelemetryState,
+}
 
 /// Origin of a canonical ride record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -936,6 +944,33 @@ pub struct RideDatabase {
     path: Arc<PathBuf>,
 }
 
+/// A location write accepted by the bounded database queue but not completed yet.
+#[derive(Debug)]
+pub struct PendingLocationWrite {
+    response: Receiver<Result<LocationAdmission, StorageError>>,
+}
+
+impl PendingLocationWrite {
+    /// Returns the durable result when the worker has completed this write.
+    ///
+    /// `None` means that the write remains queued or in progress. This method never waits for
+    /// `SQLite` or the database worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn try_result(
+        &self,
+    ) -> Result<Option<Result<LocationAdmission, StorageError>>, StorageError> {
+        match self.response.try_recv() {
+            Ok(result) => Ok(Some(result)),
+            Err(mpsc::TryRecvError::Empty) => Ok(None),
+            Err(mpsc::TryRecvError::Disconnected) => Err(StorageError::ResponseDropped),
+        }
+    }
+}
+
 impl RideDatabase {
     /// Opens or reuses the one canonical database service for this process.
     ///
@@ -1616,6 +1651,33 @@ impl RideDatabase {
         })
     }
 
+    /// Enqueues one location and returns without waiting for its durable result.
+    ///
+    /// The bounded command queue provides explicit backpressure through [`StorageError::QueueFull`];
+    /// callers must poll the returned ticket before publishing durable acceptance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded worker queue cannot accept the sample,
+    /// or [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn enqueue_location_async(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocation {
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
     /// Loads the durable summary projection for one ride.
     ///
     /// # Errors
@@ -1858,7 +1920,7 @@ enum Command {
     },
     AppendPevcapLocationBatch {
         ride_id: RideId,
-        samples: Vec<LocationSample>,
+        samples: Vec<PevcapRoutePoint>,
         reply: Reply<u64>,
     },
     FinishPevcapImport {
@@ -3417,7 +3479,6 @@ fn preflight_pevcap(
     let mut reader = PevcapReader::new(BufReader::new(file), encoding)
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
     let mut record_count = 0_u64;
-    let mut location_count = 0_u64;
     let mut earliest_milliseconds = None::<u64>;
     let mut latest_milliseconds = None::<u64>;
     while let Some(record) = reader
@@ -3431,10 +3492,10 @@ fn preflight_pevcap(
             Some(earliest_milliseconds.map_or(milliseconds, |current| current.min(milliseconds)));
         latest_milliseconds =
             Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
-        if record.phone_location.is_some() {
-            location_count = location_count.saturating_add(1);
-        }
     }
+    let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
+        Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
+    })?;
     let duration_milliseconds = latest_milliseconds
         .zip(earliest_milliseconds)
         .map_or(0, |(latest, earliest)| latest.saturating_sub(earliest));
@@ -3537,13 +3598,15 @@ fn prepare_managed_pevcap(
 fn stream_pevcap_location_batches(
     path: &Path,
     encoding: PevcapEncoding,
-    mut append: impl FnMut(Vec<LocationSample>) -> Result<u64, StorageError>,
+    mut append: impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
 ) -> Result<u64, StorageError> {
     let file = File::open(path)?;
     let mut reader = PevcapReader::new(BufReader::new(file), encoding)
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
     let mut batch = Vec::with_capacity(PEVCAP_LOCATION_BATCH_SIZE);
     let mut accepted = 0_u64;
+    let mut recorder = RideMapRecorder::new();
+    let mut started = false;
     while let Some(record) = reader
         .next_record()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
@@ -3551,25 +3614,44 @@ fn stream_pevcap_location_batches(
         let Some(location) = record.phone_location else {
             continue;
         };
-        let coordinate =
+        let Ok(coordinate) =
             Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
-                .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-        let accuracy_millimetres = location.horizontal_accuracy_meters * 1_000.0;
-        let horizontal_accuracy_millimetres = if accuracy_millimetres.is_finite()
-            && (0.0..=f64::from(u32::MAX)).contains(&accuracy_millimetres)
-        {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            Some(accuracy_millimetres.round() as u32)
-        } else {
-            None
+        else {
+            continue;
         };
-        batch.push(LocationSample::new(
+        let accuracy_millimetres = location.horizontal_accuracy_meters * 1_000.0;
+        if !accuracy_millimetres.is_finite() || accuracy_millimetres < 0.0 {
+            continue;
+        }
+        let Some(horizontal_accuracy_millimetres) =
+            u32::try_from(accuracy_millimetres.round() as u64).ok()
+        else {
+            continue;
+        };
+        let sample = LocationSample::new(
             coordinate,
             record.monotonic_ms.as_milliseconds(),
             location.wall_clock_unix_ms,
-            horizontal_accuracy_millimetres,
+            Some(horizontal_accuracy_millimetres),
             LocationSource::PevcapImport,
-        ));
+        );
+        if !started {
+            recorder
+                .start(sample.monotonic_milliseconds(), None)
+                .map_err(|_| StorageError::InvalidRideState(RideLifecycleState::Active))?;
+            started = true;
+        }
+        let segment_id = recorder.segment_id_for_sample(&sample);
+        if recorder.check_sample(&sample) != LocationAdmission::Accepted {
+            continue;
+        }
+        let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
+        recorder.record_sample_with_telemetry_state(sample, telemetry_state);
+        batch.push(PevcapRoutePoint {
+            sample,
+            segment_id,
+            telemetry_state,
+        });
         if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
             accepted = accepted.saturating_add(append(std::mem::take(&mut batch))?);
             batch.reserve(PEVCAP_LOCATION_BATCH_SIZE);
@@ -3681,17 +3763,17 @@ fn begin_pevcap_import(
 fn append_pevcap_location_batch(
     connection: &mut Connection,
     ride_id: RideId,
-    samples: &[LocationSample],
+    samples: &[PevcapRoutePoint],
 ) -> Result<u64, StorageError> {
     let transaction = connection.transaction()?;
     let mut accepted = 0_u64;
-    for &sample in samples {
+    for point in samples {
         if append_location_in_transaction(
             &transaction,
             ride_id,
-            sample,
-            0,
-            RouteTelemetryState::GpsOnly,
+            point.sample,
+            point.segment_id.value(),
+            point.telemetry_state,
             LocationWriteMode::PevcapImport,
         )? == LocationAdmission::Accepted
         {
