@@ -14,7 +14,7 @@ func lightingPresetSaveEligibility(
 
 func shouldAutoStartLightingSession(platformIdentifier: String?) -> Bool {
     guard let platformIdentifier else { return false }
-    return !platformIdentifier.isEmpty
+    return UUID(uuidString: platformIdentifier) != nil
 }
 func lightingColorSelection(
     red: UInt8,
