@@ -2631,12 +2631,17 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         for (index, location) in locations.enumerated() {
             let sample = MobilePhoneLocationSampleDto(location: location)
             let (monotonicMs, overflow) = callbackMonotonicMs.addingReportingOverflow(UInt64(index))
-            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
             do {
                 let decision = try rideMapState.ingestLocation(
                     monotonicMs: overflow ? .max : monotonicMs,
                     sample: sample
                 )
+                if let admittedSample = admittedPhoneLocationSample(sample: sample, decision: decision) {
+                    // Keep the capture writer on the same admitted sample as the map.
+                    // Raw Core Location updates must not become PEVCAP context before
+                    // Rust has accepted them into the canonical ride.
+                    phoneLocationSnapshot = phoneLocationState.ingest(sample: admittedSample)
+                }
                 publishRideMapDecision(decision)
             } catch {
                 publishRideMapError(error)
@@ -2644,6 +2649,18 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         }
         publishPhoneLocationSnapshot()
     }
+}
+
+/// Returns a phone sample only when the map accepted that exact sample into the ride.
+///
+/// Keeping this decision at the Core Location boundary prevents PEVCAP capture context
+/// from observing a raw update that the canonical map rejected or ignored.
+func admittedPhoneLocationSample(
+    sample: MobilePhoneLocationSampleDto,
+    decision: MobileRideMapDecisionDto
+) -> MobilePhoneLocationSampleDto? {
+    guard case .accepted = decision else { return nil }
+    return sample
 }
 
 private extension MobilePhoneLocationSampleDto {

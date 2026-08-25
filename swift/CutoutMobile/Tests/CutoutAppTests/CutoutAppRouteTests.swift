@@ -187,6 +187,16 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapDoesNotClaimRecordedEndpointsForTruncatedRoutes() {
+        XCTAssertTrue(
+            RideMapLiveContentView.showsRecordedBounds(for: .saved, pointsTruncated: false)
+        )
+        XCTAssertFalse(
+            RideMapLiveContentView.showsRecordedBounds(for: .saved, pointsTruncated: true)
+        )
+    }
+
+    @MainActor
     func testRideMapPresentationStateSurvivesRouteRecreation() {
         let presentation = RideMapPresentationState()
 
@@ -254,6 +264,60 @@ final class CutoutAppRouteTests: XCTestCase {
                 "corebluetooth-b"
             ]),
             ["corebluetooth-a", "corebluetooth-b"]
+        )
+    }
+
+    @MainActor
+    func testRideHistoryFiltersRemainActiveAndClearableWhenResultsAreEmpty() {
+        XCTAssertTrue(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "NF2557",
+                dateFilter: .last30Days,
+                vehicleFilter: nil
+            )
+        )
+        XCTAssertTrue(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "",
+                dateFilter: .allTime,
+                vehicleFilter: nil
+            )
+        )
+        XCTAssertTrue(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "",
+                dateFilter: .last30Days,
+                vehicleFilter: "vehicle-1"
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "",
+                dateFilter: .last30Days,
+                vehicleFilter: nil
+            )
+        )
+    }
+
+    @MainActor
+    func testRideHistoryReloadsWhenSearchTextIsCleared() {
+        XCTAssertTrue(
+            RideMapHistoryContentView.shouldReloadWhenSearchClears(
+                previous: "NF2557",
+                current: ""
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryContentView.shouldReloadWhenSearchClears(
+                previous: "",
+                current: ""
+            )
+        )
+        XCTAssertFalse(
+            RideMapHistoryContentView.shouldReloadWhenSearchClears(
+                previous: "NF2557",
+                current: "NF"
+            )
         )
     }
 

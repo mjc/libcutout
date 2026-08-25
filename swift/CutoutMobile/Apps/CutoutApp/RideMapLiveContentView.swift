@@ -34,8 +34,8 @@ struct RideMapLiveContentView: View {
             RideMapCanvasView(
                 points: points,
                 routeID: routeID,
-                showsStartMarker: snapshot?.state != .recording,
-                showsEndMarker: showsEndMarker,
+                showsStartMarker: showsRecordedBounds,
+                showsEndMarker: showsRecordedBounds,
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
@@ -91,7 +91,7 @@ struct RideMapLiveContentView: View {
                     recordedPointCount: snapshot?.summary.pointCount,
                     rustSegmentCount: snapshot?.segmentCount ?? 0,
                     decision: lastDecision,
-                    showsRecordedBounds: Self.showsRecordedBounds(for: snapshot?.state)
+                    showsRecordedBounds: showsRecordedBounds
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated"))
@@ -209,8 +209,15 @@ struct RideMapLiveContentView: View {
         }
     }
 
-    private var showsEndMarker: Bool {
-        Self.showsRecordedBounds(for: snapshot?.state)
+    static func showsRecordedBounds(
+        for state: MobileRideMapStateDto?,
+        pointsTruncated: Bool
+    ) -> Bool {
+        showsRecordedBounds(for: state) && !pointsTruncated
+    }
+
+    private var showsRecordedBounds: Bool {
+        Self.showsRecordedBounds(for: snapshot?.state, pointsTruncated: pointsTruncated)
     }
 
     private func recenterOnLatestPoint() {

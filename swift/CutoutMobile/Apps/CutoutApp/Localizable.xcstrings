@@ -709,6 +709,10 @@
       "comment" : "Ride-map history state before durable history queries are available.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saved rides will appear here when history storage is available." } } }
     },
+    "ride_map.history_clear_filters" : {
+      "comment" : "Action that clears the history search, date, and vehicle filters.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Clear filters" } } }
+    },
     "ride_map.history_error_title" : {
       "comment" : "History state when the Rust-owned ride query fails before any rides can be shown.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "History unavailable" } } }

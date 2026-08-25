@@ -59,6 +59,51 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testPevcapLocationContextUsesOnlyAdmittedMapSamples() {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_000,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+        let point = MobileRideMapPointDto(
+            sequence: 0,
+            segmentId: 0,
+            latitudeDegrees: sample.latitudeDegrees,
+            longitudeDegrees: sample.longitudeDegrees,
+            wallClockUnixMs: sample.wallClockUnixMs,
+            monotonicMs: 1_000,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters,
+            telemetryState: .gpsOnly
+        )
+
+        XCTAssertEqual(
+            admittedPhoneLocationSample(
+                sample: sample,
+                decision: .accepted(point: point, segmentStarted: true)
+            ),
+            sample
+        )
+        XCTAssertNil(
+            admittedPhoneLocationSample(
+                sample: sample,
+                decision: .rejected(reason: .accuracyTooLow)
+            )
+        )
+        XCTAssertNil(
+            admittedPhoneLocationSample(
+                sample: sample,
+                decision: .ignored(reason: .rideNotRecording)
+            )
+        )
+    }
+
     func testCaptureElapsedTimeUsesTheInjectedMonotonicClockAtExactBoundaries() {
         var now = MonotonicMilliseconds(2_999)
         let core = CutoutSessionCore(clock: MonotonicClock { now })

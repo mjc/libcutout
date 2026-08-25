@@ -14,7 +14,8 @@ struct RideMapHistoryContentView: View {
     let pointsTruncated: Bool
     let isLoading: Bool
     let isRouteLoading: Bool
-    let error: MobileRideMapError?
+    let historyError: MobileRideMapError?
+    let routeError: MobileRideMapError?
     let selectedRideID: String?
     let dateFilter: CutoutAppModel.RideMapHistoryDateFilter
     let vehicleFilter: String?
@@ -24,12 +25,14 @@ struct RideMapHistoryContentView: View {
     let returnToLive: () -> Void
     let setDateFilter: (CutoutAppModel.RideMapHistoryDateFilter) -> Void
     let setVehicleFilter: (String?) -> Void
+    let clearFilters: () -> Void
     let currentVehicleIdentity: String?
     let currentVehicleName: String?
     let vehicleName: (String?) -> String?
 
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
+    @State private var didLoadInitialHistory = false
 
     private struct VehicleOption: Hashable, Identifiable {
         let identity: String
@@ -44,6 +47,7 @@ struct RideMapHistoryContentView: View {
     private var vehicleOptions: [VehicleOption] {
         Self.uniqueVehicleIdentities(
             rides.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                + [vehicleFilter].compactMap { $0 }
         )
         .map { VehicleOption(identity: $0, label: vehicleLabel(for: $0)) }
         .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
@@ -57,6 +61,20 @@ struct RideMapHistoryContentView: View {
     @MainActor
     static func selectedRouteIsLoading(routeLoading: Bool, hasSelectedRide: Bool) -> Bool {
         routeLoading && hasSelectedRide
+    }
+
+    @MainActor
+    static func hasActiveFilters(
+        searchText: String,
+        dateFilter: CutoutAppModel.RideMapHistoryDateFilter,
+        vehicleFilter: String?
+    ) -> Bool {
+        !searchText.isEmpty || dateFilter != .last30Days || vehicleFilter != nil
+    }
+
+    @MainActor
+    static func shouldReloadWhenSearchClears(previous: String, current: String) -> Bool {
+        !previous.isEmpty && current.isEmpty
     }
 
     private func vehicleLabel(for identity: String) -> String {
@@ -90,10 +108,6 @@ struct RideMapHistoryContentView: View {
                         .tint(PevColors.yellow)
                         .frame(maxWidth: .infinity, alignment: .top)
                         .padding(24)
-                } else if rides.isEmpty, error != nil {
-                    historyErrorState
-                } else if rides.isEmpty {
-                    emptyState
                 } else {
                     RideMapHistoryFilterRow(
                         dateMenu: { filterMenu(kind: .date, title: dateFilterTitle, systemImage: "calendar") },
@@ -109,7 +123,24 @@ struct RideMapHistoryContentView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 8)
 
-                    if error != nil {
+                    if hasActiveFilters {
+                        Button(localizedAppText("ride_map.history_clear_filters"), action: clearFilters)
+                            .font(.subheadline.weight(.semibold))
+                            .buttonStyle(.plain)
+                            .foregroundStyle(PevColors.yellow)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                            .accessibilityIdentifier("ride-map.history-clear-filters")
+                    }
+
+                    if rides.isEmpty, historyError != nil {
+                        historyErrorState
+                    } else if rides.isEmpty {
+                        emptyState
+                    } else {
+
+                    if historyError != nil {
                         Label(localizedAppText("ride_map.command_failed"), systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
@@ -123,7 +154,7 @@ struct RideMapHistoryContentView: View {
                             points: points,
                             routeID: selectedRideID ?? "history",
                             showsStartMarker: true,
-                            showsEndMarker: true,
+                            showsEndMarker: !pointsTruncated,
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,
@@ -213,6 +244,7 @@ struct RideMapHistoryContentView: View {
                         topTrailingRadius: 28
                     ))
                     .padding(.bottom, 8)
+                    }
                 }
                 }
             }
@@ -222,7 +254,7 @@ struct RideMapHistoryContentView: View {
         // reloads when the user clears the field.
         .task(id: searchText) {
             if searchText.isEmpty {
-                guard rides.isEmpty, !isLoading else { return }
+                guard didLoadInitialHistory == false else { return }
             } else {
                 do {
                     try await Task.sleep(for: .milliseconds(250))
@@ -231,6 +263,14 @@ struct RideMapHistoryContentView: View {
                 }
             }
             guard Task.isCancelled == false else { return }
+            didLoadInitialHistory = true
+            load()
+        }
+        .onChange(of: searchText) { oldValue, newValue in
+            guard Self.shouldReloadWhenSearchClears(previous: oldValue, current: newValue) else {
+                return
+            }
+            didLoadInitialHistory = true
             load()
         }
         // Search belongs to the screen container so it stays attached to the
@@ -282,12 +322,20 @@ struct RideMapHistoryContentView: View {
     }
 
     private var isSelectedRouteError: Bool {
-        selectedRide != nil && points.isEmpty && error != nil
+        selectedRide != nil && points.isEmpty && routeError != nil
     }
 
     private var isSelectedRouteEmpty: Bool {
         guard let selectedRide else { return false }
-        return !isLoading && error == nil && selectedRide.summary.pointCount == 0
+        return !isLoading && routeError == nil && selectedRide.summary.pointCount == 0
+    }
+
+    private var hasActiveFilters: Bool {
+        Self.hasActiveFilters(
+            searchText: searchText,
+            dateFilter: dateFilter,
+            vehicleFilter: vehicleFilter
+        )
     }
 
     private var historyErrorState: some View {

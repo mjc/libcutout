@@ -8,7 +8,8 @@ struct RideMapHistoryDetailView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     let points: [MobileRideMapPointDto]
     let pointsTruncated: Bool
-    let error: MobileRideMapError?
+    let historyError: MobileRideMapError?
+    let routeError: MobileRideMapError?
     let isLoading: Bool
     let select: (String) -> Void
     let load: () -> Void
@@ -56,8 +57,8 @@ struct RideMapHistoryDetailView: View {
     private var selectionTaskID: String { initialHistoryID ?? "" }
 
     private var isRouteLoading: Bool {
-        guard error == nil else { return false }
-        guard selectedRide != nil else { return initialHistoryID != nil }
+        guard routeError == nil else { return false }
+        guard selectedRide != nil else { return initialHistoryID != nil && historyError == nil }
         return isLoading
     }
 
@@ -70,7 +71,7 @@ struct RideMapHistoryDetailView: View {
                             points: points,
                             routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
                             showsStartMarker: true,
-                            showsEndMarker: true,
+                            showsEndMarker: !pointsTruncated,
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,
@@ -88,7 +89,7 @@ struct RideMapHistoryDetailView: View {
                             .padding(.vertical, 10)
                             .modifier(RideMapLoadingSurface())
                             .accessibilityIdentifier("ride-map.detail-loading")
-                        } else if error != nil {
+                        } else if routeError != nil {
                             ContentUnavailableView(
                                 localizedAppText("ride_map.detail_error_title"),
                                 systemImage: "exclamationmark.triangle"
@@ -118,7 +119,7 @@ struct RideMapHistoryDetailView: View {
                             recordedPointCount: ride.summary.pointCount,
                             pointsTruncated: pointsTruncated,
                             segmentCount: ride.segmentCount,
-                            error: error,
+                            error: routeError,
                             isLoading: isRouteLoading,
                             loadFullRide: loadFullRide,
                             shareText: shareText(for: ride),
@@ -127,12 +128,12 @@ struct RideMapHistoryDetailView: View {
                     } else if initialHistoryID != nil {
                         VStack(spacing: 12) {
                             ContentUnavailableView(
-                                error == nil
+                                historyError == nil
                                     ? localizedAppText("ride_map.history_empty")
                                     : localizedAppText("ride_map.detail_error_title"),
-                                systemImage: error == nil ? "map" : "exclamationmark.triangle"
+                                systemImage: historyError == nil ? "map" : "exclamationmark.triangle"
                             )
-                            if error != nil {
+                            if historyError != nil {
                                 Button(localizedAppText("ride_map.history_retry"), action: retry)
                                     .buttonStyle(.borderedProminent)
                                     .tint(PevColors.yellow)
@@ -257,7 +258,7 @@ private struct RideMapHistoryDetailSummary: View {
                     recordedPointCount: recordedPointCount,
                     rustSegmentCount: segmentCount,
                     decision: nil,
-                    showsRecordedBounds: true
+                    showsRecordedBounds: !pointsTruncated
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated"))

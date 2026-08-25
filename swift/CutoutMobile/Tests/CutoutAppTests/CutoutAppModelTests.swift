@@ -132,6 +132,9 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertFalse(model.pauseRideMap())
         XCTAssertEqual(model.rideMapError, .NoActiveRide)
+        XCTAssertEqual(model.rideMapLiveError, .NoActiveRide)
+        XCTAssertNil(model.rideMapHistoryError)
+        XCTAssertNil(model.rideMapHistoryRouteError)
     }
 
     @MainActor
@@ -142,6 +145,8 @@ final class CutoutAppModelTests: XCTestCase {
         driver.onRideMapErrorChange?(.Storage("disk full"))
 
         XCTAssertEqual(model.rideMapError, .Storage("disk full"))
+        XCTAssertNil(model.rideMapHistoryError)
+        XCTAssertNil(model.rideMapHistoryRouteError)
     }
 
     @MainActor
@@ -152,7 +157,8 @@ final class CutoutAppModelTests: XCTestCase {
         model.loadRideMapHistory()
         await Task.yield()
 
-        XCTAssertEqual(model.rideMapError, .Storage("database unavailable"))
+        XCTAssertEqual(model.rideMapHistoryError, .Storage("database unavailable"))
+        XCTAssertNil(model.rideMapLiveError)
         XCTAssertFalse(model.rideMapHistoryLoading)
     }
 

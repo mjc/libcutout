@@ -3046,6 +3046,8 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      */
     func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64) throws  -> MobileRideIdDto
 
+    func createRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?) throws  -> MobileRideIdDto
+
     /**
      * Creates an indexed trail definition.
      *
@@ -3071,7 +3073,7 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      *
      * Returns a typed database error when the durable append is rejected by the worker.
      */
-    func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto) throws
+    func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto) throws  -> MobileRideLocationAdmissionDto
 
     /**
      * Exports one ride summary as a versioned JSON document.
@@ -3118,6 +3120,8 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
     func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32) throws  -> MobileMapPointPageDto
+
+    func monotonicCreatedAtMilliseconds(id: MobileRideIdDto) throws  -> UInt64?
 
     /**
      * Validates a PEVCAP artifact and returns bounded facts for explicit confirmation.
@@ -3521,6 +3525,17 @@ open func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64)
 })
 }
 
+open func createRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?)throws  -> MobileRideIdDto  {
+    return try  FfiConverterTypeMobileRideIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_create_ride_with_monotonic_start(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideSourceDto_lower(source),
+        FfiConverterUInt64.lower(createdAtMilliseconds),
+        FfiConverterOptionUInt64.lower(monotonicCreatedAtMilliseconds),$0
+    )
+})
+}
+
     /**
      * Creates an indexed trail definition.
      *
@@ -3560,7 +3575,8 @@ open func deviceName(platformIdentifier: String)throws  -> String?  {
      *
      * Returns a typed database error when the durable append is rejected by the worker.
      */
-open func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+open func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: MobileRideLocationDto, segmentId: UInt64, telemetryState: MobileRideMapCoreTelemetryStateDto)throws  -> MobileRideLocationAdmissionDto  {
+    return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry(
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileRideIdDto_lower(id),
@@ -3568,7 +3584,7 @@ open func enqueueLocationWithSegmentAndTelemetry(id: MobileRideIdDto, location: 
         FfiConverterUInt64.lower(segmentId),
         FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lower(telemetryState),$0
     )
-}
+})
 }
 
     /**
@@ -3653,6 +3669,15 @@ open func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCu
         FfiConverterTypeMobileGeoBoundsDto_lower(bounds),
         FfiConverterOptionTypeMobileMapPointCursorDto.lower(cursor),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+open func monotonicCreatedAtMilliseconds(id: MobileRideIdDto)throws  -> UInt64?  {
+    return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_monotonic_created_at_milliseconds(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),$0
     )
 })
 }
@@ -23862,13 +23887,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride() != 30433) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride_with_monotonic_start() != 36152) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 6712) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_device_name() != 19773) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry() != 31825) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_enqueue_location_with_segment_and_telemetry() != 18243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 4935) {
@@ -23884,6 +23912,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 20830) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_monotonic_created_at_milliseconds() != 53564) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_preflight_pevcap() != 64663) {
