@@ -467,14 +467,7 @@ impl RideMapRecorder {
             });
         let last_monotonic_milliseconds =
             point_last_monotonic_milliseconds.max(timing_last_monotonic_milliseconds);
-        let completed_duration_milliseconds = if matches!(
-            state,
-            RideLifecycleState::Active | RideLifecycleState::Paused
-        ) {
-            timing.duration_milliseconds
-        } else {
-            timing.duration_milliseconds
-        };
+        let completed_duration_milliseconds = timing.duration_milliseconds;
         Self {
             state: Some(state),
             created_at_milliseconds,
