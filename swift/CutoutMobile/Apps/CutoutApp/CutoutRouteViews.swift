@@ -269,6 +269,11 @@ final class LightingRouteModel {
                 self?.handleStateChange(state)
             }
         }
+        session.onIdentity = { [weak self] identity in
+            Task { @MainActor in
+                self?.handleIdentity(identity)
+            }
+        }
         session.onRecord = { [weak self] record in
             Task { @MainActor in
                 self?.handleRecord(record)
@@ -428,6 +433,11 @@ final class LightingRouteModel {
         }
     }
 
+    private func handleIdentity(_ identity: MelkLightingPeripheralIdentity) {
+        peripheralName = identity.name
+        peripheralIdentifier = identity.platformIdentifier
+    }
+
     private func handleStateChange(_ state: MelkLightingPeripheralState) {
         if state.resetsRestoreEligibility {
             restoreAttempted = false
@@ -451,14 +461,7 @@ final class LightingRouteModel {
     }
 
     private func append(_ record: String) {
-        if record.hasPrefix("candidate=") || record.hasPrefix("restore=melk") {
-            updateIdentity(from: record)
-            if record.hasPrefix("candidate=") {
-                let candidate = record.dropFirst("candidate=".count)
-                peripheralName = String(candidate.split(separator: " id=", maxSplits: 1).first ?? candidate)
-            }
-            records = Array((records + [MelkLightingLogEntry(text: record)]).suffix(12))
-        } else if record.hasPrefix("notification=") {
+        if record.hasPrefix("notification=") {
             notificationCount += 1
             records = Array((records + [MelkLightingLogEntry(text: "FFF4 notification received")]).suffix(12))
         } else if record.hasPrefix("requested=") {
@@ -466,14 +469,6 @@ final class LightingRouteModel {
         } else {
             records = Array((records + [MelkLightingLogEntry(text: record)]).suffix(12))
         }
-    }
-
-    private func updateIdentity(from record: String) {
-        guard let identifier = record.split(separator: "id=", maxSplits: 1).last?
-            .split(separator: " rssi=", maxSplits: 1).first else {
-            return
-        }
-        peripheralIdentifier = String(identifier)
     }
 
     private func ensureRecordForConnectedAccessory() {
