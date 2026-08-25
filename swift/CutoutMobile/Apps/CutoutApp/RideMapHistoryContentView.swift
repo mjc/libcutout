@@ -33,7 +33,6 @@ struct RideMapHistoryContentView: View {
 
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
-    @State private var didLoadInitialHistory = false
 
     private struct VehicleOption: Hashable, Identifiable {
         let identity: String
@@ -73,8 +72,8 @@ struct RideMapHistoryContentView: View {
     }
 
     @MainActor
-    static func shouldReloadWhenSearchClears(previous: String, current: String) -> Bool {
-        !previous.isEmpty && current.isEmpty
+    static func searchDebounce(for searchText: String) -> Duration {
+        searchText.isEmpty ? .zero : .milliseconds(250)
     }
 
     private func vehicleLabel(for identity: String) -> String {
@@ -250,27 +249,18 @@ struct RideMapHistoryContentView: View {
             }
         }
         // Search is Rust-owned, but keystrokes should not launch one query per
-        // character. A task keyed to the text cancels stale queries and also
-        // reloads when the user clears the field.
+        // character. This single task owns initial, typed, and cleared-search
+        // reloads; changing the key cancels the previous query.
         .task(id: searchText) {
-            if searchText.isEmpty {
-                guard didLoadInitialHistory == false else { return }
-            } else {
+            let debounce = Self.searchDebounce(for: searchText)
+            if debounce != .zero {
                 do {
-                    try await Task.sleep(for: .milliseconds(250))
+                    try await Task.sleep(for: debounce)
                 } catch {
                     return
                 }
             }
             guard Task.isCancelled == false else { return }
-            didLoadInitialHistory = true
-            load()
-        }
-        .onChange(of: searchText) { oldValue, newValue in
-            guard Self.shouldReloadWhenSearchClears(previous: oldValue, current: newValue) else {
-                return
-            }
-            didLoadInitialHistory = true
             load()
         }
         // Search belongs to the screen container so it stays attached to the

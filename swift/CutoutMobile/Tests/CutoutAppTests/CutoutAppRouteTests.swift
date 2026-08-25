@@ -330,24 +330,14 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testRideHistoryReloadsWhenSearchTextIsCleared() {
-        XCTAssertTrue(
-            RideMapHistoryContentView.shouldReloadWhenSearchClears(
-                previous: "NF2557",
-                current: ""
-            )
+    func testRideHistorySearchTaskDebouncesOnlyNonemptyQueries() {
+        XCTAssertEqual(
+            RideMapHistoryContentView.searchDebounce(for: ""),
+            .zero
         )
-        XCTAssertFalse(
-            RideMapHistoryContentView.shouldReloadWhenSearchClears(
-                previous: "",
-                current: ""
-            )
-        )
-        XCTAssertFalse(
-            RideMapHistoryContentView.shouldReloadWhenSearchClears(
-                previous: "NF2557",
-                current: "NF"
-            )
+        XCTAssertEqual(
+            RideMapHistoryContentView.searchDebounce(for: "NF2557"),
+            .milliseconds(250)
         )
     }
 
