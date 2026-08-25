@@ -718,6 +718,10 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     let _ = std::fs::remove_file(artifact_path);
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "integration test covers the complete canonical import contract"
+)]
 #[test]
 fn pevcap_import_uses_live_admission_and_segmentation_policy() {
     let _guard = test_guard();
@@ -750,12 +754,12 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
             pevcap_location_record(1_000, 40.0, 3.0),
             pevcap_location_record(900, 40.0001, 3.0),
             pevcap_location_record(2_000, 41.0, 3.0),
-            pevcap_location_record(3_000, 40.000001, 200.0),
-            pevcap_location_record(4_000, 40.000001, 3.0),
+            pevcap_location_record(3_000, 40.000_001, 200.0),
+            pevcap_location_record(4_000, 40.000_001, 3.0),
             pevcap_location_record(5_000, 91.0, 3.0),
-            pevcap_location_record(6_000, 40.000001, -1.0),
+            pevcap_location_record(6_000, 40.000_001, -1.0),
             {
-                let mut location = pevcap_location(7_000, 40.000001, 3.0);
+                let mut location = pevcap_location(7_000, 40.000_001, 3.0);
                 location.wall_clock_unix_ms = 0;
                 PevcapRecord::link_up(MonotonicTimestamp::new(7_000), None)
                     .with_phone_location(location)
@@ -817,9 +821,11 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
         .create_ride(RideSource::Live, 1_700_000_000_000)
         .unwrap();
     database.transition(live_ride, RideEvent::Start).unwrap();
-    for (monotonic_ms, latitude_degrees, segment_id) in
-        [(1_000, 40.0, 0), (4_000, 40.000001, 0), (40_000, 40.001, 1)]
-    {
+    for (monotonic_ms, latitude_degrees, segment_id) in [
+        (1_000, 40.0, 0),
+        (4_000, 40.000_001, 0),
+        (40_000, 40.001, 1),
+    ] {
         let sample = LocationSample::new(
             Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
             monotonic_ms,

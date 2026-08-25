@@ -3870,6 +3870,7 @@ impl RideDatabaseHandle {
     ///
     /// Returns a typed database error when the cursor, filter, limit, worker, or stored page is
     /// invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn list_rides_filtered(
         &self,
         cursor: Option<MobileRideCursorDto>,
@@ -3903,6 +3904,7 @@ impl RideDatabaseHandle {
     /// # Errors
     ///
     /// Returns a typed database error when the identifier, worker, or stored record is invalid.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn find_ride(
         &self,
         ride_id: MobileRideIdDto,
@@ -4429,6 +4431,10 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "called from the UniFFI boundary"
+    )]
     fn create_started_ride_with_monotonic_start(
         &self,
         source: MobileRideSourceDto,
@@ -4507,6 +4513,10 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "called from the UniFFI boundary"
+    )]
     fn transition_at(
         &self,
         id: MobileRideIdDto,
@@ -4644,6 +4654,10 @@ impl RideDatabaseHandle {
 }
 
 impl RideDatabaseHandle {
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "called from the UniFFI boundary"
+    )]
     fn enqueue_location_async(
         &self,
         id: MobileRideIdDto,
@@ -4663,6 +4677,10 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "called from the UniFFI boundary"
+    )]
     fn latest_route_map_points(
         &self,
         ride_id: MobileRideIdDto,
@@ -4890,6 +4908,10 @@ impl MobileRideMapCoreInner {
         Ok(association)
     }
 
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "state boundary retains owned candidate"
+    )]
     fn start_gps_only(
         &mut self,
         at_ms: u64,
@@ -4907,15 +4929,14 @@ impl MobileRideMapCoreInner {
             return Err(MobileRideMapCoreErrorDto::AlreadyRecording);
         }
         let id = if let Some(database) = self.database.as_ref() {
-            let id = database
+            database
                 .create_started_ride_with_monotonic_start(
                     MobileRideSourceDto::Live,
                     wall_clock_unix_milliseconds(),
                     Some(at_ms),
                     last_connected_vehicle.clone(),
                 )
-                .map_err(map_core_error)?;
-            id
+                .map_err(map_core_error)?
         } else {
             MobileRideIdDto {
                 value: Uuid::new_v4().to_string(),
@@ -4954,6 +4975,10 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    #[allow(
+        clippy::while_let_loop,
+        reason = "FIFO polling must stop at the first unresolved write"
+    )]
     fn poll_location_writes(&mut self) -> Vec<MobileRideMapCoreDecisionDto> {
         let mut decisions = Vec::new();
         loop {
@@ -5171,6 +5196,12 @@ impl MobileRideMapCore {
     /// A fresh connection starts a new live ride when no open ride exists. An already-open
     /// GPS-only ride is associated with this vehicle, preserving the route recorded before the
     /// Bluetooth connection was available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the vehicle cannot be associated or durable storage rejects the
+    /// lifecycle update.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
     pub fn ensure_recording_for_vehicle(
         &self,
         platform_identifier: String,
@@ -5216,6 +5247,10 @@ impl MobileRideMapCore {
     }
 
     /// Evaluates the pause transition at the supplied monotonic timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no active ride exists or the lifecycle transition is invalid.
     pub fn pause_at(
         &self,
         at_ms: u64,
@@ -5233,6 +5268,10 @@ impl MobileRideMapCore {
     }
 
     /// Evaluates the resume transition at the supplied monotonic timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no paused ride exists or durable storage rejects the transition.
     pub fn resume_at(
         &self,
         at_ms: u64,
@@ -5250,6 +5289,10 @@ impl MobileRideMapCore {
     }
 
     /// Evaluates the stop transition at the supplied monotonic timestamp.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when no open ride exists or durable storage rejects the transition.
     pub fn stop_at(
         &self,
         at_ms: u64,
@@ -5326,10 +5369,10 @@ impl MobileRideMapCore {
                         staged.associated_vehicle().map(str::to_owned),
                         staged
                             .associated_at_milliseconds()
-                            .map(|value| value.as_u64()),
+                            .map(ride_maps::MonotonicMilliseconds::as_u64),
                         staged
                             .last_telemetry_at_milliseconds()
-                            .map(|value| value.as_u64()),
+                            .map(ride_maps::MonotonicMilliseconds::as_u64),
                     )
                     .map_err(map_core_error)?;
             }
@@ -5343,12 +5386,16 @@ impl MobileRideMapCore {
     ///
     /// A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
     /// callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
-    /// The callback never waits for SQLite or the database worker.
+    /// The callback never waits for `SQLite` or the database worker.
     ///
     /// # Errors
     ///
     /// Returns an error when there is no active ride or the location is invalid. Queue saturation,
     /// worker shutdown, and durable rejection are explicit decision outcomes.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the FFI boundary keeps location admission as one atomic operation"
+    )]
     pub fn ingest_location(
         &self,
         monotonic_ms: u64,
@@ -5470,7 +5517,7 @@ impl MobileRideMapCore {
         })
     }
 
-    /// Returns durable outcomes for queued location writes without waiting for SQLite.
+    /// Returns durable outcomes for queued location writes without waiting for `SQLite`.
     ///
     /// The returned decisions are ordered by the bounded write queue. An empty result means that
     /// the oldest queued write is still pending.
@@ -13610,7 +13657,8 @@ mod tests {
                 .ingest_location(
                     monotonic_ms,
                     1_700_000_000_000 + monotonic_ms,
-                    40.0 + (index as f64 * 0.00001),
+                    40.0 + (f64::from(u32::try_from(index).expect("test index fits in u32"))
+                        * 0.00001),
                     -105.0,
                     3.0,
                 )
@@ -13626,7 +13674,10 @@ mod tests {
             .ingest_location(
                 1_000 + (MAX_PENDING_LOCATION_WRITES as u64 * 1_000),
                 1_700_000_000_000 + (MAX_PENDING_LOCATION_WRITES as u64 * 1_000),
-                40.0 + (MAX_PENDING_LOCATION_WRITES as f64 * 0.00001),
+                40.0 + (f64::from(
+                    u32::try_from(MAX_PENDING_LOCATION_WRITES)
+                        .expect("test queue size fits in u32"),
+                ) * 0.00001),
                 -105.0,
                 3.0,
             )

@@ -3631,12 +3631,8 @@ fn stream_pevcap_location_batches(
         else {
             continue;
         };
-        let accuracy_millimetres = location.horizontal_accuracy_meters * 1_000.0;
-        if !accuracy_millimetres.is_finite() || accuracy_millimetres < 0.0 {
-            continue;
-        }
         let Some(horizontal_accuracy_millimetres) =
-            u32::try_from(accuracy_millimetres.round() as u64).ok()
+            pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
         else {
             continue;
         };
@@ -3673,6 +3669,19 @@ fn stream_pevcap_location_batches(
         accepted = accepted.saturating_add(append(batch)?);
     }
     Ok(accepted)
+}
+
+fn pevcap_accuracy_millimetres(metres: f64) -> Option<u32> {
+    let millimetres = metres * 1_000.0;
+    if !millimetres.is_finite() || millimetres < 0.0 || millimetres > f64::from(u32::MAX) {
+        return None;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "finite non-negative values are bounded by u32::MAX above"
+    )]
+    Some(millimetres.round() as u32)
 }
 
 fn pevcap_import_receipt(
@@ -4133,20 +4142,7 @@ fn append_location_in_transaction(
             mode,
         )
         .map_err(StorageError::InvalidRideState)?;
-    let expected_segment_id = previous.map_or(0, |(_, previous_segment_id, previous_sample)| {
-        let gap_started = sample
-            .monotonic_milliseconds()
-            .as_u64()
-            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
-            > MAX_GAP_MILLISECONDS;
-        previous_segment_id.saturating_add(if gap_started { 1 } else { 0 })
-    });
-    if segment_id != expected_segment_id {
-        return Err(StorageError::InvalidSegmentId {
-            expected: expected_segment_id,
-            actual: segment_id,
-        });
-    }
+    validate_segment_id(previous.as_ref(), sample, segment_id)?;
     match decision {
         LocationWriteDecision::Accepted {
             distance_millimetres,
@@ -4177,6 +4173,45 @@ fn append_location_in_transaction(
             }
         }
         LocationWriteDecision::Rejected(admission) => Ok(admission),
+    }
+}
+
+fn validate_segment_id(
+    previous: Option<&(i64, u64, LocationSample)>,
+    sample: LocationSample,
+    segment_id: u64,
+) -> Result<(), StorageError> {
+    let expected_segment_id = previous.map_or(0, |(_, previous_segment_id, previous_sample)| {
+        let gap_started = sample
+            .monotonic_milliseconds()
+            .as_u64()
+            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+            > MAX_GAP_MILLISECONDS;
+        previous_segment_id.saturating_add(u64::from(gap_started))
+    });
+    // A +1 transition may come from a pause/resume boundary, which is persisted as
+    // lifecycle state rather than a route-point row. A time gap must still account for
+    // the increment itself, so it cannot be combined with an arbitrary jump.
+    let segment_id_is_valid = previous.is_none_or(|(_, previous_segment_id, previous_sample)| {
+        let gap_started = sample
+            .monotonic_milliseconds()
+            .as_u64()
+            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+            > MAX_GAP_MILLISECONDS;
+        if gap_started {
+            segment_id == expected_segment_id
+        } else {
+            segment_id == *previous_segment_id
+                || segment_id == previous_segment_id.saturating_add(1)
+        }
+    });
+    if segment_id_is_valid {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidSegmentId {
+            expected: expected_segment_id,
+            actual: segment_id,
+        })
     }
 }
 
