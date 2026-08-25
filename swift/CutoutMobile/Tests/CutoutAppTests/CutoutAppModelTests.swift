@@ -250,6 +250,37 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(result.1)
     }
 
+    func testBoundedRoutePointProjectionHonorsSinglePointBudget() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = try state.ingestLocation(
+            monotonicMs: 1_000,
+            wallClockUnixMs: 1_700_000_000_000,
+            latitudeDegrees: 39.7,
+            longitudeDegrees: -104.9,
+            horizontalAccuracyMeters: 5
+        )
+        _ = try state.ingestLocation(
+            monotonicMs: 2_000,
+            wallClockUnixMs: 1_700_000_001_000,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9001,
+            horizontalAccuracyMeters: 5
+        )
+        let incoming = try XCTUnwrap(state.pointsAfter(afterCursor: nil, limit: 10)?.points)
+        var points = [MobileRideMapPointDto]()
+
+        let truncated = CutoutAppModel.appendBoundedRoutePoints(
+            to: &points,
+            incoming: incoming,
+            limit: 1
+        )
+
+        XCTAssertTrue(truncated)
+        XCTAssertEqual(points.count, 1)
+        XCTAssertEqual(points[0].sequence, incoming.last?.sequence)
+    }
+
     @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])

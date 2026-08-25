@@ -664,6 +664,10 @@ final class CutoutAppModel {
             points.removeAll(keepingCapacity: true)
             return true
         }
+        guard limit > 1 else {
+            points = [incoming.last!]
+            return true
+        }
         guard points.count + incoming.count > limit else {
             points.append(contentsOf: incoming)
             return false
