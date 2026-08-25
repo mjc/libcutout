@@ -4079,9 +4079,7 @@ pub(crate) fn ride_records_sql(suffix: &str) -> String {
 }
 
 fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
-    let sql = ride_records_sql(
-        "WHERE rides.state NOT IN ('draft', 'discarded') AND rides.id = ?1",
-    );
+    let sql = ride_records_sql("WHERE rides.state NOT IN ('draft', 'discarded') AND rides.id = ?1");
     connection
         .query_row(
             &sql,
@@ -4122,7 +4120,7 @@ fn list_rides(
                 OR lower(COALESCE(associated_device.display_name, '')) LIKE ?3
                 OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?3
                 OR CAST(rides.created_at_ms AS TEXT) LIKE ?3
-                OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3)"
+                OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3)",
     );
     let mut rides = Vec::new();
     if let Some(cursor) = cursor {

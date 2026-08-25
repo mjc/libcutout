@@ -4640,11 +4640,7 @@ impl MobileRideMapCoreInner {
             return Ok(());
         };
         let bootstrap = database.bootstrap_snapshot();
-        let Some(recovered_ride_id) = bootstrap
-            .recovered_rides
-            .into_iter()
-            .next()
-        else {
+        let Some(recovered_ride_id) = bootstrap.recovered_rides.into_iter().next() else {
             database.capabilities().map_err(map_core_error)?;
             return Ok(());
         };
