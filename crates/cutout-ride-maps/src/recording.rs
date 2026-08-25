@@ -1105,6 +1105,7 @@ mod tests {
         recorder.start(monotonic(1_000), None).expect("starts");
         recorder.record_sample(sample(1_001, 40.0));
         let second = sample(40_000, 40.001);
+        assert_eq!(recorder.segment_id_for_sample(&second).value(), 1);
         assert_eq!(recorder.check_sample(&second), LocationAdmission::Accepted);
         assert!(recorder.record_sample(second));
         assert_eq!(recorder.current_segment_id().value(), 1);

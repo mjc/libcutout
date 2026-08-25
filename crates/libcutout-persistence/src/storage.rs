@@ -1091,18 +1091,13 @@ impl RideDatabase {
         source: RideSource,
         created_at_ms: u64,
     ) -> Result<RideId, StorageError> {
-        self.request(move |reply| Command::CreateRide {
-            source,
-            created_at_ms,
-            monotonic_created_at_ms: None,
-            reply,
-        })
+        self.create_ride_with_monotonic_start(source, created_at_ms, Some(created_at_ms))
     }
 
     /// Creates a draft ride with separate wall-clock and monotonic start timestamps.
     ///
-    /// The wall-clock value is used for history ordering; the monotonic value is used for elapsed
-    /// duration calculations and may be absent for imported or legacy records.
+    /// The wall-clock value is used for history ordering; the monotonic value is used only for
+    /// elapsed-duration calculations and may be absent for imported records.
     ///
     /// # Errors
     ///
@@ -1117,6 +1112,36 @@ impl RideDatabase {
             source,
             created_at_ms,
             monotonic_created_at_ms,
+            reply,
+        })
+    }
+
+    /// Atomically creates and starts a live ride with its candidate vehicle metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when metadata validation, the lifecycle transition, or the
+    /// transactional write fails.
+    pub fn create_started_ride_with_monotonic_start(
+        &self,
+        source: RideSource,
+        created_at_ms: u64,
+        monotonic_created_at_ms: Option<u64>,
+        candidate_vehicle: Option<&str>,
+    ) -> Result<RideId, StorageError> {
+        if candidate_vehicle.is_some_and(|value| value.trim().is_empty() || value.len() > 512) {
+            return Err(StorageError::InvalidStoredValue {
+                field: "candidate vehicle",
+                value: candidate_vehicle.unwrap_or_default().to_owned(),
+            });
+        }
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
+        self.request(move |reply| Command::CreateStartedRide {
+            source,
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle: candidate_vehicle.map(str::to_owned),
+            occurred_at_ms,
             reply,
         })
     }
@@ -1882,6 +1907,14 @@ enum Command {
         candidate_vehicle: Option<String>,
         reply: Reply<RideId>,
     },
+    CreateStartedRide {
+        source: RideSource,
+        created_at_ms: u64,
+        monotonic_created_at_ms: Option<u64>,
+        candidate_vehicle: Option<String>,
+        occurred_at_ms: u64,
+        reply: Reply<RideId>,
+    },
     UpdateRideMapMetadata {
         ride_id: RideId,
         candidate_vehicle: Option<String>,
@@ -2080,6 +2113,23 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     created_at_ms,
                     monotonic_created_at_ms,
                     candidate_vehicle.as_deref(),
+                ));
+            }
+            Command::CreateStartedRide {
+                source,
+                created_at_ms,
+                monotonic_created_at_ms,
+                candidate_vehicle,
+                occurred_at_ms,
+                reply,
+            } => {
+                let _ = reply.send(create_started_ride(
+                    &mut connection,
+                    source,
+                    created_at_ms,
+                    monotonic_created_at_ms,
+                    candidate_vehicle.as_deref(),
+                    occurred_at_ms,
                 ));
             }
             Command::UpdateRideMapMetadata {
@@ -2405,12 +2455,57 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
         return Err(StorageError::SpatialCapabilityUnavailable);
     }
     migrate(connection)?;
+    repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
     recover_abandoned_pevcap_imports(connection)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
     })
+}
+
+/// Repairs rides created with a monotonic timestamp before the durable wall-clock boundary was
+/// enforced. The update is idempotent and uses the first persisted wall-clock sample when one is
+/// available, otherwise the durable update time.
+pub(crate) fn repair_legacy_ride_creation_times(
+    connection: &mut Connection,
+) -> Result<(), StorageError> {
+    const MIN_UNIX_MILLISECONDS: u64 = 100_000_000_000;
+
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "UPDATE rides
+         SET created_at_ms = COALESCE(
+             (
+                 SELECT MIN(wall_clock_ms)
+                 FROM ride_points
+                 WHERE ride_points.ride_id = rides.id
+                   AND wall_clock_ms >= ?1
+                   AND wall_clock_ms <= rides.updated_at_ms
+             ),
+             updated_at_ms
+         )
+         WHERE created_at_ms < ?1
+           AND updated_at_ms >= ?1",
+        [MIN_UNIX_MILLISECONDS],
+    )?;
+    transaction.execute(
+        "UPDATE rides
+         SET monotonic_created_at_ms = (
+             SELECT MIN(monotonic_ms)
+             FROM ride_points
+             WHERE ride_points.ride_id = rides.id
+         )
+         WHERE monotonic_created_at_ms IS NULL
+           AND EXISTS (
+               SELECT 1
+               FROM ride_points
+               WHERE ride_points.ride_id = rides.id
+           )",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), StorageError> {
@@ -2535,7 +2630,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
-fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
+pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "
         CREATE TABLE rides (
@@ -3076,6 +3171,22 @@ fn create_started_live_ride(
             candidate_vehicle,
         ],
     )?;
+    transaction.commit()?;
+    Ok(ride_id)
+}
+
+fn create_started_ride(
+    connection: &mut Connection,
+    source: RideSource,
+    created_at_ms: u64,
+    monotonic_created_at_ms: Option<u64>,
+    candidate_vehicle: Option<&str>,
+    occurred_at_ms: u64,
+) -> Result<RideId, StorageError> {
+    let transaction = connection.transaction()?;
+    let ride_id = create_ride(&transaction, source, created_at_ms, monotonic_created_at_ms)?;
+    transition_ride(&transaction, ride_id, RideEvent::Start, occurred_at_ms)?;
+    update_ride_map_metadata(&transaction, ride_id, candidate_vehicle, None, None, None)?;
     transaction.commit()?;
     Ok(ride_id)
 }
@@ -4264,6 +4375,11 @@ fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideReco
                                  - monotonic_created_at_ms
                         ELSE (SELECT MAX(monotonic_ms) - MIN(monotonic_ms)
                               FROM ride_points WHERE ride_id = rides.id)
+                        WHEN monotonic_created_at_ms IS NOT NULL
+                            THEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                 - monotonic_created_at_ms
+                        ELSE (SELECT MAX(monotonic_ms) - MIN(monotonic_ms)
+                              FROM ride_points WHERE ride_id = rides.id)
                     END,
                     point_count, distance_mm,
                     (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
@@ -4360,6 +4476,11 @@ fn list_rides(
                                        AND (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
                                            < rides.monotonic_created_at_ms)
                                    THEN 0
+                               WHEN rides.monotonic_created_at_ms IS NOT NULL
+                                   THEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
+                                        - rides.monotonic_created_at_ms
+                               ELSE (SELECT MAX(monotonic_ms) - MIN(monotonic_ms)
+                                     FROM ride_points WHERE ride_id = rides.id)
                                WHEN rides.monotonic_created_at_ms IS NOT NULL
                                    THEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
                                         - rides.monotonic_created_at_ms
