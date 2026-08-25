@@ -181,11 +181,25 @@ public extension MelkLightingPeripheralState {
     }
 }
 
+/// A typed identity observation emitted when CoreBluetooth has selected a MELK peripheral.
+public struct MelkLightingPeripheralIdentity: Equatable, Sendable {
+    public let name: String?
+    public let platformIdentifier: String
+    public let rssi: Int?
+
+    public init(name: String?, platformIdentifier: String, rssi: Int?) {
+        self.name = name
+        self.platformIdentifier = platformIdentifier
+        self.rssi = rssi
+    }
+}
+
 /// The app-facing seam for an independent MELK lighting connection.
 ///
 /// Keeping the CoreBluetooth implementation behind this protocol lets the route model test
 /// lifecycle and restore behavior without sharing the ride session or requiring hardware.
 public protocol MelkLightingPeripheralSessionProtocol: AnyObject {
+    var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)? { get set }
     var onStateChange: ((MelkLightingPeripheralState) -> Void)? { get set }
     var onNotification: ((Data) -> Void)? { get set }
     var onRecord: ((String) -> Void)? { get set }
@@ -230,6 +244,9 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
 
     /// Called on the lighting session's CoreBluetooth queue for raw FFF4 notification bytes.
     public var onNotification: ((Data) -> Void)?
+
+    /// Called on the lighting session's CoreBluetooth queue for the selected peripheral identity.
+    public var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
 
     /// Called on the lighting session's CoreBluetooth queue for bounded diagnostic records.
     public var onRecord: ((String) -> Void)?
@@ -374,7 +391,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             }
             central.stopScan()
             record("candidate=\(name ?? "") id=\(peripheral.identifier.uuidString) rssi=\(rssi)")
-            connect(central: central, peripheral: peripheral, advertisedName: name)
+            connect(central: central, peripheral: peripheral, advertisedName: name, rssi: rssi.intValue)
         }
     }
 
@@ -451,6 +468,11 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
             advertisedName = restoredPeripheral.name
             peripheralName = restoredPeripheral.name
             peripheralIdentifier = restoredPeripheral.identifier.uuidString
+            onIdentity?(MelkLightingPeripheralIdentity(
+                name: restoredPeripheral.name,
+                platformIdentifier: restoredPeripheral.identifier.uuidString,
+                rssi: nil
+            ))
             restoredPeripheral.delegate = self
             if restoredPeripheral.state == .connected {
                 transition(to: .discovering)
@@ -466,12 +488,18 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
     private func connect(
         central: CBCentralManager,
         peripheral: CBPeripheral,
-        advertisedName: String? = nil
+        advertisedName: String? = nil,
+        rssi: Int? = nil
     ) {
         self.peripheral = peripheral
         self.advertisedName = advertisedName ?? peripheral.name
         peripheralName = advertisedName ?? peripheral.name
         peripheralIdentifier = peripheral.identifier.uuidString
+        onIdentity?(MelkLightingPeripheralIdentity(
+            name: advertisedName ?? peripheral.name,
+            platformIdentifier: peripheral.identifier.uuidString,
+            rssi: rssi
+        ))
         peripheral.delegate = self
         if peripheral.state == .connected {
             transition(to: .discovering)

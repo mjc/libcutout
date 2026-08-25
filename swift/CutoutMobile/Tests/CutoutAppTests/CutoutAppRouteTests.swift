@@ -715,6 +715,13 @@ final class CutoutAppRouteTests: XCTestCase {
 
         model.start()
         XCTAssertEqual(fake.startCalls, [platformIdentifier])
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: platformIdentifier,
+                rssi: -40
+            )
+        )
         fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
         await Task.yield()
         fake.emitState(.ready)
@@ -754,6 +761,13 @@ final class CutoutAppRouteTests: XCTestCase {
         )
 
         model.start()
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: platformIdentifier,
+                rssi: -40
+            )
+        )
         fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
         await Task.yield()
         fake.emitState(.ready)
@@ -764,9 +778,29 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(fake.brightnessRequests.isEmpty)
         XCTAssertEqual(model.commandStatus, .idle)
     }
+
+    @MainActor
+    func testLightingRouteModelConsumesTypedIdentityEvents() async {
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake)
+
+        fake.emitIdentity(
+            MelkLightingPeripheralIdentity(
+                name: "MELK-OC21 6A",
+                platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB",
+                rssi: -40
+            )
+        )
+        fake.emitRecord("candidate=MELK-OC21 6A id=legacy-melk rssi=-40")
+        await Task.yield()
+
+        XCTAssertEqual(model.peripheralName, "MELK-OC21 6A")
+        XCTAssertEqual(model.peripheralIdentifier, "A1B2C3D4-E5F6-4789-ABCD-0123456789AB")
+    }
 }
 
 private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
+    var onIdentity: ((MelkLightingPeripheralIdentity) -> Void)?
     var onStateChange: ((MelkLightingPeripheralState) -> Void)?
     var onNotification: ((Data) -> Void)?
     var onRecord: ((String) -> Void)?
@@ -804,6 +838,10 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
 
     func markLastCommandConfirmed() {}
     func markLastCommandUnconfirmed() {}
+
+    func emitIdentity(_ identity: MelkLightingPeripheralIdentity) {
+        onIdentity?(identity)
+    }
 
     func emitRecord(_ record: String) {
         onRecord?(record)
