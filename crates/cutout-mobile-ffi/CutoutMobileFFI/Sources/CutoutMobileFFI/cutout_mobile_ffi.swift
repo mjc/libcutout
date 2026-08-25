@@ -3048,6 +3048,8 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
 
     func createRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?) throws  -> MobileRideIdDto
 
+    func createStartedRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?, candidateVehicle: String?) throws  -> MobileRideIdDto
+
     /**
      * Creates an indexed trail definition.
      *
@@ -3257,6 +3259,8 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * Returns a typed database error when the transition or worker rejects the event.
      */
     func transition(id: MobileRideIdDto, event: MobileRideEventDto) throws  -> MobileRideLifecycleStateDto
+
+    func transitionAt(id: MobileRideIdDto, event: MobileRideEventDto, monotonicAtMilliseconds: UInt64) throws  -> MobileRideLifecycleStateDto
 
     /**
      * Persists Rust-owned map association and telemetry metadata for a ride.
@@ -3532,6 +3536,18 @@ open func createRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMil
         FfiConverterTypeMobileRideSourceDto_lower(source),
         FfiConverterUInt64.lower(createdAtMilliseconds),
         FfiConverterOptionUInt64.lower(monotonicCreatedAtMilliseconds),$0
+    )
+})
+}
+
+open func createStartedRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?, candidateVehicle: String?)throws  -> MobileRideIdDto  {
+    return try  FfiConverterTypeMobileRideIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_create_started_ride_with_monotonic_start(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideSourceDto_lower(source),
+        FfiConverterUInt64.lower(createdAtMilliseconds),
+        FfiConverterOptionUInt64.lower(monotonicCreatedAtMilliseconds),
+        FfiConverterOptionString.lower(candidateVehicle),$0
     )
 })
 }
@@ -3917,6 +3933,17 @@ open func transition(id: MobileRideIdDto, event: MobileRideEventDto)throws  -> M
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileRideIdDto_lower(id),
         FfiConverterTypeMobileRideEventDto_lower(event),$0
+    )
+})
+}
+
+open func transitionAt(id: MobileRideIdDto, event: MobileRideEventDto, monotonicAtMilliseconds: UInt64)throws  -> MobileRideLifecycleStateDto  {
+    return try  FfiConverterTypeMobileRideLifecycleStateDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_transition_at(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterTypeMobileRideEventDto_lower(event),
+        FfiConverterUInt64.lower(monotonicAtMilliseconds),$0
     )
 })
 }
@@ -10541,6 +10568,8 @@ public struct MobileRideRecordDto: Equatable, Hashable {
     public var createdAtMilliseconds: UInt64
     public var updatedAtMilliseconds: UInt64
     public var durationMilliseconds: UInt64
+    public var pausedAtMilliseconds: UInt64?
+    public var pausedDurationMilliseconds: UInt64
     public var summary: MobileRideSummaryDto
     public var segmentCount: UInt64
     public var candidateVehicle: String?
@@ -10550,13 +10579,15 @@ public struct MobileRideRecordDto: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, durationMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, durationMilliseconds: UInt64, pausedAtMilliseconds: UInt64?, pausedDurationMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
         self.id = id
         self.source = source
         self.state = state
         self.createdAtMilliseconds = createdAtMilliseconds
         self.updatedAtMilliseconds = updatedAtMilliseconds
         self.durationMilliseconds = durationMilliseconds
+        self.pausedAtMilliseconds = pausedAtMilliseconds
+        self.pausedDurationMilliseconds = pausedDurationMilliseconds
         self.summary = summary
         self.segmentCount = segmentCount
         self.candidateVehicle = candidateVehicle
@@ -10587,6 +10618,8 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
                 createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 updatedAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 durationMilliseconds: FfiConverterUInt64.read(from: &buf),
+                pausedAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                pausedDurationMilliseconds: FfiConverterUInt64.read(from: &buf),
                 summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf),
                 segmentCount: FfiConverterUInt64.read(from: &buf),
                 candidateVehicle: FfiConverterOptionString.read(from: &buf),
@@ -10603,6 +10636,8 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.createdAtMilliseconds, into: &buf)
         FfiConverterUInt64.write(value.updatedAtMilliseconds, into: &buf)
         FfiConverterUInt64.write(value.durationMilliseconds, into: &buf)
+        FfiConverterOptionUInt64.write(value.pausedAtMilliseconds, into: &buf)
+        FfiConverterUInt64.write(value.pausedDurationMilliseconds, into: &buf)
         FfiConverterTypeMobileRideSummaryDto.write(value.summary, into: &buf)
         FfiConverterUInt64.write(value.segmentCount, into: &buf)
         FfiConverterOptionString.write(value.candidateVehicle, into: &buf)
@@ -23890,6 +23925,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride_with_monotonic_start() != 36152) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_started_ride_with_monotonic_start() != 19208) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 6712) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -23960,6 +23998,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 52940) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition_at() != 14368) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_update_ride_map_metadata() != 10444) {
