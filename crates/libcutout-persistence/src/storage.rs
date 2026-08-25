@@ -4041,28 +4041,50 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
         .ok_or(StorageError::NotFound)
 }
 
+const RIDE_POINT_AGGREGATES_CTE: &str = "WITH ride_point_aggregates AS (
+    SELECT ride_id,
+           MIN(monotonic_ms) AS first_monotonic_ms,
+           MAX(monotonic_ms) AS last_monotonic_ms,
+           COUNT(DISTINCT segment_id) AS segment_count
+    FROM ride_points
+    GROUP BY ride_id
+)";
+
+const RIDE_RECORD_PROJECTION: &str =
+    "SELECT rides.id, rides.source, rides.state, rides.created_at_ms,
+       rides.monotonic_created_at_ms, rides.updated_at_ms,
+       CASE
+           WHEN ride_point_aggregates.last_monotonic_ms IS NULL
+               OR (rides.monotonic_created_at_ms IS NOT NULL
+                   AND ride_point_aggregates.last_monotonic_ms < rides.monotonic_created_at_ms)
+               THEN 0
+           WHEN rides.monotonic_created_at_ms IS NOT NULL
+               THEN ride_point_aggregates.last_monotonic_ms - rides.monotonic_created_at_ms
+           ELSE ride_point_aggregates.last_monotonic_ms - ride_point_aggregates.first_monotonic_ms
+       END,
+       rides.point_count, rides.distance_mm,
+       COALESCE(ride_point_aggregates.segment_count, 0),
+       rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
+       rides.last_telemetry_at_ms";
+
+pub(crate) fn ride_records_sql(suffix: &str) -> String {
+    format!(
+        "{RIDE_POINT_AGGREGATES_CTE}
+         {RIDE_RECORD_PROJECTION}
+         FROM rides
+         LEFT JOIN ride_point_aggregates
+             ON ride_point_aggregates.ride_id = rides.id
+         {suffix}"
+    )
+}
+
 fn find_ride(connection: &Connection, ride_id: RideId) -> Result<Option<RideRecord>, StorageError> {
+    let sql = ride_records_sql(
+        "WHERE rides.state NOT IN ('draft', 'discarded') AND rides.id = ?1",
+    );
     connection
         .query_row(
-            "SELECT id, source, state, created_at_ms, monotonic_created_at_ms, updated_at_ms,
-                    CASE
-                        WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 IS NULL
-                            OR (monotonic_created_at_ms IS NOT NULL
-                                AND (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                    < monotonic_created_at_ms)
-                            THEN 0
-                        WHEN monotonic_created_at_ms IS NOT NULL
-                            THEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 - monotonic_created_at_ms
-                        ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                 - (SELECT MIN(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                    END,
-                    point_count, distance_mm,
-                    (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                    candidate_vehicle, associated_vehicle, associated_at_ms, last_telemetry_at_ms
-             FROM rides
-             WHERE state NOT IN ('draft', 'discarded') AND id = ?1",
+            &sql,
             params![ride_id.uuid().to_string()],
             ride_record_from_row,
         )
@@ -4085,41 +4107,23 @@ fn list_rides(
         .search_text
         .as_deref()
         .map(|value| format!("%{}%", value.to_lowercase()));
-    let base_sql = "SELECT rides.id, rides.source, rides.state, rides.created_at_ms,
-                           rides.monotonic_created_at_ms, rides.updated_at_ms,
-                           CASE
-                               WHEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                        IS NULL
-                                   OR (rides.monotonic_created_at_ms IS NOT NULL
-                                       AND (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                           < rides.monotonic_created_at_ms)
-                                   THEN 0
-                               WHEN rides.monotonic_created_at_ms IS NOT NULL
-                                   THEN (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                        - rides.monotonic_created_at_ms
-                               ELSE (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                                        - (SELECT MIN(monotonic_ms) FROM ride_points WHERE ride_id = rides.id)
-                           END,
-                           rides.point_count, rides.distance_mm,
-                           (SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = rides.id),
-                           rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
-                           rides.last_telemetry_at_ms
-                    FROM rides
-                    LEFT JOIN devices AS associated_device
-                        ON associated_device.platform_identifier = rides.associated_vehicle
-                    LEFT JOIN devices AS candidate_device
-                        ON candidate_device.platform_identifier = rides.candidate_vehicle
-                    WHERE rides.state NOT IN ('draft', 'discarded')
-                      AND (?1 IS NULL OR rides.created_at_ms >= ?1)
-                      AND (?2 IS NULL OR rides.associated_vehicle = ?2 OR rides.candidate_vehicle = ?2)
-                      AND (?3 IS NULL OR
-                           lower(rides.id) LIKE ?3
-                           OR lower(COALESCE(rides.associated_vehicle, '')) LIKE ?3
-                           OR lower(COALESCE(rides.candidate_vehicle, '')) LIKE ?3
-                           OR lower(COALESCE(associated_device.display_name, '')) LIKE ?3
-                           OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?3
-                           OR CAST(rides.created_at_ms AS TEXT) LIKE ?3
-                           OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3)";
+    let base_sql = ride_records_sql(
+        "LEFT JOIN devices AS associated_device
+             ON associated_device.platform_identifier = rides.associated_vehicle
+         LEFT JOIN devices AS candidate_device
+             ON candidate_device.platform_identifier = rides.candidate_vehicle
+         WHERE rides.state NOT IN ('draft', 'discarded')
+           AND (?1 IS NULL OR rides.created_at_ms >= ?1)
+           AND (?2 IS NULL OR rides.associated_vehicle = ?2 OR rides.candidate_vehicle = ?2)
+           AND (?3 IS NULL OR
+                lower(rides.id) LIKE ?3
+                OR lower(COALESCE(rides.associated_vehicle, '')) LIKE ?3
+                OR lower(COALESCE(rides.candidate_vehicle, '')) LIKE ?3
+                OR lower(COALESCE(associated_device.display_name, '')) LIKE ?3
+                OR lower(COALESCE(candidate_device.display_name, '')) LIKE ?3
+                OR CAST(rides.created_at_ms AS TEXT) LIKE ?3
+                OR strftime('%Y-%m-%d', rides.created_at_ms / 1000, 'unixepoch') LIKE ?3)"
+    );
     let mut rides = Vec::new();
     if let Some(cursor) = cursor {
         let sql = format!(

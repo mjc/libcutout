@@ -311,6 +311,110 @@ fn ride_history_separates_wall_clock_order_from_monotonic_duration() {
 }
 
 #[test]
+fn find_and_list_ride_projections_agree_for_all_route_shapes() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-ride-projection-parity-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+
+    let empty_ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database.transition(empty_ride, RideEvent::Start).unwrap();
+    database.transition(empty_ride, RideEvent::Stop).unwrap();
+    database.transition(empty_ride, RideEvent::Save).unwrap();
+
+    let one_point_ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_001_000, Some(10_000))
+        .unwrap();
+    database
+        .transition(one_point_ride, RideEvent::Start)
+        .unwrap();
+    database
+        .append_location(
+            one_point_ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                12_500,
+                1_700_000_012_500,
+                Some(3_000),
+                LocationSource::Live,
+            ),
+        )
+        .unwrap();
+    database
+        .transition(one_point_ride, RideEvent::Stop)
+        .unwrap();
+    database
+        .transition(one_point_ride, RideEvent::Save)
+        .unwrap();
+
+    let multi_segment_ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_002_000, Some(20_000))
+        .unwrap();
+    database
+        .transition(multi_segment_ride, RideEvent::Start)
+        .unwrap();
+    database
+        .append_location_with_segment_and_telemetry(
+            multi_segment_ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                21_000,
+                1_700_000_021_000,
+                Some(3_000),
+                LocationSource::Live,
+            ),
+            0,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    database
+        .append_location_with_segment_and_telemetry(
+            multi_segment_ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.001, -105.0).unwrap(),
+                23_500,
+                1_700_000_023_500,
+                Some(3_000),
+                LocationSource::Live,
+            ),
+            1,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    database
+        .transition(multi_segment_ride, RideEvent::Stop)
+        .unwrap();
+    database
+        .transition(multi_segment_ride, RideEvent::Save)
+        .unwrap();
+
+    let listed = database
+        .list_rides(None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    for ride_id in [empty_ride, one_point_ride, multi_segment_ride] {
+        let listed_record = listed
+            .rides()
+            .iter()
+            .find(|record| record.id() == ride_id)
+            .unwrap();
+        let found_record = database.find_ride(ride_id).unwrap().unwrap();
+        assert_eq!(
+            found_record.duration_milliseconds(),
+            listed_record.duration_milliseconds()
+        );
+        assert_eq!(found_record.summary(), listed_record.summary());
+        assert_eq!(found_record.segment_count(), listed_record.segment_count());
+    }
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn queued_location_preserves_the_durable_admission_outcome() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -1161,6 +1265,38 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
     );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_history_queries_share_one_grouped_point_aggregation() {
+    let find_sql = crate::storage::ride_records_sql(
+        "WHERE rides.state NOT IN ('draft', 'discarded') AND rides.id = ?1",
+    );
+    let list_sql = crate::storage::ride_records_sql(
+        "LEFT JOIN devices AS associated_device
+             ON associated_device.platform_identifier = rides.associated_vehicle
+         WHERE rides.state NOT IN ('draft', 'discarded')",
+    );
+
+    for sql in [&find_sql, &list_sql] {
+        assert_eq!(sql.matches("GROUP BY ride_id").count(), 1);
+        assert_eq!(sql.matches("LEFT JOIN ride_point_aggregates").count(), 1);
+        assert_eq!(
+            sql.matches("SELECT MAX(monotonic_ms) FROM ride_points")
+                .count(),
+            0
+        );
+        assert_eq!(
+            sql.matches("SELECT MIN(monotonic_ms) FROM ride_points")
+                .count(),
+            0
+        );
+        assert_eq!(
+            sql.matches("SELECT COUNT(DISTINCT segment_id) FROM ride_points")
+                .count(),
+            0
+        );
+    }
 }
 
 #[test]
