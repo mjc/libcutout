@@ -18,6 +18,8 @@ workspace = true
 
 [dependencies]
 cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
+libcutout-persistence = { path = "../libcutout-persistence", version = "0.1.0" }
 cutout-protocols = { path = "../cutout-protocols", version = "0.1.0" }
 thiserror.workspace = true
 uniffi.workspace = true

@@ -63,11 +63,13 @@ cutout_swift_ffi_source_fingerprint() {
       printf '%s\n' \
         crates/cutout-core/Cargo.toml \
         crates/cutout-mobile-ffi/Cargo.toml \
-        crates/cutout-protocols/Cargo.toml
+        crates/cutout-protocols/Cargo.toml \
+        crates/libcutout-persistence/Cargo.toml
       find \
         crates/cutout-core/src \
         crates/cutout-mobile-ffi/src \
         crates/cutout-protocols/src \
+        crates/libcutout-persistence/src \
         -type f -print
       [[ ! -d crates/cutout-protocols/registry ]] \
         || find crates/cutout-protocols/registry -type f -print

@@ -435,7 +435,7 @@ final class CutoutAppModel {
 
     func forgetSavedDevice() {
         disconnectTransport()
-        selectedDeviceStore.clear()
+        try? selectedDeviceStore.clear()
         hasSavedDevice = false
     }
 

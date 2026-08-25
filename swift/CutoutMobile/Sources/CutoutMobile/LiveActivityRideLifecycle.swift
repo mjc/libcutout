@@ -152,7 +152,7 @@ public actor LiveActivityRideLifecycleCoordinator {
             )
             return result
         } catch {
-            markerStore.clear()
+            try? markerStore.clear()
             lastError = Self.lifecycleError(from: error)
             return .ended(requiresUserAction: false)
         }
@@ -483,7 +483,7 @@ public actor LiveActivityRideLifecycleCoordinator {
 
     private func persistSessionMarker() {
         guard let marker = try? sessionState.exportRideSessionMarker() else {
-            markerStore.clear()
+            try? markerStore.clear()
             return
         }
         markerStore.save(marker)

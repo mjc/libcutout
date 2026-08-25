@@ -1,0 +1,20 @@
+[package]
+name = "libcutout-persistence"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust-owned SQLite persistence for Cutout rides and mobile state"
+
+[lints]
+workspace = true
+
+[dependencies]
+cutout-core = { path = "../cutout-core", version = "0.1.0", features = ["serde"] }
+cutout-ride-maps = { path = "../cutout-ride-maps", version = "0.1.0" }
+hex.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
