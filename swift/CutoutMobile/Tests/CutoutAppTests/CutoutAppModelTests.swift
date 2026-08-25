@@ -248,6 +248,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertGreaterThan(result.0[1].sequence, 0)
         XCTAssertLessThan(result.0[1].sequence, result.0.last!.sequence)
         XCTAssertTrue(result.1)
+
+        let previewResult = try CutoutAppModel.collectRideMapHistoryPoints(
+            previewLimit: 10,
+            displayLimit: 4,
+            nextBatch: { cursor in
+                try state.pointsAfter(afterCursor: cursor, limit: 3)
+            }
+        )
+        XCTAssertEqual(previewResult.0.count, 4)
+        XCTAssertTrue(previewResult.1)
     }
 
     func testBoundedRoutePointProjectionHonorsSinglePointBudget() throws {

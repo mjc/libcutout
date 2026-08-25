@@ -617,14 +617,15 @@ final class CutoutAppModel {
     ) throws -> ([MobileRideMapPointDto], Bool) {
         var points = [MobileRideMapPointDto]()
         var cursor: UInt64?
-        let boundedDisplayLimit = max(1, min(displayLimit, previewLimit ?? displayLimit))
+        let boundedDisplayLimit = max(1, displayLimit)
+        let effectivePreviewLimit = previewLimit.map { min($0, boundedDisplayLimit) }
         var displayWasTruncated = false
         while true {
             try cancellationCheck()
             guard let batch = try nextBatch(cursor) else {
                 return ([], false)
             }
-            if let previewLimit {
+            if let previewLimit = effectivePreviewLimit {
                 let remaining = previewLimit - points.count
                 if batch.points.count > remaining {
                     points.append(contentsOf: batch.points.prefix(remaining))
