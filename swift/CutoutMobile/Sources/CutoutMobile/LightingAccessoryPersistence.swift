@@ -153,6 +153,12 @@ public final class LightingAccessoryPersistence {
         return try? MobileRgbLightingAccessoryRecord.decode(bytes: data)
     }
 
+    private static func legacyByte(_ defaults: UserDefaults, key: String) -> UInt8? {
+        let value = defaults.integer(forKey: key)
+        guard (0...255).contains(value) else { return nil }
+        return UInt8(value)
+    }
+
     private func migrateLegacyRecord() {
         guard let identifier = defaults.string(forKey: Key.legacyPlatformIdentifier),
               let migrated = try? MobileRgbLightingAccessoryRecord(
@@ -163,12 +169,20 @@ public final class LightingAccessoryPersistence {
             return
         }
 
+        guard let red = Self.legacyByte(defaults, key: Key.legacyRed),
+              let green = Self.legacyByte(defaults, key: Key.legacyGreen),
+              let blue = Self.legacyByte(defaults, key: Key.legacyBlue),
+              let brightness = Self.legacyByte(defaults, key: Key.legacyBrightness),
+              brightness <= 100 else {
+            return
+        }
+
         let state = MobileMelkLightingRestoreStateDto(
             powerOn: defaults.bool(forKey: Key.legacyPowerOn),
-            red: UInt8(clamping: defaults.integer(forKey: Key.legacyRed)),
-            green: UInt8(clamping: defaults.integer(forKey: Key.legacyGreen)),
-            blue: UInt8(clamping: defaults.integer(forKey: Key.legacyBlue)),
-            brightness: UInt8(clamping: defaults.integer(forKey: Key.legacyBrightness))
+            red: red,
+            green: green,
+            blue: blue,
+            brightness: brightness
         )
         do {
             try migrated.setRequestedState(state: state)

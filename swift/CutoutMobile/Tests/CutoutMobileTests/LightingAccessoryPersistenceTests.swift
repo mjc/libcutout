@@ -139,4 +139,22 @@ final class LightingAccessoryPersistenceTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: "lighting.accessory.record"))
         XCTAssertNil(LightingAccessoryPersistence(defaults: defaults).platformIdentifier)
     }
+
+    func testStoreRejectsOutOfRangeLegacyChannelsWithoutClamping() throws {
+        let suiteName = "LightingAccessoryPersistenceTests-invalid-legacy-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("legacy-melk", forKey: "lighting.restore.platformIdentifier")
+        defaults.set(-1, forKey: "lighting.restore.red")
+        defaults.set(0, forKey: "lighting.restore.green")
+        defaults.set(0, forKey: "lighting.restore.blue")
+        defaults.set(100, forKey: "lighting.restore.brightness")
+
+        let store = LightingAccessoryPersistence(defaults: defaults)
+
+        XCTAssertNil(store.platformIdentifier)
+        XCTAssertNil(defaults.data(forKey: "lighting.accessory.record"))
+        XCTAssertEqual(defaults.integer(forKey: "lighting.restore.red"), -1)
+    }
 }
