@@ -686,6 +686,84 @@ final class CutoutAppRouteTests: XCTestCase {
         model.stop()
         XCTAssertEqual(fake.stopCalls, 1)
     }
+
+    @MainActor
+    func testLightingRouteModelRestoresConfirmedStateForRememberedIdentity() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRestore"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: platformIdentifier))
+        let requested = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 12,
+            green: 34,
+            blue: 56,
+            brightness: 78
+        )
+        try persistence.confirm(requested)
+        persistence.setRestoreEnabled(true)
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertEqual(fake.startCalls, [platformIdentifier])
+        fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
+        await Task.yield()
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertEqual(fake.powerRequests, [true])
+        XCTAssertEqual(fake.colorRequests, ["12,34,56"])
+        XCTAssertEqual(fake.brightnessRequests, [78])
+        XCTAssertEqual(model.commandStatus, .requested)
+    }
+
+    @MainActor
+    func testLightingRouteModelStopsRestoreAfterPowerFailure() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingRestoreFailure"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let platformIdentifier = "B1C2D3E4-F5A6-4789-ABCD-0123456789AB"
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: platformIdentifier))
+        let requested = MobileMelkLightingRestoreStateDto(
+            powerOn: true,
+            red: 90,
+            green: 80,
+            blue: 70,
+            brightness: 60
+        )
+        try persistence.confirm(requested)
+        persistence.setRestoreEnabled(true)
+
+        let fake = TestLightingSession()
+        fake.powerResult = false
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        fake.emitRecord("candidate=MELK-OC21 6A id=\(platformIdentifier) rssi=-40")
+        await Task.yield()
+        fake.emitState(.ready)
+        await Task.yield()
+
+        XCTAssertEqual(fake.powerRequests, [true])
+        XCTAssertTrue(fake.colorRequests.isEmpty)
+        XCTAssertTrue(fake.brightnessRequests.isEmpty)
+        XCTAssertEqual(model.commandStatus, .idle)
+    }
 }
 
 private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
@@ -694,6 +772,12 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     var onRecord: ((String) -> Void)?
     var startCalls: [String?] = []
     var stopCalls = 0
+    var powerResult = true
+    var colorResult = true
+    var brightnessResult = true
+    var powerRequests: [Bool] = []
+    var colorRequests: [String] = []
+    var brightnessRequests: [UInt8] = []
 
     func start(preferredPlatformIdentifier: String?) {
         startCalls.append(preferredPlatformIdentifier)
@@ -704,17 +788,28 @@ private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
     }
 
     func setPower(_ on: Bool) -> Bool {
-        true
+        powerRequests.append(on)
+        return powerResult
     }
 
     func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
-        true
+        colorRequests.append("\(red),\(green),\(blue)")
+        return colorResult
     }
 
     func setBrightness(_ percentage: UInt8) throws -> Bool {
-        true
+        brightnessRequests.append(percentage)
+        return brightnessResult
     }
 
     func markLastCommandConfirmed() {}
     func markLastCommandUnconfirmed() {}
+
+    func emitRecord(_ record: String) {
+        onRecord?(record)
+    }
+
+    func emitState(_ state: MelkLightingPeripheralState) {
+        onStateChange?(state)
+    }
 }
