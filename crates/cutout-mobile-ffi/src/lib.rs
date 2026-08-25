@@ -4405,6 +4405,26 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    fn create_started_ride_with_monotonic_start(
+        &self,
+        source: MobileRideSourceDto,
+        created_at_milliseconds: u64,
+        monotonic_created_at_milliseconds: Option<u64>,
+        candidate_vehicle: Option<String>,
+    ) -> Result<MobileRideIdDto, MobileRideDatabaseError> {
+        self.inner
+            .create_started_ride_with_monotonic_start(
+                source.into(),
+                created_at_milliseconds,
+                monotonic_created_at_milliseconds,
+                candidate_vehicle.as_deref(),
+            )
+            .map(|id| MobileRideIdDto {
+                value: id.uuid().to_string(),
+            })
+            .map_err(map_ride_database_error)
+    }
+
     fn monotonic_created_at_milliseconds(
         &self,
         id: &MobileRideIdDto,
@@ -4786,22 +4806,11 @@ impl MobileRideMapCoreInner {
         }
         let id = if let Some(database) = self.database.as_ref() {
             let id = database
-                .create_ride_with_monotonic_start(
+                .create_started_ride_with_monotonic_start(
                     MobileRideSourceDto::Live,
                     wall_clock_unix_milliseconds(),
                     Some(at_ms),
-                )
-                .map_err(map_core_error)?;
-            database
-                .transition(id.clone(), MobileRideEventDto::Start)
-                .map_err(map_core_error)?;
-            database
-                .update_ride_map_metadata(
-                    id.clone(),
                     last_connected_vehicle.clone(),
-                    None,
-                    None,
-                    None,
                 )
                 .map_err(map_core_error)?;
             id
@@ -13387,6 +13396,39 @@ mod tests {
             None
         );
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_failed_start_does_not_leave_an_orphan_ride() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-start-rollback-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+
+        assert!(matches!(
+            state.start_gps_only(1_000, Some("   ".to_owned())),
+            Err(MobileRideMapCoreErrorDto::Storage(_))
+        ));
+        assert!(state.current_snapshot().is_none());
+        assert!(
+            database
+                .list_rides(None, 10)
+                .expect("history loads")
+                .rides
+                .is_empty(),
+            "failed start must not publish an active or orphan ride"
+        );
+
+        database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }
 
