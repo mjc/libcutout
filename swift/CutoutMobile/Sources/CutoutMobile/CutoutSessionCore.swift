@@ -384,6 +384,7 @@ public final class CutoutSessionCore: NSObject {
     private var lastDisplayPublication: MonotonicMilliseconds?
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let phoneLocationState = MobilePhoneLocationState()
+    private let admittedPhoneLocationState = MobilePhoneLocationState()
     private let rideMapState: MobileRideMapState
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
@@ -1597,7 +1598,7 @@ public final class CutoutSessionCore: NSObject {
                 setPhase(.failed(.notificationFailed("missing service UUID for \(characteristic.uuidString)")))
                 return
             }
-            let location = phoneLocationState.currentSnapshot().latestSample
+            let location = admittedPhoneLocationState.currentSnapshot().latestSample
             _ = captureBuilder?.recordNotificationWithContext(
                 monotonicMs: MobileMonotonicMillisDto(milliseconds: captureElapsedMilliseconds()),
                 characteristic: channel.bytes,
@@ -2650,17 +2651,19 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         )
         for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
             let sample = MobilePhoneLocationSampleDto(location: location)
+            // Current-location readback is independent of ride recording. The map
+            // admission result below only controls the canonical capture context.
+            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
             do {
                 let decision = try rideMapState.ingestLocation(
                     monotonicMs: monotonicMs.rawValue,
                     sample: sample
                 )
-                if let admittedSample = admittedPhoneLocationSample(sample: sample, decision: decision) {
-                    // Keep the capture writer on the same admitted sample as the map.
-                    // Raw Core Location updates must not become PEVCAP context before
-                    // Rust has accepted them into the canonical ride.
-                    phoneLocationSnapshot = phoneLocationState.ingest(sample: admittedSample)
-                }
+                _ = capturePhoneLocationSample(
+                    sample: sample,
+                    decision: decision,
+                    state: admittedPhoneLocationState
+                )
                 publishRideMapDecision(decision)
             } catch {
                 publishRideMapError(error)
@@ -2699,11 +2702,13 @@ func monotonicMillisecondsForLocationBatch(
 ///
 /// Keeping this decision at the Core Location boundary prevents PEVCAP capture context
 /// from observing a raw update that the canonical map rejected or ignored.
-func admittedPhoneLocationSample(
+func capturePhoneLocationSample(
     sample: MobilePhoneLocationSampleDto,
-    decision: MobileRideMapDecisionDto
+    decision: MobileRideMapDecisionDto,
+    state: MobilePhoneLocationState? = nil
 ) -> MobilePhoneLocationSampleDto? {
     guard case .accepted = decision else { return nil }
+    _ = state?.ingest(sample: sample)
     return sample
 }
 

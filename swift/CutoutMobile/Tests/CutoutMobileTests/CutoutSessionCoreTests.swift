@@ -1,5 +1,6 @@
 import XCTest
 import CutoutMobileFFI
+import CoreLocation
 #if canImport(CoreBluetooth)
 import CoreBluetooth
 #endif
@@ -79,6 +80,26 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testPhoneLocationReadbackTracksAValidSampleWithoutAnActiveRide() {
+        let core = CutoutSessionCore()
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 6,
+            course: 90,
+            courseAccuracy: 3,
+            speed: 2,
+            speedAccuracy: 0.2,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7392)
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
+    }
+
     func testPevcapLocationContextUsesOnlyAdmittedMapSamples() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,
@@ -104,24 +125,69 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            admittedPhoneLocationSample(
+            capturePhoneLocationSample(
                 sample: sample,
                 decision: .accepted(point: point, segmentStarted: true)
             ),
             sample
         )
         XCTAssertNil(
-            admittedPhoneLocationSample(
+            capturePhoneLocationSample(
                 sample: sample,
                 decision: .rejected(reason: .accuracyTooLow)
             )
         )
         XCTAssertNil(
-            admittedPhoneLocationSample(
+            capturePhoneLocationSample(
                 sample: sample,
                 decision: .ignored(reason: .rideNotRecording)
             )
         )
+    }
+
+    func testPevcapLocationStateIsSeparateFromPhoneLocationReadback() {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_000,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+        let point = MobileRideMapPointDto(
+            sequence: 0,
+            segmentId: 0,
+            latitudeDegrees: sample.latitudeDegrees,
+            longitudeDegrees: sample.longitudeDegrees,
+            wallClockUnixMs: sample.wallClockUnixMs,
+            monotonicMs: 1_000,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters,
+            telemetryState: .gpsOnly
+        )
+        let admittedState = MobilePhoneLocationState()
+
+        XCTAssertNil(
+            capturePhoneLocationSample(
+                sample: sample,
+                decision: .ignored(reason: .rideNotRecording),
+                state: admittedState
+            )
+        )
+        XCTAssertNil(admittedState.currentSnapshot().latestSample)
+
+        XCTAssertEqual(
+            capturePhoneLocationSample(
+                sample: sample,
+                decision: .accepted(point: point, segmentStarted: true),
+                state: admittedState
+            ),
+            sample
+        )
+        XCTAssertEqual(admittedState.currentSnapshot().latestSample, sample)
     }
 
     func testCaptureElapsedTimeUsesTheInjectedMonotonicClockAtExactBoundaries() {
