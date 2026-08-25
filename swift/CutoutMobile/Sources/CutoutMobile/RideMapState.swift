@@ -181,6 +181,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         return core
     }
 
+    private func withCore<T>(_ operation: (MobileRideMapCore) throws -> T) throws -> T {
+        do {
+            return try operation(requireCore())
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
         core?.currentSnapshot().map(mapSnapshot)
     }
@@ -190,11 +198,8 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
-        do {
-            let core = try requireCore()
-            return mapSnapshot(try core.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
-        } catch {
-            throw map(error)
+        try withCore {
+            mapSnapshot(try $0.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
         }
     }
 
@@ -202,53 +207,42 @@ public final class MobileRideMapState: @unchecked Sendable {
         platformIdentifier: String,
         atMs: UInt64
     ) throws -> MobileRideMapSnapshotDto {
-        do {
-            let core = try requireCore()
-            return mapSnapshot(try core.ensureRecordingForVehicle(
+        try withCore {
+            mapSnapshot(try $0.ensureRecordingForVehicle(
                 platformIdentifier: platformIdentifier,
                 atMs: atMs
             ))
-        } catch {
-            throw map(error)
         }
     }
 
     public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try requireCore().pauseAt(atMs: atMs) }
+        try transition { try $0.pauseAt(atMs: atMs) }
     }
 
     public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try requireCore().resumeAt(atMs: atMs) }
+        try transition { try $0.resumeAt(atMs: atMs) }
     }
 
     public func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try requireCore().stopAt(atMs: atMs) }
+        try transition { try $0.stopAt(atMs: atMs) }
     }
 
     public func save() throws -> MobileRideMapSnapshotDto {
-        try transition { try requireCore().save() }
+        try transition { try $0.save() }
     }
 
     public func discard() throws -> MobileRideMapSnapshotDto {
-        try transition { try requireCore().discard() }
+        try transition { try $0.discard() }
     }
 
     public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
-        do {
-            let core = try requireCore()
-            return map(try core.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
-        } catch {
-            throw map(error)
+        try withCore {
+            map(try $0.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
         }
     }
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
-        do {
-            let core = try requireCore()
-            return map(try core.observeTelemetry(atMs: atMs))
-        } catch {
-            throw map(error)
-        }
+        try withCore { map(try $0.observeTelemetry(atMs: atMs)) }
     }
 
     public func ingestLocation(
@@ -258,17 +252,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         longitudeDegrees: Double,
         horizontalAccuracyMeters: Double
     ) throws -> MobileRideMapDecisionDto {
-        do {
-            let core = try requireCore()
-            return map(try core.ingestLocation(
+        try withCore {
+            map(try $0.ingestLocation(
                 monotonicMs: monotonicMs,
                 wallClockUnixMs: wallClockUnixMs,
                 latitudeDegrees: latitudeDegrees,
                 longitudeDegrees: longitudeDegrees,
                 horizontalAccuracyMeters: horizontalAccuracyMeters
             ))
-        } catch {
-            throw map(error)
         }
     }
 
@@ -295,12 +286,7 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
-        do {
-            let core = try requireCore()
-            return map(try core.pointsAfter(afterCursor: afterCursor, limit: limit))
-        } catch {
-            throw map(error)
-        }
+        try withCore { map(try $0.pointsAfter(afterCursor: afterCursor, limit: limit)) }
     }
 
     /// Projects the Rust-owned recorder tail for a bounded map display.
@@ -312,8 +298,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         viewport: MobileGeoBoundsDto? = nil,
         privacy: MobileRideMapRoutePrivacyPolicy = .precise
     ) throws -> MobileRideMapRouteProjection {
-        do {
-            let core = try requireCore()
+        try withCore {
             let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
             switch privacy {
             case .precise:
@@ -321,13 +306,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             case let .grid(e7):
                 mappedPrivacy = .grid(gridE7: e7)
             }
-            return map(try core.projectPoints(options: MobileRideMapRouteProjectionOptionsDto(
+            return map(try $0.projectPoints(options: MobileRideMapRouteProjectionOptionsDto(
                 viewport: viewport,
                 budget: budget,
                 privacy: mappedPrivacy
             )))
-        } catch {
-            throw map(error)
         }
     }
 
@@ -404,12 +387,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
-    private func transition(_ operation: () throws -> MobileRideMapCoreSnapshotDto) throws -> MobileRideMapSnapshotDto {
-        do {
-            return mapSnapshot(try operation())
-        } catch {
-            throw map(error)
-        }
+    private func transition(_ operation: (MobileRideMapCore) throws -> MobileRideMapCoreSnapshotDto) throws -> MobileRideMapSnapshotDto {
+        try withCore { mapSnapshot(try operation($0)) }
     }
 
     private func mapSnapshot(_ snapshot: MobileRideMapCoreSnapshotDto) -> MobileRideMapSnapshotDto {
