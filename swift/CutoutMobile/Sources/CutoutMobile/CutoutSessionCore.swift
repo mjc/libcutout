@@ -2685,9 +2685,11 @@ func monotonicMillisecondsForLocationBatch(
         guard elapsedMilliseconds < Double(UInt64.max) else {
             return MonotonicMilliseconds(0)
         }
+        let offsetMilliseconds = UInt64(elapsedMilliseconds.rounded(.down))
+        let callbackMilliseconds = callbackMonotonicMs.rawValue
         return MonotonicMilliseconds(
-            callbackMonotonicMs.rawValue >= UInt64(elapsedMilliseconds.rounded(.down))
-                ? callbackMonotonicMs.rawValue - UInt64(elapsedMilliseconds.rounded(.down))
+            callbackMilliseconds >= offsetMilliseconds
+                ? callbackMilliseconds - offsetMilliseconds
                 : 0
         )
     }
