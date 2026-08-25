@@ -11,7 +11,6 @@ struct RideMapLiveContentView: View {
     let availability: MobileRideMapAvailability
     let speed: SpeedReadout
     let vehicleName: String?
-    let storageError: String?
     let mapError: MobileRideMapError?
     let lastDecision: MobileRideMapDecisionDto?
     let pointsTruncated: Bool
@@ -59,13 +58,7 @@ struct RideMapLiveContentView: View {
                         .accessibilityIdentifier("ride-map.recording-pill")
                 }
 
-                if availability != .ready {
-                    Label(availabilityText, systemImage: "location.slash")
-                        .font(.subheadline)
-                        .foregroundStyle(.orange)
-                        .accessibilityIdentifier("ride-map.location-availability")
-                }
-                if storageError != nil {
+                if Self.showsPersistenceWarning(for: availability) {
                     Label(
                         localizedAppText("ride_map.persistence_unavailable"),
                         systemImage: "exclamationmark.triangle.fill"
@@ -73,6 +66,11 @@ struct RideMapLiveContentView: View {
                     .font(.subheadline)
                     .foregroundStyle(.orange)
                     .accessibilityIdentifier("ride-map.persistence-warning")
+                } else if availability != .ready {
+                    Label(availabilityText, systemImage: "location.slash")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("ride-map.location-availability")
                 }
                 if mapError != nil {
                     Label(
@@ -214,6 +212,11 @@ struct RideMapLiveContentView: View {
         pointsTruncated: Bool
     ) -> Bool {
         showsRecordedBounds(for: state) && !pointsTruncated
+    }
+
+    @MainActor
+    static func showsPersistenceWarning(for availability: MobileRideMapAvailability) -> Bool {
+        availability == .storageUnavailable
     }
 
     private var showsRecordedBounds: Bool {

@@ -53,6 +53,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistoryRouteLoading = false
+    private(set) var rideMapHistoryVehicleIdentities = [String]()
     private(set) var selectedRideMapHistoryID: String?
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
@@ -417,6 +418,10 @@ final class CutoutAppModel {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryLoading = false
                 self.rideMapHistory = result.0
+                self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
+                    existing: self.rideMapHistoryVehicleIdentities,
+                    incoming: result.0.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                )
                 self.rideMapHistoryCursor = result.1
                 self.rideMapHistoryCanLoadMore = result.1 != nil
                 self.rideMapHistoryError = nil
@@ -469,6 +474,14 @@ final class CutoutAppModel {
         return summaryIDs.first(where: { $0 == currentID }) ?? summaryIDs.first
     }
 
+    @MainActor
+    static func mergeRideMapHistoryVehicleIdentities(
+        existing: [String],
+        incoming: [String]
+    ) -> [String] {
+        Array(Set(existing + incoming)).sorted()
+    }
+
     func loadMoreRideMapHistory() {
         guard rideMapHistoryCanLoadMore else { return }
         rideMapHistoryPageTask?.cancel()
@@ -482,6 +495,10 @@ final class CutoutAppModel {
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistory.append(contentsOf: page.summaries)
+                self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
+                    existing: self.rideMapHistoryVehicleIdentities,
+                    incoming: page.summaries.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                )
                 self.rideMapHistoryCursor = page.nextCursor
                 self.rideMapHistoryCanLoadMore = page.nextCursor != nil
                 self.rideMapHistoryError = nil

@@ -19,6 +19,7 @@ struct RideMapHistoryContentView: View {
     let selectedRideID: String?
     let dateFilter: CutoutAppModel.RideMapHistoryDateFilter
     let vehicleFilter: String?
+    let vehicleFilterOptions: [String]
     let select: (String) -> Void
     let load: () -> Void
     let loadMore: () -> Void
@@ -46,8 +47,7 @@ struct RideMapHistoryContentView: View {
 
     private var vehicleOptions: [VehicleOption] {
         Self.uniqueVehicleIdentities(
-            rides.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
-                + [vehicleFilter].compactMap { $0 }
+            vehicleFilterOptions + [vehicleFilter].compactMap { $0 }
         )
         .map { VehicleOption(identity: $0, label: vehicleLabel(for: $0)) }
         .sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }

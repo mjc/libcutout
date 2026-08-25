@@ -197,6 +197,36 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapPersistenceWarningComesOnlyFromStorageAvailability() {
+        XCTAssertTrue(
+            RideMapLiveContentView.showsPersistenceWarning(for: .storageUnavailable)
+        )
+        XCTAssertFalse(
+            RideMapLiveContentView.showsPersistenceWarning(for: .ready)
+        )
+        XCTAssertFalse(
+            RideMapLiveContentView.showsPersistenceWarning(for: .denied)
+        )
+    }
+
+    @MainActor
+    func testRideHistoryVehicleOptionsRemainAfterAFilteredOrEmptyPage() {
+        let cached = CutoutAppModel.mergeRideMapHistoryVehicleIdentities(
+            existing: ["vehicle-old"],
+            incoming: ["vehicle-new", "vehicle-old"]
+        )
+
+        XCTAssertEqual(cached, ["vehicle-new", "vehicle-old"])
+        XCTAssertEqual(
+            CutoutAppModel.mergeRideMapHistoryVehicleIdentities(
+                existing: cached,
+                incoming: []
+            ),
+            cached
+        )
+    }
+
+    @MainActor
     func testRideMapPresentationStateSurvivesRouteRecreation() {
         let presentation = RideMapPresentationState()
 

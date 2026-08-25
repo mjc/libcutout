@@ -112,7 +112,6 @@ struct RideMapRouteView: View {
             availability: model.rideMapAvailability,
             speed: model.speed,
             vehicleName: model.rideMapVehicleName,
-            storageError: model.rideMapStorageError,
             mapError: model.rideMapLiveError,
             lastDecision: model.rideMapLastDecision,
             pointsTruncated: model.rideMapLivePointsTruncated,
@@ -145,6 +144,7 @@ struct RideMapRouteView: View {
             selectedRideID: model.selectedRideMapHistoryID,
             dateFilter: model.rideMapHistoryDateFilter,
             vehicleFilter: model.rideMapHistoryVehicleFilter,
+            vehicleFilterOptions: model.rideMapHistoryVehicleIdentities,
             select: { rideID in
                 model.rideMapMode = .history
                 model.selectRideMapHistory(rideID)
