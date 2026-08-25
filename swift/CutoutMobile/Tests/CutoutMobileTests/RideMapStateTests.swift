@@ -1,7 +1,32 @@
 import XCTest
+import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testStorageUnavailableStateCannotCreateAnInMemoryRide() {
+        let state = MobileRideMapState(storageUnavailable: "database unavailable")
+
+        XCTAssertEqual(state.initializationError, .Storage("database unavailable"))
+        XCTAssertNil(state.currentSnapshot())
+        XCTAssertEqual(state.pollLocationWrites(), [])
+        XCTAssertThrowsError(
+            try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
+        }
+        XCTAssertThrowsError(
+            try state.ingestLocation(
+                monotonicMs: 100,
+                wallClockUnixMs: 1_700_000_000_100,
+                latitudeDegrees: 39.7392,
+                longitudeDegrees: -104.9903,
+                horizontalAccuracyMeters: 4
+            )
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
+        }
+    }
+
     func testMapStateReportsTypedAdmissionReasons() throws {
         let state = MobileRideMapState()
 
@@ -109,5 +134,43 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertTrue(firstBatch?.hasMore == true)
         XCTAssertEqual(try state.pointsAfter(afterCursor: firstBatch?.nextCursor, limit: 10)?.points.map(\.sequence), [1])
         XCTAssertEqual(try state.save().state, .saved)
+    }
+
+    func testMapStateProjectsBoundedLiveRouteAndRejectsInvalidBudget() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        for (monotonicMs, latitudeDegrees) in [
+            (1_001, 40.0),
+            (2_001, 40.0001),
+            (3_001, 40.0002),
+            (4_001, 40.0003),
+        ] {
+            _ = try state.ingestLocation(
+                monotonicMs: UInt64(monotonicMs),
+                wallClockUnixMs: 1_700_000_000_000 + UInt64(monotonicMs),
+                latitudeDegrees: latitudeDegrees,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            )
+        }
+
+        let projection = try state.projectPoints(
+            budget: 2,
+            viewport: MobileGeoBoundsDto(
+                minimumLatitudeDegrees: 40.0,
+                maximumLatitudeDegrees: 40.0002,
+                minimumLongitudeDegrees: -105.0,
+                maximumLongitudeDegrees: -105.0
+            ),
+            privacy: .grid(e7: 1_000)
+        )
+        XCTAssertEqual(projection.sourcePointCount, 4)
+        XCTAssertEqual(projection.points.map(\.sequence), [0, 2])
+        XCTAssertEqual(projection.points.map(\.privacyClass), [.gridRedacted, .gridRedacted])
+        XCTAssertEqual(projection.points.map(\.latitudeDegrees), [40.0, 40.0002])
+
+        XCTAssertThrowsError(try state.projectPoints(budget: 0)) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .InvalidRouteProjection)
+        }
     }
 }

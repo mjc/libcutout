@@ -3080,6 +3080,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The supplied location values are invalid.
     #[error("invalid location")]
     InvalidLocation,
+    /// The route display budget, viewport, or privacy policy is invalid.
+    #[error("invalid route projection")]
+    InvalidRouteProjection,
     /// The canonical database rejected the operation.
     #[error("ride map storage failure: {0}")]
     Storage(String),
@@ -3166,6 +3169,59 @@ pub struct MobileRideMapCorePointBatchDto {
     pub next_cursor: Option<u64>,
     /// Whether another page is available.
     pub has_more: bool,
+}
+
+/// Privacy classification attached to a Rust-owned route display coordinate.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRoutePrivacyClassDto {
+    /// The exact canonical coordinate was retained.
+    Precise,
+    /// The coordinate was snapped to a privacy grid.
+    GridRedacted,
+}
+
+/// Privacy policy applied before route display coordinates cross the FFI boundary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideMapRoutePrivacyPolicyDto {
+    /// Preserve exact coordinates for an authorized detail surface.
+    Precise,
+    /// Snap both coordinate components to this non-zero E7 grid size.
+    Grid { grid_e7: u32 },
+}
+
+/// Rust-owned options for a bounded route display projection.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapRouteProjectionOptionsDto {
+    /// Optional inclusive viewport. Reversed bounds are rejected.
+    pub viewport: Option<MobileGeoBoundsDto>,
+    /// Maximum number of display points to return.
+    pub budget: u32,
+    /// Privacy policy applied to every returned coordinate.
+    pub privacy: MobileRideMapRoutePrivacyPolicyDto,
+}
+
+/// One bounded, privacy-classified Rust route display point.
+#[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapRouteDisplayPointDto {
+    /// Stable sequence within the canonical ride.
+    pub sequence: u64,
+    /// Canonical segment sequence within the ride.
+    pub segment_id: u64,
+    /// Privacy-projected latitude in WGS84 decimal degrees.
+    pub latitude_degrees: f64,
+    /// Privacy-projected longitude in WGS84 decimal degrees.
+    pub longitude_degrees: f64,
+    /// Classification applied before this point crossed the boundary.
+    pub privacy_class: MobileRideMapRoutePrivacyClassDto,
+}
+
+/// Bounded Rust route display projection.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideMapRouteProjectionDto {
+    /// Evenly sampled points visible in the requested viewport.
+    pub points: Vec<MobileRideMapRouteDisplayPointDto>,
+    /// Total canonical point count, including points outside the in-memory display tail.
+    pub source_point_count: u64,
 }
 
 /// Summary projected for an active map recording.
@@ -3712,6 +3768,53 @@ fn mobile_geo_bounds(
         bounds.maximum_longitude_degrees,
     )
     .map_err(map_ride_database_error)
+}
+
+fn mobile_route_projection_options(
+    options: &MobileRideMapRouteProjectionOptionsDto,
+) -> Result<
+    (
+        Option<ride_maps::RouteViewport>,
+        ride_maps::RouteDisplayBudget,
+        ride_maps::RoutePrivacyPolicy,
+    ),
+    MobileRideMapCoreErrorDto,
+> {
+    let viewport = options
+        .viewport
+        .map(|bounds| {
+            let minimum = ride_maps::Coordinate::from_degrees(
+                bounds.minimum_latitude_degrees,
+                bounds.minimum_longitude_degrees,
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+            let maximum = ride_maps::Coordinate::from_degrees(
+                bounds.maximum_latitude_degrees,
+                bounds.maximum_longitude_degrees,
+            )
+            .map_err(|_| MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+            ride_maps::RouteViewport::new(
+                minimum.latitude(),
+                maximum.latitude(),
+                minimum.longitude(),
+                maximum.longitude(),
+            )
+            .ok_or(MobileRideMapCoreErrorDto::InvalidRouteProjection)
+        })
+        .transpose()?;
+    let budget = usize::try_from(options.budget)
+        .ok()
+        .and_then(ride_maps::RouteDisplayBudget::new)
+        .ok_or(MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+    let privacy = match options.privacy {
+        MobileRideMapRoutePrivacyPolicyDto::Precise => ride_maps::RoutePrivacyPolicy::Precise,
+        MobileRideMapRoutePrivacyPolicyDto::Grid { grid_e7 } => {
+            let grid = ride_maps::RoutePrivacyGridE7::new(grid_e7)
+                .ok_or(MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+            ride_maps::RoutePrivacyPolicy::grid(grid)
+        }
+    };
+    Ok((viewport, budget, privacy))
 }
 
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
@@ -4837,6 +4940,23 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    fn route_display_point(
+        point: ride_maps::RouteDisplayPoint,
+    ) -> MobileRideMapRouteDisplayPointDto {
+        MobileRideMapRouteDisplayPointDto {
+            sequence: point.sequence().as_u64(),
+            segment_id: point.segment_id().value(),
+            latitude_degrees: point.coordinate().latitude_degrees(),
+            longitude_degrees: point.coordinate().longitude_degrees(),
+            privacy_class: match point.privacy_class() {
+                ride_maps::RoutePrivacyClass::Precise => MobileRideMapRoutePrivacyClassDto::Precise,
+                ride_maps::RoutePrivacyClass::GridRedacted => {
+                    MobileRideMapRoutePrivacyClassDto::GridRedacted
+                }
+            },
+        }
+    }
+
     fn summary(&self) -> MobileRideMapCoreSummaryDto {
         let summary = self.recorder.summary();
         MobileRideMapCoreSummaryDto {
@@ -5604,6 +5724,40 @@ impl MobileRideMapCore {
             points,
             next_cursor,
             has_more,
+        })
+    }
+
+    /// Projects the Rust-owned route tail into a bounded viewport/privacy display.
+    ///
+    /// The projection is deliberately separate from [`Self::points_after`]: that method is the
+    /// durable canonical paging API, while this method is a presentation projection over the
+    /// recorder's bounded in-memory tail. `source_point_count` remains the canonical ride count
+    /// so callers can distinguish a bounded display tail from the full route.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] when the budget, viewport,
+    /// or privacy policy cannot be represented by the Rust domain policy.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_points(
+        &self,
+        options: MobileRideMapRouteProjectionOptionsDto,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let (viewport, budget, privacy) = mobile_route_projection_options(&options)?;
+        let points = ride_maps::project_route_points(
+            state.recorder.points(),
+            state.recorder.first_point_sequence(),
+            viewport,
+            budget,
+            privacy,
+        )
+        .into_iter()
+        .map(MobileRideMapCoreInner::route_display_point)
+        .collect();
+        Ok(MobileRideMapRouteProjectionDto {
+            points,
+            source_point_count: state.recorder.point_count(),
         })
     }
 }
@@ -13908,6 +14062,73 @@ mod tests {
         assert_eq!(
             points.points[1].telemetry_state,
             MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry
+        );
+    }
+
+    #[test]
+    fn mobile_ride_map_core_projects_route_tail_with_viewport_and_privacy_policy() {
+        let state = MobileRideMapCore::new();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        for (offset, latitude) in [
+            (1_001, 40.0),
+            (2_001, 40.0001),
+            (3_001, 40.0002),
+            (4_001, 40.0003),
+        ] {
+            state
+                .ingest_location(offset, 1_700_000_000_000 + offset, latitude, -105.0, 3.0)
+                .expect("location is accepted");
+        }
+
+        let projection = state
+            .project_points(MobileRideMapRouteProjectionOptionsDto {
+                viewport: Some(MobileGeoBoundsDto {
+                    minimum_latitude_degrees: 40.0,
+                    maximum_latitude_degrees: 40.0002,
+                    minimum_longitude_degrees: -105.0,
+                    maximum_longitude_degrees: -105.0,
+                }),
+                budget: 2,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Grid { grid_e7: 1_000 },
+            })
+            .expect("route projection is valid");
+
+        assert_eq!(projection.source_point_count, 4);
+        assert_eq!(projection.points.len(), 2);
+        assert_eq!(projection.points[0].sequence, 0);
+        assert_eq!(projection.points[1].sequence, 2);
+        assert_eq!(
+            projection.points[0].privacy_class,
+            MobileRideMapRoutePrivacyClassDto::GridRedacted
+        );
+        assert!((projection.points[0].latitude_degrees - 40.0).abs() < f64::EPSILON);
+        assert!((projection.points[1].latitude_degrees - 40.0002).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_rejects_invalid_route_projection_options() {
+        let state = MobileRideMapCore::new();
+        assert_eq!(
+            state
+                .project_points(MobileRideMapRouteProjectionOptionsDto {
+                    viewport: None,
+                    budget: 0,
+                    privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+                })
+                .expect_err("zero budget is invalid"),
+            MobileRideMapCoreErrorDto::InvalidRouteProjection
+        );
+        assert_eq!(
+            state
+                .project_points(MobileRideMapRouteProjectionOptionsDto {
+                    viewport: None,
+                    budget: 1,
+                    privacy: MobileRideMapRoutePrivacyPolicyDto::Grid { grid_e7: 0 },
+                })
+                .expect_err("zero privacy grid is invalid"),
+            MobileRideMapCoreErrorDto::InvalidRouteProjection
         );
     }
 

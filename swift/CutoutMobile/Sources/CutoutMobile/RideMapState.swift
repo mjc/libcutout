@@ -15,6 +15,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case NoActiveRide
     case InvalidTransition
     case InvalidLocation
+    case InvalidRouteProjection
     case Storage(String)
 }
 
@@ -62,6 +63,29 @@ public struct MobileRideMapPointBatchDto: Equatable, Hashable, Sendable {
     public var points: [MobileRideMapPointDto]
     public var nextCursor: UInt64?
     public var hasMore: Bool
+}
+
+public enum MobileRideMapRoutePrivacyPolicy: Equatable, Hashable, Sendable {
+    case precise
+    case grid(e7: UInt32)
+}
+
+public enum MobileRideMapRoutePrivacyClass: Equatable, Hashable, Sendable {
+    case precise
+    case gridRedacted
+}
+
+public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
+    public var sequence: UInt64
+    public var segmentId: UInt64
+    public var latitudeDegrees: Double
+    public var longitudeDegrees: Double
+    public var privacyClass: MobileRideMapRoutePrivacyClass
+}
+
+public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
+    public var points: [MobileRideMapRouteDisplayPoint]
+    public var sourcePointCount: UInt64
 }
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
@@ -118,33 +142,56 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
 /// lifecycle, association, admission, locking, and live-route projection state. The FFI core
 /// serializes every mutation, so this adapter is safe to call from the BLE and location queues.
 public final class MobileRideMapState: @unchecked Sendable {
-    private let core: MobileRideMapCore
+    private let core: MobileRideMapCore?
     private let database: RideDatabaseHandle?
     public private(set) var initializationError: MobileRideMapError?
+    private let storageUnavailableError: MobileRideMapError?
 
+#if DEBUG
+    /// Creates an in-memory map state for deterministic tests only.
     public init() {
         core = MobileRideMapCore()
         database = nil
         initializationError = nil
+        storageUnavailableError = nil
     }
+#endif
 
     init(database: RideDatabaseHandle) {
         let core = MobileRideMapCore.withDatabase(database: database)
-        self.core = core
+        let initializationError = core.initializationError().map(Self.mapCoreError)
+        self.core = initializationError == nil ? core : nil
         self.database = database
-        initializationError = core.initializationError().map(map)
+        self.initializationError = initializationError
+        storageUnavailableError = initializationError
+    }
+
+    init(storageUnavailable message: String) {
+        core = nil
+        database = nil
+        let error = MobileRideMapError.Storage(message)
+        initializationError = error
+        storageUnavailableError = error
+    }
+
+    private func requireCore() throws -> MobileRideMapCore {
+        guard let core else {
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+        }
+        return core
     }
 
     public func currentSnapshot() -> MobileRideMapSnapshotDto? {
-        core.currentSnapshot().map(mapSnapshot)
+        core?.currentSnapshot().map(mapSnapshot)
     }
 
     public func currentSnapshot(atMs: UInt64) -> MobileRideMapSnapshotDto? {
-        core.currentSnapshotAt(atMs: atMs).map(mapSnapshot)
+        core?.currentSnapshotAt(atMs: atMs).map(mapSnapshot)
     }
 
     public func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws -> MobileRideMapSnapshotDto {
         do {
+            let core = try requireCore()
             return mapSnapshot(try core.startGpsOnly(atMs: atMs, lastConnectedVehicle: lastConnectedVehicle))
         } catch {
             throw map(error)
@@ -156,6 +203,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         atMs: UInt64
     ) throws -> MobileRideMapSnapshotDto {
         do {
+            let core = try requireCore()
             return mapSnapshot(try core.ensureRecordingForVehicle(
                 platformIdentifier: platformIdentifier,
                 atMs: atMs
@@ -166,27 +214,28 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func pause(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try core.pauseAt(atMs: atMs) }
+        try transition { try requireCore().pauseAt(atMs: atMs) }
     }
 
     public func resume(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try core.resumeAt(atMs: atMs) }
+        try transition { try requireCore().resumeAt(atMs: atMs) }
     }
 
     public func stop(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
-        try transition { try core.stopAt(atMs: atMs) }
+        try transition { try requireCore().stopAt(atMs: atMs) }
     }
 
     public func save() throws -> MobileRideMapSnapshotDto {
-        try transition { try core.save() }
+        try transition { try requireCore().save() }
     }
 
     public func discard() throws -> MobileRideMapSnapshotDto {
-        try transition { try core.discard() }
+        try transition { try requireCore().discard() }
     }
 
     public func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws -> MobileRideMapAssociationDto {
         do {
+            let core = try requireCore()
             return map(try core.observeVehicleConnection(platformIdentifier: platformIdentifier, atMs: atMs))
         } catch {
             throw map(error)
@@ -195,6 +244,7 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     public func observeTelemetry(atMs: UInt64) throws -> MobileRideMapTelemetryObservation {
         do {
+            let core = try requireCore()
             return map(try core.observeTelemetry(atMs: atMs))
         } catch {
             throw map(error)
@@ -209,6 +259,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         horizontalAccuracyMeters: Double
     ) throws -> MobileRideMapDecisionDto {
         do {
+            let core = try requireCore()
             return map(try core.ingestLocation(
                 monotonicMs: monotonicMs,
                 wallClockUnixMs: wallClockUnixMs,
@@ -240,12 +291,41 @@ public final class MobileRideMapState: @unchecked Sendable {
     /// A pending location is not capture-admitted until this method returns its accepted
     /// outcome. Callers should poll from a bounded scheduler and publish each terminal result.
     public func pollLocationWrites() -> [MobileRideMapDecisionDto] {
-        core.pollLocationWrites().map(map)
+        core?.pollLocationWrites().map(map) ?? []
     }
 
     public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
         do {
+            let core = try requireCore()
             return map(try core.pointsAfter(afterCursor: afterCursor, limit: limit))
+        } catch {
+            throw map(error)
+        }
+    }
+
+    /// Projects the Rust-owned recorder tail for a bounded map display.
+    ///
+    /// This is a presentation projection over the active recorder tail. It does not replace the
+    /// paged SQLite history API; full-history viewport LOD remains a separate persistence task.
+    public func projectPoints(
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise
+    ) throws -> MobileRideMapRouteProjection {
+        do {
+            let core = try requireCore()
+            let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
+            switch privacy {
+            case .precise:
+                mappedPrivacy = .precise
+            case let .grid(e7):
+                mappedPrivacy = .grid(gridE7: e7)
+            }
+            return map(try core.projectPoints(options: MobileRideMapRouteProjectionOptionsDto(
+                viewport: viewport,
+                budget: budget,
+                privacy: mappedPrivacy
+            )))
         } catch {
             throw map(error)
         }
@@ -354,6 +434,28 @@ public final class MobileRideMapState: @unchecked Sendable {
         )
     }
 
+    private func map(_ projection: MobileRideMapRouteProjectionDto) -> MobileRideMapRouteProjection {
+        MobileRideMapRouteProjection(
+            points: projection.points.map { point in
+                MobileRideMapRouteDisplayPoint(
+                    sequence: point.sequence,
+                    segmentId: point.segmentId,
+                    latitudeDegrees: point.latitudeDegrees,
+                    longitudeDegrees: point.longitudeDegrees,
+                    privacyClass: map(point.privacyClass)
+                )
+            },
+            sourcePointCount: projection.sourcePointCount
+        )
+    }
+
+    private func map(_ privacyClass: MobileRideMapRoutePrivacyClassDto) -> MobileRideMapRoutePrivacyClass {
+        switch privacyClass {
+        case .precise: return .precise
+        case .gridRedacted: return .gridRedacted
+        }
+    }
+
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
         case let .pending(point, segmentStarted):
@@ -447,14 +549,11 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     private func map(_ error: Error) -> MobileRideMapError {
+        if let error = error as? MobileRideMapError {
+            return error
+        }
         if let error = error as? MobileRideMapCoreErrorDto {
-            switch error {
-            case .AlreadyRecording: return .AlreadyRecording
-            case .NoActiveRide: return .NoActiveRide
-            case .InvalidTransition: return .InvalidTransition
-            case .InvalidLocation: return .InvalidLocation
-            case let .Storage(message): return .Storage(message)
-            }
+            return Self.mapCoreError(error)
         }
         if let error = error as? MobileRideDatabaseError {
             switch error {
@@ -464,5 +563,16 @@ public final class MobileRideMapState: @unchecked Sendable {
             }
         }
         return .Storage(String(describing: error))
+    }
+
+    private static func mapCoreError(_ error: MobileRideMapCoreErrorDto) -> MobileRideMapError {
+        switch error {
+        case .AlreadyRecording: return .AlreadyRecording
+        case .NoActiveRide: return .NoActiveRide
+        case .InvalidTransition: return .InvalidTransition
+        case .InvalidLocation: return .InvalidLocation
+        case .InvalidRouteProjection: return .InvalidRouteProjection
+        case let .Storage(message): return .Storage(message)
+        }
     }
 }
