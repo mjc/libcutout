@@ -263,6 +263,7 @@ final class LightingRouteModel {
     private(set) var restoreEnabled: Bool
     private(set) var accessoryAlias: String?
     private(set) var vehicleIdentifier: String?
+    private(set) var presets: [MobileRgbLightingPresetDto] = []
     private(set) var records: [MelkLightingLogEntry] = []
     private(set) var notificationCount = 0
     private var isRunning = false
@@ -285,6 +286,7 @@ final class LightingRouteModel {
         restoreEnabled = persistence.restoreEnabled
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
+        presets = persistence.presets
         if let requested = persistence.requestedState {
             requestedState = requested
         }
@@ -329,6 +331,7 @@ final class LightingRouteModel {
         persistence.forget()
         accessoryAlias = nil
         vehicleIdentifier = nil
+        presets = []
         restoreEnabled = false
         requestedState = MobileMelkLightingRestoreStateDto(
             powerOn: false,
@@ -403,8 +406,6 @@ final class LightingRouteModel {
     var requestedBlue: UInt8 { requestedState.blue }
     var requestedBrightness: UInt8 { requestedState.brightness }
 
-    var presets: [MobileRgbLightingPresetDto] { persistence.presets }
-
     var canSavePreset: Bool {
         lightingPresetSaveEligibility(
             platformIdentifier: persistence.platformIdentifier,
@@ -418,6 +419,7 @@ final class LightingRouteModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSavePreset, !trimmed.isEmpty else { return }
         try? persistence.addPreset(name: trimmed, requested: requestedState)
+        presets = persistence.presets
     }
 
     func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
@@ -506,6 +508,7 @@ final class LightingRouteModel {
         }
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
+        presets = persistence.presets
     }
 
     private func updatePersistedRequestedState() {
