@@ -194,6 +194,8 @@ pub struct RideRecord {
     monotonic_created_at_ms: Option<u64>,
     updated_at_ms: u64,
     duration_ms: u64,
+    paused_at_ms: Option<u64>,
+    paused_duration_ms: u64,
     summary: RideSummary,
     segment_count: u64,
     candidate_vehicle: Option<String>,
@@ -243,6 +245,18 @@ impl RideRecord {
     #[must_use]
     pub const fn duration_milliseconds(&self) -> u64 {
         self.duration_ms
+    }
+
+    /// Returns the monotonic timestamp at which the current pause began.
+    #[must_use]
+    pub const fn paused_at_milliseconds(&self) -> Option<u64> {
+        self.paused_at_ms
+    }
+
+    /// Returns the total duration spent paused before the current pause.
+    #[must_use]
+    pub const fn paused_duration_milliseconds(&self) -> u64 {
+        self.paused_duration_ms
     }
 
     /// Returns the Rust-derived summary.
@@ -4187,6 +4201,7 @@ const RIDE_RECORD_PROJECTION: &str =
     "SELECT rides.id, rides.source, rides.state, rides.created_at_ms,
        rides.monotonic_created_at_ms, rides.updated_at_ms,
        rides.duration_ms,
+       rides.paused_at_ms, rides.paused_duration_ms,
        rides.point_count, rides.distance_mm,
        COALESCE(ride_point_aggregates.segment_count, 0),
        rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
@@ -4334,12 +4349,14 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         monotonic_created_at_ms: row.get(4)?,
         updated_at_ms: row.get(5)?,
         duration_ms: row.get(6)?,
-        summary: RideSummary::from_stored(row.get::<_, u64>(7)?.into(), row.get(8)?),
-        segment_count: row.get(9)?,
-        candidate_vehicle: row.get(10)?,
-        associated_vehicle: row.get(11)?,
-        associated_at_ms: row.get(12)?,
-        last_telemetry_at_ms: row.get(13)?,
+        paused_at_ms: row.get(7)?,
+        paused_duration_ms: row.get(8)?,
+        summary: RideSummary::from_stored(row.get::<_, u64>(9)?.into(), row.get(10)?),
+        segment_count: row.get(11)?,
+        candidate_vehicle: row.get(12)?,
+        associated_vehicle: row.get(13)?,
+        associated_at_ms: row.get(14)?,
+        last_telemetry_at_ms: row.get(15)?,
     })
 }
 

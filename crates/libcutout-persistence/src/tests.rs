@@ -337,6 +337,8 @@ fn ride_history_duration_is_persisted_from_lifecycle_clock() {
 
     let record = database.find_ride(ride).unwrap().unwrap();
     assert_eq!(record.duration_milliseconds(), 9_000);
+    assert_eq!(record.paused_at_milliseconds(), None);
+    assert_eq!(record.paused_duration_milliseconds(), 2_000);
     database.shutdown().unwrap();
 
     let reopened = RideDatabase::open(&path).unwrap();
@@ -348,6 +350,9 @@ fn ride_history_duration_is_persisted_from_lifecycle_clock() {
             .duration_milliseconds(),
         9_000
     );
+    let reopened_record = reopened.find_ride(ride).unwrap().unwrap();
+    assert_eq!(reopened_record.paused_at_milliseconds(), None);
+    assert_eq!(reopened_record.paused_duration_milliseconds(), 2_000);
     reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
