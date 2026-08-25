@@ -930,13 +930,15 @@ final class CutoutAppModel {
             return
         }
         if let candidate,
-           let identity = rideMapVehicleIdentity,
-           candidate.platformIdentifier == identity,
-           candidate.displayName != identity,
-           !candidate.displayName.isEmpty {
+           let displayName = Self.meaningfulDeviceName(
+               candidate.displayName,
+               identity: candidate.platformIdentifier
+           ) {
+            // Persist every resolved identity, not only the currently selected one. History can
+            // contain rides from an older CoreBluetooth identifier and must still be relabelable.
             selectedDeviceStore.save(
-                platformIdentifier: identity,
-                displayName: candidate.displayName
+                platformIdentifier: candidate.platformIdentifier,
+                displayName: displayName
             )
         }
         if let model = candidate?.support.electricUnicycleModel {

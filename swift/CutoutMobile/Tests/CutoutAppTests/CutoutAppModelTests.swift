@@ -1463,6 +1463,32 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testProtocolIdentityCandidatePersistsNamesForHistoryIdentities() {
+        let suiteName = "CutoutAppModelTests-(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = DevicePickerSelectionStore(defaults: defaults)
+        let model = CutoutAppModel(core: SessionDriverSpy(rows: []), selectedDeviceStore: store)
+        let supported = DevicePickerCandidateSupport.supported(
+            connectionRoute: .electricUnicycle,
+            electricUnicycleModel: .aero
+        )
+        let candidate = DevicePickerDiscoveryCandidate(
+            platformIdentifier: "old-core-bluetooth-id",
+            displayName: "NF2557",
+            productCategory: "Electric unicycle",
+            evidence: "advertisement",
+            detail: "resolved device",
+            support: supported,
+            symbolName: "circle.hexagongrid.circle"
+        )
+
+        model.applyProtocolIdentityCandidate(candidate)
+
+        XCTAssertEqual(store.displayName(for: "old-core-bluetooth-id"), "NF2557")
+    }
+
+    @MainActor
     func testRideMapVehicleNameNeverTreatsThePlatformIdentityAsDisplayName() {
         XCTAssertNil(CutoutAppModel.meaningfulDeviceName("wheel-1", identity: "wheel-1"))
         XCTAssertNil(CutoutAppModel.meaningfulDeviceName("", identity: "wheel-1"))
