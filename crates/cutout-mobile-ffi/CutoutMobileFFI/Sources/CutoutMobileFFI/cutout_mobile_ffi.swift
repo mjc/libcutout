@@ -2447,6 +2447,11 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      * A fresh connection starts a new live ride when no open ride exists. An already-open
      * GPS-only ride is associated with this vehicle, preserving the route recorded before the
      * Bluetooth connection was available.
+     *
+     * # Errors
+     *
+     * Returns an error when the vehicle cannot be associated or durable storage rejects the
+     * lifecycle update.
      */
     func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
@@ -2455,7 +2460,7 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      *
      * A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
      * callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
-     * The callback never waits for SQLite or the database worker.
+     * The callback never waits for `SQLite` or the database worker.
      *
      * # Errors
      *
@@ -2498,6 +2503,10 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
 
     /**
      * Evaluates the pause transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
     func pauseAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
@@ -2514,7 +2523,7 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws  -> MobileRideMapCorePointBatchDto
 
     /**
-     * Returns durable outcomes for queued location writes without waiting for SQLite.
+     * Returns durable outcomes for queued location writes without waiting for `SQLite`.
      *
      * The returned decisions are ordered by the bounded write queue. An empty result means that
      * the oldest queued write is still pending.
@@ -2532,6 +2541,10 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
 
     /**
      * Evaluates the resume transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
     func resumeAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
@@ -2564,6 +2577,10 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
 
     /**
      * Evaluates the stop transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
      */
     func stopAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
@@ -2690,6 +2707,11 @@ open func discard()throws  -> MobileRideMapCoreSnapshotDto  {
      * A fresh connection starts a new live ride when no open ride exists. An already-open
      * GPS-only ride is associated with this vehicle, preserving the route recorded before the
      * Bluetooth connection was available.
+     *
+     * # Errors
+     *
+     * Returns an error when the vehicle cannot be associated or durable storage rejects the
+     * lifecycle update.
      */
 open func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2706,7 +2728,7 @@ open func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64)thr
      *
      * A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
      * callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
-     * The callback never waits for SQLite or the database worker.
+     * The callback never waits for `SQLite` or the database worker.
      *
      * # Errors
      *
@@ -2787,6 +2809,10 @@ open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Evaluates the pause transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
      */
 open func pauseAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2818,7 +2844,7 @@ open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideM
 }
 
     /**
-     * Returns durable outcomes for queued location writes without waiting for SQLite.
+     * Returns durable outcomes for queued location writes without waiting for `SQLite`.
      *
      * The returned decisions are ordered by the bounded write queue. An empty result means that
      * the oldest queued write is still pending.
@@ -2848,6 +2874,10 @@ open func resume()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Evaluates the resume transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
      */
 open func resumeAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2907,6 +2937,10 @@ open func stop()throws  -> MobileRideMapCoreSnapshotDto  {
 
     /**
      * Evaluates the stop transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
      */
 open func stopAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
     return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -23944,10 +23978,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_discard() != 21602) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ensure_recording_for_vehicle() != 43853) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ensure_recording_for_vehicle() != 44569) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 24524) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 39313) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_initialization_error() != 36652) {
@@ -23962,19 +23996,19 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 1853) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause_at() != 12063) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause_at() != 48658) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_poll_location_writes() != 28284) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_poll_location_writes() != 7706) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume_at() != 16735) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume_at() != 15920) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_save() != 34044) {
@@ -23986,7 +24020,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 50377) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop_at() != 19031) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop_at() != 58868) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 60604) {
