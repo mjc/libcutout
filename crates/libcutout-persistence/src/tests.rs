@@ -754,6 +754,12 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
             pevcap_location_record(4_000, 40.000001, 3.0),
             pevcap_location_record(5_000, 91.0, 3.0),
             pevcap_location_record(6_000, 40.000001, -1.0),
+            {
+                let mut location = pevcap_location(7_000, 40.000001, 3.0);
+                location.wall_clock_unix_ms = 0;
+                PevcapRecord::link_up(MonotonicTimestamp::new(7_000), None)
+                    .with_phone_location(location)
+            },
             pevcap_location_record(40_000, 40.001, 3.0),
         ],
     );
@@ -763,7 +769,7 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
     let preview = database
         .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
         .unwrap();
-    assert_eq!(preview.record_count(), 9);
+    assert_eq!(preview.record_count(), 10);
     assert_eq!(preview.location_count(), 3);
     assert_eq!(preview.outcome(), PevcapImportOutcome::RideAndCapture);
 
