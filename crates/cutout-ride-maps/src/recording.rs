@@ -473,14 +473,7 @@ impl RideMapRecorder {
         ) {
             timing.duration_milliseconds
         } else {
-            let point_duration = RideDurationMilliseconds::new(
-                point_last_monotonic_milliseconds.saturating_sub(created_at_milliseconds),
-            );
-            if timing.duration_milliseconds.as_u64() >= point_duration.as_u64() {
-                timing.duration_milliseconds
-            } else {
-                point_duration
-            }
+            timing.duration_milliseconds
         };
         Self {
             state: Some(state),

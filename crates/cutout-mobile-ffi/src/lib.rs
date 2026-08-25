@@ -4715,13 +4715,13 @@ impl MobileRideMapCoreInner {
             },
             ride_maps::RideLifecycleTiming {
                 duration_milliseconds: ride_maps::RideDurationMilliseconds::new(
-                    ride.duration_milliseconds(),
+                    ride.duration_milliseconds,
                 ),
                 paused_at_milliseconds: ride
-                    .paused_at_milliseconds()
+                    .paused_at_milliseconds
                     .map(ride_maps::MonotonicMilliseconds::new),
                 paused_duration_milliseconds: ride_maps::RideDurationMilliseconds::new(
-                    ride.paused_duration_milliseconds(),
+                    ride.paused_duration_milliseconds,
                 ),
             },
             samples,
