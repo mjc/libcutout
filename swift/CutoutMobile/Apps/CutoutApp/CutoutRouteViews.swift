@@ -185,7 +185,7 @@ struct VescDebugRouteView: View {
 @Observable
 final class LightingRouteModel {
 
-    private let session = MelkLightingPeripheralSession()
+    private let session: any MelkLightingPeripheralSessionProtocol
     private let persistence: LightingAccessoryPersistence
 
     private(set) var connectionState: MelkLightingPeripheralState = .idle
@@ -208,8 +208,12 @@ final class LightingRouteModel {
     private var restoreAttempted = false
     private var lastColorPreviewAt: TimeInterval = 0
 
-    init() {
-        persistence = LightingAccessoryPersistence()
+    init(
+        session: any MelkLightingPeripheralSessionProtocol = MelkLightingPeripheralSession(),
+        persistence: LightingAccessoryPersistence = LightingAccessoryPersistence()
+    ) {
+        self.session = session
+        self.persistence = persistence
         restoreEnabled = persistence.restoreEnabled
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier

@@ -668,4 +668,53 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertTrue(stableStates.allSatisfy { !$0.resetsRestoreEligibility })
     }
 
+    @MainActor
+    func testLightingRouteModelUsesInjectedSessionLifecycle() throws {
+        let suiteName = "CutoutAppRouteTests.lightingSession"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(
+            session: fake,
+            persistence: LightingAccessoryPersistence(defaults: defaults)
+        )
+
+        model.start()
+        XCTAssertEqual(fake.startCalls, [nil])
+        model.stop()
+        XCTAssertEqual(fake.stopCalls, 1)
+    }
+}
+
+private final class TestLightingSession: MelkLightingPeripheralSessionProtocol {
+    var onStateChange: ((MelkLightingPeripheralState) -> Void)?
+    var onNotification: ((Data) -> Void)?
+    var onRecord: ((String) -> Void)?
+    var startCalls: [String?] = []
+    var stopCalls = 0
+
+    func start(preferredPlatformIdentifier: String?) {
+        startCalls.append(preferredPlatformIdentifier)
+    }
+
+    func stop() {
+        stopCalls += 1
+    }
+
+    func setPower(_ on: Bool) -> Bool {
+        true
+    }
+
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool {
+        true
+    }
+
+    func setBrightness(_ percentage: UInt8) throws -> Bool {
+        true
+    }
+
+    func markLastCommandConfirmed() {}
+    func markLastCommandUnconfirmed() {}
 }
