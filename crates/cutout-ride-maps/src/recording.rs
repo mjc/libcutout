@@ -687,9 +687,10 @@ impl RideMapRecorder {
                 VehicleAssociation::IdentityMismatch
             };
         }
-        if let Some(candidate) = self.candidate_vehicle.as_ref()
-            && candidate != platform_identifier
-        {
+        let Some(candidate) = self.candidate_vehicle.as_ref() else {
+            return VehicleAssociation::CandidateMissing;
+        };
+        if candidate != platform_identifier {
             return VehicleAssociation::IdentityMismatch;
         }
         self.associated_vehicle = Some(platform_identifier.clone());
@@ -924,14 +925,14 @@ mod tests {
     }
 
     #[test]
-    fn association_accepts_a_vehicle_found_during_recording_and_stays_stable() {
+    fn association_requires_the_snapshotted_candidate_and_stays_stable() {
         let mut no_candidate = RideMapRecorder::new();
         no_candidate.start(monotonic(1_000), None).expect("starts");
         assert_eq!(
             no_candidate.observe_vehicle(&identity("pev-1"), monotonic(1_001)),
-            VehicleAssociation::Associated
+            VehicleAssociation::CandidateMissing
         );
-        assert_eq!(no_candidate.associated_vehicle(), Some("pev-1"));
+        assert_eq!(no_candidate.associated_vehicle(), None);
 
         let mut associated = RideMapRecorder::new();
         associated
