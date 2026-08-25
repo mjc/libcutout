@@ -4667,29 +4667,21 @@ impl MobileRideMapCoreInner {
         let monotonic_created_at_milliseconds = database
             .monotonic_created_at_milliseconds(&ride.id)
             .map_err(map_core_error)?;
-        let mut cursor = None;
-        let mut samples = Vec::new();
-        loop {
-            let page = database
-                .route_points(ride.id.clone(), cursor, 500)
-                .map_err(map_core_error)?;
-            for point in page.points {
-                let sample = mobile_ride_location(point.location).map_err(map_core_error)?;
-                samples.push(ride_maps::RideMapPoint::new(
-                    sample,
-                    ride_maps::RideMapSegmentId::new(point.segment_id),
-                    map_ride_telemetry_state(point.telemetry_state),
-                ));
-            }
-            if samples.len() > ride_maps::MAX_LIVE_ROUTE_POINTS {
-                let excess = samples.len() - ride_maps::MAX_LIVE_ROUTE_POINTS;
-                samples.drain(..excess);
-            }
-            cursor = page.next_cursor;
-            if cursor.is_none() {
-                break;
-            }
-        }
+        let persisted_ride_id = parse_mobile_ride_id(&ride.id).map_err(map_core_error)?;
+        let samples: Vec<ride_maps::RideMapPoint> = database
+            .inner
+            .latest_route_points(persisted_ride_id)
+            .map_err(map_ride_database_error)
+            .map_err(map_core_error)?
+            .into_iter()
+            .map(|point| {
+                ride_maps::RideMapPoint::new(
+                    point.sample(),
+                    ride_maps::RideMapSegmentId::new(point.segment_id()),
+                    point.telemetry_state(),
+                )
+            })
+            .collect();
         self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary(
             map_ride_lifecycle_state(ride.state),
             ride_maps::MonotonicMilliseconds::new(

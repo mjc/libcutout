@@ -5,7 +5,8 @@ use cutout_core::{
     PevcapRecord, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RouteTelemetryState,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_LIVE_ROUTE_POINTS,
+    RideEvent, RouteTelemetryState,
 };
 use rusqlite::Connection;
 
@@ -1233,6 +1234,43 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .unwrap();
     assert_eq!(second.points().len(), 1);
     assert_eq!(second.points()[0].sequence(), 2);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn latest_route_points_return_the_bounded_tail_in_ascending_order() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-tail-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0..u64::try_from(MAX_LIVE_ROUTE_POINTS + 2).unwrap() {
+        let offset = f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0;
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
+            sequence + 1,
+            1_700_000_000_000 + sequence,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let points = database.latest_route_points(ride).unwrap();
+    assert_eq!(points.len(), MAX_LIVE_ROUTE_POINTS);
+    assert_eq!(points.first().unwrap().sequence(), 2);
+    assert_eq!(
+        points.last().unwrap().sequence(),
+        u64::try_from(MAX_LIVE_ROUTE_POINTS + 1).unwrap()
+    );
+
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

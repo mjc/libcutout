@@ -3,8 +3,8 @@ use cutout_core::{
     SessionOutput,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent, RideLifecycleState,
-    RideSummary, RouteTelemetryState, TransitionError,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_LIVE_ROUTE_POINTS,
+    RideEvent, RideLifecycleState, RideSummary, RouteTelemetryState, TransitionError,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -1673,6 +1673,16 @@ impl RideDatabase {
         })
     }
 
+    /// Loads the newest live-projection-sized route tail in ascending sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist, or another typed storage
+    /// error when the bounded tail cannot be decoded.
+    pub fn latest_route_points(&self, ride_id: RideId) -> Result<Vec<RoutePoint>, StorageError> {
+        self.request(move |reply| Command::LatestRoutePoints { ride_id, reply })
+    }
+
     /// Stops the process-wide worker and releases its ownership slot.
     ///
     /// # Errors
@@ -1926,6 +1936,10 @@ enum Command {
         cursor: Option<RoutePointCursor>,
         limit: QueryLimit,
         reply: Reply<RoutePointPage>,
+    },
+    LatestRoutePoints {
+        ride_id: RideId,
+        reply: Reply<Vec<RoutePoint>>,
     },
     Shutdown {
         reply: Reply<()>,
@@ -2236,6 +2250,9 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 reply,
             } => {
                 let _ = reply.send(route_points(&connection, ride_id, cursor, limit));
+            }
+            Command::LatestRoutePoints { ride_id, reply } => {
+                let _ = reply.send(latest_route_points(&connection, ride_id));
             }
             Command::Shutdown { reply } => {
                 let _ = reply.send(Ok(()));
@@ -4370,6 +4387,37 @@ fn route_points(
         points,
         next_cursor,
     })
+}
+
+fn latest_route_points(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<Vec<RoutePoint>, StorageError> {
+    let limit = i64::try_from(MAX_LIVE_ROUTE_POINTS)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [ride_id.uuid().to_string()],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::NotFound);
+    }
+    let mut statement = connection.prepare(
+        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
+                horizontal_accuracy_mm, source
+         FROM ride_points
+         WHERE ride_id = ?1
+         ORDER BY sequence DESC
+         LIMIT ?2",
+    )?;
+    let rows = statement.query_map(
+        params![ride_id.uuid().to_string(), limit],
+        route_point_from_row,
+    )?;
+    let mut points = rows.collect::<Result<Vec<_>, _>>()?;
+    points.reverse();
+    Ok(points)
 }
 
 fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint> {
