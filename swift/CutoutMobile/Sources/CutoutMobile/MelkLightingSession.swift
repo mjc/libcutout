@@ -181,6 +181,27 @@ public extension MelkLightingPeripheralState {
     }
 }
 
+/// The app-facing seam for an independent MELK lighting connection.
+///
+/// Keeping the CoreBluetooth implementation behind this protocol lets the route model test
+/// lifecycle and restore behavior without sharing the ride session or requiring hardware.
+public protocol MelkLightingPeripheralSessionProtocol: AnyObject {
+    var onStateChange: ((MelkLightingPeripheralState) -> Void)? { get set }
+    var onNotification: ((Data) -> Void)? { get set }
+    var onRecord: ((String) -> Void)? { get set }
+
+    func start(preferredPlatformIdentifier: String?)
+    func stop()
+    @discardableResult
+    func setPower(_ on: Bool) -> Bool
+    @discardableResult
+    func setSolidColor(red: UInt8, green: UInt8, blue: UInt8) -> Bool
+    @discardableResult
+    func setBrightness(_ percentage: UInt8) throws -> Bool
+    func markLastCommandConfirmed()
+    func markLastCommandUnconfirmed()
+}
+
 /// A secondary CoreBluetooth connection for validating MELK without replacing a ride session.
 ///
 /// The lighting session owns its own central manager, so it can remain connected while the primary
@@ -592,4 +613,7 @@ public final class MelkLightingPeripheralSession: NSObject, CBCentralManagerDele
         return try queue.sync(execute: work)
     }
 }
+
+extension MelkLightingPeripheralSession: MelkLightingPeripheralSessionProtocol {}
+
 #endif
