@@ -242,7 +242,7 @@ final class LightingRouteModel {
         restoreEnabled = persistence.restoreEnabled
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
-        presets = persistence.presets
+        refreshPresets()
         if let requested = persistence.requestedState {
             requestedState = requested
         }
@@ -287,7 +287,7 @@ final class LightingRouteModel {
         persistence.forget()
         accessoryAlias = nil
         vehicleIdentifier = nil
-        presets = []
+        refreshPresets()
         restoreEnabled = false
         requestedState = MobileMelkLightingRestoreStateDto(
             powerOn: false,
@@ -375,7 +375,7 @@ final class LightingRouteModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canSavePreset, !trimmed.isEmpty else { return }
         try? persistence.addPreset(name: trimmed, requested: requestedState)
-        presets = persistence.presets
+        refreshPresets()
     }
 
     func saveAccessoryMetadata(alias: String, vehicleIdentifier: String?) {
@@ -464,6 +464,10 @@ final class LightingRouteModel {
         }
         accessoryAlias = persistence.alias
         vehicleIdentifier = persistence.vehicleIdentifier
+        refreshPresets()
+    }
+
+    private func refreshPresets() {
         presets = persistence.presets
     }
 
