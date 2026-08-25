@@ -26,10 +26,7 @@ final class CutoutAppModel {
     // Keep this within the Rust persistence query limit (max 500).
     private static let rideMapPointBatchLimit: UInt32 = 500
     private static let rideMapPreviewPointLimit = 4_096
-    // A full-history request may scan every durable page, but Swift must never
-    // retain an unbounded route for map rendering. Rust remains the source of
-    // truth; this is only the presentation budget for the current viewport.
-    private static let rideMapDisplayPointLimit = 16_384
+    private static let rideMapHistoryDisplayPointLimit: UInt32 = 16_384
 
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
@@ -55,6 +52,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDateFilter = RideMapHistoryDateFilter.last30Days
     private(set) var rideMapHistoryVehicleFilter: String?
     private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistoryRouteLoading = false
     private(set) var rideMapHistoryVehicleIdentities = [String]()
@@ -381,6 +379,7 @@ final class CutoutAppModel {
             return false
         }
         rideMapHistoryPoints = []
+        rideMapHistoryDisplayPoints = []
         rideMapHistoryPointsTruncated = false
         rideMapHistoryRouteLoading = false
         loadRideMapHistory()
@@ -437,6 +436,7 @@ final class CutoutAppModel {
                 guard let selectedID else {
                     self.selectedRideMapHistoryID = nil
                     self.rideMapHistoryPoints = []
+                    self.rideMapHistoryDisplayPoints = []
                     self.rideMapHistoryPointsTruncated = false
                     self.rideMapHistoryRouteLoading = false
                     return
@@ -569,27 +569,23 @@ final class CutoutAppModel {
         let selectingDifferentRide = selectedRideMapHistoryID != rideID
         if selectingDifferentRide {
             rideMapHistoryPoints = []
+            rideMapHistoryDisplayPoints = []
             rideMapHistoryPointsTruncated = false
         }
         selectedRideMapHistoryID = rideID
         rideMapHistoryRouteError = nil
         rideMapHistoryRouteLoading = true
         let state = core.rideMapStateHandle
-        let pointBatchLimit = Self.rideMapPointBatchLimit
-        let displayPointLimit = Self.rideMapDisplayPointLimit
+        let budget = UInt32(
+            min(
+                previewLimit ?? Int(Self.rideMapHistoryDisplayPointLimit),
+                Int(Self.rideMapHistoryDisplayPointLimit)
+            )
+        )
         rideMapHistorySelectionTask = Task { [weak self] in
             do {
                 let worker = Task.detached(priority: .userInitiated) {
-                    try Self.collectRideMapHistoryPoints(
-                        previewLimit: previewLimit,
-                        displayLimit: displayPointLimit
-                    ) { cursor in
-                        try state.storedPointsAfter(
-                            rideId: rideID,
-                            afterCursor: cursor,
-                            limit: pointBatchLimit
-                        )
-                    }
+                    try state.projectStoredPoints(rideID: rideID, budget: budget)
                 }
                 let result = try await withTaskCancellationHandler(operation: {
                     try await worker.value
@@ -598,8 +594,10 @@ final class CutoutAppModel {
                 })
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryRouteError = nil
-                self.rideMapHistoryPoints = result.0
-                self.rideMapHistoryPointsTruncated = result.1
+                self.rideMapHistoryPoints = []
+                self.rideMapHistoryDisplayPoints = result.points
+                self.rideMapHistoryPointsTruncated = result.sourcePointCount
+                    > UInt64(result.points.count)
                 self.rideMapHistoryRouteLoading = false
             } catch {
                 guard !Task.isCancelled, let self else { return }
@@ -607,90 +605,6 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteLoading = false
             }
         }
-    }
-
-    nonisolated static func collectRideMapHistoryPoints(
-        previewLimit: Int?,
-        displayLimit: Int = 16_384,
-        nextBatch: (UInt64?) throws -> MobileRideMapPointBatchDto?,
-        cancellationCheck: () throws -> Void = { try Task.checkCancellation() }
-    ) throws -> ([MobileRideMapPointDto], Bool) {
-        var points = [MobileRideMapPointDto]()
-        var cursor: UInt64?
-        let boundedDisplayLimit = max(1, displayLimit)
-        let effectivePreviewLimit = previewLimit.map { min($0, boundedDisplayLimit) }
-        var displayWasTruncated = false
-        while true {
-            try cancellationCheck()
-            guard let batch = try nextBatch(cursor) else {
-                return ([], false)
-            }
-            if let previewLimit = effectivePreviewLimit {
-                let remaining = previewLimit - points.count
-                if batch.points.count > remaining {
-                    points.append(contentsOf: batch.points.prefix(remaining))
-                    return (points, true)
-                }
-                points.append(contentsOf: batch.points)
-                cursor = batch.nextCursor
-                if points.count == previewLimit {
-                    return (points, batch.hasMore)
-                }
-            } else {
-                displayWasTruncated = Self.appendBoundedRoutePoints(
-                    to: &points,
-                    incoming: batch.points,
-                    limit: boundedDisplayLimit
-                ) || displayWasTruncated
-                cursor = batch.nextCursor
-            }
-            if batch.hasMore == false {
-                return (points, displayWasTruncated)
-            }
-        }
-    }
-
-    /// Keeps full-history map rendering bounded while retaining both route endpoints.
-    ///
-    /// The durable route remains complete in Rust/SQLite. This helper only controls the
-    /// presentation projection, and callers must keep the returned truncation bit so the UI
-    /// does not claim that the last displayed point is the ride endpoint.
-    nonisolated static func appendBoundedRoutePoints(
-        to points: inout [MobileRideMapPointDto],
-        incoming: [MobileRideMapPointDto],
-        limit: Int
-    ) -> Bool {
-        guard incoming.isEmpty == false else { return false }
-        guard limit > 0 else {
-            points.removeAll(keepingCapacity: true)
-            return true
-        }
-        guard limit > 1 else {
-            points = [incoming.last!]
-            return true
-        }
-        guard points.count + incoming.count > limit else {
-            points.append(contentsOf: incoming)
-            return false
-        }
-
-        let source = points + incoming
-        guard let last = source.last else { return true }
-        var bounded = [source[0]]
-        bounded.reserveCapacity(limit)
-        if limit > 2 {
-            let scale = Double(source.count - 1) / Double(limit - 1)
-            for sample in 1 ..< (limit - 1) {
-                let index = min(
-                    source.count - 2,
-                    Int((Double(sample) * scale).rounded())
-                )
-                bounded.append(source[index])
-            }
-        }
-        bounded.append(last)
-        points = bounded
-        return true
     }
 
     private static func mapRideMapError(_ error: Error) -> MobileRideMapError {

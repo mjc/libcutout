@@ -17,7 +17,7 @@ struct RideMapCanvasView: View {
         let pointCount: Int
     }
 
-    let points: [MobileRideMapPointDto]
+    let points: [MobileRideMapRouteDisplayPoint]
     let routeID: String
     let showsStartMarker: Bool
     let showsEndMarker: Bool
@@ -55,7 +55,7 @@ struct RideMapCanvasView: View {
         dynamicTypeSize.isAccessibilitySize ? 2 : 1
     }
 
-    static func region(for points: [MobileRideMapPointDto]) -> MKCoordinateRegion? {
+    static func region(for points: [MobileRideMapRouteDisplayPoint]) -> MKCoordinateRegion? {
         guard let first = points.first else { return nil }
         var minimumLatitude = first.latitudeDegrees
         var maximumLatitude = first.latitudeDegrees
@@ -209,7 +209,7 @@ struct RideMapCanvasView: View {
         renderedKey = key
     }
 
-    private func append(_ point: MobileRideMapPointDto) {
+    private func append(_ point: MobileRideMapRouteDisplayPoint) {
         let coordinate = coordinate(for: point)
         if segmentPaths.last?.id == point.segmentId {
             segmentPaths[segmentPaths.index(before: segmentPaths.endIndex)].coordinates.append(coordinate)
@@ -227,11 +227,11 @@ struct RideMapCanvasView: View {
         }
     }
 
-    private func coordinate(for point: MobileRideMapPointDto) -> CLLocationCoordinate2D {
+    private func coordinate(for point: MobileRideMapRouteDisplayPoint) -> CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: point.latitudeDegrees, longitude: point.longitudeDegrees)
     }
 
-    private func fitMap(to points: [MobileRideMapPointDto]) {
+    private func fitMap(to points: [MobileRideMapRouteDisplayPoint]) {
         guard let region = Self.region(for: points) else { return }
         isApplyingCamera = true
         mapPosition = .region(region)

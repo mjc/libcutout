@@ -8,6 +8,7 @@ struct RideMapRouteTruthView: View {
     let rustSegmentCount: UInt64
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
+    let hasRoute: Bool? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -15,7 +16,7 @@ struct RideMapRouteTruthView: View {
                 .font(.caption)
                 .foregroundStyle(PevColors.muted)
                 .accessibilityIdentifier("ride-map.route-truth")
-            if points.isEmpty == false, showsRecordedBounds {
+            if routeIsPresent, showsRecordedBounds {
                 Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(points.count)))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
@@ -36,6 +37,8 @@ struct RideMapRouteTruthView: View {
     }
 
     private var segmentCount: UInt64 { rustSegmentCount }
+
+    private var routeIsPresent: Bool { hasRoute ?? !points.isEmpty }
 
     private var telemetryText: String {
         guard let state = points.last?.telemetryState else {

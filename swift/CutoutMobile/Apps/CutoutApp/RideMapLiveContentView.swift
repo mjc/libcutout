@@ -31,7 +31,7 @@ struct RideMapLiveContentView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
             RideMapCanvasView(
-                points: points,
+                points: points.map(MobileRideMapRouteDisplayPoint.init),
                 routeID: routeID,
                 showsStartMarker: showsRecordedBounds,
                 showsEndMarker: showsRecordedBounds,

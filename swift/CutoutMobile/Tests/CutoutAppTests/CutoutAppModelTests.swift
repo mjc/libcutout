@@ -206,22 +206,7 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
-    func testHistoryRoutePointCollectorChecksCancellationBeforeFetching() {
-        XCTAssertThrowsError(
-            try CutoutAppModel.collectRideMapHistoryPoints(
-                previewLimit: nil,
-                nextBatch: { _ in
-                    XCTFail("cancelled route load should not fetch a page")
-                    return nil
-                },
-                cancellationCheck: { throw CancellationError() }
-            )
-        ) { error in
-            XCTAssertTrue(error is CancellationError)
-        }
-    }
-
-    func testHistoryRoutePointCollectorBoundsDisplayMemoryAndPreservesEndpoints() throws {
+    func testRouteProjectionUsesRustBoundedProjection() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
         for sequence in 0 ..< 10 {
@@ -234,61 +219,30 @@ final class CutoutAppModelTests: XCTestCase {
             )
         }
 
-        let result = try CutoutAppModel.collectRideMapHistoryPoints(
-            previewLimit: nil,
-            displayLimit: 4,
-            nextBatch: { cursor in
-                try state.pointsAfter(afterCursor: cursor, limit: 3)
-            }
-        )
-
-        XCTAssertEqual(result.0.count, 4)
-        XCTAssertEqual(result.0.first?.sequence, 0)
-        XCTAssertEqual(result.0.last?.sequence, 9)
-        XCTAssertGreaterThan(result.0[1].sequence, 0)
-        XCTAssertLessThan(result.0[1].sequence, result.0.last!.sequence)
-        XCTAssertTrue(result.1)
-
-        let previewResult = try CutoutAppModel.collectRideMapHistoryPoints(
-            previewLimit: 10,
-            displayLimit: 4,
-            nextBatch: { cursor in
-                try state.pointsAfter(afterCursor: cursor, limit: 3)
-            }
-        )
-        XCTAssertEqual(previewResult.0.count, 4)
-        XCTAssertTrue(previewResult.1)
+        let projection = try state.projectPoints(budget: 4)
+        XCTAssertEqual(projection.sourcePointCount, 10)
+        XCTAssertEqual(projection.points.count, 4)
+        XCTAssertEqual(projection.points.first?.sequence, 0)
+        XCTAssertEqual(projection.points.last?.sequence, 9)
     }
 
-    func testBoundedRoutePointProjectionHonorsSinglePointBudget() throws {
-        let state = MobileRideMapState()
-        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
-        _ = try state.ingestLocation(
-            monotonicMs: 1_000,
+    func testRouteDisplayPointConversionPreservesCanonicalGeometry() {
+        let point = MobileRideMapPointDto(
+            sequence: 4,
+            segmentId: 2,
+            latitudeDegrees: 40,
+            longitudeDegrees: -105,
             wallClockUnixMs: 1_700_000_000_000,
-            latitudeDegrees: 39.7,
-            longitudeDegrees: -104.9,
-            horizontalAccuracyMeters: 5
+            monotonicMs: 1_000,
+            horizontalAccuracyMeters: 3,
+            telemetryState: .associatedFresh
         )
-        _ = try state.ingestLocation(
-            monotonicMs: 2_000,
-            wallClockUnixMs: 1_700_000_001_000,
-            latitudeDegrees: 39.7001,
-            longitudeDegrees: -104.9001,
-            horizontalAccuracyMeters: 5
-        )
-        let incoming = try XCTUnwrap(state.pointsAfter(afterCursor: nil, limit: 10)?.points)
-        var points = [MobileRideMapPointDto]()
-
-        let truncated = CutoutAppModel.appendBoundedRoutePoints(
-            to: &points,
-            incoming: incoming,
-            limit: 1
-        )
-
-        XCTAssertTrue(truncated)
-        XCTAssertEqual(points.count, 1)
-        XCTAssertEqual(points[0].sequence, incoming.last?.sequence)
+        let display = MobileRideMapRouteDisplayPoint(point)
+        XCTAssertEqual(display.sequence, point.sequence)
+        XCTAssertEqual(display.segmentId, point.segmentId)
+        XCTAssertEqual(display.latitudeDegrees, point.latitudeDegrees)
+        XCTAssertEqual(display.longitudeDegrees, point.longitudeDegrees)
+        XCTAssertEqual(display.privacyClass, .precise)
     }
 
     @MainActor

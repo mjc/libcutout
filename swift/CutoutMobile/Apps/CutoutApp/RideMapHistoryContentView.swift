@@ -10,7 +10,7 @@ struct RideMapHistoryContentView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     @Binding var searchText: String
     let canLoadMore: Bool
-    let points: [MobileRideMapPointDto]
+    let displayPoints: [MobileRideMapRouteDisplayPoint]
     let pointsTruncated: Bool
     let isLoading: Bool
     let isRouteLoading: Bool
@@ -150,7 +150,7 @@ struct RideMapHistoryContentView: View {
 
                     ZStack {
                         RideMapCanvasView(
-                            points: points,
+                            points: displayPoints,
                             routeID: selectedRideID ?? "history",
                             showsStartMarker: true,
                             showsEndMarker: !pointsTruncated,
@@ -197,7 +197,7 @@ struct RideMapHistoryContentView: View {
                     .frame(maxWidth: .infinity)
 
                     if pointsTruncated {
-                        Text(localizedAppText("ride_map.history_truncated_count", points.count))
+                        Text(localizedAppText("ride_map.history_truncated_count", displayPoints.count))
                             .font(.caption)
                             .foregroundStyle(PevColors.muted)
                             .padding(.horizontal, 16)
@@ -312,7 +312,7 @@ struct RideMapHistoryContentView: View {
     }
 
     private var isSelectedRouteError: Bool {
-        selectedRide != nil && points.isEmpty && routeError != nil
+        selectedRide != nil && displayPoints.isEmpty && routeError != nil
     }
 
     private var isSelectedRouteEmpty: Bool {

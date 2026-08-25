@@ -7,6 +7,7 @@ struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let points: [MobileRideMapPointDto]
+    let displayPoints: [MobileRideMapRouteDisplayPoint]
     let pointsTruncated: Bool
     let historyError: MobileRideMapError?
     let routeError: MobileRideMapError?
@@ -83,7 +84,7 @@ struct RideMapHistoryDetailView: View {
                 VStack(spacing: 0) {
                     ZStack {
                         RideMapCanvasView(
-                            points: points,
+                            points: displayPoints,
                             routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
                             showsStartMarker: true,
                             showsEndMarker: !pointsTruncated,
@@ -131,6 +132,7 @@ struct RideMapHistoryDetailView: View {
                             recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
                             vehicle: vehicleLabel(for: ride),
                             points: points,
+                            displayPointCount: displayPoints.count,
                             recordedPointCount: ride.summary.pointCount,
                             pointsTruncated: pointsTruncated,
                             segmentCount: ride.segmentCount,
@@ -223,6 +225,7 @@ private struct RideMapHistoryDetailSummary: View {
     let recordedAt: String
     let vehicle: String
     let points: [MobileRideMapPointDto]
+    let displayPointCount: Int
     let recordedPointCount: UInt64
     let pointsTruncated: Bool
     let segmentCount: UInt64
@@ -280,10 +283,11 @@ private struct RideMapHistoryDetailSummary: View {
                     recordedPointCount: recordedPointCount,
                     rustSegmentCount: segmentCount,
                     decision: nil,
-                    showsRecordedBounds: !pointsTruncated
+                    showsRecordedBounds: !pointsTruncated,
+                    hasRoute: !displayPoints.isEmpty
                 )
                 if pointsTruncated {
-                    Text(localizedAppText("ride_map.history_truncated_count", points.count))
+                    Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
                         .font(.caption)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityIdentifier("ride-map.detail-truncated")

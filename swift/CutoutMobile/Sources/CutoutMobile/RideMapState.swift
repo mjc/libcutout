@@ -81,6 +81,30 @@ public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
     public var latitudeDegrees: Double
     public var longitudeDegrees: Double
     public var privacyClass: MobileRideMapRoutePrivacyClass
+
+    public init(
+        sequence: UInt64,
+        segmentId: UInt64,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+        privacyClass: MobileRideMapRoutePrivacyClass
+    ) {
+        self.sequence = sequence
+        self.segmentId = segmentId
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.privacyClass = privacyClass
+    }
+
+    public init(_ point: MobileRideMapPointDto) {
+        self.init(
+            sequence: point.sequence,
+            segmentId: point.segmentId,
+            latitudeDegrees: point.latitudeDegrees,
+            longitudeDegrees: point.longitudeDegrees,
+            privacyClass: .precise
+        )
+    }
 }
 
 public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
@@ -307,6 +331,40 @@ public final class MobileRideMapState: @unchecked Sendable {
                 budget: budget,
                 privacy: mappedPrivacy
             )))
+        }
+    }
+
+    /// Projects a durable route through Rust-owned viewport, LOD, and privacy policy.
+    ///
+    /// The raw route remains a persistence concern; only bounded display points cross into the
+    /// application layer.
+    public func projectStoredPoints(
+        rideID: String,
+        budget: UInt32,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise
+    ) throws -> MobileRideMapRouteProjection {
+        guard let database else {
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+        }
+        let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
+        switch privacy {
+        case .precise:
+            mappedPrivacy = .precise
+        case let .grid(e7):
+            mappedPrivacy = .grid(gridE7: e7)
+        }
+        do {
+            return try map(database.projectRoutePoints(
+                rideId: MobileRideIdDto(value: rideID),
+                options: MobileRideMapRouteProjectionOptionsDto(
+                    viewport: viewport,
+                    budget: budget,
+                    privacy: mappedPrivacy
+                )
+            ))
+        } catch {
+            throw map(error)
         }
     }
 
