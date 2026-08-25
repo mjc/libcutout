@@ -125,6 +125,15 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(ConnectionReconnectPolicy.delayMilliseconds(attempt: 4, jitter: 0.5))
     }
 
+    func testRestoredConnectedPeripheralStartsRideMapBeforeTelemetry() {
+        XCTAssertTrue(
+            RideMapConnectionPolicy.shouldEnsureRecording(hasObservedConnection: false)
+        )
+        XCTAssertFalse(
+            RideMapConnectionPolicy.shouldEnsureRecording(hasObservedConnection: true)
+        )
+    }
+
     func testReconnectSchedulerCancelsSupersededAndExplicitRetries() {
         let scheduler = RecordingReconnectScheduler()
         let reconnects = ConnectionReconnectController(scheduler: scheduler)

@@ -212,6 +212,12 @@ enum CoreBluetoothRestorationPolicy {
     }
 }
 
+enum RideMapConnectionPolicy {
+    static func shouldEnsureRecording(hasObservedConnection: Bool) -> Bool {
+        !hasObservedConnection
+    }
+}
+
 #if DEBUG
 public enum CutoutSessionTestInitialBluetoothState: Sendable {
     case scanning
@@ -974,9 +980,8 @@ public final class CutoutSessionCore: NSObject {
     func applyNotificationStep(_ step: CoreBluetoothSessionStep, receivedAt: MonotonicMilliseconds) {
         cancelPendingReconnect()
         step.actions.forEach(applySessionAction)
-        if !hasObservedRideMapConnection, let peripheral {
-            hasObservedRideMapConnection = true
-            ensureRideMapRecordingForConnection(platformIdentifier: peripheral.identifier.uuidString)
+        if let peripheral {
+            ensureRideMapRecordingIfNeeded(platformIdentifier: peripheral.identifier.uuidString)
         }
         if step.actions.contains(where: { $0.rawTelemetry != nil }) {
             do {
@@ -1976,6 +1981,7 @@ private extension CutoutSessionCore {
     func resumeConnectedPeripheral(_ peripheral: CBPeripheral) {
         assertOnBleQueue()
         guard liveOwner == nil else { return }
+        ensureRideMapRecordingIfNeeded(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         let services = peripheral.services ?? []
         guard !services.isEmpty else {
@@ -2113,7 +2119,7 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         assertOnBleQueue()
         hasObservedRideMapConnection = false
-        ensureRideMapRecordingForConnection(platformIdentifier: peripheral.identifier.uuidString)
+        ensureRideMapRecordingIfNeeded(platformIdentifier: peripheral.identifier.uuidString)
         setPhase(.discoveringServices)
         peripheral.delegate = self
         if isRecordOnly || isProbeOnly {
@@ -2123,6 +2129,16 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
             )
         }
         peripheral.discoverServices(discoveryServiceUuidsForSelectedRoute)
+    }
+
+    private func ensureRideMapRecordingIfNeeded(platformIdentifier: String) {
+        guard RideMapConnectionPolicy.shouldEnsureRecording(
+            hasObservedConnection: hasObservedRideMapConnection
+        ) else {
+            return
+        }
+        hasObservedRideMapConnection = true
+        ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier)
     }
 
     private func ensureRideMapRecordingForConnection(platformIdentifier: String) {
