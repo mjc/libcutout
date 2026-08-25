@@ -59,6 +59,26 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testBatchedLocationsPreserveTheirRecordedTimeSpacing() {
+        let timestamps = [
+            Date(timeIntervalSince1970: 1_700_000_000),
+            Date(timeIntervalSince1970: 1_700_000_001.5),
+            Date(timeIntervalSince1970: 1_700_000_004),
+        ]
+
+        XCTAssertEqual(
+            monotonicMillisecondsForLocationBatch(
+                timestamps: timestamps,
+                callbackMonotonicMs: MonotonicMilliseconds(20_000)
+            ),
+            [
+                MonotonicMilliseconds(16_000),
+                MonotonicMilliseconds(17_500),
+                MonotonicMilliseconds(20_000),
+            ]
+        )
+    }
+
     func testPevcapLocationContextUsesOnlyAdmittedMapSamples() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,

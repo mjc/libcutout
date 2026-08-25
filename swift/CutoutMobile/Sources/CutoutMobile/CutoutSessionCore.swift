@@ -2644,12 +2644,15 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard locations.isEmpty == false else { return }
         let callbackMonotonicMs = clock.now().rawValue
-        for (index, location) in locations.enumerated() {
+        let monotonicMilliseconds = monotonicMillisecondsForLocationBatch(
+            timestamps: locations.map(\.timestamp),
+            callbackMonotonicMs: MonotonicMilliseconds(callbackMonotonicMs)
+        )
+        for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
             let sample = MobilePhoneLocationSampleDto(location: location)
-            let (monotonicMs, overflow) = callbackMonotonicMs.addingReportingOverflow(UInt64(index))
             do {
                 let decision = try rideMapState.ingestLocation(
-                    monotonicMs: overflow ? .max : monotonicMs,
+                    monotonicMs: monotonicMs.rawValue,
                     sample: sample
                 )
                 if let admittedSample = admittedPhoneLocationSample(sample: sample, decision: decision) {
@@ -2664,6 +2667,29 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             }
         }
         publishPhoneLocationSnapshot()
+    }
+}
+
+func monotonicMillisecondsForLocationBatch(
+    timestamps: [Date],
+    callbackMonotonicMs: MonotonicMilliseconds
+) -> [MonotonicMilliseconds] {
+    guard let newestTimestamp = timestamps.max() else { return [] }
+
+    return timestamps.map { timestamp in
+        let elapsedSeconds = newestTimestamp.timeIntervalSince(timestamp)
+        guard elapsedSeconds.isFinite, elapsedSeconds > 0 else {
+            return callbackMonotonicMs
+        }
+        let elapsedMilliseconds = elapsedSeconds * 1_000
+        guard elapsedMilliseconds < Double(UInt64.max) else {
+            return MonotonicMilliseconds(0)
+        }
+        return MonotonicMilliseconds(
+            callbackMonotonicMs.rawValue >= UInt64(elapsedMilliseconds.rounded(.down))
+                ? callbackMonotonicMs.rawValue - UInt64(elapsedMilliseconds.rounded(.down))
+                : 0
+        )
     }
 }
 
