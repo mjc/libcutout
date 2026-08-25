@@ -4639,16 +4639,18 @@ impl MobileRideMapCoreInner {
         let Some(database) = self.database.as_ref() else {
             return Ok(());
         };
-        let page = database.list_rides(None, 50).map_err(map_core_error)?;
-        let Some(ride) = page.rides.into_iter().find(|ride| {
-            matches!(
-                ride.state,
-                MobileRideLifecycleStateDto::Active
-                    | MobileRideLifecycleStateDto::Paused
-                    | MobileRideLifecycleStateDto::Stopped
-                    | MobileRideLifecycleStateDto::Interrupted
-            )
-        }) else {
+        let Some(recovered_ride_id) = database
+            .bootstrap_snapshot()
+            .recovered_rides
+            .into_iter()
+            .next()
+        else {
+            return Ok(());
+        };
+        let Some(ride) = database
+            .find_ride(recovered_ride_id)
+            .map_err(map_core_error)?
+        else {
             return Ok(());
         };
         self.active_ride_id = Some(ride.id.clone());
@@ -13693,6 +13695,69 @@ mod tests {
         assert_eq!(rides.rides.len(), 1);
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
         assert_eq!(rides.rides[0].duration_milliseconds, 500_000);
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_restores_a_recovered_ride_beyond_the_history_page() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-recovery-history-page-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let recovered_ride = database
+            .create_ride(MobileRideSourceDto::Live, 1_000)
+            .expect("recovered ride creates");
+        database
+            .transition(recovered_ride.clone(), MobileRideEventDto::Start)
+            .expect("recovered ride starts");
+        database
+            .append_location(
+                recovered_ride.clone(),
+                MobileRideLocationDto {
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    monotonic_milliseconds: 1_001,
+                    wall_clock_unix_milliseconds: 1_700_000_000_001,
+                    horizontal_accuracy_millimetres: Some(3_000),
+                    source: MobileRideSourceDto::Live,
+                },
+            )
+            .expect("recovered ride records a point");
+
+        for index in 0..51_u64 {
+            let ride = database
+                .create_ride(MobileRideSourceDto::Live, 2_000 + index)
+                .expect("newer ride creates");
+            database
+                .transition(ride.clone(), MobileRideEventDto::Start)
+                .expect("newer ride starts");
+            database
+                .transition(ride.clone(), MobileRideEventDto::Stop)
+                .expect("newer ride stops");
+            database
+                .transition(ride, MobileRideEventDto::Save)
+                .expect("newer ride saves");
+        }
+        database.shutdown().expect("database shuts down");
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let snapshot = state
+            .current_snapshot()
+            .expect("the recovered ride must restore even when older than 50 history rows");
+        assert_eq!(snapshot.ride_id, recovered_ride.value);
+        assert_eq!(snapshot.state, MobileRideLifecycleStateDto::Interrupted);
+        assert_eq!(snapshot.summary.point_count, 1);
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);
