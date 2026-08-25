@@ -266,26 +266,12 @@ final class LightingRouteModel {
         }
         session.onStateChange = { [weak self] state in
             Task { @MainActor in
-                if state.resetsRestoreEligibility {
-                    self?.restoreAttempted = false
-                }
-                if state == .scanning {
-                    self?.peripheralName = nil
-                    self?.peripheralIdentifier = nil
-                }
-                self?.connectionState = state
-                if state == .ready {
-                    self?.ensureRecordForConnectedAccessory()
-                    self?.persistence.setConnection(.ready)
-                    self?.restoreIfEligible()
-                } else if state != .idle {
-                    self?.persistence.setConnection(.disconnected)
-                }
+                self?.handleStateChange(state)
             }
         }
         session.onRecord = { [weak self] record in
             Task { @MainActor in
-                self?.append(record)
+                self?.handleRecord(record)
             }
         }
     }
@@ -440,6 +426,28 @@ final class LightingRouteModel {
         default:
             false
         }
+    }
+
+    private func handleStateChange(_ state: MelkLightingPeripheralState) {
+        if state.resetsRestoreEligibility {
+            restoreAttempted = false
+        }
+        if state == .scanning {
+            peripheralName = nil
+            peripheralIdentifier = nil
+        }
+        connectionState = state
+        if state == .ready {
+            ensureRecordForConnectedAccessory()
+            persistence.setConnection(.ready)
+            restoreIfEligible()
+        } else if state != .idle {
+            persistence.setConnection(.disconnected)
+        }
+    }
+
+    private func handleRecord(_ record: String) {
+        append(record)
     }
 
     private func append(_ record: String) {
