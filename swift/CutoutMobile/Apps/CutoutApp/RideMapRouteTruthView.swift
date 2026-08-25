@@ -58,6 +58,8 @@ struct RideMapRouteTruthView: View {
         switch decision {
         case .accepted:
             return nil
+        case .pending:
+            return localizedAppText("ride_map.decision.pending")
         case let .rejected(reason), let .ignored(reason):
             switch reason {
             case .rideNotRecording:
@@ -71,6 +73,8 @@ struct RideMapRouteTruthView: View {
             case .unrealisticJump:
                 return localizedAppText("ride_map.decision.jump")
             }
+        case let .storageError(message):
+            return localizedAppText("ride_map.decision.storage_error", message)
         }
     }
 

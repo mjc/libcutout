@@ -2451,12 +2451,16 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
 
     /**
-     * Admits one Core Location sample into the active recording.
+     * Queues one Core Location sample for durable admission into the active recording.
+     *
+     * A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
+     * callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
+     * The callback never waits for SQLite or the database worker.
      *
      * # Errors
      *
-     * Returns an error when there is no active ride, the location is invalid, or durable
-     * persistence rejects the sample.
+     * Returns an error when there is no active ride or the location is invalid. Queue saturation,
+     * worker shutdown, and durable rejection are explicit decision outcomes.
      */
     func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double) throws  -> MobileRideMapCoreDecisionDto
 
@@ -2508,6 +2512,14 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
      * Returns an error when durable route paging fails.
      */
     func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws  -> MobileRideMapCorePointBatchDto
+
+    /**
+     * Returns durable outcomes for queued location writes without waiting for SQLite.
+     *
+     * The returned decisions are ordered by the bounded write queue. An empty result means that
+     * the oldest queued write is still pending.
+     */
+    func pollLocationWrites()  -> [MobileRideMapCoreDecisionDto]
 
     /**
      * Resumes the paused ride.
@@ -2690,12 +2702,16 @@ open func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64)thr
 }
 
     /**
-     * Admits one Core Location sample into the active recording.
+     * Queues one Core Location sample for durable admission into the active recording.
+     *
+     * A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
+     * callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
+     * The callback never waits for SQLite or the database worker.
      *
      * # Errors
      *
-     * Returns an error when there is no active ride, the location is invalid, or durable
-     * persistence rejects the sample.
+     * Returns an error when there is no active ride or the location is invalid. Queue saturation,
+     * worker shutdown, and durable rejection are explicit decision outcomes.
      */
 open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double)throws  -> MobileRideMapCoreDecisionDto  {
     return try  FfiConverterTypeMobileRideMapCoreDecisionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
@@ -2797,6 +2813,20 @@ open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideM
             self.uniffiCloneHandle(),
         FfiConverterOptionUInt64.lower(afterCursor),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+    /**
+     * Returns durable outcomes for queued location writes without waiting for SQLite.
+     *
+     * The returned decisions are ordered by the bounded write queue. An empty result means that
+     * the oldest queued write is still pending.
+     */
+open func pollLocationWrites() -> [MobileRideMapCoreDecisionDto]  {
+    return try!  FfiConverterSequenceTypeMobileRideMapCoreDecisionDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_poll_location_writes(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -17289,6 +17319,10 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case InvalidRideState
     /**
+     * A route point supplied a segment identity outside Rust's canonical sequence.
+     */
+    case InvalidSegmentId
+    /**
      * The bounded Rust worker queue is full.
      */
     case QueueFull
@@ -17344,9 +17378,10 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
         case 13: return .NotFound
         case 14: return .InvalidTransition
         case 15: return .InvalidRideState
-        case 16: return .QueueFull
-        case 17: return .WorkerStopped
-        case 18: return .StorageFailure
+        case 16: return .InvalidSegmentId
+        case 17: return .QueueFull
+        case 18: return .WorkerStopped
+        case 19: return .StorageFailure
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -17419,16 +17454,20 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(15))
 
 
-        case .QueueFull:
+        case .InvalidSegmentId:
             writeInt(&buf, Int32(16))
 
 
-        case .WorkerStopped:
+        case .QueueFull:
             writeInt(&buf, Int32(17))
 
 
-        case .StorageFailure:
+        case .WorkerStopped:
             writeInt(&buf, Int32(18))
+
+
+        case .StorageFailure:
+            writeInt(&buf, Int32(19))
 
         }
     }
@@ -17952,6 +17991,17 @@ public func FfiConverterTypeMobileRideMapCoreAssociationDto_lower(_ value: Mobil
 public enum MobileRideMapCoreDecisionDto: Equatable, Hashable {
 
     /**
+     * The location was queued for durable persistence but has not completed yet.
+     */
+    case pending(
+        /**
+         * The provisional route point; it is not part of the durable projection yet.
+         */point: MobileRideMapCorePointDto,
+        /**
+         * Whether this point starts a new route segment after durable admission.
+         */segmentStarted: Bool
+    )
+    /**
      * The location was accepted into the canonical route.
      */
     case accepted(
@@ -17978,6 +18028,14 @@ public enum MobileRideMapCoreDecisionDto: Equatable, Hashable {
          * Stable admission reason.
          */reason: MobileRideMapDecisionReasonDto
     )
+    /**
+     * Durable persistence failed before the point could be admitted.
+     */
+    case storageError(
+        /**
+         * Stable storage failure text for the mobile diagnostic surface.
+         */message: String
+    )
 
 
 
@@ -17999,13 +18057,19 @@ public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuff
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .accepted(point: try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf), segmentStarted: try FfiConverterBool.read(from: &buf)
+        case 1: return .pending(point: try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf), segmentStarted: try FfiConverterBool.read(from: &buf)
         )
 
-        case 2: return .rejected(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
+        case 2: return .accepted(point: try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf), segmentStarted: try FfiConverterBool.read(from: &buf)
         )
 
-        case 3: return .ignored(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
+        case 3: return .rejected(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
+        )
+
+        case 4: return .ignored(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
+        )
+
+        case 5: return .storageError(message: try FfiConverterString.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -18016,20 +18080,31 @@ public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuff
         switch value {
 
 
-        case let .accepted(point,segmentStarted):
+        case let .pending(point,segmentStarted):
             writeInt(&buf, Int32(1))
             FfiConverterTypeMobileRideMapCorePointDto.write(point, into: &buf)
             FfiConverterBool.write(segmentStarted, into: &buf)
 
 
-        case let .rejected(reason):
+        case let .accepted(point,segmentStarted):
             writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileRideMapCorePointDto.write(point, into: &buf)
+            FfiConverterBool.write(segmentStarted, into: &buf)
+
+
+        case let .rejected(reason):
+            writeInt(&buf, Int32(3))
             FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
 
 
         case let .ignored(reason):
-            writeInt(&buf, Int32(3))
+            writeInt(&buf, Int32(4))
             FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
+
+
+        case let .storageError(message):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(message, into: &buf)
 
         }
     }
@@ -23492,6 +23567,31 @@ fileprivate struct FfiConverterSequenceTypeMobilePevcapImportWarningDto: FfiConv
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideMapCoreDecisionDto]
+
+    public static func write(_ value: [MobileRideMapCoreDecisionDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideMapCoreDecisionDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideMapCoreDecisionDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideMapCoreDecisionDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideMapCoreDecisionDto.read(from: &buf))
+        }
+        return seq
+    }
+}
 /**
  * Ambiguous picker candidate that requires user confirmation before routing.
  */
@@ -23847,7 +23947,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ensure_recording_for_vehicle() != 43853) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 25961) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 24524) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_initialization_error() != 36652) {
@@ -23866,6 +23966,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_poll_location_writes() != 28284) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {

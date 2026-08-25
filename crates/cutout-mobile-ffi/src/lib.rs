@@ -3576,6 +3576,9 @@ pub enum MobileRideDatabaseError {
     /// The ride is not accepting location samples.
     #[error("ride is not accepting samples")]
     InvalidRideState,
+    /// A route point supplied a segment identity outside Rust's canonical sequence.
+    #[error("invalid ride segment identity")]
+    InvalidSegmentId,
     /// The bounded Rust worker queue is full.
     #[error("ride database queue is full")]
     QueueFull,
@@ -3624,6 +3627,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::NotFound => MobileRideDatabaseError::NotFound,
         persistence::StorageError::Transition(_) => MobileRideDatabaseError::InvalidTransition,
         persistence::StorageError::InvalidRideState(_) => MobileRideDatabaseError::InvalidRideState,
+        persistence::StorageError::InvalidSegmentId { .. } => {
+            MobileRideDatabaseError::InvalidSegmentId
+        }
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
@@ -13561,11 +13567,17 @@ mod tests {
         let pending = state
             .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
             .expect("location queues");
-        assert!(matches!(pending, MobileRideMapCoreDecisionDto::Pending { .. }));
+        assert!(matches!(
+            pending,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
 
         state.stop().expect("recording stops");
         let completed = await_location_decision(&state, pending);
-        assert!(matches!(completed, MobileRideMapCoreDecisionDto::Accepted { .. }));
+        assert!(matches!(
+            completed,
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
 
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(inner.recorder.summary().point_count().as_u64(), 0);

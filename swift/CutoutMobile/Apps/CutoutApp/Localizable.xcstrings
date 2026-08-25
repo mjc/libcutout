@@ -821,6 +821,14 @@
       "comment" : "Route truth status when a location update arrives outside active recording.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location ignored because the ride is not recording." } } }
     },
+    "ride_map.decision.pending" : {
+      "comment" : "Route truth status while a location waits for durable storage confirmation.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Saving location…" } } }
+    },
+    "ride_map.decision.storage_error" : {
+      "comment" : "Route truth status when durable location storage fails.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location was not saved: %@" } } }
+    },
     "ride_map.decision.duplicate" : {
       "comment" : "Route truth status for a duplicate location update.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Duplicate location ignored." } } }
