@@ -55,6 +55,10 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.recent_sag"), "Derived from voltage curve + recent sag")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.voltage_curve"), "Derived from voltage curve only")
         XCTAssertEqual(localizedAppText("bms.no_data.estimate_detail.unavailable"), "Estimate unavailable")
+        XCTAssertEqual(
+            localizedAppText("ride_map.history_truncated_count", 16_384),
+            "Showing 16,384 route points; the full route remains stored."
+        )
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
         XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Raw readback, available when we need to debug")
         XCTAssertEqual(localizedAppText("bms.display_modes"), "Display modes")

@@ -197,7 +197,7 @@ struct RideMapHistoryContentView: View {
                     .frame(maxWidth: .infinity)
 
                     if pointsTruncated {
-                        Text(localizedAppText("ride_map.history_truncated"))
+                        Text(localizedAppText("ride_map.history_truncated_count", points.count))
                             .font(.caption)
                             .foregroundStyle(PevColors.muted)
                             .padding(.horizontal, 16)

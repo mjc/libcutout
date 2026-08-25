@@ -283,7 +283,7 @@ private struct RideMapHistoryDetailSummary: View {
                     showsRecordedBounds: !pointsTruncated
                 )
                 if pointsTruncated {
-                    Text(localizedAppText("ride_map.history_truncated"))
+                    Text(localizedAppText("ride_map.history_truncated_count", points.count))
                         .font(.caption)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityIdentifier("ride-map.detail-truncated")

@@ -773,6 +773,10 @@
       "comment" : "History route warning when the bounded UI point preview is incomplete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }
     },
+    "ride_map.history_truncated_count" : {
+      "comment" : "History route warning with the number of points currently projected for map display; the durable route remains complete.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %lld route points; the full route remains stored." } } }
+    },
     "ride_map.history_loading" : {
       "comment" : "Historical ride detail state while the selected route is being loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading ride…" } } }
