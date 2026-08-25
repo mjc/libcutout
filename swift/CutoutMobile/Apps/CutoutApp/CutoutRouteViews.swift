@@ -181,6 +181,21 @@ struct VescDebugRouteView: View {
     }
 }
 
+private extension MelkLightingPeripheralState {
+    var persistedConnectionState: MobileRgbLightingConnectionStateDto? {
+        switch self {
+        case .idle:
+            nil
+        case .disconnected:
+            .disconnected
+        case .ready:
+            .ready
+        case .scanning, .connecting, .discovering, .retrying, .failed:
+            .unknown
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class LightingRouteModel {
@@ -405,10 +420,10 @@ final class LightingRouteModel {
         connectionState = state
         if state == .ready {
             ensureRecordForConnectedAccessory()
-            persistence.setConnection(.ready)
             restoreIfEligible()
-        } else if state != .idle {
-            persistence.setConnection(.disconnected)
+        }
+        if let persistedConnectionState = state.persistedConnectionState {
+            persistence.setConnection(persistedConnectionState)
         }
     }
 

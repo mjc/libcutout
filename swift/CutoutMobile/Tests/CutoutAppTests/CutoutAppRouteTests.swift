@@ -688,6 +688,47 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLightingRouteModelPersistsOnlyStableConnectionStates() async throws {
+        let suiteName = "CutoutAppRouteTests.lightingConnectionState"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let persistence = LightingAccessoryPersistence(defaults: defaults)
+        XCTAssertTrue(persistence.ensureRecord(platformIdentifier: "A1B2C3D4-E5F6-4789-ABCD-0123456789AB"))
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake, persistence: persistence)
+        model.start()
+
+        let transientStates: [MelkLightingPeripheralState] = [
+            .scanning,
+            .connecting,
+            .discovering,
+            .retrying(attempt: 1, delayMilliseconds: 250),
+            .failed("Bluetooth unavailable"),
+        ]
+        for state in transientStates {
+            fake.emitState(state)
+            await Task.yield()
+            let data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+            let record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+            XCTAssertEqual(record.connection(), .unknown, "unexpected persisted state for \(state)")
+        }
+
+        fake.emitState(.ready)
+        await Task.yield()
+        var data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+        var record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+        XCTAssertEqual(record.connection(), .ready)
+
+        fake.emitState(.disconnected)
+        await Task.yield()
+        data = try XCTUnwrap(defaults.data(forKey: "lighting.accessory.record"))
+        record = try MobileRgbLightingAccessoryRecord.decode(bytes: data)
+        XCTAssertEqual(record.connection(), .disconnected)
+    }
+
+    @MainActor
     func testLightingRouteModelRestoresConfirmedStateForRememberedIdentity() async throws {
         let suiteName = "CutoutAppRouteTests.lightingRestore"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
