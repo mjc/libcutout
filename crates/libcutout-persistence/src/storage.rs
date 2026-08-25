@@ -3,9 +3,9 @@ use cutout_core::{
     SessionOutput,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_LIVE_ROUTE_POINTS,
-    RideEvent, RideLifecycleState, RideMapRecorder, RideMapSegmentId, RideSummary,
-    RouteTelemetryState, TransitionError,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
+    MAX_LIVE_ROUTE_POINTS, RideEvent, RideLifecycleState, RideMapRecorder, RideMapSegmentId,
+    RideSummary, RouteTelemetryState, TransitionError,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -872,6 +872,15 @@ pub enum StorageError {
     /// The ride cannot accept a point in its current state.
     #[error("ride is not accepting location samples in state {0:?}")]
     InvalidRideState(RideLifecycleState),
+    /// A persisted route point supplied a segment identity that does not follow the canonical
+    /// previous-point and gap policy.
+    #[error("invalid route segment id: expected {expected}, got {actual}")]
+    InvalidSegmentId {
+        /// Canonical segment identity derived from the previous point and gap policy.
+        expected: u64,
+        /// Segment identity supplied by the caller.
+        actual: u64,
+    },
     /// The bounded command queue is full.
     #[error("ride database command queue is full")]
     QueueFull,
@@ -4124,6 +4133,20 @@ fn append_location_in_transaction(
             mode,
         )
         .map_err(StorageError::InvalidRideState)?;
+    let expected_segment_id = previous.map_or(0, |(_, previous_segment_id, previous_sample)| {
+        let gap_started = sample
+            .monotonic_milliseconds()
+            .as_u64()
+            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+            > MAX_GAP_MILLISECONDS;
+        previous_segment_id.saturating_add(if gap_started { 1 } else { 0 })
+    });
+    if segment_id != expected_segment_id {
+        return Err(StorageError::InvalidSegmentId {
+            expected: expected_segment_id,
+            actual: segment_id,
+        });
+    }
     match decision {
         LocationWriteDecision::Accepted {
             distance_millimetres,

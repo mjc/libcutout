@@ -485,8 +485,8 @@ fn find_and_list_ride_projections_agree_for_all_route_shapes() {
             multi_segment_ride,
             LocationSample::new(
                 Coordinate::from_degrees(40.001, -105.0).unwrap(),
-                23_500,
-                1_700_000_023_500,
+                52_000,
+                1_700_000_052_000,
                 Some(3_000),
                 LocationSource::Live,
             ),
@@ -1772,6 +1772,69 @@ fn route_points_persist_telemetry_provenance() {
         RouteTelemetryState::AssociatedFresh
     );
 
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn route_points_reject_arbitrary_segment_id() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-integrity-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = |monotonic_ms| {
+        LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            Some(3_000),
+            LocationSource::Live,
+        )
+    };
+    database
+        .append_location_with_segment_and_telemetry(
+            ride,
+            sample(11),
+            0,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    assert!(matches!(
+        database.append_location_with_segment_and_telemetry(
+            ride,
+            sample(12),
+            2,
+            RouteTelemetryState::GpsOnly,
+        ),
+        Err(StorageError::InvalidSegmentId {
+            expected: 0,
+            actual: 2
+        })
+    ));
+    database
+        .append_location_with_segment_and_telemetry(
+            ride,
+            sample(30_012),
+            1,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    assert!(matches!(
+        database.append_location_with_segment_and_telemetry(
+            ride,
+            sample(30_013),
+            3,
+            RouteTelemetryState::GpsOnly,
+        ),
+        Err(StorageError::InvalidSegmentId {
+            expected: 1,
+            actual: 3
+        })
+    ));
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

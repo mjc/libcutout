@@ -5,7 +5,8 @@ use crate::{
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
-const MAX_GAP_MILLISECONDS: u64 = 30_000;
+/// Maximum sample interval that remains in the current route segment.
+pub const MAX_GAP_MILLISECONDS: u64 = 30_000;
 const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
 
 /// A non-empty platform identity for a connected vehicle.
