@@ -4483,6 +4483,19 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
+    fn transition_at(
+        &self,
+        id: MobileRideIdDto,
+        event: MobileRideEventDto,
+        monotonic_at_milliseconds: u64,
+    ) -> Result<MobileRideLifecycleStateDto, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        self.inner
+            .transition_at(id, event.into(), monotonic_at_milliseconds)
+            .map(Into::into)
+            .map_err(map_ride_database_error)
+    }
+
     /// Appends a location sample and reports duplicate/out-of-order admission.
     ///
     /// # Errors
@@ -5375,7 +5388,9 @@ impl MobileRideMapCoreInner {
             .apply(event.into())
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         if let Some(database) = self.database.as_ref() {
-            database.transition(id, event).map_err(map_core_error)?;
+            database
+                .transition(id, event.into())
+                .map_err(map_core_error)?;
         }
         self.recorder.apply_transition(next);
         Ok(self.snapshot(next.into()))
@@ -5395,7 +5410,9 @@ impl MobileRideMapCoreInner {
             .apply(event.into())
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
         if let Some(database) = self.database.as_ref() {
-            database.transition(id, event).map_err(map_core_error)?;
+            database
+                .transition_at(id, event.into(), at_milliseconds)
+                .map_err(map_core_error)?;
         }
         self.recorder
             .apply_transition_at(next, ride_maps::MonotonicMilliseconds::new(at_milliseconds));
@@ -13301,13 +13318,13 @@ mod tests {
             state
                 .observe_vehicle_connection("pev-found-later".to_owned(), 1_001)
                 .expect("late PEV connection is observed"),
-            MobileRideMapCoreAssociationDto::Associated
+            MobileRideMapCoreAssociationDto::CandidateMissing
         );
         assert_eq!(
             state
                 .current_snapshot()
                 .and_then(|snapshot| snapshot.associated_vehicle),
-            Some("pev-found-later".to_owned())
+            None
         );
     }
 
@@ -13401,7 +13418,9 @@ mod tests {
         let database =
             open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
         let state = MobileRideMapCore::with_database(database.clone());
-        state.start_gps_only(1_000, None).expect("recording starts");
+        state
+            .start_gps_only(1_000, Some("pev-1".to_owned()))
+            .expect("recording starts");
         database.shutdown().expect("database shuts down");
 
         assert!(matches!(

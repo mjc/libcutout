@@ -28,7 +28,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -1490,6 +1490,32 @@ impl RideDatabase {
             ride_id,
             event,
             occurred_at_ms,
+            monotonic_at_ms: None,
+            reply,
+        })
+    }
+
+    /// Applies one lifecycle event using a caller-provided monotonic timestamp for duration.
+    ///
+    /// The wall-clock update remains owned by the database worker; the monotonic value is used
+    /// only for canonical active-duration accounting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride is missing, the transition is invalid, or the
+    /// worker cannot process the command.
+    pub fn transition_at(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: u64,
+    ) -> Result<RideLifecycleState, StorageError> {
+        let occurred_at_ms = wall_clock_now_milliseconds()?;
+        self.request(move |reply| Command::Transition {
+            ride_id,
+            event,
+            occurred_at_ms,
+            monotonic_at_ms: Some(monotonic_at_ms),
             reply,
         })
     }
@@ -1871,6 +1897,7 @@ enum Command {
         ride_id: RideId,
         event: RideEvent,
         occurred_at_ms: u64,
+        monotonic_at_ms: Option<u64>,
         reply: Reply<RideLifecycleState>,
     },
     AppendLocation {
@@ -2162,9 +2189,16 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 ride_id,
                 event,
                 occurred_at_ms,
+                monotonic_at_ms,
                 reply,
             } => {
-                let _ = reply.send(transition_ride(&connection, ride_id, event, occurred_at_ms));
+                let _ = reply.send(transition_ride(
+                    &connection,
+                    ride_id,
+                    event,
+                    occurred_at_ms,
+                    monotonic_at_ms,
+                ));
             }
             Command::AppendLocation {
                 ride_id,
@@ -2362,7 +2396,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 10;
+                PRAGMA user_version = 11;
                  COMMIT;",
             )?;
         }
@@ -2420,6 +2454,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         7 => migrate_v7_to_current(connection)?,
         8 => migrate_v8_to_current(connection)?,
         9 => migrate_v9_to_current(connection)?,
+        10 => migrate_v10_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -2440,6 +2475,9 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
             monotonic_created_at_ms INTEGER CHECK (monotonic_created_at_ms IS NULL OR monotonic_created_at_ms >= 0),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+            duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (duration_ms >= 0),
+            paused_at_ms INTEGER CHECK (paused_at_ms IS NULL OR paused_at_ms >= 0),
+            paused_duration_ms INTEGER NOT NULL DEFAULT 0 CHECK (paused_duration_ms >= 0),
             point_count INTEGER NOT NULL CHECK (point_count >= 0),
             distance_mm INTEGER NOT NULL CHECK (distance_mm >= 0),
             candidate_vehicle TEXT CHECK (candidate_vehicle IS NULL OR length(candidate_vehicle) BETWEEN 1 AND 512),
@@ -2630,7 +2668,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-            PRAGMA user_version = 10;
+                PRAGMA user_version = 11;
         ",
     )?;
     transaction.commit()?;
@@ -2771,6 +2809,32 @@ fn migrate_v9_to_current(connection: &mut Connection) -> Result<(), StorageError
         ALTER TABLE rides ADD COLUMN monotonic_created_at_ms INTEGER
             CHECK (monotonic_created_at_ms IS NULL OR monotonic_created_at_ms >= 0);
         PRAGMA user_version = 10;
+        COMMIT;
+        ",
+    )?;
+    migrate_v10_to_current(connection)
+}
+
+fn migrate_v10_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    connection.execute_batch(
+        "
+        BEGIN IMMEDIATE;
+        ALTER TABLE rides ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0
+            CHECK (duration_ms >= 0);
+        ALTER TABLE rides ADD COLUMN paused_at_ms INTEGER
+            CHECK (paused_at_ms IS NULL OR paused_at_ms >= 0);
+        ALTER TABLE rides ADD COLUMN paused_duration_ms INTEGER NOT NULL DEFAULT 0
+            CHECK (paused_duration_ms >= 0);
+        UPDATE rides
+        SET duration_ms = COALESCE((
+            SELECT MAX(ride_points.monotonic_ms) -
+                   COALESCE(rides.monotonic_created_at_ms, MIN(ride_points.monotonic_ms))
+            FROM ride_points
+            WHERE ride_points.ride_id = rides.id
+        ), 0)
+        WHERE duration_ms = 0;
+        PRAGMA user_version = 11;
         COMMIT;
         ",
     )?;
@@ -2937,7 +3001,13 @@ fn create_started_ride(
 ) -> Result<RideId, StorageError> {
     let transaction = connection.transaction()?;
     let ride_id = create_ride(&transaction, source, created_at_ms, monotonic_created_at_ms)?;
-    transition_ride(&transaction, ride_id, RideEvent::Start, occurred_at_ms)?;
+    transition_ride(
+        &transaction,
+        ride_id,
+        RideEvent::Start,
+        occurred_at_ms,
+        None,
+    )?;
     update_ride_map_metadata(&transaction, ride_id, candidate_vehicle, None, None, None)?;
     transaction.commit()?;
     Ok(ride_id)
@@ -3624,7 +3694,13 @@ fn finish_pevcap_import(
         return Err(StorageError::PevcapImportInProgress);
     }
     if let Some(ride_id) = ride_id {
-        transition_ride(&transaction, ride_id, RideEvent::Import, imported_at_ms)?;
+        transition_ride(
+            &transaction,
+            ride_id,
+            RideEvent::Import,
+            imported_at_ms,
+            None,
+        )?;
     }
     transaction.execute(
         "INSERT INTO pevcap_imports
@@ -3833,15 +3909,22 @@ fn transition_ride(
     ride_id: RideId,
     event: RideEvent,
     occurred_at_ms: u64,
+    monotonic_at_ms: Option<u64>,
 ) -> Result<RideLifecycleState, StorageError> {
     let write_state = load_ride_write_state(connection, ride_id)?;
-    let update = write_state.transition(event, occurred_at_ms)?;
+    let update = write_state.transition_at(event, occurred_at_ms, monotonic_at_ms)?;
     connection.execute(
-        "UPDATE rides SET state = ?2, updated_at_ms = ?3 WHERE id = ?1",
+        "UPDATE rides
+         SET state = ?2, updated_at_ms = ?3, duration_ms = ?4,
+             paused_at_ms = ?5, paused_duration_ms = ?6
+         WHERE id = ?1",
         params![
             ride_id.uuid().to_string(),
             state_to_db(update.lifecycle()),
-            update.updated_at_milliseconds()
+            update.updated_at_milliseconds(),
+            update.duration_milliseconds(),
+            update.paused_at_milliseconds(),
+            update.paused_duration_milliseconds(),
         ],
     )?;
     Ok(update.lifecycle())
@@ -3929,6 +4012,7 @@ fn append_location_in_transaction(
         LocationWriteDecision::Accepted {
             distance_millimetres,
             updated_at_ms,
+            duration_milliseconds,
         } => {
             let sequence = previous
                 .map(|(sequence, _, _)| sequence + 1)
@@ -3941,6 +4025,7 @@ fn append_location_in_transaction(
                 telemetry_state,
                 distance_millimetres,
                 updated_at_ms,
+                duration_milliseconds,
             };
             match insert_location(connection, &insert) {
                 Ok(()) => Ok(LocationAdmission::Accepted),
@@ -3960,18 +4045,42 @@ fn load_ride_write_state(
     connection: &Connection,
     ride_id: RideId,
 ) -> Result<RideWriteState, StorageError> {
-    let (source, lifecycle, updated_at_ms): (String, String, u64) = connection
+    let (
+        source,
+        lifecycle,
+        updated_at_ms,
+        monotonic_created_at_ms,
+        duration_ms,
+        paused_at_ms,
+        paused_duration_ms,
+    ): (String, String, u64, Option<u64>, u64, Option<u64>, u64) = connection
         .query_row(
-            "SELECT source, state, updated_at_ms FROM rides WHERE id = ?1",
+            "SELECT source, state, updated_at_ms, monotonic_created_at_ms,
+                    duration_ms, paused_at_ms, paused_duration_ms
+             FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    Ok(RideWriteState::new(
+    Ok(RideWriteState::with_duration(
         ride_source_from_db(&source)?,
         state_from_db(&lifecycle)?,
         updated_at_ms,
+        monotonic_created_at_ms,
+        duration_ms,
+        paused_at_ms,
+        paused_duration_ms,
     ))
 }
 
@@ -3984,6 +4093,7 @@ struct LocationInsert {
     telemetry_state: RouteTelemetryState,
     distance_millimetres: u64,
     updated_at_ms: u64,
+    duration_milliseconds: u64,
 }
 
 fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(), StorageError> {
@@ -3995,6 +4105,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         telemetry_state,
         distance_millimetres,
         updated_at_ms,
+        duration_milliseconds,
     } = *insert;
     connection.execute(
         "INSERT INTO ride_points
@@ -4014,12 +4125,17 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         ],
     )?;
     connection.execute(
-        "UPDATE rides SET point_count = point_count + 1, distance_mm = distance_mm + ?2,
-         updated_at_ms = ?3 WHERE id = ?1",
+        "UPDATE rides
+         SET point_count = point_count + 1,
+             distance_mm = distance_mm + ?2,
+             updated_at_ms = ?3,
+             duration_ms = MAX(duration_ms, ?4)
+         WHERE id = ?1",
         params![
             ride_id.uuid().to_string(),
             distance_millimetres,
-            updated_at_ms
+            updated_at_ms,
+            duration_milliseconds,
         ],
     )?;
     Ok(())
@@ -4053,15 +4169,7 @@ const RIDE_POINT_AGGREGATES_CTE: &str = "WITH ride_point_aggregates AS (
 const RIDE_RECORD_PROJECTION: &str =
     "SELECT rides.id, rides.source, rides.state, rides.created_at_ms,
        rides.monotonic_created_at_ms, rides.updated_at_ms,
-       CASE
-           WHEN ride_point_aggregates.last_monotonic_ms IS NULL
-               OR (rides.monotonic_created_at_ms IS NOT NULL
-                   AND ride_point_aggregates.last_monotonic_ms < rides.monotonic_created_at_ms)
-               THEN 0
-           WHEN rides.monotonic_created_at_ms IS NOT NULL
-               THEN ride_point_aggregates.last_monotonic_ms - rides.monotonic_created_at_ms
-           ELSE ride_point_aggregates.last_monotonic_ms - ride_point_aggregates.first_monotonic_ms
-       END,
+       rides.duration_ms,
        rides.point_count, rides.distance_mm,
        COALESCE(ride_point_aggregates.segment_count, 0),
        rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,

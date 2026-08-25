@@ -311,6 +311,47 @@ fn ride_history_separates_wall_clock_order_from_monotonic_duration() {
 }
 
 #[test]
+fn ride_history_duration_is_persisted_from_lifecycle_clock() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-lifecycle-duration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Pause, 5_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 7_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Stop, 12_000)
+        .unwrap();
+
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(record.duration_milliseconds(), 9_000);
+    database.shutdown().unwrap();
+
+    let reopened = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .find_ride(ride)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        9_000
+    );
+    reopened.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn find_and_list_ride_projections_agree_for_all_route_shapes() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -916,7 +957,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 10);
+        assert_eq!(current_version, 11);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1312,6 +1353,9 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
         .execute_batch(
             "
             ALTER TABLE rides DROP COLUMN monotonic_created_at_ms;
+            ALTER TABLE rides DROP COLUMN duration_ms;
+            ALTER TABLE rides DROP COLUMN paused_at_ms;
+            ALTER TABLE rides DROP COLUMN paused_duration_ms;
             DROP TABLE devices;
             PRAGMA application_id = 1129665615;
             PRAGMA user_version = 8;
@@ -1337,7 +1381,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
