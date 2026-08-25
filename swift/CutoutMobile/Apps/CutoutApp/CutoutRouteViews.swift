@@ -194,6 +194,15 @@ private extension MelkLightingPeripheralState {
             .unknown
         }
     }
+
+    var invalidatesPendingCommand: Bool {
+        switch self {
+        case .retrying, .disconnected, .failed:
+            true
+        case .idle, .scanning, .connecting, .discovering, .ready:
+            false
+        }
+    }
 }
 
 @MainActor
@@ -418,6 +427,10 @@ final class LightingRouteModel {
             peripheralIdentifier = nil
         }
         connectionState = state
+        if state.invalidatesPendingCommand, commandStatus == .requested {
+            commandStatus = .unconfirmed
+            persistence.markUnconfirmed()
+        }
         if state == .ready {
             ensureRecordForConnectedAccessory()
             restoreIfEligible()

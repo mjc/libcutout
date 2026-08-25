@@ -688,6 +688,22 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLightingRouteModelMarksPendingCommandUnconfirmedAfterLinkLoss() async {
+        let fake = TestLightingSession()
+        let model = LightingRouteModel(session: fake)
+
+        fake.emitState(.ready)
+        await Task.yield()
+        model.setPower(true)
+        XCTAssertEqual(model.commandStatus, .requested)
+
+        fake.emitState(.retrying(attempt: 1, delayMilliseconds: 250))
+        await Task.yield()
+
+        XCTAssertEqual(model.commandStatus, .unconfirmed)
+    }
+
+    @MainActor
     func testLightingRouteModelPersistsOnlyStableConnectionStates() async throws {
         let suiteName = "CutoutAppRouteTests.lightingConnectionState"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
