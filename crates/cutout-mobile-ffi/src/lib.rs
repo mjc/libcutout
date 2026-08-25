@@ -4814,29 +4814,10 @@ impl MobileRideMapCoreInner {
     }
 
     fn summary(&self) -> MobileRideMapCoreSummaryDto {
-        let persisted = self.active_ride_id.as_ref().and_then(|id| {
-            self.database
-                .as_ref()
-                .and_then(|database| database.summary(id.clone()).ok())
-        });
-        let (point_count, distance_meters) = persisted.map_or_else(
-            || {
-                let summary = self.recorder.summary();
-                (
-                    summary.point_count().as_u64(),
-                    millimetres_to_meters(summary.distance_millimetres()),
-                )
-            },
-            |summary| {
-                (
-                    summary.point_count,
-                    millimetres_to_meters(summary.distance_millimetres),
-                )
-            },
-        );
+        let summary = self.recorder.summary();
         MobileRideMapCoreSummaryDto {
-            point_count,
-            distance_meters,
+            point_count: summary.point_count().as_u64(),
+            distance_meters: millimetres_to_meters(summary.distance_millimetres()),
             duration_milliseconds: self.recorder.duration_milliseconds().as_u64(),
         }
     }
