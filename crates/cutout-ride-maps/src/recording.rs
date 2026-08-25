@@ -483,6 +483,22 @@ impl RideMapRecorder {
         self.segment_id
     }
 
+    /// Returns the segment identity that will be assigned to an accepted sample.
+    #[must_use]
+    pub fn segment_id_for_sample(&self, sample: &LocationSample) -> RideMapSegmentId {
+        let gap_started = self.points.last().is_some_and(|previous| {
+            sample
+                .monotonic_milliseconds()
+                .saturating_sub(previous.sample().monotonic_milliseconds())
+                > MAX_GAP_MILLISECONDS
+        });
+        if gap_started {
+            self.segment_id.next()
+        } else {
+            self.segment_id
+        }
+    }
+
     /// Returns the Rust-owned number of route segments admitted to the ride.
     #[must_use]
     pub const fn segment_count(&self) -> RideSegmentCount {
@@ -768,15 +784,11 @@ impl RideMapRecorder {
 
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
-        let gap_started = self.points.last().is_some_and(|previous| {
-            sample
-                .monotonic_milliseconds()
-                .saturating_sub(previous.sample().monotonic_milliseconds())
-                > MAX_GAP_MILLISECONDS
-        });
+        let next_segment_id = self.segment_id_for_sample(&sample);
+        let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
         if gap_started {
-            self.segment_id = self.segment_id.next();
+            self.segment_id = next_segment_id;
         }
         let distance = if segment_started {
             DistanceMillimetres::default()
@@ -955,6 +967,7 @@ mod tests {
         recorder.start(monotonic(1_000), None).expect("starts");
         recorder.record_sample(sample(1_001, 40.0));
         let second = sample(40_000, 40.001);
+        assert_eq!(recorder.segment_id_for_sample(&second).value(), 1);
         assert_eq!(recorder.check_sample(&second), LocationAdmission::Accepted);
         assert!(recorder.record_sample(second));
         assert_eq!(recorder.current_segment_id().value(), 1);

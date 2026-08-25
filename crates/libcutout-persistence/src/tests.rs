@@ -145,6 +145,41 @@ fn database_owns_one_service_and_reopens_persisted_rides() {
 }
 
 #[test]
+fn current_database_repairs_monotonic_ride_creation_times() {
+    let _guard = test_guard();
+    let mut connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO rides
+             (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+             VALUES (?1, 'live', 'saved', 1_000, 1_700_000_002_000, 2, 1)",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_points
+             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+              latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+             VALUES (?1, 0, 0, 0, 1_000, 1_700_000_001_000, 400000000, -105000000, NULL, 'live')",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+
+    crate::storage::repair_legacy_ride_creation_times(&mut connection).unwrap();
+
+    let created_at_ms: u64 = connection
+        .query_row(
+            "SELECT created_at_ms FROM rides WHERE id = ?1",
+            ["00000000-0000-0000-0000-000000000001"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(created_at_ms, 1_700_000_001_000);
+}
+
+#[test]
 fn ride_updates_follow_domain_timestamps_without_regressing() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -236,6 +271,84 @@ fn ride_history_duration_is_derived_from_rust_monotonic_state() {
         .list_rides(None, QueryLimit::new(1).unwrap())
         .unwrap();
     assert_eq!(page.rides()[0].duration_milliseconds(), 2_000);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_history_separates_wall_clock_order_from_monotonic_duration() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-dual-clock-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(10_000))
+        .unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    database
+        .append_location(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                12_500,
+                1_700_000_002_500,
+                None,
+                LocationSource::Live,
+            ),
+        )
+        .unwrap();
+
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(record.created_at_milliseconds(), 1_700_000_000_000);
+    assert_eq!(record.monotonic_created_at_milliseconds(), Some(10_000));
+    assert_eq!(record.duration_milliseconds(), 2_500);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn queued_location_preserves_the_durable_admission_outcome() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-queued-location-admission-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database
+            .enqueue_location_with_segment_and_telemetry(
+                ride,
+                sample,
+                0,
+                RouteTelemetryState::GpsOnly,
+            )
+            .unwrap(),
+        LocationAdmission::Accepted
+    );
+    assert_eq!(
+        database
+            .enqueue_location_with_segment_and_telemetry(
+                ride,
+                sample,
+                0,
+                RouteTelemetryState::GpsOnly,
+            )
+            .unwrap(),
+        LocationAdmission::Duplicate
+    );
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
@@ -699,7 +812,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 9);
+        assert_eq!(current_version, 10);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1047,6 +1160,50 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
         vec![first]
     );
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn version_eight_migration_adds_monotonic_ride_start_column() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-legacy-v8-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "
+            ALTER TABLE rides DROP COLUMN monotonic_created_at_ms;
+            DROP TABLE devices;
+            PRAGMA application_id = 1129665615;
+            PRAGMA user_version = 8;
+            ",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let has_monotonic_start: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pragma_table_info('rides')
+                 WHERE name = 'monotonic_created_at_ms'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, 10);
+    assert!(has_monotonic_start);
+
     let _ = std::fs::remove_file(path);
 }
 
