@@ -143,6 +143,57 @@ final class CutoutSessionCoreTests: XCTestCase {
                 decision: .ignored(reason: .rideNotRecording)
             )
         )
+        XCTAssertNil(
+            capturePhoneLocationSample(
+                sample: sample,
+                decision: .pending(point: point, segmentStarted: true)
+            )
+        )
+        XCTAssertNil(
+            capturePhoneLocationSample(
+                sample: sample,
+                decision: .storageError(message: "queue full")
+            )
+        )
+    }
+
+    func testDatabaseBackedRideMapReportsPendingThenDurablyAccepted() throws {
+        guard let database = RustPersistenceStore.shared else {
+            throw XCTSkip("Rust ride database is unavailable in this test environment")
+        }
+
+        let state = MobileRideMapState(database: database)
+        defer {
+            _ = try? state.stop(atMs: 200)
+            _ = try? state.discard()
+        }
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        let decision = try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 4
+        )
+
+        guard case let .pending(point, segmentStarted) = decision else {
+            return XCTFail("database-backed ingestion should return pending, got \(decision)")
+        }
+
+        var accepted: MobileRideMapDecisionDto?
+        for _ in 0 ..< 100 {
+            if let outcome = state.pollLocationWrites().first {
+                accepted = outcome
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+
+        guard case let .accepted(acceptedPoint, acceptedSegmentStarted) = accepted else {
+            return XCTFail("pending location did not produce a durable acceptance")
+        }
+        XCTAssertEqual(acceptedPoint, point)
+        XCTAssertEqual(acceptedSegmentStarted, segmentStarted)
     }
 
     func testPevcapLocationStateIsSeparateFromPhoneLocationReadback() {

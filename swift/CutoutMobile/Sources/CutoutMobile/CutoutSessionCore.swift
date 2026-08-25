@@ -385,6 +385,14 @@ public final class CutoutSessionCore: NSObject {
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let phoneLocationState = MobilePhoneLocationState()
     private let admittedPhoneLocationState = MobilePhoneLocationState()
+    private let rideMapPollQueue = DispatchQueue(
+        label: "io.cutout.ride-map-location-poll",
+        qos: .utility
+    )
+    private let pendingPhoneLocationLock = NSLock()
+    private var pendingPhoneLocations: [UInt64: MobilePhoneLocationSampleDto] = [:]
+    private var pendingPhoneLocationOrder = [UInt64]()
+    private var rideMapPollScheduled = false
     private let rideMapState: MobileRideMapState
     private var didRequestAlwaysLocationAuthorization = false
     private var didResolveBluetoothRestoration = false
@@ -1556,8 +1564,14 @@ public final class CutoutSessionCore: NSObject {
     }
 
     private func publishRideMapDecision(_ decision: MobileRideMapDecisionDto) {
-        guard let snapshot = rideMapState.currentSnapshot() else { return }
-        publishOnMain { self.onRideMapDecisionChange?(snapshot, decision) }
+        // Do not read the Rust map projection from Core Location's callback. The FFI read is
+        // mutex-protected (and intentionally cheap today), but keeping it off the callback makes
+        // this path safe if the projection gains a durable read or other blocking work later.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let snapshot = self.rideMapState.currentSnapshot() else { return }
+            self.onRideMapDecisionChange?(snapshot, decision)
+        }
+        DispatchQueue.main.async(execute: work)
     }
 
     private func publishRideMapSnapshot() {
@@ -2659,17 +2673,109 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
                     monotonicMs: monotonicMs.rawValue,
                     sample: sample
                 )
-                _ = capturePhoneLocationSample(
-                    sample: sample,
-                    decision: decision,
-                    state: admittedPhoneLocationState
-                )
-                publishRideMapDecision(decision)
+                handleRideMapLocationDecision(decision, sample: sample)
             } catch {
                 publishRideMapError(error)
             }
         }
         publishPhoneLocationSnapshot()
+    }
+
+    /// Applies a location decision to the PEVCAP context and publishes it. Pending decisions are
+    /// deliberately not capture-admitted; the sample is retained until Rust reports durable
+    /// acceptance from `pollLocationWrites()`.
+    private func handleRideMapLocationDecision(
+        _ decision: MobileRideMapDecisionDto,
+        sample: MobilePhoneLocationSampleDto? = nil
+    ) {
+        switch decision {
+        case let .pending(point, _):
+            guard let sample else { return }
+            rememberPendingPhoneLocation(sample, sequence: point.sequence)
+            scheduleRideMapWritePoll()
+        case .accepted:
+            let admittedSample = sample ?? takePendingPhoneLocation(for: decision)
+            if let admittedSample {
+                _ = capturePhoneLocationSample(
+                    sample: admittedSample,
+                    decision: decision,
+                    state: admittedPhoneLocationState
+                )
+            }
+        case .rejected, .ignored, .storageError:
+            // A terminal outcome from the poll is FIFO with the pending write. Direct
+            // rejection/error outcomes carry the current sample and therefore have no pending
+            // entry to remove.
+            if sample == nil {
+                _ = takePendingPhoneLocation(for: decision)
+            }
+        }
+        publishRideMapDecision(decision)
+    }
+
+    private func rememberPendingPhoneLocation(
+        _ sample: MobilePhoneLocationSampleDto,
+        sequence: UInt64
+    ) {
+        pendingPhoneLocationLock.lock()
+        defer { pendingPhoneLocationLock.unlock() }
+        pendingPhoneLocations[sequence] = sample
+        pendingPhoneLocationOrder.append(sequence)
+    }
+
+    private func takePendingPhoneLocation(
+        for decision: MobileRideMapDecisionDto
+    ) -> MobilePhoneLocationSampleDto? {
+        pendingPhoneLocationLock.lock()
+        defer { pendingPhoneLocationLock.unlock() }
+
+        let sequence: UInt64?
+        if case let .accepted(point, _) = decision {
+            sequence = point.sequence
+            if pendingPhoneLocations[point.sequence] == nil {
+                // A lifecycle reset may have invalidated the Rust-side pending queue before its
+                // terminal result arrived. Drop the oldest retained sample rather than attaching
+                // a stale result to a newer route or polling forever.
+                guard let staleSequence = pendingPhoneLocationOrder.first else { return nil }
+                pendingPhoneLocationOrder.removeFirst()
+                pendingPhoneLocations.removeValue(forKey: staleSequence)
+                return nil
+            }
+        } else {
+            sequence = pendingPhoneLocationOrder.first
+        }
+        guard let sequence, let sample = pendingPhoneLocations.removeValue(forKey: sequence) else {
+            return nil
+        }
+        if let index = pendingPhoneLocationOrder.firstIndex(of: sequence) {
+            pendingPhoneLocationOrder.remove(at: index)
+        }
+        return sample
+    }
+
+    private func scheduleRideMapWritePoll() {
+        pendingPhoneLocationLock.lock()
+        guard !rideMapPollScheduled else {
+            pendingPhoneLocationLock.unlock()
+            return
+        }
+        rideMapPollScheduled = true
+        pendingPhoneLocationLock.unlock()
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            let decisions = self.rideMapState.pollLocationWrites()
+            decisions.forEach { self.handleRideMapLocationDecision($0) }
+
+            self.pendingPhoneLocationLock.lock()
+            self.rideMapPollScheduled = false
+            let shouldPollAgain = !self.pendingPhoneLocationOrder.isEmpty
+            self.pendingPhoneLocationLock.unlock()
+            if shouldPollAgain {
+                self.scheduleRideMapWritePoll()
+            }
+        }
+        rideMapPollQueue.asyncAfter(deadline: .now() + .milliseconds(50), execute: work)
     }
 }
 

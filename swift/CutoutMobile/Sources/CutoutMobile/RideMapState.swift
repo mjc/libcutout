@@ -105,9 +105,13 @@ public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
 }
 
 public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
+    /// The point passed admission but is still awaiting durable SQLite confirmation.
+    case pending(point: MobileRideMapPointDto, segmentStarted: Bool)
     case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
+    /// The point could not be queued or persisted. It is not part of the ride.
+    case storageError(message: String)
 }
 
 /// Swift keeps only presentation DTOs and the canonical history handle. Rust owns all active
@@ -231,6 +235,14 @@ public final class MobileRideMapState: @unchecked Sendable {
         )
     }
 
+    /// Drains durable outcomes without waiting for the SQLite worker.
+    ///
+    /// A pending location is not capture-admitted until this method returns its accepted
+    /// outcome. Callers should poll from a bounded scheduler and publish each terminal result.
+    public func pollLocationWrites() -> [MobileRideMapDecisionDto] {
+        core.pollLocationWrites().map(map)
+    }
+
     public func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
         do {
             return map(try core.pointsAfter(afterCursor: afterCursor, limit: limit))
@@ -344,12 +356,16 @@ public final class MobileRideMapState: @unchecked Sendable {
 
     private func map(_ decision: MobileRideMapCoreDecisionDto) -> MobileRideMapDecisionDto {
         switch decision {
+        case let .pending(point, segmentStarted):
+            return .pending(point: mapPoint(point), segmentStarted: segmentStarted)
         case let .accepted(point, segmentStarted):
             return .accepted(point: mapPoint(point), segmentStarted: segmentStarted)
         case let .rejected(reason):
             return .rejected(reason: map(reason))
         case let .ignored(reason):
             return .ignored(reason: map(reason))
+        case let .storageError(message):
+            return .storageError(message: message)
         }
     }
 
