@@ -221,6 +221,35 @@ final class CutoutAppModelTests: XCTestCase {
         }
     }
 
+    func testHistoryRoutePointCollectorBoundsDisplayMemoryAndPreservesEndpoints() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        for sequence in 0 ..< 10 {
+            _ = try state.ingestLocation(
+                monotonicMs: UInt64(1_000 + sequence * 1_000),
+                wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
+                latitudeDegrees: 39.7 + Double(sequence) / 10_000,
+                longitudeDegrees: -104.9 - Double(sequence) / 10_000,
+                horizontalAccuracyMeters: 5
+            )
+        }
+
+        let result = try CutoutAppModel.collectRideMapHistoryPoints(
+            previewLimit: nil,
+            displayLimit: 4,
+            nextBatch: { cursor in
+                try state.pointsAfter(afterCursor: cursor, limit: 3)
+            }
+        )
+
+        XCTAssertEqual(result.0.count, 4)
+        XCTAssertEqual(result.0.first?.sequence, 0)
+        XCTAssertEqual(result.0.last?.sequence, 9)
+        XCTAssertGreaterThan(result.0[1].sequence, 0)
+        XCTAssertLessThan(result.0[1].sequence, result.0.last!.sequence)
+        XCTAssertTrue(result.1)
+    }
+
     @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])

@@ -26,6 +26,10 @@ final class CutoutAppModel {
     // Keep this within the Rust persistence query limit (max 500).
     private static let rideMapPointBatchLimit: UInt32 = 500
     private static let rideMapPreviewPointLimit = 4_096
+    // A full-history request may scan every durable page, but Swift must never
+    // retain an unbounded route for map rendering. Rust remains the source of
+    // truth; this is only the presentation budget for the current viewport.
+    private static let rideMapDisplayPointLimit = 16_384
 
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
@@ -572,10 +576,14 @@ final class CutoutAppModel {
         rideMapHistoryRouteLoading = true
         let state = core.rideMapStateHandle
         let pointBatchLimit = Self.rideMapPointBatchLimit
+        let displayPointLimit = Self.rideMapDisplayPointLimit
         rideMapHistorySelectionTask = Task { [weak self] in
             do {
                 let worker = Task.detached(priority: .userInitiated) {
-                    try Self.collectRideMapHistoryPoints(previewLimit: previewLimit) { cursor in
+                    try Self.collectRideMapHistoryPoints(
+                        previewLimit: previewLimit,
+                        displayLimit: displayPointLimit
+                    ) { cursor in
                         try state.storedPointsAfter(
                             rideId: rideID,
                             afterCursor: cursor,
@@ -603,11 +611,14 @@ final class CutoutAppModel {
 
     nonisolated static func collectRideMapHistoryPoints(
         previewLimit: Int?,
+        displayLimit: Int = 16_384,
         nextBatch: (UInt64?) throws -> MobileRideMapPointBatchDto?,
         cancellationCheck: () throws -> Void = { try Task.checkCancellation() }
     ) throws -> ([MobileRideMapPointDto], Bool) {
         var points = [MobileRideMapPointDto]()
         var cursor: UInt64?
+        let boundedDisplayLimit = max(1, min(displayLimit, previewLimit ?? displayLimit))
+        var displayWasTruncated = false
         while true {
             try cancellationCheck()
             guard let batch = try nextBatch(cursor) else {
@@ -625,13 +636,56 @@ final class CutoutAppModel {
                     return (points, batch.hasMore)
                 }
             } else {
-                points.append(contentsOf: batch.points)
+                displayWasTruncated = Self.appendBoundedRoutePoints(
+                    to: &points,
+                    incoming: batch.points,
+                    limit: boundedDisplayLimit
+                ) || displayWasTruncated
                 cursor = batch.nextCursor
             }
             if batch.hasMore == false {
-                return (points, false)
+                return (points, displayWasTruncated)
             }
         }
+    }
+
+    /// Keeps full-history map rendering bounded while retaining both route endpoints.
+    ///
+    /// The durable route remains complete in Rust/SQLite. This helper only controls the
+    /// presentation projection, and callers must keep the returned truncation bit so the UI
+    /// does not claim that the last displayed point is the ride endpoint.
+    nonisolated static func appendBoundedRoutePoints(
+        to points: inout [MobileRideMapPointDto],
+        incoming: [MobileRideMapPointDto],
+        limit: Int
+    ) -> Bool {
+        guard incoming.isEmpty == false else { return false }
+        guard limit > 0 else {
+            points.removeAll(keepingCapacity: true)
+            return true
+        }
+        guard points.count + incoming.count > limit else {
+            points.append(contentsOf: incoming)
+            return false
+        }
+
+        let source = points + incoming
+        guard let last = source.last else { return true }
+        var bounded = [source[0]]
+        bounded.reserveCapacity(limit)
+        if limit > 2 {
+            let scale = Double(source.count - 1) / Double(limit - 1)
+            for sample in 1 ..< (limit - 1) {
+                let index = min(
+                    source.count - 2,
+                    Int((Double(sample) * scale).rounded())
+                )
+                bounded.append(source[index])
+            }
+        }
+        bounded.append(last)
+        points = bounded
+        return true
     }
 
     private static func mapRideMapError(_ error: Error) -> MobileRideMapError {
