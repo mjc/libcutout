@@ -562,48 +562,32 @@ final class CutoutAppModel {
             return
         }
         rideMapHistorySelectionTask?.cancel()
-        if selectedRideMapHistoryID != rideID {
+        let selectingDifferentRide = selectedRideMapHistoryID != rideID
+        if selectingDifferentRide {
             rideMapHistoryPoints = []
+            rideMapHistoryPointsTruncated = false
         }
         selectedRideMapHistoryID = rideID
         rideMapHistoryRouteError = nil
-        rideMapHistoryPointsTruncated = false
         rideMapHistoryRouteLoading = true
         let state = core.rideMapStateHandle
         let pointBatchLimit = Self.rideMapPointBatchLimit
         rideMapHistorySelectionTask = Task { [weak self] in
             do {
-                let result = try await Task.detached(priority: .userInitiated) {
-                    var points = [MobileRideMapPointDto]()
-                    var cursor: UInt64?
-                    while true {
-                        guard let batch = try state.storedPointsAfter(
+                let worker = Task.detached(priority: .userInitiated) {
+                    try Self.collectRideMapHistoryPoints(previewLimit: previewLimit) { cursor in
+                        try state.storedPointsAfter(
                             rideId: rideID,
                             afterCursor: cursor,
                             limit: pointBatchLimit
-                        ) else {
-                            return ([MobileRideMapPointDto](), false)
-                        }
-                        if let previewLimit {
-                            let remaining = previewLimit - points.count
-                            if batch.points.count > remaining {
-                                points.append(contentsOf: batch.points.prefix(remaining))
-                                return (points, true)
-                            }
-                            points.append(contentsOf: batch.points)
-                            cursor = batch.nextCursor
-                            if points.count == previewLimit {
-                                return (points, batch.hasMore)
-                            }
-                        } else {
-                            points.append(contentsOf: batch.points)
-                            cursor = batch.nextCursor
-                        }
-                        if batch.hasMore == false {
-                            return (points, false)
-                        }
+                        )
                     }
-                }.value
+                }
+                let result = try await withTaskCancellationHandler(operation: {
+                    try await worker.value
+                }, onCancel: {
+                    worker.cancel()
+                })
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryPoints = result.0
@@ -612,9 +596,40 @@ final class CutoutAppModel {
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryRouteError = Self.mapRideMapError(error)
-                self.rideMapHistoryPoints = []
-                self.rideMapHistoryPointsTruncated = false
                 self.rideMapHistoryRouteLoading = false
+            }
+        }
+    }
+
+    nonisolated static func collectRideMapHistoryPoints(
+        previewLimit: Int?,
+        nextBatch: (UInt64?) throws -> MobileRideMapPointBatchDto?,
+        cancellationCheck: () throws -> Void = { try Task.checkCancellation() }
+    ) throws -> ([MobileRideMapPointDto], Bool) {
+        var points = [MobileRideMapPointDto]()
+        var cursor: UInt64?
+        while true {
+            try cancellationCheck()
+            guard let batch = try nextBatch(cursor) else {
+                return ([], false)
+            }
+            if let previewLimit {
+                let remaining = previewLimit - points.count
+                if batch.points.count > remaining {
+                    points.append(contentsOf: batch.points.prefix(remaining))
+                    return (points, true)
+                }
+                points.append(contentsOf: batch.points)
+                cursor = batch.nextCursor
+                if points.count == previewLimit {
+                    return (points, batch.hasMore)
+                }
+            } else {
+                points.append(contentsOf: batch.points)
+                cursor = batch.nextCursor
+            }
+            if batch.hasMore == false {
+                return (points, false)
             }
         }
     }

@@ -206,6 +206,21 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    func testHistoryRoutePointCollectorChecksCancellationBeforeFetching() {
+        XCTAssertThrowsError(
+            try CutoutAppModel.collectRideMapHistoryPoints(
+                previewLimit: nil,
+                nextBatch: { _ in
+                    XCTFail("cancelled route load should not fetch a page")
+                    return nil
+                },
+                cancellationCheck: { throw CancellationError() }
+            )
+        ) { error in
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
     @MainActor
     func testPickerAndCaptureRoutesDoNotObserveRideTelemetry() {
         let driver = SessionDriverSpy(rows: [])
