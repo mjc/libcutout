@@ -4807,10 +4807,10 @@ impl MobileRideMapCoreInner {
                         Some(platform_identifier.to_owned()),
                         staged
                             .associated_at_milliseconds()
-                            .map(|value| value.as_u64()),
+                            .map(ride_maps::MonotonicMilliseconds::as_u64),
                         staged
                             .last_telemetry_at_milliseconds()
-                            .map(|value| value.as_u64()),
+                            .map(ride_maps::MonotonicMilliseconds::as_u64),
                     )
                     .map_err(map_core_error)?;
             }
