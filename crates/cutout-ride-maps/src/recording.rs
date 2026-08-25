@@ -95,6 +95,22 @@ impl RideMapSegmentId {
     }
 }
 
+/// Why a new ordered route segment began.
+///
+/// Segment identity is scoped to a ride. This reason is persisted with the segment so
+/// consumers do not have to infer lifecycle or import provenance from point rows.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RideSegmentStartReason {
+    /// The first accepted point in a ride.
+    Initial,
+    /// A paused ride resumed and started a new route segment.
+    Resume,
+    /// A location gap exceeded the route continuity threshold.
+    BackgroundGap,
+    /// An imported artifact established the first canonical route segment.
+    ImportBoundary,
+}
+
 /// Number of route segments admitted to one ride recording.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RideSegmentCount(u64);

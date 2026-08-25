@@ -1048,18 +1048,24 @@ pub struct PevcapPhoneLocation {
     pub longitude_degrees: f64,
     /// Altitude above mean sea level in meters.
     pub altitude_meters: f64,
-    /// Horizontal accuracy in meters.
-    pub horizontal_accuracy_meters: f64,
-    /// Vertical accuracy in meters.
-    pub vertical_accuracy_meters: f64,
-    /// Platform-reported speed in meters per second.
-    pub speed_meters_per_second: f64,
-    /// Platform-reported speed accuracy in meters per second.
-    pub speed_accuracy_meters_per_second: f64,
-    /// Platform-reported direction of travel in degrees.
-    pub course_degrees: f64,
-    /// Platform-reported course accuracy in degrees.
-    pub course_accuracy_degrees: f64,
+    /// Horizontal accuracy in meters, when Core Location reported it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub horizontal_accuracy_meters: Option<f64>,
+    /// Vertical accuracy in meters, when Core Location reported it.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub vertical_accuracy_meters: Option<f64>,
+    /// Platform-reported speed in meters per second, when available.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub speed_meters_per_second: Option<f64>,
+    /// Platform-reported speed accuracy in meters per second, when available.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub speed_accuracy_meters_per_second: Option<f64>,
+    /// Platform-reported direction of travel in degrees, when available.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub course_degrees: Option<f64>,
+    /// Platform-reported course accuracy in degrees, when available.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub course_accuracy_degrees: Option<f64>,
 }
 
 impl PartialEq for PevcapPhoneLocation {
@@ -1068,14 +1074,29 @@ impl PartialEq for PevcapPhoneLocation {
             && self.latitude_degrees.to_bits() == other.latitude_degrees.to_bits()
             && self.longitude_degrees.to_bits() == other.longitude_degrees.to_bits()
             && self.altitude_meters.to_bits() == other.altitude_meters.to_bits()
-            && self.horizontal_accuracy_meters.to_bits()
-                == other.horizontal_accuracy_meters.to_bits()
-            && self.vertical_accuracy_meters.to_bits() == other.vertical_accuracy_meters.to_bits()
-            && self.speed_meters_per_second.to_bits() == other.speed_meters_per_second.to_bits()
-            && self.speed_accuracy_meters_per_second.to_bits()
-                == other.speed_accuracy_meters_per_second.to_bits()
-            && self.course_degrees.to_bits() == other.course_degrees.to_bits()
-            && self.course_accuracy_degrees.to_bits() == other.course_accuracy_degrees.to_bits()
+            && option_f64_bits_eq(
+                self.horizontal_accuracy_meters,
+                other.horizontal_accuracy_meters,
+            )
+            && option_f64_bits_eq(
+                self.vertical_accuracy_meters,
+                other.vertical_accuracy_meters,
+            )
+            && option_f64_bits_eq(self.speed_meters_per_second, other.speed_meters_per_second)
+            && option_f64_bits_eq(
+                self.speed_accuracy_meters_per_second,
+                other.speed_accuracy_meters_per_second,
+            )
+            && option_f64_bits_eq(self.course_degrees, other.course_degrees)
+            && option_f64_bits_eq(self.course_accuracy_degrees, other.course_accuracy_degrees)
+    }
+}
+
+fn option_f64_bits_eq(left: Option<f64>, right: Option<f64>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.to_bits() == right.to_bits(),
+        (None, None) => true,
+        _ => false,
     }
 }
 

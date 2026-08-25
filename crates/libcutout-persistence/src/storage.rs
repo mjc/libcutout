@@ -3671,7 +3671,8 @@ fn stream_pevcap_location_batches(
     Ok(accepted)
 }
 
-fn pevcap_accuracy_millimetres(metres: f64) -> Option<u32> {
+fn pevcap_accuracy_millimetres(metres: Option<f64>) -> Option<u32> {
+    let metres = metres?;
     let millimetres = metres * 1_000.0;
     if !millimetres.is_finite() || millimetres < 0.0 || millimetres > f64::from(u32::MAX) {
         return None;

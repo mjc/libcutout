@@ -59,7 +59,7 @@ final class PhoneLocationReadbackTests: XCTestCase {
             altitudeMeters: 1_600,
             horizontalAccuracyMeters: 4,
             verticalAccuracyMeters: 6,
-            speedMetersPerSecond: speed.map { Double($0) / 1_000 } ?? -1,
+            speedMetersPerSecond: speed.map { Double($0) / 1_000 },
             speedAccuracyMetersPerSecond: 0.2,
             courseDegrees: 90,
             courseAccuracyDegrees: 3

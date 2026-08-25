@@ -268,13 +268,9 @@ public final class MobileRideMapState: @unchecked Sendable {
         monotonicMs: UInt64,
         sample: MobilePhoneLocationSampleDto
     ) throws -> MobileRideMapDecisionDto {
-        try ingestLocation(
-            monotonicMs: monotonicMs,
-            wallClockUnixMs: sample.wallClockUnixMs,
-            latitudeDegrees: sample.latitudeDegrees,
-            longitudeDegrees: sample.longitudeDegrees,
-            horizontalAccuracyMeters: sample.horizontalAccuracyMeters
-        )
+        try withCore {
+            map(try $0.ingestLocationSample(monotonicMs: monotonicMs, sample: sample))
+        }
     }
 
     /// Drains durable outcomes without waiting for the SQLite worker.

@@ -1,8 +1,8 @@
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use cutout_ride_maps::{
-    LocationAdmission, LocationSample, RideEvent, RideLifecycleState, TransitionError,
-    distance_between,
+    LocationAdmission, LocationSample, RideEvent, RideLifecycleState, RideMapSegmentId,
+    TransitionError, distance_between,
 };
 
 use super::RideSource;
@@ -109,7 +109,7 @@ impl RideWriteState {
         self,
         previous: Option<(u64, LocationSample)>,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         mode: LocationWriteMode,
     ) -> Result<LocationWriteDecision, RideLifecycleState> {
         if !self.accepts_location(mode) {
@@ -123,7 +123,7 @@ impl RideWriteState {
 
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
-                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id)
+                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id.value())
                 .map(|(_, previous)| distance_between(previous, sample).as_u64())
                 .unwrap_or_default(),
             updated_at_ms: self
@@ -196,7 +196,7 @@ pub(super) fn wall_clock_now_milliseconds() -> Result<u64, SystemTimeError> {
 
 #[cfg(test)]
 mod tests {
-    use cutout_ride_maps::{Coordinate, LocationSource};
+    use cutout_ride_maps::{Coordinate, LocationSource, RideMapSegmentId};
 
     use super::*;
 
@@ -232,7 +232,12 @@ mod tests {
         );
         assert!(matches!(
             state
-                .decide_location(None, sample, 0, LocationWriteMode::Live)
+                .decide_location(
+                    None,
+                    sample,
+                    RideMapSegmentId::new(0),
+                    LocationWriteMode::Live,
+                )
                 .unwrap(),
             LocationWriteDecision::Accepted {
                 updated_at_ms: 30,

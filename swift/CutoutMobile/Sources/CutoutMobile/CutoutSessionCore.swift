@@ -348,6 +348,8 @@ public final class CutoutSessionCore: NSObject {
     public var onBluetoothRestorationResolved: ((String?) -> Void)?
 
     private let clock: MonotonicClock
+    private let wallClock: WallClock
+    private var lastAcceptedLocationTimestamp: Date?
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
@@ -422,6 +424,7 @@ public final class CutoutSessionCore: NSObject {
 
     init(
         clock: MonotonicClock,
+        wallClock: WallClock = WallClock(),
         testScript: CutoutSessionTestScript? = nil,
         reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
@@ -435,6 +438,8 @@ public final class CutoutSessionCore: NSObject {
             detectionSession: deviceDetectionSession
         )
         self.clock = clock
+        self.wallClock = wallClock
+        self.lastAcceptedLocationTimestamp = nil
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
@@ -456,6 +461,7 @@ public final class CutoutSessionCore: NSObject {
 #else
     init(
         clock: MonotonicClock,
+        wallClock: WallClock = WallClock(),
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
     ) {
         let rustSessionState = CutoutSessionStateHandle()
@@ -466,6 +472,8 @@ public final class CutoutSessionCore: NSObject {
             detectionSession: deviceDetectionSession
         )
         self.clock = clock
+        self.wallClock = wallClock
+        self.lastAcceptedLocationTimestamp = nil
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
@@ -2662,8 +2670,12 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         let callbackMonotonicMs = clock.now().rawValue
         let monotonicMilliseconds = monotonicMillisecondsForLocationBatch(
             timestamps: locations.map(\.timestamp),
-            callbackMonotonicMs: MonotonicMilliseconds(callbackMonotonicMs)
+            callbackMonotonicMs: MonotonicMilliseconds(callbackMonotonicMs),
+            callbackWallClock: wallClock.now(),
+            lastAcceptedTimestamp: lastAcceptedLocationTimestamp
         )
+        guard monotonicMilliseconds.count == locations.count else { return }
+        lastAcceptedLocationTimestamp = locations.last?.timestamp
         for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
             let sample = MobilePhoneLocationSampleDto(location: location)
             // Current-location readback is independent of ride recording. The map
@@ -2782,9 +2794,27 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
 func monotonicMillisecondsForLocationBatch(
     timestamps: [Date],
-    callbackMonotonicMs: MonotonicMilliseconds
+    callbackMonotonicMs: MonotonicMilliseconds,
+    callbackWallClock: Date = Date(),
+    lastAcceptedTimestamp: Date? = nil
 ) -> [MonotonicMilliseconds] {
-    guard let newestTimestamp = timestamps.max() else { return [] }
+    guard let newestTimestamp = timestamps.last,
+          callbackWallClock.timeIntervalSinceReferenceDate.isFinite,
+          newestTimestamp.timeIntervalSinceReferenceDate.isFinite
+    else {
+        return []
+    }
+
+    var previousTimestamp = lastAcceptedTimestamp
+    for timestamp in timestamps {
+        guard timestamp.timeIntervalSinceReferenceDate.isFinite,
+              timestamp <= callbackWallClock,
+              previousTimestamp.map({ timestamp > $0 }) ?? true
+        else {
+            return []
+        }
+        previousTimestamp = timestamp
+    }
 
     return timestamps.map { timestamp in
         let elapsedSeconds = newestTimestamp.timeIntervalSince(timestamp)
@@ -2826,14 +2856,24 @@ private extension MobilePhoneLocationSampleDto {
             latitudeDegrees: location.coordinate.latitude,
             longitudeDegrees: location.coordinate.longitude,
             altitudeMeters: location.altitude,
-            horizontalAccuracyMeters: location.horizontalAccuracy,
-            verticalAccuracyMeters: location.verticalAccuracy,
-            speedMetersPerSecond: location.speed,
-            speedAccuracyMetersPerSecond: location.speedAccuracy,
-            courseDegrees: location.course,
-            courseAccuracyDegrees: location.courseAccuracy
+            horizontalAccuracyMeters: nonNegativeFinite(location.horizontalAccuracy),
+            verticalAccuracyMeters: nonNegativeFinite(location.verticalAccuracy),
+            speedMetersPerSecond: nonNegativeFinite(location.speed),
+            speedAccuracyMetersPerSecond: nonNegativeFinite(location.speedAccuracy),
+            courseDegrees: validCourse(location.course),
+            courseAccuracyDegrees: nonNegativeFinite(location.courseAccuracy)
         )
     }
+}
+
+private func nonNegativeFinite(_ value: Double) -> Double? {
+    guard value.isFinite, value >= 0 else { return nil }
+    return value
+}
+
+private func validCourse(_ value: Double) -> Double? {
+    guard value.isFinite, (0 ..< 360).contains(value) else { return nil }
+    return value
 }
 
 private extension CBCharacteristic {
@@ -2868,6 +2908,18 @@ struct MonotonicClock {
     }
 
     func now() -> MonotonicMilliseconds {
+        source()
+    }
+}
+
+struct WallClock {
+    private let source: () -> Date
+
+    init(now: @escaping () -> Date = { Date() }) {
+        source = now
+    }
+
+    func now() -> Date {
         source()
     }
 }

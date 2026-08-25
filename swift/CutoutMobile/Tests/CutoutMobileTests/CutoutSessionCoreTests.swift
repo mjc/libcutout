@@ -70,7 +70,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(
             monotonicMillisecondsForLocationBatch(
                 timestamps: timestamps,
-                callbackMonotonicMs: MonotonicMilliseconds(20_000)
+                callbackMonotonicMs: MonotonicMilliseconds(20_000),
+                callbackWallClock: Date(timeIntervalSince1970: 1_700_000_004)
             ),
             [
                 MonotonicMilliseconds(16_000),
@@ -78,6 +79,82 @@ final class CutoutSessionCoreTests: XCTestCase {
                 MonotonicMilliseconds(20_000),
             ]
         )
+    }
+
+    func testBatchedLocationsRejectDuplicateAndOutOfOrderSourceTimes() {
+        let first = Date(timeIntervalSince1970: 1_700_000_000)
+        let second = Date(timeIntervalSince1970: 1_700_000_001)
+        let callback = Date(timeIntervalSince1970: 1_700_000_002)
+
+        XCTAssertEqual(
+            monotonicMillisecondsForLocationBatch(
+                timestamps: [first, first],
+                callbackMonotonicMs: MonotonicMilliseconds(20_000),
+                callbackWallClock: callback
+            ),
+            []
+        )
+        XCTAssertEqual(
+            monotonicMillisecondsForLocationBatch(
+                timestamps: [second, first],
+                callbackMonotonicMs: MonotonicMilliseconds(20_000),
+                callbackWallClock: callback
+            ),
+            []
+        )
+    }
+
+    func testBatchedLocationsRejectStaleAndFutureSourceTimesUsingInjectedWallClock() {
+        let lastAccepted = Date(timeIntervalSince1970: 1_700_000_010)
+        let callback = Date(timeIntervalSince1970: 1_700_000_020)
+
+        XCTAssertEqual(
+            monotonicMillisecondsForLocationBatch(
+                timestamps: [Date(timeIntervalSince1970: 1_700_000_009)],
+                callbackMonotonicMs: MonotonicMilliseconds(20_000),
+                callbackWallClock: callback,
+                lastAcceptedTimestamp: lastAccepted
+            ),
+            []
+        )
+        XCTAssertEqual(
+            monotonicMillisecondsForLocationBatch(
+                timestamps: [Date(timeIntervalSince1970: 1_700_000_021)],
+                callbackMonotonicMs: MonotonicMilliseconds(20_000),
+                callbackWallClock: callback,
+                lastAcceptedTimestamp: lastAccepted
+            ),
+            []
+        )
+    }
+
+    func testCoreLocationSentinelsBecomeTypedAbsence() {
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(20_000) },
+            wallClock: WallClock { Date(timeIntervalSince1970: 1_700_000_001) }
+        )
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: -1,
+            verticalAccuracy: -1,
+            course: -1,
+            courseAccuracy: -1,
+            speed: -1,
+            speedAccuracy: -1,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+
+        let sample = core.phoneLocationSnapshot.latestSample
+        XCTAssertNotNil(sample)
+        XCTAssertNil(sample?.horizontalAccuracyMeters)
+        XCTAssertNil(sample?.verticalAccuracyMeters)
+        XCTAssertNil(sample?.speedMetersPerSecond)
+        XCTAssertNil(sample?.speedAccuracyMetersPerSecond)
+        XCTAssertNil(sample?.courseDegrees)
+        XCTAssertNil(sample?.courseAccuracyDegrees)
     }
 
     func testPhoneLocationReadbackTracksAValidSampleWithoutAnActiveRide() {
@@ -120,7 +197,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             longitudeDegrees: sample.longitudeDegrees,
             wallClockUnixMs: sample.wallClockUnixMs,
             monotonicMs: 1_000,
-            horizontalAccuracyMeters: sample.horizontalAccuracyMeters,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters ?? 0,
             telemetryState: .gpsOnly
         )
 
@@ -216,7 +293,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             longitudeDegrees: sample.longitudeDegrees,
             wallClockUnixMs: sample.wallClockUnixMs,
             monotonicMs: 1_000,
-            horizontalAccuracyMeters: sample.horizontalAccuracyMeters,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters ?? 0,
             telemetryState: .gpsOnly
         )
         let admittedState = MobilePhoneLocationState()
