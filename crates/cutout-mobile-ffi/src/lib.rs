@@ -3959,7 +3959,7 @@ fn mobile_segment_count(
             .filter(|point| {
                 viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate()))
             })
-            .map(|point| point.segment_id()),
+            .map(ride_maps::RideMapPoint::segment_id),
     );
     u64::try_from(count).unwrap_or(u64::MAX)
 }

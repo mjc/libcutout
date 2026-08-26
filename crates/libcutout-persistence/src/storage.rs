@@ -5166,52 +5166,14 @@ fn project_route_points(
         return Err(StorageError::Cancelled);
     }
 
-    let source_point_count = connection.query_row(
-        "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
-        [&ride_id],
-        |row| row.get::<_, u64>(0),
-    )?;
-    let source_segment_count = connection.query_row(
-        "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
-        [&ride_id],
-        |row| row.get::<_, u64>(0),
-    )?;
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
-    let viewport_predicate = route_point_viewport_predicate(viewport);
-    let candidate_count = if let Some(viewport) = viewport {
-        connection.query_row(
-            &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get::<_, u64>(0),
-        )?
-    } else {
-        source_point_count
-    };
-    let candidate_segment_count = if let Some(viewport) = viewport {
-        connection.query_row(
-            &format!(
-                "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
-            ),
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get::<_, u64>(0),
-        )?
-    } else {
-        source_segment_count
-    };
+    let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
+    let RouteProjectionCounts {
+        source_point_count,
+        source_segment_count,
+        candidate_count,
+        candidate_segment_count,
+        viewport_predicate,
+    } = counts;
     if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
         return Err(StorageError::Cancelled);
     }
@@ -5280,6 +5242,73 @@ fn project_route_points(
         source_segment_count,
         candidate_segment_count,
         displayed_segment_count,
+    })
+}
+
+struct RouteProjectionCounts {
+    source_point_count: u64,
+    source_segment_count: u64,
+    candidate_count: u64,
+    candidate_segment_count: u64,
+    viewport_predicate: String,
+}
+
+fn route_projection_counts(
+    connection: &Connection,
+    ride_id: &str,
+    viewport: Option<RouteViewport>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<RouteProjectionCounts, StorageError> {
+    let source_point_count = connection.query_row(
+        "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
+        [ride_id],
+        |row| row.get::<_, u64>(0),
+    )?;
+    let source_segment_count = connection.query_row(
+        "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+        [ride_id],
+        |row| row.get::<_, u64>(0),
+    )?;
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+    let viewport_predicate = route_point_viewport_predicate(viewport);
+    let (candidate_count, candidate_segment_count) = if let Some(viewport) = viewport {
+        let parameters = params![
+            ride_id,
+            viewport.minimum_latitude().as_i32(),
+            viewport.maximum_latitude().as_i32(),
+            viewport.minimum_longitude().as_i32(),
+            viewport.maximum_longitude().as_i32(),
+        ];
+        let candidate_count = connection.query_row(
+            &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
+            parameters,
+            |row| row.get::<_, u64>(0),
+        )?;
+        let candidate_segment_count = connection.query_row(
+            &format!(
+                "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
+            ),
+            params![
+                ride_id,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get::<_, u64>(0),
+        )?;
+        (candidate_count, candidate_segment_count)
+    } else {
+        (source_point_count, source_segment_count)
+    };
+    Ok(RouteProjectionCounts {
+        source_point_count,
+        source_segment_count,
+        candidate_count,
+        candidate_segment_count,
+        viewport_predicate,
     })
 }
 
