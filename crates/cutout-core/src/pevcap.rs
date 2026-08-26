@@ -2024,6 +2024,10 @@ pub enum PevcapRecordError {
     /// A link lifecycle record carried payload bytes.
     #[error("link lifecycle PEVCAP record carried payload bytes")]
     UnexpectedLinkBytes,
+
+    /// A record carried a phone location outside the canonical Core Location domain.
+    #[error("PEVCAP record carried an invalid phone location")]
+    InvalidPhoneLocation,
 }
 
 #[cfg(feature = "serde")]
@@ -2476,6 +2480,13 @@ impl PevcapRecordJson {
     }
 
     fn validate(&self) -> Result<(), PevcapRecordError> {
+        if self
+            .phone_location
+            .is_some_and(|location| !valid_phone_location(location))
+        {
+            return Err(PevcapRecordError::InvalidPhoneLocation);
+        }
+
         match self.direction {
             PevcapDirectionJson::LinkUp | PevcapDirectionJson::LinkDown => {
                 if self.service.is_some() {
@@ -2524,6 +2535,36 @@ impl PevcapRecordJson {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "serde")]
+fn valid_phone_location(location: PevcapPhoneLocation) -> bool {
+    location.wall_clock_unix_ms != 0
+        && location.latitude_degrees.is_finite()
+        && (-90.0..=90.0).contains(&location.latitude_degrees)
+        && location.longitude_degrees.is_finite()
+        && (-180.0..=180.0).contains(&location.longitude_degrees)
+        && location.altitude_meters.is_finite()
+        && valid_non_negative(location.horizontal_accuracy_meters)
+        && valid_non_negative(location.vertical_accuracy_meters)
+        && valid_non_negative(location.speed_meters_per_second)
+        && valid_non_negative(location.speed_accuracy_meters_per_second)
+        && valid_course(location.course_degrees)
+        && valid_non_negative(location.course_accuracy_degrees)
+}
+
+#[cfg(feature = "serde")]
+fn valid_non_negative(value: Option<f64>) -> bool {
+    value
+        .map(|value| value.is_finite() && value >= 0.0)
+        .unwrap_or(true)
+}
+
+#[cfg(feature = "serde")]
+fn valid_course(value: Option<f64>) -> bool {
+    value
+        .map(|value| value.is_finite() && (0.0..360.0).contains(&value))
+        .unwrap_or(true)
 }
 
 #[cfg(feature = "serde")]
@@ -3578,6 +3619,101 @@ mod tests {
                 source: PevcapRecordError::MissingInboundService,
             }
         ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_jsonl_rejects_invalid_phone_location_before_replay() {
+        let mut capture = sample_pevcap_capture();
+        capture.records[1].phone_location = Some(PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_725_000_123_456,
+            latitude_degrees: 91.0,
+            longitude_degrees: -104.990_251,
+            altitude_meters: 1_609.344,
+            horizontal_accuracy_meters: Some(0.8),
+            vertical_accuracy_meters: Some(1.2),
+            speed_meters_per_second: Some(4.470_400_25),
+            speed_accuracy_meters_per_second: Some(0.25),
+            course_degrees: Some(271.5),
+            course_accuracy_degrees: Some(3.0),
+        });
+        let jsonl = capture.to_jsonl().expect("capture serializes");
+
+        let error = PevcapCapture::from_jsonl(&jsonl).expect_err("location should be rejected");
+
+        assert!(matches!(
+            error,
+            PevcapJsonlError::Record {
+                line: 3,
+                source: PevcapRecordError::InvalidPhoneLocation,
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn pevcap_phone_location_validation_rejects_noncanonical_values() {
+        let valid = PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_725_000_123_456,
+            latitude_degrees: 39.739_235_8,
+            longitude_degrees: -104.990_251,
+            altitude_meters: 1_609.344,
+            horizontal_accuracy_meters: Some(0.8),
+            vertical_accuracy_meters: Some(1.2),
+            speed_meters_per_second: Some(4.470_400_25),
+            speed_accuracy_meters_per_second: Some(0.25),
+            course_degrees: Some(271.5),
+            course_accuracy_degrees: Some(3.0),
+        };
+        let invalid = [
+            PevcapPhoneLocation {
+                wall_clock_unix_ms: 0,
+                ..valid
+            },
+            PevcapPhoneLocation {
+                latitude_degrees: 91.0,
+                ..valid
+            },
+            PevcapPhoneLocation {
+                longitude_degrees: -181.0,
+                ..valid
+            },
+            PevcapPhoneLocation {
+                altitude_meters: f64::NAN,
+                ..valid
+            },
+            PevcapPhoneLocation {
+                horizontal_accuracy_meters: Some(-1.0),
+                ..valid
+            },
+            PevcapPhoneLocation {
+                vertical_accuracy_meters: Some(f64::INFINITY),
+                ..valid
+            },
+            PevcapPhoneLocation {
+                speed_meters_per_second: Some(-1.0),
+                ..valid
+            },
+            PevcapPhoneLocation {
+                speed_accuracy_meters_per_second: Some(f64::NAN),
+                ..valid
+            },
+            PevcapPhoneLocation {
+                course_degrees: Some(360.0),
+                ..valid
+            },
+            PevcapPhoneLocation {
+                course_accuracy_degrees: Some(-1.0),
+                ..valid
+            },
+        ];
+
+        assert!(
+            invalid
+                .into_iter()
+                .all(|location| !valid_phone_location(location))
+        );
+        assert!(valid_phone_location(valid));
     }
 
     #[cfg(feature = "serde")]
