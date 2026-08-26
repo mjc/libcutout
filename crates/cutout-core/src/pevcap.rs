@@ -1136,7 +1136,7 @@ fn canonical_non_negative_finite(value: Option<f64>) -> Option<f64> {
 }
 
 fn canonical_course(value: Option<f64>) -> Option<f64> {
-    value.filter(|value| value.is_finite() && (0.0..360.0).contains(value))
+    value.filter(|value| value.is_finite() && *value >= 0.0 && *value < 360.0)
 }
 
 impl PartialEq for PevcapPhoneLocation {
@@ -3184,7 +3184,7 @@ mod tests {
             vertical_accuracy_meters: Some(f64::NAN),
             speed_meters_per_second: Some(-1.0),
             speed_accuracy_meters_per_second: Some(f64::INFINITY),
-            course_degrees: Some(-1.0),
+            course_degrees: Some(0.0),
             course_accuracy_degrees: Some(-1.0),
         };
 
@@ -3193,8 +3193,14 @@ mod tests {
         assert_eq!(canonical.vertical_accuracy_meters, None);
         assert_eq!(canonical.speed_meters_per_second, None);
         assert_eq!(canonical.speed_accuracy_meters_per_second, None);
-        assert_eq!(canonical.course_degrees, None);
+        assert_eq!(canonical.course_degrees, Some(0.0));
         assert_eq!(canonical.course_accuracy_degrees, None);
+
+        let invalid_course = PevcapPhoneLocation {
+            course_degrees: Some(-1.0),
+            ..location
+        };
+        assert_eq!(invalid_course.canonical().unwrap().course_degrees, None);
     }
 
     #[test]
