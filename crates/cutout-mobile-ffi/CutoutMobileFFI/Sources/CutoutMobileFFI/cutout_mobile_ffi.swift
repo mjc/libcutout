@@ -3169,6 +3169,17 @@ public convenience init() {
     }
 
 
+    /**
+     * Creates a projection cancellation token with a Rust-owned timeout.
+     */
+public static func withTimeoutMilliseconds(timeoutMilliseconds: UInt64) -> MobileRouteProjectionCancellation  {
+    return try!  FfiConverterTypeMobileRouteProjectionCancellation_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilerouteprojectioncancellation_with_timeout_milliseconds(
+        FfiConverterUInt64.lower(timeoutMilliseconds),$0
+    )
+})
+}
+
 
 
     /**
@@ -17939,6 +17950,10 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case Cancelled
     /**
+     * A durable route projection exceeded its caller-provided deadline.
+     */
+    case DeadlineExceeded
+    /**
      * The Rust worker is no longer available.
      */
     case WorkerStopped
@@ -17994,8 +18009,9 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
         case 17: return .InvalidSegmentId
         case 18: return .QueueFull
         case 19: return .Cancelled
-        case 20: return .WorkerStopped
-        case 21: return .StorageFailure
+        case 20: return .DeadlineExceeded
+        case 21: return .WorkerStopped
+        case 22: return .StorageFailure
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -18084,12 +18100,16 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(19))
 
 
-        case .WorkerStopped:
+        case .DeadlineExceeded:
             writeInt(&buf, Int32(20))
 
 
-        case .StorageFailure:
+        case .WorkerStopped:
             writeInt(&buf, Int32(21))
+
+
+        case .StorageFailure:
+            writeInt(&buf, Int32(22))
 
         }
     }
@@ -25026,6 +25046,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilerouteprojectioncancellation_new() != 34931) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilerouteprojectioncancellation_with_timeout_milliseconds() != 49536) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_vescreadonlysession_new() != 39732) {

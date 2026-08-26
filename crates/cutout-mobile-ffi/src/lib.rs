@@ -3720,6 +3720,9 @@ pub enum MobileRideDatabaseError {
     /// A durable route projection was cancelled by its caller.
     #[error("ride route projection cancelled")]
     Cancelled,
+    /// A durable route projection exceeded its caller-provided deadline.
+    #[error("ride route projection deadline exceeded")]
+    DeadlineExceeded,
     /// The Rust worker is no longer available.
     #[error("ride database worker stopped")]
     WorkerStopped,
@@ -3770,6 +3773,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
         persistence::StorageError::Cancelled => MobileRideDatabaseError::Cancelled,
+        persistence::StorageError::DeadlineExceeded => MobileRideDatabaseError::DeadlineExceeded,
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
         | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
@@ -4077,6 +4081,18 @@ impl MobileRouteProjectionCancellation {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: persistence::RouteProjectionCancellation::new(),
+        })
+    }
+
+    /// Creates a projection cancellation token with a Rust-owned timeout.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn with_timeout_milliseconds(timeout_milliseconds: u64) -> Arc<Self> {
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(timeout_milliseconds))
+            .unwrap_or_else(Instant::now);
+        Arc::new(Self {
+            inner: persistence::RouteProjectionCancellation::with_deadline(deadline),
         })
     }
 
@@ -14543,6 +14559,41 @@ mod tests {
         );
         assert!((projection.points[0].latitude_degrees - 40.0).abs() < f64::EPSILON);
         assert!((projection.points[1].latitude_degrees - 40.0002).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn mobile_database_route_projection_timeout_is_typed_at_the_boundary() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-route-projection-deadline-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let ride = database
+            .create_ride(MobileRideSourceDto::Live, 1_000)
+            .expect("ride creates");
+        let cancellation = MobileRouteProjectionCancellation::with_timeout_milliseconds(0);
+
+        let error = database
+            .project_route_points_cancellable(
+                ride,
+                MobileRideMapRouteProjectionOptionsDto {
+                    viewport: None,
+                    budget: 1,
+                    privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+                },
+                cancellation,
+            )
+            .expect_err("zero timeout must be rejected before the worker runs");
+
+        assert_eq!(error, MobileRideDatabaseError::DeadlineExceeded);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     #[test]
