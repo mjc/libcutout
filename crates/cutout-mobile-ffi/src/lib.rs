@@ -2908,28 +2908,30 @@ impl MobilePhoneLocationSampleDto {
     /// Coordinates, altitude, and wall time are required for a usable sample. Optional metrics
     /// remain attached when valid, so an unavailable speed or course never discards a good fix.
     fn canonical(self) -> Option<Self> {
-        let valid_coordinate = self.latitude_degrees.is_finite()
-            && (-90.0..=90.0).contains(&self.latitude_degrees)
-            && self.longitude_degrees.is_finite()
-            && (-180.0..=180.0).contains(&self.longitude_degrees);
-        if self.wall_clock_unix_ms == 0 || !self.altitude_meters.is_finite() || !valid_coordinate {
-            return None;
-        }
+        let location = PevcapPhoneLocation {
+            wall_clock_unix_ms: self.wall_clock_unix_ms,
+            latitude_degrees: self.latitude_degrees,
+            longitude_degrees: self.longitude_degrees,
+            altitude_meters: self.altitude_meters,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
+            vertical_accuracy_meters: self.vertical_accuracy_meters,
+            speed_meters_per_second: self.speed_meters_per_second,
+            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
+            course_degrees: self.course_degrees,
+            course_accuracy_degrees: self.course_accuracy_degrees,
+        };
+        let location = location.canonical().ok()?;
         Some(Self {
-            horizontal_accuracy_meters: non_negative_finite(self.horizontal_accuracy_meters),
-            vertical_accuracy_meters: non_negative_finite(self.vertical_accuracy_meters),
-            speed_meters_per_second: non_negative_finite(self.speed_meters_per_second),
-            speed_accuracy_meters_per_second: non_negative_finite(
-                self.speed_accuracy_meters_per_second,
-            ),
-            course_degrees: self.course_degrees.and_then(|value| {
-                value
-                    .is_finite()
-                    .then_some(value)
-                    .filter(|value| (0.0..360.0).contains(value))
-            }),
-            course_accuracy_degrees: non_negative_finite(self.course_accuracy_degrees),
-            ..self
+            wall_clock_unix_ms: location.wall_clock_unix_ms,
+            latitude_degrees: location.latitude_degrees,
+            longitude_degrees: location.longitude_degrees,
+            altitude_meters: location.altitude_meters,
+            horizontal_accuracy_meters: location.horizontal_accuracy_meters,
+            vertical_accuracy_meters: location.vertical_accuracy_meters,
+            speed_meters_per_second: location.speed_meters_per_second,
+            speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
+            course_degrees: location.course_degrees,
+            course_accuracy_degrees: location.course_accuracy_degrees,
         })
     }
 
@@ -2966,10 +2968,6 @@ impl MobilePhoneLocationSampleDto {
             course_accuracy_degrees: self.course_accuracy_degrees,
         }
     }
-}
-
-fn non_negative_finite(value: Option<f64>) -> Option<f64> {
-    value.filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 /// Rust-owned phone location snapshot returned to the mobile UI and capture path.

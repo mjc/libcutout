@@ -4354,9 +4354,9 @@ fn stream_pevcap_location_batches(
         let Some(location) = record.phone_location else {
             continue;
         };
-        if location.wall_clock_unix_ms == 0 {
+        let Ok(location) = location.canonical() else {
             continue;
-        }
+        };
         let Ok(coordinate) =
             Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
         else {

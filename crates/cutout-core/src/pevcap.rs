@@ -1068,6 +1068,77 @@ pub struct PevcapPhoneLocation {
     pub course_accuracy_degrees: Option<f64>,
 }
 
+/// A required-field failure while canonicalizing a phone-location observation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum PevcapPhoneLocationError {
+    /// The platform did not provide a usable source timestamp.
+    #[error("phone location is missing a source timestamp")]
+    MissingWallClockTimestamp,
+
+    /// The latitude is not a finite WGS84 latitude.
+    #[error("phone location latitude is outside [-90, 90]")]
+    InvalidLatitude,
+
+    /// The longitude is not a finite WGS84 longitude.
+    #[error("phone location longitude is outside [-180, 180]")]
+    InvalidLongitude,
+
+    /// The altitude is not finite.
+    #[error("phone location altitude is not finite")]
+    InvalidAltitude,
+}
+
+impl PevcapPhoneLocation {
+    /// Canonicalizes a platform observation without mutating the raw capture record.
+    ///
+    /// Coordinates, altitude, and source time are required. Core Location's negative or
+    /// non-finite optional sentinels are represented as typed absence. This policy is shared by
+    /// live mobile ingestion and PEVCAP route import; callers that need to retain forensic input
+    /// should keep the original [`PevcapPhoneLocation`] alongside the canonical result.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error when a required field cannot describe a location observation.
+    pub fn canonical(self) -> Result<Self, PevcapPhoneLocationError> {
+        if self.wall_clock_unix_ms == 0 {
+            return Err(PevcapPhoneLocationError::MissingWallClockTimestamp);
+        }
+        if !self.latitude_degrees.is_finite() || !(-90.0..=90.0).contains(&self.latitude_degrees) {
+            return Err(PevcapPhoneLocationError::InvalidLatitude);
+        }
+        if !self.longitude_degrees.is_finite()
+            || !(-180.0..=180.0).contains(&self.longitude_degrees)
+        {
+            return Err(PevcapPhoneLocationError::InvalidLongitude);
+        }
+        if !self.altitude_meters.is_finite() {
+            return Err(PevcapPhoneLocationError::InvalidAltitude);
+        }
+
+        Ok(Self {
+            horizontal_accuracy_meters: canonical_non_negative_finite(
+                self.horizontal_accuracy_meters,
+            ),
+            vertical_accuracy_meters: canonical_non_negative_finite(self.vertical_accuracy_meters),
+            speed_meters_per_second: canonical_non_negative_finite(self.speed_meters_per_second),
+            speed_accuracy_meters_per_second: canonical_non_negative_finite(
+                self.speed_accuracy_meters_per_second,
+            ),
+            course_degrees: canonical_course(self.course_degrees),
+            course_accuracy_degrees: canonical_non_negative_finite(self.course_accuracy_degrees),
+            ..self
+        })
+    }
+}
+
+fn canonical_non_negative_finite(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+fn canonical_course(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite() && (0.0..360.0).contains(value))
+}
+
 impl PartialEq for PevcapPhoneLocation {
     fn eq(&self, other: &Self) -> bool {
         self.wall_clock_unix_ms == other.wall_clock_unix_ms
@@ -3100,6 +3171,79 @@ mod tests {
         assert_eq!(write.target, Some(target));
         assert_eq!(write.direction, PevcapDirection::Outbound);
         assert_eq!(write.write_mode, Some(WriteMode::WithoutResponse));
+    }
+
+    #[test]
+    fn phone_location_canonicalizes_optional_sentinels_without_losing_fix() {
+        let location = PevcapPhoneLocation {
+            wall_clock_unix_ms: 1_725_000_000_000,
+            latitude_degrees: 39.739_235_8,
+            longitude_degrees: -104.990_251,
+            altitude_meters: 1_609.344,
+            horizontal_accuracy_meters: Some(0.8),
+            vertical_accuracy_meters: Some(f64::NAN),
+            speed_meters_per_second: Some(-1.0),
+            speed_accuracy_meters_per_second: Some(f64::INFINITY),
+            course_degrees: Some(-1.0),
+            course_accuracy_degrees: Some(-1.0),
+        };
+
+        let canonical = location.canonical().expect("coordinates remain usable");
+        assert_eq!(canonical.horizontal_accuracy_meters, Some(0.8));
+        assert_eq!(canonical.vertical_accuracy_meters, None);
+        assert_eq!(canonical.speed_meters_per_second, None);
+        assert_eq!(canonical.speed_accuracy_meters_per_second, None);
+        assert_eq!(canonical.course_degrees, None);
+        assert_eq!(canonical.course_accuracy_degrees, None);
+    }
+
+    #[test]
+    fn phone_location_canonicalization_rejects_invalid_required_fields() {
+        let base = PevcapPhoneLocation {
+            wall_clock_unix_ms: 1,
+            latitude_degrees: 0.0,
+            longitude_degrees: 0.0,
+            altitude_meters: 0.0,
+            horizontal_accuracy_meters: None,
+            vertical_accuracy_meters: None,
+            speed_meters_per_second: None,
+            speed_accuracy_meters_per_second: None,
+            course_degrees: None,
+            course_accuracy_degrees: None,
+        };
+
+        assert_eq!(
+            PevcapPhoneLocation {
+                wall_clock_unix_ms: 0,
+                ..base
+            }
+            .canonical(),
+            Err(PevcapPhoneLocationError::MissingWallClockTimestamp)
+        );
+        assert_eq!(
+            PevcapPhoneLocation {
+                latitude_degrees: 91.0,
+                ..base
+            }
+            .canonical(),
+            Err(PevcapPhoneLocationError::InvalidLatitude)
+        );
+        assert_eq!(
+            PevcapPhoneLocation {
+                longitude_degrees: 181.0,
+                ..base
+            }
+            .canonical(),
+            Err(PevcapPhoneLocationError::InvalidLongitude)
+        );
+        assert_eq!(
+            PevcapPhoneLocation {
+                altitude_meters: f64::NAN,
+                ..base
+            }
+            .canonical(),
+            Err(PevcapPhoneLocationError::InvalidAltitude)
+        );
     }
 
     #[test]
