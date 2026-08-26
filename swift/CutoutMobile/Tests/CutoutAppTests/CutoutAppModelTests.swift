@@ -29,6 +29,21 @@ final class CutoutAppModelTests: XCTestCase {
         return decision
     }
 
+    @MainActor
+    private static func waitUntil(
+        _ description: String,
+        maxTurns: Int = 10_000,
+        file: StaticString = #filePath,
+        line: UInt = #line,
+        condition: @escaping @MainActor () async -> Bool
+    ) async {
+        for _ in 0 ..< maxTurns {
+            if await condition() { return }
+            await Task.yield()
+        }
+        XCTFail("timed out waiting for \(description)", file: file, line: line)
+    }
+
     override func setUp() {
         super.setUp()
         clear(RideSessionMarkerStore())
@@ -356,10 +371,9 @@ final class CutoutAppModelTests: XCTestCase {
         model.setRideMapHistoryDateFilter(.allTime)
         let initialDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
         model.loadRideMapHistory(selecting: rideID)
-        for _ in 0 ..< 200
-        where model.selectedRideMapHistoryID != rideID || model.rideMapHistoryDisplayPoints.isEmpty
-        {
-            try await Task.sleep(for: .milliseconds(5))
+        await Self.waitUntil("history route selection") {
+            model.selectedRideMapHistoryID == rideID
+                && model.rideMapHistoryDisplayPoints.isEmpty == false
         }
         XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
         let historyPoints = model.rideMapHistoryDisplayPoints
@@ -390,8 +404,8 @@ final class CutoutAppModelTests: XCTestCase {
             minimumLongitudeDegrees: -104.90001,
             maximumLongitudeDegrees: -104.89999
         ))
-        for _ in 0 ..< 100 where model.rideMapHistoryDetailRouteError == nil {
-            try await Task.sleep(for: .milliseconds(5))
+        await Self.waitUntil("invalid history detail viewport error") {
+            model.rideMapHistoryDetailRouteError != nil
         }
         XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
         XCTAssertNil(model.rideMapHistoryRouteError)
@@ -1827,9 +1841,8 @@ final class CutoutAppModelTests: XCTestCase {
         model.start()
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
 
-        for _ in 0 ..< 20 {
-            if model.liveActivityError != nil { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("live activity start failure") {
+            model.liveActivityError != nil
         }
 
         XCTAssertEqual(model.liveActivityError, .authorizationDenied)
@@ -1838,9 +1851,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertTrue(model.pair(platformIdentifier: row.id))
         XCTAssertFalse(model.pair(platformIdentifier: row.id))
 
-        for _ in 0 ..< 20 {
-            if await manager.startCount == 2 { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("live activity retry") {
+            await manager.startCount == 2
         }
 
         let startCount = await manager.startCount
@@ -2102,15 +2114,13 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 50 {
-            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("restored ride reconnecting phase") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .reconnecting
         }
         driver.onPhaseChange?(.subscribing)
         driver.onPhaseChange?(.live)
-        for _ in 0 ..< 50 {
-            if driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("restored ride active phase") {
+            driver.rideSessionStateHandle.rideSessionSnapshot().phase == .active
         }
 
         XCTAssertEqual(
@@ -2146,7 +2156,6 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        try? await Task.sleep(for: .milliseconds(10))
 
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [])
         let startCount = await manager.startCount
@@ -2184,7 +2193,6 @@ final class CutoutAppModelTests: XCTestCase {
         }
 
         driver.onBluetoothRestorationResolved?(platformIdentifier)
-        try? await Task.sleep(for: .milliseconds(10))
 
         XCTAssertEqual(driver.pairedPlatformIdentifiers, [platformIdentifier])
         let endReason = await manager.lastEndReason
@@ -2217,11 +2225,11 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 50 {
+        await Self.waitUntil("mismatched restored ride termination") {
             if case .ended(reason: .appReset) = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
-                break
+                return true
             }
-            try? await Task.sleep(for: .milliseconds(1))
+            return false
         }
 
         let endReason = await manager.lastEndReason
@@ -2233,9 +2241,8 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertNil(markerStore.marker)
 
         XCTAssertTrue(model.pair(platformIdentifier: restoredPlatformIdentifier))
-        for _ in 0 ..< 50 {
-            if await manager.startCount == 1 { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("user-selected replacement ride activity") {
+            await manager.startCount == 1
         }
         let userActionStartCount = await manager.startCount
         XCTAssertEqual(userActionStartCount, 1)
@@ -2259,9 +2266,11 @@ final class CutoutAppModelTests: XCTestCase {
         )
 
         model.start()
-        for _ in 0 ..< 50 {
-            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase { break }
-            try? await Task.sleep(for: .milliseconds(1))
+        await Self.waitUntil("orphaned ride termination") {
+            if case .ended = driver.rideSessionStateHandle.rideSessionSnapshot().phase {
+                return true
+            }
+            return false
         }
 
         XCTAssertEqual(
