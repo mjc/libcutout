@@ -341,6 +341,19 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints.count, 1)
         XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 40,
+            maximumLatitudeDegrees: 39,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        for _ in 0 ..< 100 where model.rideMapHistoryDetailRouteError == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNotNil(model.rideMapHistoryDetailRouteError)
+        XCTAssertNil(model.rideMapHistoryRouteError)
+        XCTAssertFalse(model.rideMapHistoryDetailRouteLoading)
     }
 
     @MainActor
