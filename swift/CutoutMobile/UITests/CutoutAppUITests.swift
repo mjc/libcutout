@@ -212,6 +212,7 @@ final class CutoutAppUITests: XCTestCase {
     }
 
     func testHomeMapRouteKeepsMapAndStartActionReachable() throws {
+        XCTAssertTrue(pairAvailableDevice(.vesc))
         let mapButton = app.buttons["dashboard.nav.map"]
         XCTAssertTrue(mapButton.waitForExistence(timeout: 8), app.debugDescription)
         XCTAssertTrue(mapButton.isHittable)
@@ -3656,8 +3657,8 @@ private enum ConnectedDeviceFamily: Equatable {
 
     var unavailableTabNames: [String] {
         switch self {
-        case .euc: ["map", "tune"]
-        case .vesc: ["map", "logs"]
+        case .euc: ["tune"]
+        case .vesc: ["logs"]
         }
     }
 
