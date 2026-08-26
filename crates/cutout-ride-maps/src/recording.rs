@@ -5,7 +5,8 @@ use crate::{
 };
 
 const MAX_HORIZONTAL_ACCURACY_MILLIMETRES: u32 = 100_000;
-const MAX_GAP_MILLISECONDS: u64 = 30_000;
+/// Maximum sample interval that remains in the current route segment.
+pub const MAX_GAP_MILLISECONDS: u64 = 30_000;
 const MAX_IMPLIED_SPEED_MILLIMETRES_PER_SECOND: u64 = 100_000;
 
 /// A non-empty platform identity for a connected vehicle.
@@ -92,6 +93,22 @@ impl RideMapSegmentId {
     const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
+}
+
+/// Why a new ordered route segment began.
+///
+/// Segment identity is scoped to a ride. This reason is persisted with the segment so
+/// consumers do not have to infer lifecycle or import provenance from point rows.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RideSegmentStartReason {
+    /// The first accepted point in a ride.
+    Initial,
+    /// A paused ride resumed and started a new route segment.
+    Resume,
+    /// A location gap exceeded the route continuity threshold.
+    BackgroundGap,
+    /// An imported artifact established the first canonical route segment.
+    ImportBoundary,
 }
 
 /// Number of route segments admitted to one ride recording.

@@ -5,8 +5,10 @@ use cutout_core::{
     PevcapRecord, RawTelemetryReadback, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_LIVE_ROUTE_POINTS,
-    RideEvent, RouteTelemetryState,
+    Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
+    MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideMapSegmentId, RidePointSequence,
+    RideSegmentStartReason, RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy,
+    RouteTelemetryState, RouteViewport, WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -14,7 +16,7 @@ use cutout_ride_maps::RideLifecycleState;
 
 use super::{
     GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
-    RideSource, StorageError, VoltageSagModelRecord,
+    RideSource, RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -35,12 +37,12 @@ fn pevcap_location(
         latitude_degrees,
         longitude_degrees: -105.0,
         altitude_meters: 1_600.0,
-        horizontal_accuracy_meters,
-        vertical_accuracy_meters: 4.0,
-        speed_meters_per_second: 0.0,
-        speed_accuracy_meters_per_second: 1.0,
-        course_degrees: 0.0,
-        course_accuracy_degrees: 1.0,
+        horizontal_accuracy_meters: Some(horizontal_accuracy_meters),
+        vertical_accuracy_meters: Some(4.0),
+        speed_meters_per_second: Some(0.0),
+        speed_accuracy_meters_per_second: Some(1.0),
+        course_degrees: Some(0.0),
+        course_accuracy_degrees: Some(1.0),
     }
 }
 
@@ -184,6 +186,16 @@ fn current_database_repairs_monotonic_ride_creation_times() {
             "INSERT INTO rides
              (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
              VALUES (?1, 'live', 'saved', 1_000, 1_700_000_002_000, 2, 1)",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO ride_segments
+             (ride_id, segment_id, sequence, start_reason, source,
+              started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
+             VALUES (?1, 0, 0, 'initial', 'live', 1_000, 1_000,
+                     1_700_000_001_000, 1_700_000_001_000)",
             ["00000000-0000-0000-0000-000000000001"],
         )
         .unwrap();
@@ -485,8 +497,8 @@ fn find_and_list_ride_projections_agree_for_all_route_shapes() {
             multi_segment_ride,
             LocationSample::new(
                 Coordinate::from_degrees(40.001, -105.0).unwrap(),
-                23_500,
-                1_700_000_023_500,
+                52_000,
+                1_700_000_052_000,
                 Some(3_000),
                 LocationSource::Live,
             ),
@@ -654,12 +666,12 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
                     latitude_degrees: 40.0,
                     longitude_degrees: -105.0,
                     altitude_meters: 1_600.0,
-                    horizontal_accuracy_meters: 3.0,
-                    vertical_accuracy_meters: 4.0,
-                    speed_meters_per_second: 0.0,
-                    speed_accuracy_meters_per_second: 1.0,
-                    course_degrees: 0.0,
-                    course_accuracy_degrees: 1.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: Some(4.0),
+                    speed_meters_per_second: Some(0.0),
+                    speed_accuracy_meters_per_second: Some(1.0),
+                    course_degrees: Some(0.0),
+                    course_accuracy_degrees: Some(1.0),
                 },
             ),
         ],
@@ -718,6 +730,10 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     let _ = std::fs::remove_file(artifact_path);
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "integration test covers the complete canonical import contract"
+)]
 #[test]
 fn pevcap_import_uses_live_admission_and_segmentation_policy() {
     let _guard = test_guard();
@@ -750,12 +766,12 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
             pevcap_location_record(1_000, 40.0, 3.0),
             pevcap_location_record(900, 40.0001, 3.0),
             pevcap_location_record(2_000, 41.0, 3.0),
-            pevcap_location_record(3_000, 40.000001, 200.0),
-            pevcap_location_record(4_000, 40.000001, 3.0),
+            pevcap_location_record(3_000, 40.000_001, 200.0),
+            pevcap_location_record(4_000, 40.000_001, 3.0),
             pevcap_location_record(5_000, 91.0, 3.0),
-            pevcap_location_record(6_000, 40.000001, -1.0),
+            pevcap_location_record(6_000, 40.000_001, -1.0),
             {
-                let mut location = pevcap_location(7_000, 40.000001, 3.0);
+                let mut location = pevcap_location(7_000, 40.000_001, 3.0);
                 location.wall_clock_unix_ms = 0;
                 PevcapRecord::link_up(MonotonicTimestamp::new(7_000), None)
                     .with_phone_location(location)
@@ -789,7 +805,11 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
             .iter()
             .map(|point| point.segment_id())
             .collect::<Vec<_>>(),
-        vec![0, 0, 1]
+        vec![
+            RideMapSegmentId::new(0),
+            RideMapSegmentId::new(0),
+            RideMapSegmentId::new(1),
+        ]
     );
     assert!(points.iter().all(|point| {
         point.sample().source() == LocationSource::PevcapImport
@@ -817,9 +837,11 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
         .create_ride(RideSource::Live, 1_700_000_000_000)
         .unwrap();
     database.transition(live_ride, RideEvent::Start).unwrap();
-    for (monotonic_ms, latitude_degrees, segment_id) in
-        [(1_000, 40.0, 0), (4_000, 40.000001, 0), (40_000, 40.001, 1)]
-    {
+    for (monotonic_ms, latitude_degrees, segment_id) in [
+        (1_000, 40.0, 0),
+        (4_000, 40.000_001, 0),
+        (40_000, 40.001, 1),
+    ] {
         let sample = LocationSample::new(
             Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
             monotonic_ms,
@@ -1208,7 +1230,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 11);
+        assert_eq!(current_version, 12);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1243,6 +1265,119 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
                 .unwrap();
             assert_eq!(selected, "legacy-device");
         }
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "migration fixture keeps both legacy schemas explicit"
+)]
+fn schema_ten_and_eleven_migrations_create_segment_rows_and_foreign_keys() {
+    let _guard = test_guard();
+    for version in [10_i64, 11_i64] {
+        let path = std::env::temp_dir().join(format!(
+            "libcutout-persistence-segment-migration-v{version}-{}.sqlite",
+            uuid::Uuid::new_v4()
+        ));
+        let connection = Connection::open(&path).unwrap();
+        crate::storage::create_current_schema(&connection).unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = OFF;
+                 DROP TABLE ride_points;
+                 DROP TABLE ride_segments;
+                 DROP TABLE rides;",
+            )
+            .unwrap();
+        let duration_columns = if version >= 11 {
+            ", duration_ms INTEGER NOT NULL DEFAULT 0,
+               paused_at_ms INTEGER,
+               paused_duration_ms INTEGER NOT NULL DEFAULT 0"
+        } else {
+            ""
+        };
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE rides (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    source TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    monotonic_created_at_ms INTEGER,
+                    updated_at_ms INTEGER NOT NULL,
+                    point_count INTEGER NOT NULL,
+                    distance_mm INTEGER NOT NULL,
+                    candidate_vehicle TEXT,
+                    associated_vehicle TEXT,
+                    associated_at_ms INTEGER,
+                    last_telemetry_at_ms INTEGER{duration_columns}
+                );
+                CREATE TABLE ride_points (
+                    ride_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    segment_id INTEGER NOT NULL DEFAULT 0,
+                    telemetry_state INTEGER NOT NULL DEFAULT 0,
+                    monotonic_ms INTEGER NOT NULL,
+                    wall_clock_ms INTEGER NOT NULL,
+                    latitude_e7 INTEGER NOT NULL,
+                    longitude_e7 INTEGER NOT NULL,
+                    horizontal_accuracy_mm INTEGER,
+                    source TEXT NOT NULL,
+                    PRIMARY KEY (ride_id, sequence)
+                );
+                PRAGMA user_version = {version};"
+            ))
+            .unwrap();
+        let ride_id = uuid::Uuid::new_v4().to_string();
+        connection
+            .execute(
+                "INSERT INTO rides
+                    (id, source, state, created_at_ms, monotonic_created_at_ms, updated_at_ms,
+                     point_count, distance_mm)
+                 VALUES (?1, 'live', 'saved', 10, 1, 20, 1, 1234)",
+                [&ride_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO ride_points
+                    (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+                     latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+                 VALUES (?1, 0, 0, 0, 1, 2, 400000000, -1050000000, NULL, 'live')",
+                [&ride_id],
+            )
+            .unwrap();
+        drop(connection);
+        let database = RideDatabase::open(&path).unwrap();
+        database.shutdown().unwrap();
+        let connection = Connection::open(&path).unwrap();
+
+        let current_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(current_version, 12);
+        let segment_count: u64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
+                [&ride_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(segment_count, 1);
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .unwrap();
+        let foreign_key_errors: Vec<String> = connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(foreign_key_errors.is_empty());
+        drop(connection);
         let _ = std::fs::remove_file(path);
     }
 }
@@ -1477,13 +1612,13 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .route_points(ride, None, QueryLimit::new(2).unwrap())
         .unwrap();
     assert_eq!(first.points().len(), 2);
-    assert_eq!(first.points()[0].sequence(), 0);
-    assert_eq!(first.points()[1].sequence(), 1);
+    assert_eq!(first.points()[0].sequence(), RidePointSequence::new(0));
+    assert_eq!(first.points()[1].sequence(), RidePointSequence::new(1));
     let second = database
         .route_points(ride, first.next_cursor(), QueryLimit::new(2).unwrap())
         .unwrap();
     assert_eq!(second.points().len(), 1);
-    assert_eq!(second.points()[0].sequence(), 2);
+    assert_eq!(second.points()[0].sequence(), RidePointSequence::new(2));
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -1515,12 +1650,114 @@ fn latest_route_points_return_the_bounded_tail_in_ascending_order() {
 
     let points = database.latest_route_points(ride).unwrap();
     assert_eq!(points.len(), MAX_LIVE_ROUTE_POINTS);
-    assert_eq!(points.first().unwrap().sequence(), 2);
+    assert_eq!(
+        points.first().unwrap().sequence(),
+        RidePointSequence::new(2)
+    );
     assert_eq!(
         points.last().unwrap().sequence(),
-        u64::try_from(MAX_LIVE_ROUTE_POINTS + 1).unwrap()
+        RidePointSequence::new(u64::try_from(MAX_LIVE_ROUTE_POINTS + 1).unwrap())
     );
 
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for offset in 0..4_u64 {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(
+                40.0 + f64::from(u32::try_from(offset).unwrap()) / 10_000.0,
+                -105.0,
+            )
+            .unwrap(),
+            offset + 1,
+            1_700_000_000_000 + offset,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let viewport = RouteViewport::new(
+        LatitudeE7::new(400_000_000),
+        LatitudeE7::new(400_002_000),
+        LongitudeE7::new(-1_050_000_000),
+        LongitudeE7::new(-1_049_999_000),
+    )
+    .unwrap();
+    let projection = database
+        .project_route_points(
+            ride,
+            Some(viewport),
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(1_000).unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(projection.source_point_count(), 4);
+    assert_eq!(projection.points().len(), 2);
+    assert_eq!(projection.points()[0].sequence().as_u64(), 0);
+    assert_eq!(projection.points()[1].sequence().as_u64(), 2);
+    assert!(projection.points().iter().all(|point| {
+        point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
+    }));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cancelled_durable_route_projection_returns_before_scanning() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-cancel-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0_u64..4_096 {
+        let offset = f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0;
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
+            sequence + 1,
+            1_700_000_000_000 + sequence,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+    let cancellation = RouteProjectionCancellation::new();
+    cancellation.cancel();
+
+    let error = database
+        .project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            cancellation,
+        )
+        .expect_err("a cancelled projection must not scan the route");
+
+    assert!(matches!(error, StorageError::Cancelled));
+    assert!(database.find_ride(ride).unwrap().is_some());
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -1669,7 +1906,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 11);
+    assert_eq!(version, 12);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
@@ -1777,6 +2014,69 @@ fn route_points_persist_telemetry_provenance() {
 }
 
 #[test]
+fn route_points_reject_arbitrary_segment_id() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-integrity-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = |monotonic_ms| {
+        LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            Some(3_000),
+            LocationSource::Live,
+        )
+    };
+    database
+        .append_location_with_segment_and_telemetry(
+            ride,
+            sample(11),
+            0,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    assert!(matches!(
+        database.append_location_with_segment_and_telemetry(
+            ride,
+            sample(12),
+            2,
+            RouteTelemetryState::GpsOnly,
+        ),
+        Err(StorageError::InvalidSegmentId {
+            expected: 0,
+            actual: 2
+        })
+    ));
+    database
+        .append_location_with_segment_and_telemetry(
+            ride,
+            sample(30_012),
+            1,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    assert!(matches!(
+        database.append_location_with_segment_and_telemetry(
+            ride,
+            sample(30_013),
+            3,
+            RouteTelemetryState::GpsOnly,
+        ),
+        Err(StorageError::InvalidSegmentId {
+            expected: 1,
+            actual: 3
+        })
+    ));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn migrated_ride_tables_enforce_the_current_constraints() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -1810,4 +2110,103 @@ fn migrated_ride_tables_enforce_the_current_constraints() {
             .is_err()
     );
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_segments_persist_ordered_reason_and_source_metadata() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-ride-segments-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 10).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = |monotonic_ms| {
+        LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            Some(3_000),
+            LocationSource::Live,
+        )
+    };
+    database
+        .append_location_with_segment_and_telemetry(
+            ride,
+            sample(11),
+            0,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+    database
+        .append_location_with_segment_and_telemetry(
+            ride,
+            sample(40_012),
+            1,
+            RouteTelemetryState::GpsOnly,
+        )
+        .unwrap();
+
+    let segments = database
+        .ride_segments(ride, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].id(), RideMapSegmentId::new(0));
+    assert_eq!(segments[0].sequence(), RidePointSequence::new(0));
+    assert_eq!(segments[0].start_reason(), RideSegmentStartReason::Initial);
+    assert_eq!(segments[0].source(), RideSource::Live);
+    assert_eq!(
+        segments[0].ended_monotonic_milliseconds(),
+        Some(MonotonicMilliseconds::new(11))
+    );
+    assert_eq!(segments[1].id(), RideMapSegmentId::new(1));
+    assert_eq!(segments[1].sequence(), RidePointSequence::new(1));
+    assert_eq!(
+        segments[1].start_reason(),
+        RideSegmentStartReason::BackgroundGap
+    );
+    assert_eq!(
+        segments[1].started_monotonic_milliseconds(),
+        MonotonicMilliseconds::new(40_012)
+    );
+    assert_eq!(
+        segments[1].ended_monotonic_milliseconds(),
+        Some(MonotonicMilliseconds::new(40_012))
+    );
+    assert_eq!(
+        segments[1].started_wall_clock_milliseconds(),
+        WallClockUnixMilliseconds::new(1_700_000_040_012)
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn ride_points_require_a_matching_segment_foreign_key() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute(
+            "INSERT INTO rides
+             (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
+             VALUES (?1, 'live', 'active', 10, 10, 0, 0)",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .unwrap();
+    let error = connection
+        .execute(
+            "INSERT INTO ride_points
+             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+              latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+             VALUES (?1, 0, 0, 0, 11, 1_700_000_000_011, 400000000, -105000000, NULL, 'live')",
+            ["00000000-0000-0000-0000-000000000001"],
+        )
+        .expect_err("a point without its segment must be rejected");
+    assert!(matches!(error, rusqlite::Error::SqliteFailure(_, _)));
 }

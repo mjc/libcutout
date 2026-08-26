@@ -3,9 +3,11 @@ use cutout_core::{
     SessionOutput,
 };
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_LIVE_ROUTE_POINTS,
-    RideEvent, RideLifecycleState, RideMapRecorder, RideMapSegmentId, RideSummary,
-    RouteTelemetryState, TransitionError,
+    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
+    MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint,
+    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideSegmentStartReason, RideSummary,
+    RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    RouteTelemetryState, RouteViewport, TransitionError, WallClockUnixMilliseconds,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -16,6 +18,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
@@ -29,7 +32,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 11;
+const CURRENT_SCHEMA_VERSION: i64 = 12;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -327,18 +330,18 @@ impl RidePage {
 
 /// Stable cursor for ascending route-point pagination.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RoutePointCursor(u64);
+pub struct RoutePointCursor(RidePointSequence);
 
 impl RoutePointCursor {
     /// Restores a cursor returned by a previous query page.
     #[must_use]
-    pub const fn new(sequence: u64) -> Self {
+    pub const fn new(sequence: RidePointSequence) -> Self {
         Self(sequence)
     }
 
     /// Returns the sequence component.
     #[must_use]
-    pub const fn sequence(self) -> u64 {
+    pub const fn sequence(self) -> RidePointSequence {
         self.0
     }
 }
@@ -346,8 +349,8 @@ impl RoutePointCursor {
 /// One canonical route point with its stable ride sequence.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoutePoint {
-    sequence: u64,
-    segment_id: u64,
+    sequence: RidePointSequence,
+    segment_id: RideMapSegmentId,
     sample: LocationSample,
     telemetry_state: RouteTelemetryState,
 }
@@ -355,13 +358,19 @@ pub struct RoutePoint {
 impl RoutePoint {
     /// Returns the stable zero-based sequence within the ride.
     #[must_use]
-    pub const fn sequence(self) -> u64 {
+    pub const fn sequence(self) -> RidePointSequence {
         self.sequence
     }
 
     /// Returns the Rust-owned segment identity within the ride.
     #[must_use]
-    pub const fn segment_id(self) -> u64 {
+    pub const fn segment_id(self) -> RideMapSegmentId {
+        self.segment_id
+    }
+
+    /// Returns the typed segment identity scoped to this ride.
+    #[must_use]
+    pub const fn segment_identity(self) -> RideMapSegmentId {
         self.segment_id
     }
 
@@ -375,6 +384,90 @@ impl RoutePoint {
     #[must_use]
     pub const fn telemetry_state(self) -> RouteTelemetryState {
         self.telemetry_state
+    }
+}
+
+/// One ordered segment in a canonical ride route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RideSegment {
+    id: RideMapSegmentId,
+    sequence: RidePointSequence,
+    start_reason: RideSegmentStartReason,
+    source: RideSource,
+    started_monotonic_ms: MonotonicMilliseconds,
+    ended_monotonic_ms: Option<MonotonicMilliseconds>,
+    started_wall_clock_ms: WallClockUnixMilliseconds,
+    ended_wall_clock_ms: Option<WallClockUnixMilliseconds>,
+}
+
+impl RideSegment {
+    /// Returns this segment's scoped identity.
+    #[must_use]
+    pub const fn id(self) -> RideMapSegmentId {
+        self.id
+    }
+
+    /// Returns the stable sequence within its ride.
+    #[must_use]
+    pub const fn sequence(self) -> RidePointSequence {
+        self.sequence
+    }
+
+    /// Returns why this segment began.
+    #[must_use]
+    pub const fn start_reason(self) -> RideSegmentStartReason {
+        self.start_reason
+    }
+
+    /// Returns the point provenance for this segment.
+    #[must_use]
+    pub const fn source(self) -> RideSource {
+        self.source
+    }
+
+    /// Returns the first point's monotonic timestamp.
+    #[must_use]
+    pub const fn started_monotonic_milliseconds(self) -> MonotonicMilliseconds {
+        self.started_monotonic_ms
+    }
+
+    /// Returns the latest point's monotonic timestamp, when any point exists.
+    #[must_use]
+    pub const fn ended_monotonic_milliseconds(self) -> Option<MonotonicMilliseconds> {
+        self.ended_monotonic_ms
+    }
+
+    /// Returns the first point's wall-clock timestamp.
+    #[must_use]
+    pub const fn started_wall_clock_milliseconds(self) -> WallClockUnixMilliseconds {
+        self.started_wall_clock_ms
+    }
+
+    /// Returns the latest point's wall-clock timestamp, when any point exists.
+    #[must_use]
+    pub const fn ended_wall_clock_milliseconds(self) -> Option<WallClockUnixMilliseconds> {
+        self.ended_wall_clock_ms
+    }
+}
+
+/// One bounded, privacy-classified projection of a durable ride route.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoutePointProjection {
+    points: Vec<RouteDisplayPoint>,
+    source_point_count: u64,
+}
+
+impl RoutePointProjection {
+    /// Returns the bounded display points in canonical sequence order.
+    #[must_use]
+    pub fn points(&self) -> &[RouteDisplayPoint] {
+        &self.points
+    }
+
+    /// Returns the complete durable point count before LOD or viewport filtering.
+    #[must_use]
+    pub const fn source_point_count(&self) -> u64 {
+        self.source_point_count
     }
 }
 
@@ -872,6 +965,15 @@ pub enum StorageError {
     /// The ride cannot accept a point in its current state.
     #[error("ride is not accepting location samples in state {0:?}")]
     InvalidRideState(RideLifecycleState),
+    /// A persisted route point supplied a segment identity that does not follow the canonical
+    /// previous-point and gap policy.
+    #[error("invalid route segment id: expected {expected}, got {actual}")]
+    InvalidSegmentId {
+        /// Canonical segment identity derived from the previous point and gap policy.
+        expected: u64,
+        /// Segment identity supplied by the caller.
+        actual: u64,
+    },
     /// The bounded command queue is full.
     #[error("ride database command queue is full")]
     QueueFull,
@@ -912,6 +1014,9 @@ pub enum StorageError {
     /// The spatial schema could not be initialized.
     #[error("SQLite spatial schema initialization failed: {0}")]
     SpatialSchemaInitialization(String),
+    /// A durable route projection was cancelled at a worker checkpoint.
+    #[error("route projection cancelled")]
+    Cancelled,
 }
 
 enum SpatialSchemaState {
@@ -948,6 +1053,39 @@ pub struct RideDatabase {
 #[derive(Debug)]
 pub struct PendingLocationWrite {
     response: Receiver<Result<LocationAdmission, StorageError>>,
+}
+
+/// Cooperative cancellation shared by a durable route projection and its caller.
+#[derive(Clone, Debug)]
+pub struct RouteProjectionCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl RouteProjectionCancellation {
+    /// Creates a new active cancellation token.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Requests cancellation of the associated projection.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Returns whether cancellation was requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+}
+
+impl Default for RouteProjectionCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PendingLocationWrite {
@@ -1580,7 +1718,7 @@ impl RideDatabase {
         ride_id: RideId,
         sample: LocationSample,
     ) -> Result<LocationAdmission, StorageError> {
-        self.append_location_with_segment(ride_id, sample, 0)
+        self.append_location_with_segment_id(ride_id, sample, RideMapSegmentId::new(0))
     }
 
     /// Appends one location with its Rust-owned route segment identity.
@@ -1595,7 +1733,24 @@ impl RideDatabase {
         sample: LocationSample,
         segment_id: u64,
     ) -> Result<LocationAdmission, StorageError> {
-        self.append_location_with_segment_and_telemetry(
+        self.append_location_with_segment_id(ride_id, sample, RideMapSegmentId::new(segment_id))
+    }
+
+    /// Appends one location with a typed segment identity.
+    ///
+    /// The segment ordinal is scoped to the ride and is not a standalone entity identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride is missing, not accepting samples, or the worker
+    /// cannot commit the point.
+    pub fn append_location_with_segment_id(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+    ) -> Result<LocationAdmission, StorageError> {
+        self.append_location_with_segment_id_and_telemetry(
             ride_id,
             sample,
             segment_id,
@@ -1614,6 +1769,26 @@ impl RideDatabase {
         ride_id: RideId,
         sample: LocationSample,
         segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<LocationAdmission, StorageError> {
+        self.append_location_with_segment_id_and_telemetry(
+            ride_id,
+            sample,
+            RideMapSegmentId::new(segment_id),
+            telemetry_state,
+        )
+    }
+
+    /// Appends one location with typed segment and telemetry provenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the ride, sample, or worker rejects the append.
+    pub fn append_location_with_segment_id_and_telemetry(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
     ) -> Result<LocationAdmission, StorageError> {
         self.request(move |reply| Command::AppendLocation {
@@ -1642,6 +1817,26 @@ impl RideDatabase {
         segment_id: u64,
         telemetry_state: RouteTelemetryState,
     ) -> Result<LocationAdmission, StorageError> {
+        self.enqueue_location_with_segment_id_and_telemetry(
+            ride_id,
+            sample,
+            RideMapSegmentId::new(segment_id),
+            telemetry_state,
+        )
+    }
+
+    /// Enqueues one location with typed segment and telemetry provenance and waits for durability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot accept or commit the sample.
+    pub fn enqueue_location_with_segment_id_and_telemetry(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<LocationAdmission, StorageError> {
         self.request(|reply| Command::AppendLocation {
             ride_id,
             sample,
@@ -1665,6 +1860,26 @@ impl RideDatabase {
         ride_id: RideId,
         sample: LocationSample,
         segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        self.enqueue_location_id_async(
+            ride_id,
+            sample,
+            RideMapSegmentId::new(segment_id),
+            telemetry_state,
+        )
+    }
+
+    /// Enqueues one location with a typed segment identity without waiting for `SQLite`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded worker queue cannot accept the sample.
+    pub fn enqueue_location_id_async(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
@@ -1745,6 +1960,78 @@ impl RideDatabase {
             ride_id,
             cursor,
             limit,
+            reply,
+        })
+    }
+
+    /// Loads the ordered, typed segments belonging to one canonical ride.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist, or another typed storage
+    /// error when a persisted segment cannot be decoded.
+    pub fn ride_segments(
+        &self,
+        ride_id: RideId,
+        limit: QueryLimit,
+    ) -> Result<Vec<RideSegment>, StorageError> {
+        self.request(move |reply| Command::RideSegments {
+            ride_id,
+            limit,
+            reply,
+        })
+    }
+
+    /// Projects a durable route through the shared Rust viewport, LOD, and privacy policy.
+    ///
+    /// The worker counts the complete route and streams only viewport candidates into the
+    /// bounded projection, so callers never need to page or retain the raw route in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist, or another typed storage
+    /// error when the route cannot be decoded.
+    pub fn project_route_points(
+        &self,
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+    ) -> Result<RoutePointProjection, StorageError> {
+        self.request(move |reply| Command::ProjectRoutePoints {
+            ride_id,
+            viewport,
+            budget,
+            privacy,
+            cancellation: None,
+            reply,
+        })
+    }
+
+    /// Projects a durable route while honoring a cooperative cancellation token.
+    ///
+    /// The worker checks the token before each query and while streaming route rows. Cancellation
+    /// is cooperative: an individual `SQLite` statement may finish before the worker observes the
+    /// request, but the projection does not retain the full route in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::Cancelled`] when cancellation is requested, or the same storage
+    /// errors as [`Self::project_route_points`].
+    pub fn project_route_points_cancellable(
+        &self,
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        cancellation: RouteProjectionCancellation,
+    ) -> Result<RoutePointProjection, StorageError> {
+        self.request(move |reply| Command::ProjectRoutePoints {
+            ride_id,
+            viewport,
+            budget,
+            privacy,
+            cancellation: Some(cancellation),
             reply,
         })
     }
@@ -1989,7 +2276,7 @@ enum Command {
     AppendLocation {
         ride_id: RideId,
         sample: LocationSample,
-        segment_id: u64,
+        segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
     },
@@ -2012,6 +2299,19 @@ enum Command {
         cursor: Option<RoutePointCursor>,
         limit: QueryLimit,
         reply: Reply<RoutePointPage>,
+    },
+    RideSegments {
+        ride_id: RideId,
+        limit: QueryLimit,
+        reply: Reply<Vec<RideSegment>>,
+    },
+    ProjectRoutePoints {
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        cancellation: Option<RouteProjectionCancellation>,
+        reply: Reply<RoutePointProjection>,
     },
     LatestRoutePoints {
         ride_id: RideId,
@@ -2327,6 +2627,30 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             } => {
                 let _ = reply.send(route_points(&connection, ride_id, cursor, limit));
             }
+            Command::RideSegments {
+                ride_id,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(ride_segments(&connection, ride_id, limit));
+            }
+            Command::ProjectRoutePoints {
+                ride_id,
+                viewport,
+                budget,
+                privacy,
+                cancellation,
+                reply,
+            } => {
+                let _ = reply.send(project_route_points(
+                    &connection,
+                    ride_id,
+                    viewport,
+                    budget,
+                    privacy,
+                    cancellation.as_ref(),
+                ));
+            }
             Command::LatestRoutePoints { ride_id, reply } => {
                 let _ = reply.send(latest_route_points(&connection, ride_id));
             }
@@ -2489,7 +2813,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 11;
+                PRAGMA user_version = 12;
                  COMMIT;",
             )?;
         }
@@ -2548,6 +2872,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         8 => migrate_v8_to_current(connection)?,
         9 => migrate_v9_to_current(connection)?,
         10 => migrate_v10_to_current(connection)?,
+        11 => migrate_v11_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -2558,6 +2883,10 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the declarative schema stays in one transaction"
+)]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "
@@ -2579,6 +2908,19 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             last_telemetry_at_ms INTEGER CHECK (last_telemetry_at_ms IS NULL OR last_telemetry_at_ms >= 0)
         );
         CREATE INDEX rides_history_order ON rides(created_at_ms DESC, id DESC);
+        CREATE TABLE ride_segments (
+            ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
+            source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
+            started_monotonic_ms INTEGER NOT NULL CHECK (started_monotonic_ms >= 0),
+            ended_monotonic_ms INTEGER CHECK (ended_monotonic_ms IS NULL OR ended_monotonic_ms >= started_monotonic_ms),
+            started_wall_clock_ms INTEGER NOT NULL CHECK (started_wall_clock_ms >= 0),
+            ended_wall_clock_ms INTEGER CHECK (ended_wall_clock_ms IS NULL OR ended_wall_clock_ms >= started_wall_clock_ms),
+            PRIMARY KEY (ride_id, segment_id),
+            UNIQUE (ride_id, sequence)
+        );
         CREATE TABLE ride_points (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
@@ -2591,7 +2933,8 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             horizontal_accuracy_mm INTEGER CHECK (horizontal_accuracy_mm IS NULL OR horizontal_accuracy_mm >= 0),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
             PRIMARY KEY (ride_id, sequence),
-            UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7)
+            UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7),
+            FOREIGN KEY (ride_id, segment_id) REFERENCES ride_segments(ride_id, segment_id)
         );
         CREATE TABLE selected_device (
             id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -2739,6 +3082,13 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
             (id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm)
         SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
         FROM rides_legacy;
+        INSERT INTO ride_segments
+            (ride_id, segment_id, sequence, start_reason, source,
+             started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
+        SELECT ride_id, 0, 0, 'initial', MIN(source), MIN(monotonic_ms), MAX(monotonic_ms),
+               MIN(wall_clock_ms), MAX(wall_clock_ms)
+        FROM ride_points_legacy
+        GROUP BY ride_id;
         INSERT INTO ride_points
             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7,
              longitude_e7, horizontal_accuracy_mm, source)
@@ -2761,7 +3111,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 11;
+                PRAGMA user_version = 12;
         ",
     )?;
     transaction.commit()?;
@@ -2931,6 +3281,70 @@ fn migrate_v10_to_current(connection: &mut Connection) -> Result<(), StorageErro
         COMMIT;
         ",
     )?;
+    migrate_v11_to_current(connection)
+}
+
+fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    if table_exists(connection, "ride_segments")? {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 12;",
+        )?;
+        return Ok(());
+    }
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "
+        CREATE TABLE ride_segments (
+            ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
+            source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
+            started_monotonic_ms INTEGER NOT NULL CHECK (started_monotonic_ms >= 0),
+            ended_monotonic_ms INTEGER CHECK (ended_monotonic_ms IS NULL OR ended_monotonic_ms >= started_monotonic_ms),
+            started_wall_clock_ms INTEGER NOT NULL CHECK (started_wall_clock_ms >= 0),
+            ended_wall_clock_ms INTEGER CHECK (ended_wall_clock_ms IS NULL OR ended_wall_clock_ms >= started_wall_clock_ms),
+            PRIMARY KEY (ride_id, segment_id),
+            UNIQUE (ride_id, sequence)
+        );
+        INSERT INTO ride_segments
+            (ride_id, segment_id, sequence, start_reason, source,
+             started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
+        SELECT ride_id, segment_id, segment_id,
+               CASE WHEN segment_id = 0 THEN 'initial' ELSE 'background_gap' END,
+               MIN(source), MIN(monotonic_ms), MAX(monotonic_ms), MIN(wall_clock_ms), MAX(wall_clock_ms)
+        FROM ride_points
+        GROUP BY ride_id, segment_id;
+        ALTER TABLE ride_points RENAME TO ride_points_legacy;
+        CREATE TABLE ride_points (
+            ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+            telemetry_state INTEGER NOT NULL DEFAULT 0 CHECK (telemetry_state BETWEEN 0 AND 3),
+            monotonic_ms INTEGER NOT NULL CHECK (monotonic_ms >= 0),
+            wall_clock_ms INTEGER NOT NULL CHECK (wall_clock_ms >= 0),
+            latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
+            longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000),
+            horizontal_accuracy_mm INTEGER CHECK (horizontal_accuracy_mm IS NULL OR horizontal_accuracy_mm >= 0),
+            source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
+            PRIMARY KEY (ride_id, sequence),
+            UNIQUE (ride_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7),
+            FOREIGN KEY (ride_id, segment_id) REFERENCES ride_segments(ride_id, segment_id)
+        );
+        INSERT INTO ride_points
+            (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+             latitude_e7, longitude_e7, horizontal_accuracy_mm, source)
+        SELECT ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms,
+               latitude_e7, longitude_e7, horizontal_accuracy_mm, source
+        FROM ride_points_legacy;
+        DROP TABLE ride_points_legacy;
+        PRAGMA application_id = 1129665615;
+        PRAGMA user_version = 12;
+        ",
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -2943,6 +3357,7 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
     for table in [
         "rides",
         "ride_points",
+        "ride_segments",
         "devices",
         "selected_device",
         "voltage_sag_models",
@@ -3622,12 +4037,8 @@ fn stream_pevcap_location_batches(
         else {
             continue;
         };
-        let accuracy_millimetres = location.horizontal_accuracy_meters * 1_000.0;
-        if !accuracy_millimetres.is_finite() || accuracy_millimetres < 0.0 {
-            continue;
-        }
         let Some(horizontal_accuracy_millimetres) =
-            u32::try_from(accuracy_millimetres.round() as u64).ok()
+            pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
         else {
             continue;
         };
@@ -3664,6 +4075,20 @@ fn stream_pevcap_location_batches(
         accepted = accepted.saturating_add(append(batch)?);
     }
     Ok(accepted)
+}
+
+fn pevcap_accuracy_millimetres(metres: Option<f64>) -> Option<u32> {
+    let metres = metres?;
+    let millimetres = metres * 1_000.0;
+    if !millimetres.is_finite() || millimetres < 0.0 || millimetres > f64::from(u32::MAX) {
+        return None;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "finite non-negative values are bounded by u32::MAX above"
+    )]
+    Some(millimetres.round() as u32)
 }
 
 fn pevcap_import_receipt(
@@ -3775,7 +4200,7 @@ fn append_pevcap_location_batch(
             &transaction,
             ride_id,
             point.sample,
-            point.segment_id.value(),
+            point.segment_id,
             point.telemetry_state,
             LocationWriteMode::PevcapImport,
         )? == LocationAdmission::Accepted
@@ -4050,7 +4475,7 @@ fn append_location(
     connection: &mut Connection,
     ride_id: RideId,
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
 ) -> Result<LocationAdmission, StorageError> {
     let transaction = connection.transaction()?;
@@ -4070,7 +4495,7 @@ fn append_location_in_transaction(
     connection: &Connection,
     ride_id: RideId,
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
     mode: LocationWriteMode,
 ) -> Result<LocationAdmission, StorageError> {
@@ -4124,12 +4549,14 @@ fn append_location_in_transaction(
             mode,
         )
         .map_err(StorageError::InvalidRideState)?;
+    validate_segment_id(previous.as_ref(), sample, segment_id)?;
     match decision {
         LocationWriteDecision::Accepted {
             distance_millimetres,
             updated_at_ms,
             duration_milliseconds,
         } => {
+            ensure_ride_segment(connection, ride_id, previous.as_ref(), sample, segment_id)?;
             let sequence = previous
                 .map(|(sequence, _, _)| sequence + 1)
                 .unwrap_or_default();
@@ -4154,6 +4581,133 @@ fn append_location_in_transaction(
             }
         }
         LocationWriteDecision::Rejected(admission) => Ok(admission),
+    }
+}
+
+fn ensure_ride_segment(
+    connection: &Connection,
+    ride_id: RideId,
+    previous: Option<&(i64, u64, LocationSample)>,
+    sample: LocationSample,
+    segment_identity: RideMapSegmentId,
+) -> Result<(), StorageError> {
+    let segment_id =
+        i64::try_from(segment_identity.value()).map_err(|_| StorageError::InvalidStoredValue {
+            field: "ride segment identifier",
+            value: segment_identity.value().to_string(),
+        })?;
+    let existing = connection
+        .query_row(
+            "SELECT start_reason, source FROM ride_segments
+             WHERE ride_id = ?1 AND segment_id = ?2",
+            params![ride_id.uuid().to_string(), segment_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((reason, source)) = existing {
+        segment_start_reason_from_db(&reason)?;
+        let expected_source = source_to_db(sample.source());
+        if source != expected_source {
+            return Err(StorageError::InvalidStoredValue {
+                field: "ride segment source",
+                value: source,
+            });
+        }
+        connection.execute(
+            "UPDATE ride_segments
+             SET ended_monotonic_ms = MAX(COALESCE(ended_monotonic_ms, started_monotonic_ms), ?3),
+                 ended_wall_clock_ms = MAX(COALESCE(ended_wall_clock_ms, started_wall_clock_ms), ?4)
+             WHERE ride_id = ?1 AND segment_id = ?2",
+            params![
+                ride_id.uuid().to_string(),
+                segment_id,
+                sample.monotonic_milliseconds().as_u64(),
+                sample.wall_clock_unix_milliseconds().as_u64(),
+            ],
+        )?;
+        return Ok(());
+    }
+
+    let start_reason = segment_start_reason(previous, sample, segment_identity);
+    connection.execute(
+        "INSERT INTO ride_segments
+            (ride_id, segment_id, sequence, start_reason, source,
+             started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
+         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
+        params![
+            ride_id.uuid().to_string(),
+            segment_id,
+            segment_start_reason_to_db(start_reason),
+            source_to_db(sample.source()),
+            sample.monotonic_milliseconds().as_u64(),
+            sample.wall_clock_unix_milliseconds().as_u64(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn segment_start_reason(
+    previous: Option<&(i64, u64, LocationSample)>,
+    sample: LocationSample,
+    segment_id: RideMapSegmentId,
+) -> RideSegmentStartReason {
+    let Some((_, previous_segment_id, previous_sample)) = previous else {
+        return match sample.source() {
+            LocationSource::Live => RideSegmentStartReason::Initial,
+            LocationSource::PevcapImport => RideSegmentStartReason::ImportBoundary,
+        };
+    };
+    if *previous_segment_id == segment_id.value() {
+        return RideSegmentStartReason::Initial;
+    }
+    let gap_started = sample
+        .monotonic_milliseconds()
+        .as_u64()
+        .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+        > MAX_GAP_MILLISECONDS;
+    if gap_started {
+        RideSegmentStartReason::BackgroundGap
+    } else {
+        RideSegmentStartReason::Resume
+    }
+}
+
+fn validate_segment_id(
+    previous: Option<&(i64, u64, LocationSample)>,
+    sample: LocationSample,
+    segment_id: RideMapSegmentId,
+) -> Result<(), StorageError> {
+    let expected_segment_id = previous.map_or(0, |(_, previous_segment_id, previous_sample)| {
+        let gap_started = sample
+            .monotonic_milliseconds()
+            .as_u64()
+            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+            > MAX_GAP_MILLISECONDS;
+        previous_segment_id.saturating_add(u64::from(gap_started))
+    });
+    // A +1 transition may come from a pause/resume boundary, which is persisted as
+    // lifecycle state rather than a route-point row. A time gap must still account for
+    // the increment itself, so it cannot be combined with an arbitrary jump.
+    let segment_id_is_valid = previous.is_none_or(|(_, previous_segment_id, previous_sample)| {
+        let gap_started = sample
+            .monotonic_milliseconds()
+            .as_u64()
+            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+            > MAX_GAP_MILLISECONDS;
+        if gap_started {
+            segment_id.value() == expected_segment_id
+        } else {
+            segment_id.value() == *previous_segment_id
+                || segment_id.value() == previous_segment_id.saturating_add(1)
+        }
+    });
+    if segment_id_is_valid {
+        Ok(())
+    } else {
+        Err(StorageError::InvalidSegmentId {
+            expected: expected_segment_id,
+            actual: segment_id.value(),
+        })
     }
 }
 
@@ -4205,7 +4759,7 @@ struct LocationInsert {
     ride_id: RideId,
     sequence: i64,
     sample: LocationSample,
-    segment_id: u64,
+    segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
     distance_millimetres: u64,
     updated_at_ms: u64,
@@ -4230,7 +4784,7 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         params![
             ride_id.uuid().to_string(),
             sequence,
-            segment_id,
+            segment_id.value(),
             telemetry_state.storage_value(),
             sample.monotonic_milliseconds().as_u64(),
             sample.wall_clock_unix_milliseconds().as_u64(),
@@ -4459,7 +5013,9 @@ fn route_points(
     if !exists {
         return Err(StorageError::NotFound);
     }
-    let after = cursor.map_or(-1_i64, |cursor| i64::try_from(cursor.0).unwrap_or(i64::MAX));
+    let after = cursor.map_or(-1_i64, |cursor| {
+        i64::try_from(cursor.sequence().as_u64()).unwrap_or(i64::MAX)
+    });
     let fetch_limit = i64::from(limit.get()) + 1;
     let mut statement = connection.prepare(
         "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
@@ -4484,11 +5040,204 @@ fn route_points(
     let next_cursor = has_more
         .then(|| points.last())
         .flatten()
-        .map(|point| RoutePointCursor(point.sequence));
+        .map(|point| RoutePointCursor::new(point.sequence()));
     Ok(RoutePointPage {
         points,
         next_cursor,
     })
+}
+
+fn ride_segments(
+    connection: &Connection,
+    ride_id: RideId,
+    limit: QueryLimit,
+) -> Result<Vec<RideSegment>, StorageError> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [ride_id.uuid().to_string()],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::NotFound);
+    }
+    let mut statement = connection.prepare(
+        "SELECT segment_id, sequence, start_reason, source,
+                started_monotonic_ms, ended_monotonic_ms,
+                started_wall_clock_ms, ended_wall_clock_ms
+         FROM ride_segments
+         WHERE ride_id = ?1
+         ORDER BY sequence ASC
+         LIMIT ?2",
+    )?;
+    let rows = statement.query_map(
+        params![ride_id.uuid().to_string(), i64::from(limit.get())],
+        |row| {
+            let segment_id: i64 = row.get(0)?;
+            let segment_id = u64::try_from(segment_id).map_err(|_| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Integer,
+                    Box::new(StorageError::InvalidStoredValue {
+                        field: "ride segment identifier",
+                        value: segment_id.to_string(),
+                    }),
+                )
+            })?;
+            let reason_value: String = row.get(2)?;
+            let start_reason = segment_start_reason_from_db(&reason_value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    2,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            let source_value: String = row.get(3)?;
+            let source = ride_source_from_db(&source_value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?;
+            Ok(RideSegment {
+                id: RideMapSegmentId::new(segment_id),
+                sequence: RidePointSequence::new(row.get(1)?),
+                start_reason,
+                source,
+                started_monotonic_ms: MonotonicMilliseconds::new(row.get(4)?),
+                ended_monotonic_ms: row
+                    .get::<_, Option<u64>>(5)?
+                    .map(MonotonicMilliseconds::new),
+                started_wall_clock_ms: WallClockUnixMilliseconds::new(row.get(6)?),
+                ended_wall_clock_ms: row
+                    .get::<_, Option<u64>>(7)?
+                    .map(WallClockUnixMilliseconds::new),
+            })
+        },
+    )?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
+}
+
+fn project_route_points(
+    connection: &Connection,
+    ride_id: RideId,
+    viewport: Option<RouteViewport>,
+    budget: RouteDisplayBudget,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<RoutePointProjection, StorageError> {
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+    let ride_id = ride_id.uuid().to_string();
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [&ride_id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::NotFound);
+    }
+
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+
+    let source_point_count = connection.query_row(
+        "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
+        [&ride_id],
+        |row| row.get::<_, u64>(0),
+    )?;
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+    let viewport_predicate = route_point_viewport_predicate(viewport);
+    let candidate_count = if let Some(viewport) = viewport {
+        connection.query_row(
+            &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
+            params![
+                ride_id,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get::<_, u64>(0),
+        )?
+    } else {
+        source_point_count
+    };
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+    let candidate_count = usize::try_from(candidate_count).unwrap_or(usize::MAX);
+    if candidate_count == 0 {
+        return Ok(RoutePointProjection {
+            points: Vec::new(),
+            source_point_count,
+        });
+    }
+
+    let select = format!(
+        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7,
+                longitude_e7, horizontal_accuracy_mm, source
+         FROM ride_points
+         WHERE ride_id = ?1{viewport_predicate}
+         ORDER BY sequence ASC"
+    );
+    let mut statement = connection.prepare(&select)?;
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+    let rows = if let Some(viewport) = viewport {
+        statement.query_map(
+            params![
+                ride_id,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            route_point_from_row,
+        )?
+    } else {
+        statement.query_map([ride_id], route_point_from_row)?
+    };
+    let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
+    for (candidate_ordinal, row) in rows.enumerate() {
+        if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+            return Err(StorageError::Cancelled);
+        }
+        let point = row?;
+        accumulator.push(
+            candidate_ordinal,
+            point.sequence().as_u64(),
+            RideMapPoint::new(point.sample(), point.segment_id(), point.telemetry_state()),
+        );
+        if accumulator.is_complete() {
+            break;
+        }
+    }
+    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+        return Err(StorageError::Cancelled);
+    }
+    Ok(RoutePointProjection {
+        points: accumulator.finish(),
+        source_point_count,
+    })
+}
+
+fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {
+    let Some(viewport) = viewport else {
+        return String::new();
+    };
+    if viewport.crosses_antimeridian() {
+        " AND latitude_e7 BETWEEN ?2 AND ?3 AND (longitude_e7 >= ?4 OR longitude_e7 <= ?5)"
+            .to_owned()
+    } else {
+        " AND latitude_e7 BETWEEN ?2 AND ?3 AND longitude_e7 BETWEEN ?4 AND ?5".to_owned()
+    }
 }
 
 fn latest_route_points(
@@ -4535,8 +5284,8 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
         )
     })?;
     Ok(RoutePoint {
-        sequence: row.get(0)?,
-        segment_id: row.get(1)?,
+        sequence: RidePointSequence::new(row.get(0)?),
+        segment_id: RideMapSegmentId::new(row.get(1)?),
         telemetry_state: RouteTelemetryState::from_storage(row.get(2)?).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
                 2,
@@ -4611,6 +5360,28 @@ fn source_from_db(value: &str) -> Result<LocationSource, StorageError> {
         "pevcap_import" => Ok(LocationSource::PevcapImport),
         other => Err(StorageError::InvalidStoredValue {
             field: "location source",
+            value: other.to_owned(),
+        }),
+    }
+}
+
+fn segment_start_reason_to_db(reason: RideSegmentStartReason) -> &'static str {
+    match reason {
+        RideSegmentStartReason::Initial => "initial",
+        RideSegmentStartReason::Resume => "resume",
+        RideSegmentStartReason::BackgroundGap => "background_gap",
+        RideSegmentStartReason::ImportBoundary => "import_boundary",
+    }
+}
+
+fn segment_start_reason_from_db(value: &str) -> Result<RideSegmentStartReason, StorageError> {
+    match value {
+        "initial" => Ok(RideSegmentStartReason::Initial),
+        "resume" => Ok(RideSegmentStartReason::Resume),
+        "background_gap" => Ok(RideSegmentStartReason::BackgroundGap),
+        "import_boundary" => Ok(RideSegmentStartReason::ImportBoundary),
+        other => Err(StorageError::InvalidStoredValue {
+            field: "ride segment start reason",
             value: other.to_owned(),
         }),
     }
