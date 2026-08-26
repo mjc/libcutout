@@ -17,13 +17,13 @@ final class CutoutAppModelTests: XCTestCase {
     private func settle(
         _ state: MobileRideMapState,
         _ decision: MobileRideMapDecisionDto
-    ) -> MobileRideMapDecisionDto {
+    ) async -> MobileRideMapDecisionDto {
         guard case .pending = decision else { return decision }
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< 10_000 {
             if let terminal = state.pollLocationWrites().first {
                 return terminal
             }
-            Thread.sleep(forTimeInterval: 0.001)
+            await Task.yield()
         }
         XCTFail("timed out waiting for durable ride-map location outcome")
         return decision
@@ -115,7 +115,7 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: "pev-restored"
         )
-        _ = settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        _ = await settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -173,7 +173,7 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: nil
         )
-        let decision = settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        let decision = await settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -203,7 +203,7 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: nil
         )
-        let decision = settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        let decision = await settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -335,14 +335,14 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapStateHandle
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
-        _ = settle(state, try state.ingestLocation(
+        _ = await settle(state, try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7000,
             longitudeDegrees: -104.9000,
             horizontalAccuracyMeters: 5
         ))
-        _ = settle(state, try state.ingestLocation(
+        _ = await settle(state, try state.ingestLocation(
             monotonicMs: 1_100,
             wallClockUnixMs: 1_700_000_001_100,
             latitudeDegrees: 39.7001,
@@ -473,11 +473,11 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
-    func testRouteProjectionUsesRustBoundedProjection() throws {
+    func testRouteProjectionUsesRustBoundedProjection() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
         for sequence in 0 ..< 10 {
-            _ = settle(state, try state.ingestLocation(
+            _ = await settle(state, try state.ingestLocation(
                 monotonicMs: UInt64(1_000 + sequence * 1_000),
                 wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
                 latitudeDegrees: 39.7 + Double(sequence) / 10_000,

@@ -6,13 +6,13 @@ final class RideMapStateTests: XCTestCase {
     private func settle(
         _ state: MobileRideMapState,
         _ decision: MobileRideMapDecisionDto
-    ) -> MobileRideMapDecisionDto {
+    ) async -> MobileRideMapDecisionDto {
         guard case .pending = decision else { return decision }
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< 10_000 {
             if let terminal = state.pollLocationWrites().first {
                 return terminal
             }
-            Thread.sleep(forTimeInterval: 0.001)
+            await Task.yield()
         }
         XCTFail("timed out waiting for durable ride-map location outcome")
         return decision
@@ -112,7 +112,7 @@ final class RideMapStateTests: XCTestCase {
         )
     }
 
-    func testMapStateKeepsLifecycleAndRouteProjectionTyped() throws {
+    func testMapStateKeepsLifecycleAndRouteProjectionTyped() async throws {
         let state = MobileRideMapState()
 
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: "pev-1")
@@ -120,7 +120,7 @@ final class RideMapStateTests: XCTestCase {
             state.currentSnapshot(atMs: 1_100)?.summary.durationMilliseconds,
             1_000
         )
-        let decision = settle(state, try state.ingestLocation(
+        let decision = await settle(state, try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -132,14 +132,15 @@ final class RideMapStateTests: XCTestCase {
         guard case let .accepted(point, _) = decision else {
             return XCTFail("expected the location to be admitted")
         }
+        let secondDecision = await settle(state, try state.ingestLocation(
+            monotonicMs: 2_000,
+            wallClockUnixMs: 1_700_000_002_000,
+            latitudeDegrees: 39.7393,
+            longitudeDegrees: -104.9902,
+            horizontalAccuracyMeters: 4
+        ))
         XCTAssertEqual(
-            settle(state, try state.ingestLocation(
-                monotonicMs: 2_000,
-                wallClockUnixMs: 1_700_000_002_000,
-                latitudeDegrees: 39.7393,
-                longitudeDegrees: -104.9902,
-                horizontalAccuracyMeters: 4
-            )),
+            secondDecision,
             .accepted(
                 point: MobileRideMapPointDto(
                     sequence: 1,
@@ -166,7 +167,7 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertEqual(try state.save().state, .saved)
     }
 
-    func testMapStateProjectsBoundedLiveRouteAndRejectsInvalidBudget() throws {
+    func testMapStateProjectsBoundedLiveRouteAndRejectsInvalidBudget() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         for (monotonicMs, latitudeDegrees) in [
@@ -175,7 +176,7 @@ final class RideMapStateTests: XCTestCase {
             (3_001, 40.0002),
             (4_001, 40.0003),
         ] {
-            _ = settle(state, try state.ingestLocation(
+            _ = await settle(state, try state.ingestLocation(
                 monotonicMs: UInt64(monotonicMs),
                 wallClockUnixMs: 1_700_000_000_000 + UInt64(monotonicMs),
                 latitudeDegrees: latitudeDegrees,
@@ -208,10 +209,10 @@ final class RideMapStateTests: XCTestCase {
         }
     }
 
-    func testLiveProjectionCancellationIsTypedAndLeavesCompatibilityPathUsable() throws {
+    func testLiveProjectionCancellationIsTypedAndLeavesCompatibilityPathUsable() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        _ = settle(state, try state.ingestLocation(
+        _ = await settle(state, try state.ingestLocation(
             monotonicMs: 1_001,
             wallClockUnixMs: 1_700_000_001_001,
             latitudeDegrees: 40,
@@ -230,10 +231,10 @@ final class RideMapStateTests: XCTestCase {
         _ = try state.discard()
     }
 
-    func testStoredProjectionHonorsRustCancellationToken() throws {
+    func testStoredProjectionHonorsRustCancellationToken() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
-        _ = settle(state, try state.ingestLocation(
+        _ = await settle(state, try state.ingestLocation(
             monotonicMs: 1_001,
             wallClockUnixMs: 1_700_000_001_001,
             latitudeDegrees: 40,
@@ -256,12 +257,12 @@ final class RideMapStateTests: XCTestCase {
         }
     }
 
-    func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() throws {
+    func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() async throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
         for offset in 0 ..< 4_100 {
             let monotonicMs = UInt64(1_001 + offset)
-            _ = settle(state, try state.ingestLocation(
+            _ = await settle(state, try state.ingestLocation(
                 monotonicMs: monotonicMs,
                 wallClockUnixMs: 1_700_000_000_000 + monotonicMs,
                 latitudeDegrees: 40.0,

@@ -302,7 +302,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testRejectedLocationDoesNotPoisonTheNextCallbackTimestamp() throws {
+    func testRejectedLocationDoesNotPoisonTheNextCallbackTimestamp() async throws {
         let core = CutoutSessionCore(
             clock: MonotonicClock { MonotonicMilliseconds(20_000) },
             wallClock: WallClock { Date(timeIntervalSince1970: 1_700_000_020) }
@@ -343,11 +343,11 @@ final class CutoutSessionCoreTests: XCTestCase {
         core.locationManager(CLLocationManager(), didUpdateLocations: [valid])
 
         var snapshot: MobileRideMapSnapshotDto?
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< 10_000 {
             _ = core.rideMapStateHandle.pollLocationWrites()
             snapshot = core.rideMapStateHandle.currentSnapshot(atMs: 20_000)
             if snapshot?.summary.pointCount == 1 { break }
-            Thread.sleep(forTimeInterval: 0.001)
+            await Task.yield()
         }
         XCTAssertEqual(snapshot?.summary.pointCount, 1)
     }
@@ -409,7 +409,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testDatabaseBackedRideMapReportsPendingThenDurablyAccepted() throws {
+    func testDatabaseBackedRideMapReportsPendingThenDurablyAccepted() async throws {
         guard let database = RustPersistenceStore.shared else {
             throw XCTSkip("Rust ride database is unavailable in this test environment")
         }
@@ -433,12 +433,12 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
 
         var accepted: MobileRideMapDecisionDto?
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< 10_000 {
             if let outcome = state.pollLocationWrites().first {
                 accepted = outcome
                 break
             }
-            Thread.sleep(forTimeInterval: 0.001)
+            await Task.yield()
         }
 
         guard case let .accepted(acceptedPoint, acceptedSegmentStarted) = accepted else {
@@ -446,6 +446,53 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
         XCTAssertEqual(acceptedPoint, point)
         XCTAssertEqual(acceptedSegmentStarted, segmentStarted)
+    }
+
+    func testPendingLocationPollUsesInjectedSchedulerWithoutSleeping() async throws {
+        guard RustPersistenceStore.shared != nil else {
+            throw XCTSkip("Rust ride database is unavailable in this test environment")
+        }
+        let scheduler = RecordingRideMapPollScheduler()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(20_000) },
+            wallClock: WallClock { Date(timeIntervalSince1970: 1_700_000_020) },
+            rideMapPollScheduler: scheduler
+        )
+        defer {
+            _ = try? core.rideMapStateHandle.stop(atMs: 20_000)
+            _ = try? core.rideMapStateHandle.discard()
+        }
+        _ = try core.rideMapStateHandle.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 6,
+            course: 90,
+            courseAccuracy: 3,
+            speed: 2,
+            speedAccuracy: 0.2,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_010)
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [location])
+
+        XCTAssertEqual(scheduler.scheduledCount, 1)
+        for _ in 0 ..< 10_000 {
+            guard scheduler.runNext() else {
+                await Task.yield()
+                continue
+            }
+            if core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount == 1 {
+                break
+            }
+            await Task.yield()
+        }
+        XCTAssertEqual(
+            core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount,
+            1
+        )
+        XCTAssertGreaterThan(scheduler.runCount, 0)
     }
 
     func testPendingLocationQueueDoesNotCollideWhenAStoppedRideRestartsAtSequenceZero() {
@@ -3528,5 +3575,25 @@ private final class RecordingReconnectScheduler: ConnectionReconnectScheduling {
         for entry in scheduled where !entry.token.isCancelled {
             entry.operation()
         }
+    }
+}
+
+private final class RecordingRideMapPollScheduler: RideMapWritePollingScheduling {
+    private var scheduled: [() -> Void] = []
+
+    var scheduledCount: Int { scheduled.count }
+    private(set) var runCount = 0
+
+    func schedule(after _: UInt64, operation: @escaping () -> Void) {
+        scheduled.append(operation)
+    }
+
+    @discardableResult
+    func runNext() -> Bool {
+        guard scheduled.isEmpty == false else { return false }
+        runCount += 1
+        let operation = scheduled.removeFirst()
+        operation()
+        return true
     }
 }

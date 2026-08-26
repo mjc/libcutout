@@ -140,6 +140,10 @@ protocol ConnectionReconnectScheduling: AnyObject {
     func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) -> any ConnectionReconnectCancellable
 }
 
+protocol RideMapWritePollingScheduling: AnyObject {
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void)
+}
+
 final class ConnectionReconnectController {
     private let scheduler: any ConnectionReconnectScheduling
     private var pending: (any ConnectionReconnectCancellable)?
@@ -188,6 +192,20 @@ private final class MainQueueReconnectScheduler: ConnectionReconnectScheduling {
             execute: workItem
         )
         return DispatchReconnectCancellation(workItem: workItem)
+    }
+}
+
+private final class MainQueueRideMapPollScheduler: RideMapWritePollingScheduling {
+    private let queue = DispatchQueue(
+        label: "io.cutout.ride-map-location-poll",
+        qos: .utility
+    )
+
+    func schedule(after delayMilliseconds: UInt64, operation: @escaping () -> Void) {
+        queue.asyncAfter(
+            deadline: .now() + .milliseconds(Int(clamping: delayMilliseconds)),
+            execute: DispatchWorkItem(block: operation)
+        )
     }
 }
 
@@ -453,10 +471,7 @@ public final class CutoutSessionCore: NSObject {
     private var lastPublishedWarningSeverity: EucRideWarningSeverity?
     private let phoneLocationState = MobilePhoneLocationState()
     private let admittedPhoneLocationState = MobilePhoneLocationState()
-    private let rideMapPollQueue = DispatchQueue(
-        label: "io.cutout.ride-map-location-poll",
-        qos: .utility
-    )
+    private let rideMapPollScheduler: any RideMapWritePollingScheduling
     private let pendingPhoneLocationLock = NSLock()
     private var pendingPhoneLocations = PendingPhoneLocationQueue()
     private var rideMapPollScheduled = false
@@ -498,6 +513,7 @@ public final class CutoutSessionCore: NSObject {
         testScript: CutoutSessionTestScript? = nil,
         reconnectScheduler: any ConnectionReconnectScheduling = MainQueueReconnectScheduler(),
         reconnectJitter: @escaping () -> Double = { Double.random(in: 0...1) },
+        rideMapPollScheduler: any RideMapWritePollingScheduling = MainQueueRideMapPollScheduler(),
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
     ) {
         let rustSessionState = CutoutSessionStateHandle()
@@ -513,6 +529,7 @@ public final class CutoutSessionCore: NSObject {
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
+        self.rideMapPollScheduler = rideMapPollScheduler
         self.selectedDeviceStore = selectedDeviceStore
         if testScript == nil {
             let storage = Self.makeRideMapState()
@@ -532,6 +549,7 @@ public final class CutoutSessionCore: NSObject {
     init(
         clock: MonotonicClock,
         wallClock: WallClock = WallClock(),
+        rideMapPollScheduler: any RideMapWritePollingScheduling = MainQueueRideMapPollScheduler(),
         selectedDeviceStore: DevicePickerSelectionStore = DevicePickerSelectionStore()
     ) {
         let rustSessionState = CutoutSessionStateHandle()
@@ -546,6 +564,7 @@ public final class CutoutSessionCore: NSObject {
         self.locationTimestampAdmission = LocationTimestampAdmission()
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
+        self.rideMapPollScheduler = rideMapPollScheduler
         self.selectedDeviceStore = selectedDeviceStore
         let storage = Self.makeRideMapState()
         self.rideMapState = storage.state
@@ -2832,7 +2851,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         rideMapPollScheduled = true
         pendingPhoneLocationLock.unlock()
 
-        let work = DispatchWorkItem { [weak self] in
+        let work = { [weak self] in
             guard let self else { return }
             let decisions = self.rideMapState.pollLocationWrites()
             decisions.forEach { self.handleRideMapLocationDecision($0) }
@@ -2845,7 +2864,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
                 self.scheduleRideMapWritePoll()
             }
         }
-        rideMapPollQueue.asyncAfter(deadline: .now() + .milliseconds(50), execute: work)
+        rideMapPollScheduler.schedule(after: 50, operation: work)
     }
 }
 
