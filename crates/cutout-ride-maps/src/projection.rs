@@ -148,7 +148,9 @@ impl RouteViewport {
         self.minimum_longitude.as_i32() > self.maximum_longitude.as_i32()
     }
 
-    fn contains(self, coordinate: Coordinate) -> bool {
+    /// Returns whether a coordinate lies inside this viewport.
+    #[must_use]
+    pub fn contains(self, coordinate: Coordinate) -> bool {
         let latitude = coordinate.latitude().as_i32();
         let longitude = coordinate.longitude().as_i32();
         let latitude_visible =
@@ -170,6 +172,24 @@ pub struct RouteDisplayPoint {
     segment_id: RideMapSegmentId,
     coordinate: Coordinate,
     privacy_class: RoutePrivacyClass,
+}
+
+/// Counts segment runs in canonical route order.
+///
+/// Route points are ordered by their stable sequence before they reach the projection layer, so
+/// each segment is represented by one contiguous run. Keeping this operation run-based avoids
+/// allocating a set while callers stream a durable route.
+#[must_use]
+pub fn count_segment_runs(segment_ids: impl IntoIterator<Item = RideMapSegmentId>) -> usize {
+    let mut previous = None;
+    let mut count = 0;
+    for segment_id in segment_ids {
+        if previous != Some(segment_id) {
+            count += 1;
+            previous = Some(segment_id);
+        }
+    }
+    count
 }
 
 /// Incremental bounded route projection state.

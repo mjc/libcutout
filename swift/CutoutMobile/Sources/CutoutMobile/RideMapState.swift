@@ -145,6 +145,14 @@ public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
 public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var points: [MobileRideMapRouteDisplayPoint]
     public var sourcePointCount: UInt64
+    public var sourceSegmentCount: UInt64
+    public var candidateSegmentCount: UInt64
+    public var displayedSegmentCount: UInt64
+
+    /// Whether route segments were omitted by the bounded display projection.
+    public var segmentsOmittedByBudget: Bool {
+        displayedSegmentCount < candidateSegmentCount
+    }
 }
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
@@ -586,7 +594,10 @@ public final class MobileRideMapState: @unchecked Sendable {
                     privacyClass: map(point.privacyClass)
                 )
             },
-            sourcePointCount: projection.sourcePointCount
+            sourcePointCount: projection.sourcePointCount,
+            sourceSegmentCount: projection.sourceSegmentCount,
+            candidateSegmentCount: projection.candidateSegmentCount,
+            displayedSegmentCount: projection.displayedSegmentCount
         )
     }
 

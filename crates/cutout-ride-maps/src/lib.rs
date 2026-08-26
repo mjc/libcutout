@@ -34,7 +34,7 @@ mod projection;
 pub use projection::{
     MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyClass,
     RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteViewport,
-    project_route_points, project_route_points_from_iter,
+    count_segment_runs, project_route_points, project_route_points_from_iter,
 };
 
 #[cfg(test)]

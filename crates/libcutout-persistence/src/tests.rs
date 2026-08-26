@@ -1708,12 +1708,79 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
         .unwrap();
 
     assert_eq!(projection.source_point_count(), 4);
+    assert_eq!(projection.source_segment_count(), 1);
+    assert_eq!(projection.candidate_segment_count(), 1);
+    assert_eq!(projection.displayed_segment_count(), 1);
     assert_eq!(projection.points().len(), 2);
     assert_eq!(projection.points()[0].sequence().as_u64(), 0);
     assert_eq!(projection.points()[1].sequence().as_u64(), 2);
     assert!(projection.points().iter().all(|point| {
         point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
     }));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_route_projection_reports_segments_omitted_by_display_budget() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-segment-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for (sample_number, (monotonic_ms, latitude_degrees, segment_id)) in [
+        (1, 40.0, 0),
+        (2_001, 40.0001, 0),
+        (3_001, 40.0002, 0),
+        (40_000, 40.0003, 1),
+        (80_000, 40.0004, 2),
+        (81_000, 40.0005, 2),
+        (82_000, 40.0006, 2),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database
+                .append_location_with_segment_id(ride, sample, RideMapSegmentId::new(segment_id))
+                .unwrap(),
+            LocationAdmission::Accepted,
+            "sample {sample_number} should be accepted"
+        );
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(4).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+
+    assert_eq!(projection.source_point_count(), 7);
+    assert_eq!(projection.source_segment_count(), 3);
+    assert_eq!(projection.candidate_segment_count(), 3);
+    assert_eq!(projection.displayed_segment_count(), 2);
+    assert_eq!(
+        projection
+            .points()
+            .iter()
+            .map(|point| point.segment_id().value())
+            .collect::<Vec<_>>(),
+        vec![0, 0, 2, 2]
+    );
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

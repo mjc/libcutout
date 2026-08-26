@@ -8,6 +8,7 @@ use cutout_ride_maps::{
     RideMapRecorder, RideMapSegmentId, RidePointSequence, RideSegmentStartReason, RideSummary,
     RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteTelemetryState, RouteViewport, TransitionError, WallClockUnixMilliseconds,
+    count_segment_runs,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -455,6 +456,9 @@ impl RideSegment {
 pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     source_point_count: u64,
+    source_segment_count: u64,
+    candidate_segment_count: u64,
+    displayed_segment_count: u64,
 }
 
 impl RoutePointProjection {
@@ -468,6 +472,24 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn source_point_count(&self) -> u64 {
         self.source_point_count
+    }
+
+    /// Returns the complete durable segment count before viewport filtering or display LOD.
+    #[must_use]
+    pub const fn source_segment_count(&self) -> u64 {
+        self.source_segment_count
+    }
+
+    /// Returns the segment count represented by points inside the requested viewport.
+    #[must_use]
+    pub const fn candidate_segment_count(&self) -> u64 {
+        self.candidate_segment_count
+    }
+
+    /// Returns the segment count represented by the bounded display points.
+    #[must_use]
+    pub const fn displayed_segment_count(&self) -> u64 {
+        self.displayed_segment_count
     }
 }
 
@@ -5149,6 +5171,11 @@ fn project_route_points(
         [&ride_id],
         |row| row.get::<_, u64>(0),
     )?;
+    let source_segment_count = connection.query_row(
+        "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+        [&ride_id],
+        |row| row.get::<_, u64>(0),
+    )?;
     if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
         return Err(StorageError::Cancelled);
     }
@@ -5168,6 +5195,23 @@ fn project_route_points(
     } else {
         source_point_count
     };
+    let candidate_segment_count = if let Some(viewport) = viewport {
+        connection.query_row(
+            &format!(
+                "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
+            ),
+            params![
+                ride_id,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get::<_, u64>(0),
+        )?
+    } else {
+        source_segment_count
+    };
     if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
         return Err(StorageError::Cancelled);
     }
@@ -5176,6 +5220,9 @@ fn project_route_points(
         return Ok(RoutePointProjection {
             points: Vec::new(),
             source_point_count,
+            source_segment_count,
+            candidate_segment_count,
+            displayed_segment_count: 0,
         });
     }
 
@@ -5222,9 +5269,17 @@ fn project_route_points(
     if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
         return Err(StorageError::Cancelled);
     }
+    let points = accumulator.finish();
+    let displayed_segment_count = u64::try_from(count_segment_runs(
+        points.iter().copied().map(RouteDisplayPoint::segment_id),
+    ))
+    .unwrap_or(u64::MAX);
     Ok(RoutePointProjection {
-        points: accumulator.finish(),
+        points,
         source_point_count,
+        source_segment_count,
+        candidate_segment_count,
+        displayed_segment_count,
     })
 }
 

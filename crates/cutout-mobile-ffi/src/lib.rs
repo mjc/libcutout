@@ -3292,6 +3292,12 @@ pub struct MobileRideMapRouteProjectionDto {
     pub points: Vec<MobileRideMapRouteDisplayPointDto>,
     /// Total canonical point count before viewport filtering or display LOD.
     pub source_point_count: u64,
+    /// Total canonical segment count before viewport filtering or display LOD.
+    pub source_segment_count: u64,
+    /// Number of canonical segments with points inside the requested viewport.
+    pub candidate_segment_count: u64,
+    /// Number of segments represented by the bounded display points.
+    pub displayed_segment_count: u64,
 }
 
 /// Summary projected for an active map recording.
@@ -3936,7 +3942,35 @@ fn mobile_route_projection_dto(
             .map(mobile_route_display_point_dto)
             .collect(),
         source_point_count: projection.source_point_count(),
+        source_segment_count: projection.source_segment_count(),
+        candidate_segment_count: projection.candidate_segment_count(),
+        displayed_segment_count: projection.displayed_segment_count(),
     }
+}
+
+fn mobile_segment_count(
+    points: &[ride_maps::RideMapPoint],
+    viewport: Option<ride_maps::RouteViewport>,
+) -> u64 {
+    let count = ride_maps::count_segment_runs(
+        points
+            .iter()
+            .copied()
+            .filter(|point| {
+                viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate()))
+            })
+            .map(|point| point.segment_id()),
+    );
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
+fn mobile_displayed_segment_count(points: &[MobileRideMapRouteDisplayPointDto]) -> u64 {
+    let count = ride_maps::count_segment_runs(
+        points
+            .iter()
+            .map(|point| ride_maps::RideMapSegmentId::new(point.segment_id)),
+    );
+    u64::try_from(count).unwrap_or(u64::MAX)
 }
 
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
@@ -5993,10 +6027,15 @@ impl MobileRideMapCore {
         )
         .into_iter()
         .map(mobile_route_display_point_dto)
-        .collect();
+        .collect::<Vec<_>>();
+        let candidate_segment_count = mobile_segment_count(state.recorder.points(), viewport);
+        let displayed_segment_count = mobile_displayed_segment_count(&points);
         Ok(MobileRideMapRouteProjectionDto {
             points,
             source_point_count: state.recorder.point_count(),
+            source_segment_count: state.recorder.segment_count().as_u64(),
+            candidate_segment_count,
+            displayed_segment_count,
         })
     }
 }
@@ -14504,6 +14543,55 @@ mod tests {
         );
         assert!((projection.points[0].latitude_degrees - 40.0).abs() < f64::EPSILON);
         assert!((projection.points[1].latitude_degrees - 40.0002).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_reports_segments_omitted_by_display_budget() {
+        let state = MobileRideMapCore::new_for_testing();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        for (monotonic_ms, latitude_degrees) in [
+            (1_001, 40.0),
+            (2_001, 40.0001),
+            (3_001, 40.0002),
+            (40_000, 40.0003),
+            (80_000, 40.0004),
+            (81_000, 40.0005),
+            (82_000, 40.0006),
+        ] {
+            state
+                .ingest_location(
+                    monotonic_ms,
+                    1_700_000_000_000 + monotonic_ms,
+                    latitude_degrees,
+                    -105.0,
+                    3.0,
+                )
+                .expect("location is accepted");
+        }
+
+        let projection = state
+            .project_points(MobileRideMapRouteProjectionOptionsDto {
+                viewport: None,
+                budget: 4,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+            })
+            .expect("route projection is valid");
+
+        assert_eq!(projection.source_point_count, 7);
+        assert_eq!(projection.points.len(), 4);
+        assert_eq!(
+            projection
+                .points
+                .iter()
+                .map(|point| point.segment_id)
+                .collect::<Vec<_>>(),
+            vec![0, 0, 2, 2]
+        );
+        assert_eq!(projection.source_segment_count, 3);
+        assert_eq!(projection.candidate_segment_count, 3);
+        assert_eq!(projection.displayed_segment_count, 2);
     }
 
     #[test]

@@ -10969,6 +10969,18 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
      * Total canonical point count before viewport filtering or display LOD.
      */
     public var sourcePointCount: UInt64
+    /**
+     * Total canonical segment count before viewport filtering or display LOD.
+     */
+    public var sourceSegmentCount: UInt64
+    /**
+     * Number of canonical segments with points inside the requested viewport.
+     */
+    public var candidateSegmentCount: UInt64
+    /**
+     * Number of segments represented by the bounded display points.
+     */
+    public var displayedSegmentCount: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -10978,9 +10990,21 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
          */points: [MobileRideMapRouteDisplayPointDto],
         /**
          * Total canonical point count before viewport filtering or display LOD.
-         */sourcePointCount: UInt64) {
+         */sourcePointCount: UInt64,
+        /**
+         * Total canonical segment count before viewport filtering or display LOD.
+         */sourceSegmentCount: UInt64,
+        /**
+         * Number of canonical segments with points inside the requested viewport.
+         */candidateSegmentCount: UInt64,
+        /**
+         * Number of segments represented by the bounded display points.
+         */displayedSegmentCount: UInt64) {
         self.points = points
         self.sourcePointCount = sourcePointCount
+        self.sourceSegmentCount = sourceSegmentCount
+        self.candidateSegmentCount = candidateSegmentCount
+        self.displayedSegmentCount = displayedSegmentCount
     }
 
 
@@ -11000,13 +11024,19 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
         return
             try MobileRideMapRouteProjectionDto(
                 points: FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.read(from: &buf),
-                sourcePointCount: FfiConverterUInt64.read(from: &buf)
+                sourcePointCount: FfiConverterUInt64.read(from: &buf),
+                sourceSegmentCount: FfiConverterUInt64.read(from: &buf),
+                candidateSegmentCount: FfiConverterUInt64.read(from: &buf),
+                displayedSegmentCount: FfiConverterUInt64.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileRideMapRouteProjectionDto, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.write(value.points, into: &buf)
         FfiConverterUInt64.write(value.sourcePointCount, into: &buf)
+        FfiConverterUInt64.write(value.sourceSegmentCount, into: &buf)
+        FfiConverterUInt64.write(value.candidateSegmentCount, into: &buf)
+        FfiConverterUInt64.write(value.displayedSegmentCount, into: &buf)
     }
 }
 
