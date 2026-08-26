@@ -257,6 +257,12 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertFalse(
             RideMapLiveContentView.showsRecordedBounds(for: .saved, pointsTruncated: true)
         )
+        XCTAssertTrue(
+            RideMapCanvasView.shouldShowRecordedEndpointMarkers(pointsTruncated: false)
+        )
+        XCTAssertFalse(
+            RideMapCanvasView.shouldShowRecordedEndpointMarkers(pointsTruncated: true)
+        )
     }
 
     @MainActor

@@ -153,8 +153,12 @@ struct RideMapHistoryContentView: View {
                         RideMapCanvasView(
                             points: displayPoints,
                             routeID: selectedRideID ?? "history",
-                            showsStartMarker: true,
-                            showsEndMarker: !pointsTruncated,
+                            showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
+                                pointsTruncated: pointsTruncated
+                            ),
+                            showsEndMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
+                                pointsTruncated: pointsTruncated
+                            ),
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,
