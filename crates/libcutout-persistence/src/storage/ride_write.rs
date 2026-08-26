@@ -70,13 +70,7 @@ impl RideWriteState {
                     paused_at_ms = None;
                 }
                 (
-                    RideLifecycleState::Active,
-                    RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-                ) => {
-                    duration_ms = duration_ms.max(self.active_duration_at(at_ms));
-                }
-                (
-                    RideLifecycleState::Paused,
+                    RideLifecycleState::Active | RideLifecycleState::Paused,
                     RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
                 ) => {
                     duration_ms = duration_ms.max(self.active_duration_at(at_ms));
