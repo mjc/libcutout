@@ -162,6 +162,9 @@ struct RideMapRouteView: View {
             currentVehicleIdentity: model.rideMapVehicleIdentity,
             currentVehicleName: model.rideMapVehicleName,
             vehicleName: model.rideMapVehicleName(for:),
+            cameraDidChange: { region in
+                model.projectRideMapHistoryViewport(RideMapCanvasView.geoBounds(for: region))
+            },
             mapPosition: $presentation.historyMapPosition,
             isApplyingCamera: $presentation.historyIsApplyingCamera
         )
@@ -183,6 +186,9 @@ struct RideMapRouteView: View {
             retry: { model.loadRideMapHistory(selecting: initialHistoryID) },
             loadFullRide: { model.loadFullRideMapHistory() },
             vehicleName: model.rideMapVehicleName(for:),
+            cameraDidChange: { region in
+                model.projectRideMapHistoryViewport(RideMapCanvasView.geoBounds(for: region))
+            },
             mapPosition: $presentation.detailMapPosition,
             isApplyingCamera: $presentation.detailIsApplyingCamera,
             close: closeDetail ?? { dismiss() }

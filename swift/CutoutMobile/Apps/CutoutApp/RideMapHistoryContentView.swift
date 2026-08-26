@@ -30,6 +30,7 @@ struct RideMapHistoryContentView: View {
     let currentVehicleIdentity: String?
     let currentVehicleName: String?
     let vehicleName: (String?) -> String?
+    let cameraDidChange: (MKCoordinateRegion) -> Void
 
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
@@ -157,7 +158,7 @@ struct RideMapHistoryContentView: View {
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,
-                            cameraDidChange: {}
+                            cameraDidChange: cameraDidChange
                         )
 
                         if isSelectedRouteLoading {

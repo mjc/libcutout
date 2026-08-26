@@ -3095,6 +3095,143 @@ public func FfiConverterTypeMobileRideMapCore_lower(_ value: MobileRideMapCore) 
 
 
 /**
+ * Cooperative cancellation for one durable route projection.
+ */
+public protocol MobileRouteProjectionCancellationProtocol: AnyObject, Sendable {
+
+    /**
+     * Requests cancellation of the associated durable projection.
+     */
+    func cancel()
+
+}
+/**
+ * Cooperative cancellation for one durable route projection.
+ */
+open class MobileRouteProjectionCancellation: MobileRouteProjectionCancellationProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilerouteprojectioncancellation(self.handle, $0) }
+    }
+    /**
+     * Creates an active projection cancellation token.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilerouteprojectioncancellation_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilerouteprojectioncancellation(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Requests cancellation of the associated durable projection.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilerouteprojectioncancellation_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRouteProjectionCancellation: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRouteProjectionCancellation
+
+    public static func lift(_ handle: UInt64) throws -> MobileRouteProjectionCancellation {
+        return MobileRouteProjectionCancellation(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileRouteProjectionCancellation) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRouteProjectionCancellation {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRouteProjectionCancellation, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRouteProjectionCancellation_lift(_ handle: UInt64) throws -> MobileRouteProjectionCancellation {
+    return try FfiConverterTypeMobileRouteProjectionCancellation.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRouteProjectionCancellation_lower(_ value: MobileRouteProjectionCancellation) -> UInt64 {
+    return FfiConverterTypeMobileRouteProjectionCancellation.lower(value)
+}
+
+
+
+
+
+
+/**
  * Rust-owned synchronous ride database handle for mobile clients.
  */
 public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
@@ -3303,6 +3440,16 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * invalid or unavailable.
      */
     func projectRoutePoints(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto) throws  -> MobileRideMapRouteProjectionDto
+
+    /**
+     * Projects one durable route while honoring cooperative cancellation.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride ID, projection options, cancellation token,
+     * or database worker is invalid or unavailable.
+     */
+    func projectRoutePointsCancellable(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileRouteProjectionCancellation) throws  -> MobileRideMapRouteProjectionDto
 
     /**
      * Rebuilds all derived spatial indexes from their canonical tables.
@@ -3902,6 +4049,25 @@ open func projectRoutePoints(rideId: MobileRideIdDto, options: MobileRideMapRout
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileRideIdDto_lower(rideId),
         FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),$0
+    )
+})
+}
+
+    /**
+     * Projects one durable route while honoring cooperative cancellation.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride ID, projection options, cancellation token,
+     * or database worker is invalid or unavailable.
+     */
+open func projectRoutePointsCancellable(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileRouteProjectionCancellation)throws  -> MobileRideMapRouteProjectionDto  {
+    return try  FfiConverterTypeMobileRideMapRouteProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_project_route_points_cancellable(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(rideId),
+        FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),
+        FfiConverterTypeMobileRouteProjectionCancellation_lower(cancellation),$0
     )
 })
 }
@@ -17739,6 +17905,10 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case QueueFull
     /**
+     * A durable route projection was cancelled by its caller.
+     */
+    case Cancelled
+    /**
      * The Rust worker is no longer available.
      */
     case WorkerStopped
@@ -17793,8 +17963,9 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
         case 16: return .InvalidRideState
         case 17: return .InvalidSegmentId
         case 18: return .QueueFull
-        case 19: return .WorkerStopped
-        case 20: return .StorageFailure
+        case 19: return .Cancelled
+        case 20: return .WorkerStopped
+        case 21: return .StorageFailure
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -17879,12 +18050,16 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(18))
 
 
-        case .WorkerStopped:
+        case .Cancelled:
             writeInt(&buf, Int32(19))
 
 
-        case .StorageFailure:
+        case .WorkerStopped:
             writeInt(&buf, Int32(20))
+
+
+        case .StorageFailure:
+            writeInt(&buf, Int32(21))
 
         }
     }
@@ -24652,6 +24827,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop_at() != 58868) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilerouteprojectioncancellation_cancel() != 63217) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 60604) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -24725,6 +24903,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_route_points() != 34152) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_route_points_cancellable() != 52968) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_rebuild_spatial_indexes() != 39593) {
@@ -24812,6 +24993,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobileridemapcore_with_database() != 43894) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilerouteprojectioncancellation_new() != 34931) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_vescreadonlysession_new() != 39732) {

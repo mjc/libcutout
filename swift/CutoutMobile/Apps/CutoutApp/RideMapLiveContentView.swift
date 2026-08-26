@@ -39,7 +39,7 @@ struct RideMapLiveContentView: View {
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
-                cameraDidChange: { followsLatestPoint = false }
+                cameraDidChange: { _ in followsLatestPoint = false }
             )
             // Keep the live hero compact enough that the metrics and controls
             // remain above a connected TabView on the smallest iPhone.

@@ -184,6 +184,8 @@ final class CutoutAppModel {
     private var rideMapHistoryLoadTask: Task<Void, Never>?
     private var rideMapHistoryPageTask: Task<Void, Never>?
     private var rideMapHistorySelectionTask: Task<Void, Never>?
+    private var rideMapHistoryViewportTask: Task<Void, Never>?
+    private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapRestoreTask: Task<Void, Never>?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
@@ -390,6 +392,8 @@ final class CutoutAppModel {
         // A reload changes the query that owns the selected route. Do not let an
         // older route request repopulate points after the new page arrives.
         rideMapHistorySelectionTask?.cancel()
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
         rideMapHistoryError = nil
         rideMapHistoryRouteError = nil
         rideMapHistoryLoading = true
@@ -552,6 +556,46 @@ final class CutoutAppModel {
         selectRideMapHistory(rideID, previewLimit: Self.rideMapPreviewPointLimit)
     }
 
+    func projectRideMapHistoryViewport(_ viewport: MobileGeoBoundsDto?) {
+        guard let viewport,
+              let selectedRideMapHistoryID,
+              rideMapHistory.contains(where: { $0.rideId == selectedRideMapHistoryID })
+        else {
+            return
+        }
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
+        let cancellation = MobileRideMapProjectionCancellation()
+        rideMapHistoryViewportCancellation = cancellation
+        let state = core.rideMapStateHandle
+        let budget = Self.rideMapHistoryDisplayPointLimit
+        rideMapHistoryViewportTask = Task { [weak self] in
+            do {
+                let result = try await withTaskCancellationHandler(operation: {
+                    try await Task.detached(priority: .userInitiated) {
+                        try state.projectStoredPoints(
+                            rideID: selectedRideMapHistoryID,
+                            budget: budget,
+                            viewport: viewport,
+                            cancellation: cancellation
+                        )
+                    }.value
+                }, onCancel: {
+                    cancellation.cancel()
+                })
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryDisplayPoints = result.points
+                self.rideMapHistoryRouteError = nil
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                if case MobileRideMapError.cancelled = Self.mapRideMapError(error) {
+                    return
+                }
+                self.rideMapHistoryRouteError = Self.mapRideMapError(error)
+            }
+        }
+    }
+
     func loadFullRideMapHistory() {
         guard let selectedRideMapHistoryID else { return }
         selectRideMapHistory(selectedRideMapHistoryID, previewLimit: nil)
@@ -564,6 +608,8 @@ final class CutoutAppModel {
             return
         }
         rideMapHistorySelectionTask?.cancel()
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
         let selectingDifferentRide = selectedRideMapHistoryID != rideID
         if selectingDifferentRide {
             rideMapHistoryPoints = []

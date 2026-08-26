@@ -17,7 +17,21 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case InvalidTransition
     case InvalidLocation
     case InvalidRouteProjection
+    case cancelled
     case Storage(String)
+}
+
+/// Swift-owned handle for cancelling one Rust durable route projection.
+public final class MobileRideMapProjectionCancellation: @unchecked Sendable {
+    fileprivate let ffi: MobileRouteProjectionCancellation
+
+    public init() {
+        ffi = MobileRouteProjectionCancellation()
+    }
+
+    public func cancel() {
+        ffi.cancel()
+    }
 }
 
 public enum MobileRideMapStateDto: Equatable, Hashable, Sendable {
@@ -386,7 +400,8 @@ public final class MobileRideMapState: @unchecked Sendable {
         rideID: String,
         budget: UInt32,
         viewport: MobileGeoBoundsDto? = nil,
-        privacy: MobileRideMapRoutePrivacyPolicy = .precise
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise,
+        cancellation: MobileRideMapProjectionCancellation? = nil
     ) throws -> MobileRideMapRouteProjection {
         guard let database else {
             throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
@@ -399,14 +414,25 @@ public final class MobileRideMapState: @unchecked Sendable {
             mappedPrivacy = .grid(gridE7: e7)
         }
         do {
-            return try map(database.projectRoutePoints(
-                rideId: MobileRideIdDto(value: rideID),
-                options: MobileRideMapRouteProjectionOptionsDto(
-                    viewport: viewport,
-                    budget: budget,
-                    privacy: mappedPrivacy
+            let options = MobileRideMapRouteProjectionOptionsDto(
+                viewport: viewport,
+                budget: budget,
+                privacy: mappedPrivacy
+            )
+            let projection: MobileRideMapRouteProjectionDto
+            if let cancellation {
+                projection = try database.projectRoutePointsCancellable(
+                    rideId: MobileRideIdDto(value: rideID),
+                    options: options,
+                    cancellation: cancellation.ffi
                 )
-            ))
+            } else {
+                projection = try database.projectRoutePoints(
+                    rideId: MobileRideIdDto(value: rideID),
+                    options: options
+                )
+            }
+            return map(projection)
         } catch {
             throw map(error)
         }
@@ -636,6 +662,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             switch error {
             case .NotFound: return .NoActiveRide
             case .InvalidTransition, .InvalidRideState: return .InvalidTransition
+            case .Cancelled: return .cancelled
             default: return .Storage(String(describing: error))
             }
         }

@@ -172,6 +172,71 @@ pub struct RouteDisplayPoint {
     privacy_class: RoutePrivacyClass,
 }
 
+/// Incremental bounded route projection state.
+///
+/// Durable stores use this accumulator while they stream `SQLite` rows, so projecting a long route
+/// never requires retaining all canonical points in memory.
+#[derive(Debug)]
+pub struct RouteProjectionAccumulator {
+    output_count: usize,
+    candidate_count: usize,
+    privacy: RoutePrivacyPolicy,
+    projected: Vec<RouteDisplayPoint>,
+    output_ordinal: usize,
+    next_target: usize,
+}
+
+impl RouteProjectionAccumulator {
+    /// Creates an accumulator for a known candidate count.
+    #[must_use]
+    pub fn new(
+        candidate_count: usize,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+    ) -> Self {
+        let output_count = candidate_count.min(budget.as_usize());
+        Self {
+            output_count,
+            candidate_count,
+            privacy,
+            projected: Vec::with_capacity(output_count),
+            output_ordinal: 0,
+            next_target: 0,
+        }
+    }
+
+    /// Adds one candidate in ascending route order.
+    pub fn push(&mut self, candidate_ordinal: usize, sequence: u64, point: RideMapPoint) {
+        if self.output_ordinal == self.output_count || candidate_ordinal != self.next_target {
+            return;
+        }
+        let (coordinate, privacy_class) = self.privacy.project(point.sample().coordinate());
+        self.projected.push(RouteDisplayPoint {
+            sequence: RidePointSequence::new(sequence),
+            segment_id: point.segment_id(),
+            coordinate,
+            privacy_class,
+        });
+        self.output_ordinal += 1;
+        if self.output_ordinal < self.output_count {
+            self.next_target =
+                evenly_spaced_ordinal(self.output_ordinal, self.output_count, self.candidate_count);
+        }
+    }
+
+    /// Returns whether the bounded output is complete.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.output_ordinal == self.output_count
+    }
+
+    /// Finishes the projection and returns only the bounded display points.
+    #[must_use]
+    pub fn finish(self) -> Vec<RouteDisplayPoint> {
+        self.projected
+    }
+}
+
 impl RouteDisplayPoint {
     /// Returns the canonical route sequence.
     #[must_use]
@@ -249,31 +314,14 @@ pub fn project_route_points_from_iter(
     budget: RouteDisplayBudget,
     privacy: RoutePrivacyPolicy,
 ) -> Vec<RouteDisplayPoint> {
-    let output_count = candidate_count.min(budget.as_usize());
-    if output_count == 0 {
-        return Vec::new();
-    }
-
-    let mut projected = Vec::with_capacity(output_count);
-    let mut output_ordinal = 0_usize;
-    let mut next_target = 0_usize;
+    let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, (sequence, point)) in points.into_iter().enumerate() {
-        if candidate_ordinal == next_target {
-            let (coordinate, privacy_class) = privacy.project(point.sample().coordinate());
-            projected.push(RouteDisplayPoint {
-                sequence: RidePointSequence::new(sequence),
-                segment_id: point.segment_id(),
-                coordinate,
-                privacy_class,
-            });
-            output_ordinal += 1;
-            if output_ordinal == output_count {
-                break;
-            }
-            next_target = evenly_spaced_ordinal(output_ordinal, output_count, candidate_count);
+        accumulator.push(candidate_ordinal, sequence, point);
+        if accumulator.is_complete() {
+            break;
         }
     }
-    projected
+    accumulator.finish()
 }
 
 fn as_u64(value: usize) -> u64 {

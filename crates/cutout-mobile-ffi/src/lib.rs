@@ -3711,6 +3711,9 @@ pub enum MobileRideDatabaseError {
     /// The bounded Rust worker queue is full.
     #[error("ride database queue is full")]
     QueueFull,
+    /// A durable route projection was cancelled by its caller.
+    #[error("ride route projection cancelled")]
+    Cancelled,
     /// The Rust worker is no longer available.
     #[error("ride database worker stopped")]
     WorkerStopped,
@@ -3760,6 +3763,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
             MobileRideDatabaseError::InvalidSegmentId
         }
         persistence::StorageError::QueueFull => MobileRideDatabaseError::QueueFull,
+        persistence::StorageError::Cancelled => MobileRideDatabaseError::Cancelled,
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
         | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
@@ -4011,6 +4015,29 @@ pub struct RideDatabaseHandle {
     inner: persistence::RideDatabase,
 }
 
+/// Cooperative cancellation for one durable route projection.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileRouteProjectionCancellation {
+    inner: persistence::RouteProjectionCancellation,
+}
+
+#[uniffi::export]
+impl MobileRouteProjectionCancellation {
+    /// Creates an active projection cancellation token.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            inner: persistence::RouteProjectionCancellation::new(),
+        })
+    }
+
+    /// Requests cancellation of the associated durable projection.
+    pub fn cancel(&self) {
+        self.inner.cancel();
+    }
+}
+
 /// Acquires the process-wide Rust-owned ride database service for `path`.
 ///
 /// # Errors
@@ -4179,6 +4206,41 @@ impl RideDatabaseHandle {
         let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
         self.inner
             .project_route_points(ride_id, viewport, budget, privacy)
+            .map(|projection| MobileRideMapRouteProjectionDto {
+                points: projection
+                    .points()
+                    .iter()
+                    .copied()
+                    .map(mobile_route_display_point_dto)
+                    .collect(),
+                source_point_count: projection.source_point_count(),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Projects one durable route while honoring cooperative cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride ID, projection options, cancellation token,
+    /// or database worker is invalid or unavailable.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_route_points_cancellable(
+        &self,
+        ride_id: MobileRideIdDto,
+        options: MobileRideMapRouteProjectionOptionsDto,
+        cancellation: Arc<MobileRouteProjectionCancellation>,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
+        self.inner
+            .project_route_points_cancellable(
+                ride_id,
+                viewport,
+                budget,
+                privacy,
+                cancellation.inner.clone(),
+            )
             .map(|projection| MobileRideMapRouteProjectionDto {
                 points: projection
                     .points()

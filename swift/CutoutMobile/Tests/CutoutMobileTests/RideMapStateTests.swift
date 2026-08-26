@@ -188,6 +188,32 @@ final class RideMapStateTests: XCTestCase {
         }
     }
 
+    func testStoredProjectionHonorsRustCancellationToken() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        _ = settle(state, try state.ingestLocation(
+            monotonicMs: 1_001,
+            wallClockUnixMs: 1_700_000_001_001,
+            latitudeDegrees: 40,
+            longitudeDegrees: -105,
+            horizontalAccuracyMeters: 3
+        ))
+        let rideID = try state.stop(atMs: 2_000).rideId
+        _ = try state.save()
+
+        let cancellation = MobileRideMapProjectionCancellation()
+        cancellation.cancel()
+        XCTAssertThrowsError(
+            try state.projectStoredPoints(
+                rideID: rideID,
+                budget: 1,
+                cancellation: cancellation
+            )
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .cancelled)
+        }
+    }
+
     func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)

@@ -2,6 +2,7 @@ import XCTest
 @testable import CutoutApp
 import CutoutMobile
 import CoreLocation
+import MapKit
 
 final class CutoutAppRouteTests: XCTestCase {
     func testScreenRoutesMatchTopLevelSections() {
@@ -179,6 +180,34 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(RideMapCanvasView.markerTitleLineLimit(for: .large), 1)
         XCTAssertEqual(RideMapCanvasView.markerTitleLineLimit(for: .accessibility1), 2)
         XCTAssertGreaterThan(abs(accessibility.start.width), abs(regular.start.width))
+    }
+
+    @MainActor
+    func testRideMapCameraProjectsFiniteViewportBounds() {
+        let bounds = RideMapCanvasView.geoBounds(
+            for: MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 40, longitude: -105),
+                span: MKCoordinateSpan(latitudeDelta: 2, longitudeDelta: 4)
+            )
+        )
+
+        XCTAssertEqual(bounds?.minimumLatitudeDegrees, 39)
+        XCTAssertEqual(bounds?.maximumLatitudeDegrees, 41)
+        XCTAssertEqual(bounds?.minimumLongitudeDegrees, -107)
+        XCTAssertEqual(bounds?.maximumLongitudeDegrees, -103)
+    }
+
+    @MainActor
+    func testRideMapCameraPreservesAntimeridianViewportBounds() {
+        let bounds = RideMapCanvasView.geoBounds(
+            for: MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 0, longitude: 179),
+                span: MKCoordinateSpan(latitudeDelta: 2, longitudeDelta: 6)
+            )
+        )
+
+        XCTAssertEqual(bounds?.minimumLongitudeDegrees, 176)
+        XCTAssertEqual(bounds?.maximumLongitudeDegrees, -178)
     }
 
     @MainActor

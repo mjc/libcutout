@@ -18,6 +18,7 @@ struct RideMapHistoryDetailView: View {
     let retry: () -> Void
     let loadFullRide: () -> Void
     let vehicleName: (String?) -> String?
+    let cameraDidChange: (MKCoordinateRegion) -> Void
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let close: () -> Void
@@ -91,7 +92,7 @@ struct RideMapHistoryDetailView: View {
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,
-                            cameraDidChange: {}
+                            cameraDidChange: cameraDidChange
                         )
 
                         if isRouteLoading {

@@ -33,8 +33,8 @@ pub use recording::{
 mod projection;
 pub use projection::{
     MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyClass,
-    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteViewport, project_route_points,
-    project_route_points_from_iter,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteViewport,
+    project_route_points, project_route_points_from_iter,
 };
 
 #[cfg(test)]

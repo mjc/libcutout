@@ -16,7 +16,7 @@ use cutout_ride_maps::RideLifecycleState;
 
 use super::{
     GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
-    RideSource, StorageError, VoltageSagModelRecord,
+    RideSource, RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1715,6 +1715,34 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
         point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
     }));
 
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cancelled_durable_route_projection_returns_before_scanning() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-cancel-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let cancellation = RouteProjectionCancellation::new();
+    cancellation.cancel();
+
+    let error = database
+        .project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            cancellation,
+        )
+        .expect_err("a cancelled projection must not scan the route");
+
+    assert!(matches!(error, StorageError::Cancelled));
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
