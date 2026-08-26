@@ -303,9 +303,7 @@ final class CutoutAppModel {
                 guard !Task.isCancelled, let self else { return }
                 guard let result else { return }
                 self.rideMapPoints = result.0
-                self.rideMapLiveDisplayPoints = result.1.points
-                self.rideMapLivePointsTruncated =
-                    result.1.sourcePointCount > UInt64(result.1.points.count)
+                self.applyLiveProjection(result.1)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapLiveError = Self.mapRideMapError(error)
@@ -638,14 +636,17 @@ final class CutoutAppModel {
                 let projection = try core.rideMapStateHandle.projectPoints(
                     budget: UInt32(Self.rideMapPreviewPointLimit)
                 )
-                rideMapLiveDisplayPoints = projection.points
-                rideMapLivePointsTruncated =
-                    projection.sourcePointCount > UInt64(projection.points.count)
+                applyLiveProjection(projection)
             } catch {
                 rideMapLiveError = Self.mapRideMapError(error)
                 rideMapLiveDisplayPoints = []
             }
         }
+    }
+
+    private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
+        rideMapLiveDisplayPoints = projection.points
+        rideMapLivePointsTruncated = projection.sourcePointCount > UInt64(projection.points.count)
     }
 
     private func applyRideMapCommand(

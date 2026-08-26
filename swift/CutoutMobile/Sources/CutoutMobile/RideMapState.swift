@@ -203,7 +203,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         return try? openRideDatabase(path: path)
     }()
 
-    /// Creates an isolated, durable map state for deterministic tests only.
+    /// Creates a fresh durable map state for deterministic tests only.
     public convenience init() {
         guard let database = Self.debugDatabase else {
             self.init(storageUnavailable: "Rust ride database is unavailable")
