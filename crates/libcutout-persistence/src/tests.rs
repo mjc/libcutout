@@ -327,6 +327,30 @@ fn async_location_write_reports_completion_without_waiting() {
 }
 
 #[test]
+fn database_reopens_after_an_unexpected_worker_exit() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let stale_handle = database.clone();
+
+    database.stop_worker_for_test().unwrap();
+    assert!(matches!(
+        stale_handle.capabilities(),
+        Err(StorageError::WorkerStopped)
+    ));
+
+    let recovered = stale_handle.reopen().unwrap();
+    assert_ne!(recovered.service_id(), stale_handle.service_id());
+    assert!(recovered.capabilities().is_ok());
+
+    recovered.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn ride_history_duration_is_derived_from_rust_monotonic_state() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

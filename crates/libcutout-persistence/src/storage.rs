@@ -1367,6 +1367,19 @@ impl RideDatabase {
         Ok(handle)
     }
 
+    /// Reacquires the database service after its worker has exited.
+    ///
+    /// A worker failure disconnects the sender held by this handle; callers must replace the
+    /// failed handle with the returned handle before issuing more commands. If the worker is
+    /// still healthy, this returns another handle to the existing service.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::open`] when the service cannot be reacquired.
+    pub fn reopen(&self) -> Result<Self, StorageError> {
+        Self::open(&self.path)
+    }
+
     /// Returns the process-wide service identity.
     #[must_use]
     pub const fn service_id(&self) -> Uuid {
@@ -2274,6 +2287,25 @@ impl RideDatabase {
         })
     }
 
+    /// Stops the worker without releasing the owner entry, simulating an unexpected worker exit.
+    #[cfg(test)]
+    pub(crate) fn stop_worker_for_test(&self) -> Result<(), StorageError> {
+        let result = self.request(|reply| Command::StopForTest { reply });
+        if result.is_ok() {
+            loop {
+                let finished = owner()
+                    .lock()
+                    .ok()
+                    .and_then(|owner| owner.as_ref()?.join.as_ref().map(JoinHandle::is_finished));
+                if finished == Some(true) {
+                    break;
+                }
+                thread::yield_now();
+            }
+        }
+        result
+    }
+
     /// Loads the newest live-projection-sized route tail in ascending sequence order.
     ///
     /// # Errors
@@ -2606,6 +2638,10 @@ enum Command {
     InstallRouteProjectionTestGate {
         entered: SyncSender<()>,
         release: Receiver<()>,
+        reply: Reply<()>,
+    },
+    #[cfg(test)]
+    StopForTest {
         reply: Reply<()>,
     },
     LatestRoutePoints {
@@ -2975,6 +3011,11 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     }),
                 );
                 let _ = reply.send(Ok(()));
+            }
+            #[cfg(test)]
+            Command::StopForTest { reply } => {
+                let _ = reply.send(Ok(()));
+                break;
             }
             Command::LatestRoutePoints { ride_id, reply } => {
                 let _ = reply.send(latest_route_points(&connection, ride_id));
