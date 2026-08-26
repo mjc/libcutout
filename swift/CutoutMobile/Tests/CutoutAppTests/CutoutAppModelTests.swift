@@ -208,7 +208,7 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapRecordingProjectionStaysActiveWhileHistoryIsSelected() {
+    func testRideMapLifecycleControlsUpdateRecordingState() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
 

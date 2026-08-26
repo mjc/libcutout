@@ -396,6 +396,13 @@ final class CutoutAppRouteTests: XCTestCase {
                 vehicleFilter: nil
             )
         )
+        XCTAssertFalse(
+            RideMapHistoryContentView.hasActiveFilters(
+                searchText: "  \n",
+                dateFilter: .last30Days,
+                vehicleFilter: nil
+            )
+        )
     }
 
     @MainActor

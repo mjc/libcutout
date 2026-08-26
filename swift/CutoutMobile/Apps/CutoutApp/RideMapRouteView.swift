@@ -162,9 +162,10 @@ struct RideMapRouteView: View {
             currentVehicleIdentity: model.rideMapVehicleIdentity,
             currentVehicleName: model.rideMapVehicleName,
             vehicleName: model.rideMapVehicleName(for:),
-            cameraDidChange: { region in
-                model.projectRideMapHistoryViewport(RideMapCanvasView.geoBounds(for: region))
-            },
+            // Detail and list intentionally share the selected route data, but not a
+            // viewport projection. A detail pan must not replace the list's display
+            // projection while both destinations remain alive in the navigation stack.
+            cameraDidChange: { _ in },
             mapPosition: $presentation.historyMapPosition,
             isApplyingCamera: $presentation.historyIsApplyingCamera
         )

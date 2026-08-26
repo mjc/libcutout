@@ -882,8 +882,8 @@
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording paused" } } }
     },
     "ride_map.show_full_ride" : {
-      "comment" : "Historical ride detail action that loads and displays all stored route points.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show full ride" } } }
+      "comment" : "Historical ride detail action that loads the largest bounded route preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show route preview" } } }
     },
     "ride_map.share" : {
       "comment" : "Historical ride detail share action.",
