@@ -14,6 +14,7 @@ final class RideMapStateTests: XCTestCase {
             }
             Thread.sleep(forTimeInterval: 0.001)
         }
+        XCTFail("timed out waiting for durable ride-map location outcome")
         return decision
     }
 

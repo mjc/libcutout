@@ -25,6 +25,7 @@ final class CutoutAppModelTests: XCTestCase {
             }
             Thread.sleep(forTimeInterval: 0.001)
         }
+        XCTFail("timed out waiting for durable ride-map location outcome")
         return decision
     }
 
@@ -1596,9 +1597,9 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
-    func testProtocolIdentityCandidatePersistsNamesForHistoryIdentities() {
-        let suiteName = "CutoutAppModelTests-(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+    func testProtocolIdentityCandidatePersistsNamesForHistoryIdentities() throws {
+        let suiteName = "CutoutAppModelTests.\(#function).\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = DevicePickerSelectionStore(defaults: defaults)
         let model = CutoutAppModel(core: SessionDriverSpy(rows: []), selectedDeviceStore: store)
