@@ -14,7 +14,7 @@ final class CutoutAppModelTests: XCTestCase {
         writerError: nil
     )
 
-    private func settle(
+    private static func settle(
         _ state: MobileRideMapState,
         _ decision: MobileRideMapDecisionDto
     ) async -> MobileRideMapDecisionDto {
@@ -115,7 +115,7 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: "pev-restored"
         )
-        _ = await settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        _ = await Self.settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -173,7 +173,7 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: nil
         )
-        let decision = await settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        let decision = await Self.settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -203,7 +203,7 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: nil
         )
-        let decision = await settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+        let decision = await Self.settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
@@ -335,14 +335,14 @@ final class CutoutAppModelTests: XCTestCase {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapStateHandle
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
-        _ = await settle(state, try state.ingestLocation(
+        _ = await Self.settle(state, try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7000,
             longitudeDegrees: -104.9000,
             horizontalAccuracyMeters: 5
         ))
-        _ = await settle(state, try state.ingestLocation(
+        _ = await Self.settle(state, try state.ingestLocation(
             monotonicMs: 1_100,
             wallClockUnixMs: 1_700_000_001_100,
             latitudeDegrees: 39.7001,
@@ -477,7 +477,7 @@ final class CutoutAppModelTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
         for sequence in 0 ..< 10 {
-            _ = await settle(state, try state.ingestLocation(
+            _ = await Self.settle(state, try state.ingestLocation(
                 monotonicMs: UInt64(1_000 + sequence * 1_000),
                 wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
                 latitudeDegrees: 39.7 + Double(sequence) / 10_000,
