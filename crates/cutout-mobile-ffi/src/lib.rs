@@ -3987,6 +3987,23 @@ fn mobile_displayed_segment_count(points: &[MobileRideMapRouteDisplayPointDto]) 
     u64::try_from(count).unwrap_or(u64::MAX)
 }
 
+fn mobile_route_display_points(
+    points: impl IntoIterator<Item = ride_maps::RouteDisplayPoint>,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<Vec<MobileRideMapRouteDisplayPointDto>, MobileRideMapCoreErrorDto> {
+    let mut display_points = Vec::new();
+    for point in points {
+        if is_cancelled() {
+            return Err(MobileRideMapCoreErrorDto::Cancelled);
+        }
+        display_points.push(mobile_route_display_point_dto(point));
+    }
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    Ok(display_points)
+}
+
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
     persistence::QueryLimit::new(value).map_err(map_ride_database_error)
 }
@@ -6119,7 +6136,7 @@ fn project_live_route_points(
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
     let candidate_segment_count = mobile_segment_count(&points, viewport, &mut is_cancelled)?;
-    let points = ride_maps::project_route_points_cancellable(
+    let projected_points = ride_maps::project_route_points_cancellable(
         &points,
         first_sequence,
         viewport,
@@ -6127,13 +6144,8 @@ fn project_live_route_points(
         privacy,
         &mut is_cancelled,
     )
-    .map_err(|_| MobileRideMapCoreErrorDto::Cancelled)?
-    .into_iter()
-    .map(mobile_route_display_point_dto)
-    .collect::<Vec<_>>();
-    if is_cancelled() {
-        return Err(MobileRideMapCoreErrorDto::Cancelled);
-    }
+    .map_err(|_| MobileRideMapCoreErrorDto::Cancelled)?;
+    let points = mobile_route_display_points(projected_points, &mut is_cancelled)?;
     let displayed_segment_count = mobile_displayed_segment_count(&points);
     Ok(MobileRideMapRouteProjectionDto {
         points,
@@ -14710,6 +14722,45 @@ mod tests {
             })
             .expect("the compatibility wrapper remains usable after cancellation");
         assert_eq!(projection.points.len(), 1);
+    }
+
+    #[test]
+    fn mobile_live_projection_checks_cancellation_while_mapping_dtos() {
+        let state = MobileRideMapCore::new_for_testing();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        for (offset, latitude) in [(1_001, 40.0), (2_001, 40.0001), (3_001, 40.0002)] {
+            state
+                .ingest_location(offset, 1_700_000_000_000 + offset, latitude, -105.0, 3.0)
+                .expect("location is accepted");
+        }
+        let (canonical_points, first_sequence) = {
+            let state = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
+            (
+                state.recorder.points().to_vec(),
+                state.recorder.first_point_sequence(),
+            )
+        };
+        let projected_points = ride_maps::project_route_points(
+            &canonical_points,
+            first_sequence,
+            None,
+            ride_maps::RouteDisplayBudget::new(2).expect("budget is valid"),
+            ride_maps::RoutePrivacyPolicy::Precise,
+        );
+        let mut checks = 0;
+        let error = match mobile_route_display_points(projected_points, || {
+            checks += 1;
+            checks == 1
+        }) {
+            Err(error) => error,
+            Ok(points) => panic!(
+                "DTO mapping must observe cancellation before completing: checks={checks}, points={points:?}"
+            ),
+        };
+        assert_eq!(error, MobileRideMapCoreErrorDto::Cancelled);
+        assert_eq!(checks, 1);
     }
 
     #[test]
