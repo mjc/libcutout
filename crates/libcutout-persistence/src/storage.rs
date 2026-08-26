@@ -1121,7 +1121,7 @@ impl RouteProjectionCancellation {
         }
     }
 
-    /// Requests cancellation of the associated projection and interrupts an active SQLite query.
+    /// Requests cancellation of the associated projection and interrupts an active `SQLite` query.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.interrupt();
