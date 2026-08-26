@@ -378,10 +378,22 @@ final class CutoutSessionCoreTests: XCTestCase {
 
     func testRestoredConnectedPeripheralStartsRideMapBeforeTelemetry() {
         XCTAssertTrue(
-            RideMapConnectionPolicy.shouldEnsureRecording(hasObservedConnection: false)
+            RideMapConnectionPolicy.shouldEnsureRecording(
+                hasObservedConnection: false,
+                hasSelectedRoute: true
+            )
         )
         XCTAssertFalse(
-            RideMapConnectionPolicy.shouldEnsureRecording(hasObservedConnection: true)
+            RideMapConnectionPolicy.shouldEnsureRecording(
+                hasObservedConnection: true,
+                hasSelectedRoute: true
+            )
+        )
+        XCTAssertFalse(
+            RideMapConnectionPolicy.shouldEnsureRecording(
+                hasObservedConnection: false,
+                hasSelectedRoute: false
+            )
         )
     }
 

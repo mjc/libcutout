@@ -213,8 +213,11 @@ enum CoreBluetoothRestorationPolicy {
 }
 
 enum RideMapConnectionPolicy {
-    static func shouldEnsureRecording(hasObservedConnection: Bool) -> Bool {
-        !hasObservedConnection
+    static func shouldEnsureRecording(
+        hasObservedConnection: Bool,
+        hasSelectedRoute: Bool
+    ) -> Bool {
+        !hasObservedConnection && hasSelectedRoute
     }
 }
 
@@ -2157,24 +2160,30 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     private func ensureRideMapRecordingIfNeeded(platformIdentifier: String) {
         guard RideMapConnectionPolicy.shouldEnsureRecording(
-            hasObservedConnection: hasObservedRideMapConnection
+            hasObservedConnection: hasObservedRideMapConnection,
+            hasSelectedRoute: selectedRoute != nil
         ) else {
             return
         }
         hasObservedRideMapConnection = true
-        ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier)
+        guard ensureRideMapRecordingForConnection(platformIdentifier: platformIdentifier) else {
+            hasObservedRideMapConnection = false
+            return
+        }
     }
 
-    private func ensureRideMapRecordingForConnection(platformIdentifier: String) {
-        guard selectedRoute != nil else { return }
+    @discardableResult
+    private func ensureRideMapRecordingForConnection(platformIdentifier: String) -> Bool {
         do {
             let snapshot = try rideMapState.ensureRecordingForVehicle(
                 platformIdentifier: platformIdentifier,
                 atMs: clock.now().rawValue
             )
             publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
+            return true
         } catch {
             publishRideMapError(error)
+            return false
         }
     }
 
