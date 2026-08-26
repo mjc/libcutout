@@ -300,7 +300,7 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapPresentationStateSurvivesRouteRecreation() {
+    func testRideMapPresentationStateStoresIndependentSurfaceFlags() {
         let presentation = RideMapPresentationState()
 
         presentation.followsLatestPoint = false
