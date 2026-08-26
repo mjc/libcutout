@@ -2752,7 +2752,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         )
         for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
             guard let monotonicMs else { continue }
-            let sample = MobilePhoneLocationSampleDto(location: location)
+            guard let sample = MobilePhoneLocationSampleDto(location: location) else { continue }
             // Current-location readback is independent of ride recording. The map
             // admission result below only controls the canonical capture context.
             phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
@@ -2907,9 +2907,12 @@ func capturePhoneLocationSample(
 }
 
 private extension MobilePhoneLocationSampleDto {
-    init(location: CLLocation) {
+    init?(location: CLLocation) {
+        guard let wallClockUnixMs = wallClockUnixMilliseconds(for: location.timestamp) else {
+            return nil
+        }
         self.init(
-            wallClockUnixMs: UInt64(max(0, location.timestamp.timeIntervalSince1970 * 1_000)),
+            wallClockUnixMs: wallClockUnixMs,
             latitudeDegrees: location.coordinate.latitude,
             longitudeDegrees: location.coordinate.longitude,
             altitudeMeters: location.altitude,
@@ -2921,6 +2924,19 @@ private extension MobilePhoneLocationSampleDto {
             courseAccuracyDegrees: nonNegativeFinite(location.courseAccuracy)
         )
     }
+}
+
+func wallClockUnixMilliseconds(for timestamp: Date) -> UInt64? {
+    let seconds = timestamp.timeIntervalSince1970
+    guard seconds.isFinite, seconds >= 0 else { return nil }
+
+    let milliseconds = seconds * 1_000
+    guard milliseconds.isFinite, milliseconds >= 0,
+          milliseconds < Double(Int64.max)
+    else {
+        return nil
+    }
+    return UInt64(milliseconds.rounded(.down))
 }
 
 private func nonNegativeFinite(_ value: Double) -> Double? {

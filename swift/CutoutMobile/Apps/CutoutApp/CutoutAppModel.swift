@@ -302,6 +302,7 @@ final class CutoutAppModel {
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
         let previewLimit = Self.rideMapPreviewPointLimit
+        let restorationGeneration = rideMapLiveProjectionGeneration
         rideMapRestoreTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
@@ -311,11 +312,25 @@ final class CutoutAppModel {
                     )
                 }.value
                 guard !Task.isCancelled, let self else { return }
+                guard Self.shouldApplyRestoredLiveProjection(
+                    restorationGeneration: restorationGeneration,
+                    currentGeneration: self.rideMapLiveProjectionGeneration,
+                    liveProjectionEnabled: self.rideMapLiveProjectionEnabled
+                ) else {
+                    return
+                }
                 guard let result else { return }
                 self.rideMapPoints = Array(result.0.suffix(previewLimit))
                 self.applyLiveProjection(result.1)
             } catch {
                 guard !Task.isCancelled, let self else { return }
+                guard Self.shouldApplyRestoredLiveProjection(
+                    restorationGeneration: restorationGeneration,
+                    currentGeneration: self.rideMapLiveProjectionGeneration,
+                    liveProjectionEnabled: self.rideMapLiveProjectionEnabled
+                ) else {
+                    return
+                }
                 self.rideMapLiveError = Self.mapRideMapError(error)
                 self.rideMapPoints = []
                 self.rideMapLiveDisplayPoints = []
@@ -753,6 +768,14 @@ final class CutoutAppModel {
         enabled: Bool
     ) -> Bool {
         enabled && generation == currentGeneration
+    }
+
+    static func shouldApplyRestoredLiveProjection(
+        restorationGeneration: UInt64,
+        currentGeneration: UInt64,
+        liveProjectionEnabled: Bool
+    ) -> Bool {
+        !liveProjectionEnabled && restorationGeneration == currentGeneration
     }
 
     private func applyRideMapDecision(

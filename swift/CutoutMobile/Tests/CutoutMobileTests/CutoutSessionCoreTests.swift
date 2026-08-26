@@ -90,6 +90,20 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(admission.lastAcceptedTimestamp)
     }
 
+    func testCoreLocationTimestampConversionRejectsInvalidAndOutOfRangeDates() {
+        XCTAssertEqual(
+            wallClockUnixMilliseconds(for: Date(timeIntervalSince1970: 1_700_000_000.125)),
+            1_700_000_000_125
+        )
+        XCTAssertNil(wallClockUnixMilliseconds(for: Date(timeIntervalSince1970: -1)))
+        XCTAssertNil(wallClockUnixMilliseconds(for: Date(timeIntervalSince1970: .nan)))
+        XCTAssertNil(
+            wallClockUnixMilliseconds(
+                for: Date(timeIntervalSince1970: Double(Int64.max) / 1_000)
+            )
+        )
+    }
+
     func testBatchedLocationsPreserveTheirRecordedTimeSpacing() {
         let timestamps = [
             Date(timeIntervalSince1970: 1_700_000_000),
