@@ -1729,6 +1729,20 @@ fn cancelled_durable_route_projection_returns_before_scanning() {
     let database = RideDatabase::open(&path).unwrap();
     let ride = database.create_ride(RideSource::Live, 40).unwrap();
     database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0_u64..4_096 {
+        let offset = f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0;
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0 + offset, -105.0).unwrap(),
+            sequence + 1,
+            1_700_000_000_000 + sequence,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
     let cancellation = RouteProjectionCancellation::new();
     cancellation.cancel();
 
@@ -1743,6 +1757,7 @@ fn cancelled_durable_route_projection_returns_before_scanning() {
         .expect_err("a cancelled projection must not scan the route");
 
     assert!(matches!(error, StorageError::Cancelled));
+    assert!(database.find_ride(ride).unwrap().is_some());
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
