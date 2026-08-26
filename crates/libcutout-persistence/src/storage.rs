@@ -1833,7 +1833,7 @@ impl RideDatabase {
         )
     }
 
-    /// Enqueues one location with a typed segment identity without waiting for SQLite.
+    /// Enqueues one location with a typed segment identity without waiting for `SQLite`.
     ///
     /// # Errors
     ///
@@ -2814,6 +2814,10 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the declarative schema stays in one transaction"
+)]
 pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), StorageError> {
     connection.execute_batch(
         "

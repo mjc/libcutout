@@ -3290,7 +3290,7 @@ pub struct MobileRideMapRouteDisplayPointDto {
 pub struct MobileRideMapRouteProjectionDto {
     /// Evenly sampled points visible in the requested viewport.
     pub points: Vec<MobileRideMapRouteDisplayPointDto>,
-    /// Total canonical point count, including points outside the in-memory display tail.
+    /// Total canonical point count before viewport filtering or display LOD.
     pub source_point_count: u64,
 }
 
@@ -3678,9 +3678,12 @@ pub enum MobileRideDatabaseError {
     /// A growing query was not bounded by a supported limit.
     #[error("invalid query limit")]
     InvalidQueryLimit,
-    /// Geographic query bounds were non-finite, out of range, or reversed.
+    /// Geographic query bounds were non-finite, out of range, or had reversed latitudes.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
+    /// The route display budget, viewport, or privacy policy is invalid.
+    #[error("invalid route projection")]
+    InvalidRouteProjection,
     /// PEVCAP preflight rejected an artifact that exceeded a hard resource limit.
     #[error("PEVCAP resource limit exceeded")]
     PevcapLimitExceeded,
@@ -3850,6 +3853,20 @@ fn mobile_route_projection_options(
     ),
     MobileRideMapCoreErrorDto,
 > {
+    mobile_route_projection_options_for_database(options)
+        .map_err(|_| MobileRideMapCoreErrorDto::InvalidRouteProjection)
+}
+
+fn mobile_route_projection_options_for_database(
+    options: &MobileRideMapRouteProjectionOptionsDto,
+) -> Result<
+    (
+        Option<ride_maps::RouteViewport>,
+        ride_maps::RouteDisplayBudget,
+        ride_maps::RoutePrivacyPolicy,
+    ),
+    MobileRideDatabaseError,
+> {
     let viewport = options
         .viewport
         .map(|bounds| {
@@ -3857,34 +3874,51 @@ fn mobile_route_projection_options(
                 bounds.minimum_latitude_degrees,
                 bounds.minimum_longitude_degrees,
             )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+            .map_err(|_| MobileRideDatabaseError::InvalidRouteProjection)?;
             let maximum = ride_maps::Coordinate::from_degrees(
                 bounds.maximum_latitude_degrees,
                 bounds.maximum_longitude_degrees,
             )
-            .map_err(|_| MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+            .map_err(|_| MobileRideDatabaseError::InvalidRouteProjection)?;
             ride_maps::RouteViewport::new(
                 minimum.latitude(),
                 maximum.latitude(),
                 minimum.longitude(),
                 maximum.longitude(),
             )
-            .ok_or(MobileRideMapCoreErrorDto::InvalidRouteProjection)
+            .ok_or(MobileRideDatabaseError::InvalidRouteProjection)
         })
         .transpose()?;
     let budget = usize::try_from(options.budget)
         .ok()
         .and_then(ride_maps::RouteDisplayBudget::new)
-        .ok_or(MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+        .ok_or(MobileRideDatabaseError::InvalidRouteProjection)?;
     let privacy = match options.privacy {
         MobileRideMapRoutePrivacyPolicyDto::Precise => ride_maps::RoutePrivacyPolicy::Precise,
         MobileRideMapRoutePrivacyPolicyDto::Grid { grid_e7 } => {
             let grid = ride_maps::RoutePrivacyGridE7::new(grid_e7)
-                .ok_or(MobileRideMapCoreErrorDto::InvalidRouteProjection)?;
+                .ok_or(MobileRideDatabaseError::InvalidRouteProjection)?;
             ride_maps::RoutePrivacyPolicy::grid(grid)
         }
     };
     Ok((viewport, budget, privacy))
+}
+
+fn mobile_route_display_point_dto(
+    point: ride_maps::RouteDisplayPoint,
+) -> MobileRideMapRouteDisplayPointDto {
+    MobileRideMapRouteDisplayPointDto {
+        sequence: point.sequence().as_u64(),
+        segment_id: point.segment_id().value(),
+        latitude_degrees: point.coordinate().latitude_degrees(),
+        longitude_degrees: point.coordinate().longitude_degrees(),
+        privacy_class: match point.privacy_class() {
+            ride_maps::RoutePrivacyClass::Precise => MobileRideMapRoutePrivacyClassDto::Precise,
+            ride_maps::RoutePrivacyClass::GridRedacted => {
+                MobileRideMapRoutePrivacyClassDto::GridRedacted
+            }
+        },
+    }
 }
 
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
@@ -4102,7 +4136,9 @@ impl RideDatabaseHandle {
         limit: u32,
     ) -> Result<MobileRoutePointPageDto, MobileRideDatabaseError> {
         let ride_id = parse_mobile_ride_id(&ride_id)?;
-        let cursor = cursor.map(|cursor| persistence::RoutePointCursor::new(cursor.sequence));
+        let cursor = cursor.map(|cursor| {
+            persistence::RoutePointCursor::new(ride_maps::RidePointSequence::new(cursor.sequence))
+        });
         let limit = mobile_query_limit(limit)?;
         self.inner
             .route_points(ride_id, cursor, limit)
@@ -4111,15 +4147,46 @@ impl RideDatabaseHandle {
                     .points()
                     .iter()
                     .map(|point| MobileRoutePointDto {
-                        sequence: point.sequence(),
-                        segment_id: point.segment_id(),
+                        sequence: point.sequence().as_u64(),
+                        segment_id: point.segment_id().value(),
                         location: mobile_ride_location_dto(point.sample()),
                         telemetry_state: point.telemetry_state().into(),
                     })
                     .collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileRoutePointCursorDto {
-                    sequence: cursor.sequence(),
+                    sequence: cursor.sequence().as_u64(),
                 }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Projects one durable route through Rust-owned viewport, LOD, and privacy policy.
+    ///
+    /// The database worker owns raw route paging and returns only the bounded display projection;
+    /// mobile callers must not scan or decimate route points themselves.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the ride ID, projection options, or database worker is
+    /// invalid or unavailable.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_route_points(
+        &self,
+        ride_id: MobileRideIdDto,
+        options: MobileRideMapRouteProjectionOptionsDto,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
+        self.inner
+            .project_route_points(ride_id, viewport, budget, privacy)
+            .map(|projection| MobileRideMapRouteProjectionDto {
+                points: projection
+                    .points()
+                    .iter()
+                    .copied()
+                    .map(mobile_route_display_point_dto)
+                    .collect(),
+                source_point_count: projection.source_point_count(),
             })
             .map_err(map_ride_database_error)
     }
@@ -4867,7 +4934,7 @@ impl RideDatabaseHandle {
                     .map(|point| {
                         ride_maps::RideMapPoint::new(
                             point.sample(),
-                            ride_maps::RideMapSegmentId::new(point.segment_id()),
+                            point.segment_id(),
                             point.telemetry_state(),
                         )
                     })
@@ -5007,23 +5074,6 @@ impl MobileRideMapCoreInner {
                 .horizontal_accuracy_millimetres
                 .map_or(0.0, |value| f64::from(value) / 1_000.0),
             telemetry_state: telemetry_state.into(),
-        }
-    }
-
-    fn route_display_point(
-        point: ride_maps::RouteDisplayPoint,
-    ) -> MobileRideMapRouteDisplayPointDto {
-        MobileRideMapRouteDisplayPointDto {
-            sequence: point.sequence().as_u64(),
-            segment_id: point.segment_id().value(),
-            latitude_degrees: point.coordinate().latitude_degrees(),
-            longitude_degrees: point.coordinate().longitude_degrees(),
-            privacy_class: match point.privacy_class() {
-                ride_maps::RoutePrivacyClass::Precise => MobileRideMapRoutePrivacyClassDto::Precise,
-                ride_maps::RoutePrivacyClass::GridRedacted => {
-                    MobileRideMapRoutePrivacyClassDto::GridRedacted
-                }
-            },
         }
     }
 
@@ -5322,15 +5372,6 @@ fn empty_map_point_batch() -> MobileRideMapCorePointBatchDto {
 
 #[uniffi::export]
 impl MobileRideMapCore {
-    /// Creates a Rust-owned map state without durable storage, for deterministic UI tests.
-    #[uniffi::constructor]
-    #[must_use]
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(MobileRideMapCoreInner::new(None)),
-        })
-    }
-
     /// Creates a Rust-owned map state backed by the process-wide ride database.
     #[uniffi::constructor]
     #[must_use]
@@ -5711,6 +5752,11 @@ impl MobileRideMapCore {
     ///
     /// Unlike the legacy scalar convenience method, this boundary preserves typed absence for
     /// optional Core Location metrics and rejects invalid required fields before admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed map error when the sample is invalid, no ride is active, or durable
+    /// admission cannot be queued.
     pub fn ingest_location_sample(
         &self,
         monotonic_ms: u64,
@@ -5821,6 +5867,42 @@ impl MobileRideMapCore {
         })
     }
 
+    /// Returns the recorder's bounded active-route tail in sequence order.
+    ///
+    /// The recorder deliberately retains only [`ride_maps::MAX_LIVE_ROUTE_POINTS`] points for
+    /// active-route recovery. This API exposes that tail directly, so clients do not have to
+    /// page durable storage from sequence zero merely to rebuild the live map after reconnect.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed map error if the active recorder cannot produce its route tail.
+    pub fn latest_route_points(
+        &self,
+    ) -> Result<MobileRideMapCorePointBatchDto, MobileRideMapCoreErrorDto> {
+        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let first_point_sequence = state.recorder.first_point_sequence();
+        let points = state
+            .recorder
+            .points()
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(offset, sample)| {
+                MobileRideMapCoreInner::point_from_location(
+                    mobile_ride_location_dto(sample.sample()),
+                    first_point_sequence.saturating_add(offset as u64).as_u64(),
+                    sample.segment_id(),
+                    sample.telemetry_state(),
+                )
+            })
+            .collect();
+        Ok(MobileRideMapCorePointBatchDto {
+            points,
+            next_cursor: None,
+            has_more: false,
+        })
+    }
+
     /// Projects the Rust-owned route tail into a bounded viewport/privacy display.
     ///
     /// The projection is deliberately separate from [`Self::points_after`]: that method is the
@@ -5847,11 +5929,24 @@ impl MobileRideMapCore {
             privacy,
         )
         .into_iter()
-        .map(MobileRideMapCoreInner::route_display_point)
+        .map(mobile_route_display_point_dto)
         .collect();
         Ok(MobileRideMapRouteProjectionDto {
             points,
             source_point_count: state.recorder.point_count(),
+        })
+    }
+}
+
+#[cfg(test)]
+impl MobileRideMapCore {
+    /// Creates an isolated in-memory core for Rust unit tests only.
+    ///
+    /// This helper is deliberately outside the `UniFFI` export surface so release clients cannot
+    /// create a recorder whose points are not backed by durable storage.
+    fn new_for_testing() -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(MobileRideMapCoreInner::new(None)),
         })
     }
 }
@@ -13787,7 +13882,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_owns_lifecycle_and_vehicle_association() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         assert_eq!(
             state
                 .start_gps_only(1_000, Some("pev-1".to_owned()))
@@ -13867,7 +13962,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_uses_canonical_phone_location_boundary() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         state
             .start_gps_only(1_000, None)
             .expect("map recording starts");
@@ -13993,7 +14088,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_associates_a_vehicle_found_during_a_gps_only_ride() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         state
             .start_gps_only(1_000, None)
             .expect("GPS-only recording starts");
@@ -14013,7 +14108,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_starts_and_associates_on_vehicle_connection() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         let snapshot = state
             .ensure_recording_for_vehicle("pev-1".to_owned(), 1_000)
             .expect("connection starts the live map ride");
@@ -14030,7 +14125,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_keeps_the_first_confirmed_association() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         state
             .start_gps_only(1_000, Some("pev-1".to_owned()))
             .expect("recording starts");
@@ -14155,7 +14250,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_retains_point_telemetry_provenance_without_backfill() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         state
             .start_gps_only(1_000, Some("pev-1".to_owned()))
             .expect("recording starts");
@@ -14207,7 +14302,7 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_projects_route_tail_with_viewport_and_privacy_policy() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         state
             .start_gps_only(1_000, None)
             .expect("map recording starts");
@@ -14248,8 +14343,36 @@ mod tests {
     }
 
     #[test]
+    fn mobile_ride_map_core_returns_the_bounded_active_tail() {
+        let state = MobileRideMapCore::new_for_testing();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        for sequence in 0..(ride_maps::MAX_LIVE_ROUTE_POINTS + 4) {
+            let monotonic_ms = 1_001 + sequence as u64;
+            state
+                .ingest_location(
+                    monotonic_ms,
+                    1_700_000_000_000 + monotonic_ms,
+                    40.0,
+                    -105.0,
+                    3.0,
+                )
+                .expect("location is accepted");
+        }
+
+        let tail = state.latest_route_points().expect("tail is available");
+
+        assert_eq!(tail.points.len(), ride_maps::MAX_LIVE_ROUTE_POINTS);
+        assert_eq!(tail.points.first().map(|point| point.sequence), Some(4));
+        assert_eq!(tail.points.last().map(|point| point.sequence), Some(4_099));
+        assert_eq!(tail.next_cursor, None);
+        assert!(!tail.has_more);
+    }
+
+    #[test]
     fn mobile_ride_map_core_rejects_invalid_route_projection_options() {
-        let state = MobileRideMapCore::new();
+        let state = MobileRideMapCore::new_for_testing();
         assert_eq!(
             state
                 .project_points(MobileRideMapRouteProjectionOptionsDto {

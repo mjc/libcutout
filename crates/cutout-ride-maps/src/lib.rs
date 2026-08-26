@@ -26,13 +26,15 @@ mod recording;
 pub use recording::{
     MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideLifecycleTiming,
     RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
-    RideSegmentCount, RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
-    VehicleAssociation, VehicleIdentity, VehicleIdentityError,
+    RideSegmentCount, RideSegmentStartReason, RouteTelemetryState,
+    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
+    VehicleIdentityError,
 };
 mod projection;
 pub use projection::{
     MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyClass,
     RoutePrivacyGridE7, RoutePrivacyPolicy, RouteViewport, project_route_points,
+    project_route_points_from_iter,
 };
 
 #[cfg(test)]
@@ -43,6 +45,7 @@ mod tests {
         RideLifecycleState, RideMapRecorder, RidePointCount, RideSummary, RouteDisplayBudget,
         RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteViewport, TransitionError,
         VehicleIdentity, WallClockUnixMilliseconds, project_route_points,
+        project_route_points_from_iter,
     };
 
     #[test]
@@ -201,6 +204,56 @@ mod tests {
             )
             .is_none()
         );
+        assert!(
+            RouteViewport::new(
+                LatitudeE7::new(400_000_000),
+                LatitudeE7::new(400_001_000),
+                LongitudeE7::new(1_790_000_000),
+                LongitudeE7::new(-1_790_000_000),
+            )
+            .unwrap()
+            .crosses_antimeridian()
+        );
         assert!(RoutePrivacyGridE7::new(0).is_none());
+    }
+
+    #[test]
+    fn streamed_route_projection_preserves_sequence_without_retaining_input() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        for offset in 0..4_u32 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(40.0 + f64::from(offset) / 10_000.0, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000 + u64::from(offset) * 1_000),
+                WallClockUnixMilliseconds::new(1_700_000_000_000 + u64::from(offset) * 1_000),
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+            recorder.record_sample(sample);
+        }
+        let points = recorder
+            .points()
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(sequence, point)| (u64::try_from(sequence).unwrap(), point));
+
+        let projection = project_route_points_from_iter(
+            points,
+            4,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        );
+
+        assert_eq!(
+            projection
+                .iter()
+                .map(|point| point.sequence().as_u64())
+                .collect::<Vec<_>>(),
+            vec![0, 3]
+        );
     }
 }

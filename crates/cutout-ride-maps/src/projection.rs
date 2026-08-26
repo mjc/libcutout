@@ -96,7 +96,9 @@ pub struct RouteViewport {
 }
 
 impl RouteViewport {
-    /// Creates a viewport, rejecting inverted latitude or longitude bounds.
+    /// Creates a viewport, rejecting inverted latitude bounds.
+    ///
+    /// A minimum longitude greater than the maximum denotes an antimeridian-crossing viewport.
     #[must_use]
     pub const fn new(
         minimum_latitude: LatitudeE7,
@@ -104,9 +106,7 @@ impl RouteViewport {
         minimum_longitude: LongitudeE7,
         maximum_longitude: LongitudeE7,
     ) -> Option<Self> {
-        if minimum_latitude.as_i32() > maximum_latitude.as_i32()
-            || minimum_longitude.as_i32() > maximum_longitude.as_i32()
-        {
+        if minimum_latitude.as_i32() > maximum_latitude.as_i32() {
             None
         } else {
             Some(Self {
@@ -118,12 +118,48 @@ impl RouteViewport {
         }
     }
 
+    /// Returns the inclusive minimum latitude.
+    #[must_use]
+    pub const fn minimum_latitude(self) -> LatitudeE7 {
+        self.minimum_latitude
+    }
+
+    /// Returns the inclusive maximum latitude.
+    #[must_use]
+    pub const fn maximum_latitude(self) -> LatitudeE7 {
+        self.maximum_latitude
+    }
+
+    /// Returns the inclusive minimum longitude.
+    #[must_use]
+    pub const fn minimum_longitude(self) -> LongitudeE7 {
+        self.minimum_longitude
+    }
+
+    /// Returns the inclusive maximum longitude.
+    #[must_use]
+    pub const fn maximum_longitude(self) -> LongitudeE7 {
+        self.maximum_longitude
+    }
+
+    /// Returns whether the viewport crosses the antimeridian.
+    #[must_use]
+    pub const fn crosses_antimeridian(self) -> bool {
+        self.minimum_longitude.as_i32() > self.maximum_longitude.as_i32()
+    }
+
     fn contains(self, coordinate: Coordinate) -> bool {
         let latitude = coordinate.latitude().as_i32();
         let longitude = coordinate.longitude().as_i32();
-        (self.minimum_latitude.as_i32()..=self.maximum_latitude.as_i32()).contains(&latitude)
-            && (self.minimum_longitude.as_i32()..=self.maximum_longitude.as_i32())
-                .contains(&longitude)
+        let latitude_visible =
+            (self.minimum_latitude.as_i32()..=self.maximum_latitude.as_i32()).contains(&latitude);
+        let longitude_visible = if self.crosses_antimeridian() {
+            longitude >= self.minimum_longitude.as_i32()
+                || longitude <= self.maximum_longitude.as_i32()
+        } else {
+            (self.minimum_longitude.as_i32()..=self.maximum_longitude.as_i32()).contains(&longitude)
+        };
+        latitude_visible && longitude_visible
     }
 }
 
@@ -184,23 +220,48 @@ pub fn project_route_points(
         .copied()
         .filter(|point| is_visible(*point))
         .count();
+    project_route_points_from_iter(
+        points
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(offset, point)| {
+                is_visible(point).then_some((
+                    first_sequence.saturating_add(as_u64(offset)).as_u64(),
+                    point,
+                ))
+            }),
+        candidate_count,
+        budget,
+        privacy,
+    )
+}
+
+/// Projects a stream of already viewport-filtered canonical points without retaining the route.
+///
+/// The caller supplies the number of candidates because durable stores can count and stream
+/// visible points separately. This keeps the output bounded while reusing the same deterministic
+/// LOD and privacy policy as the in-memory route projection.
+#[must_use]
+pub fn project_route_points_from_iter(
+    points: impl IntoIterator<Item = (u64, RideMapPoint)>,
+    candidate_count: usize,
+    budget: RouteDisplayBudget,
+    privacy: RoutePrivacyPolicy,
+) -> Vec<RouteDisplayPoint> {
     let output_count = candidate_count.min(budget.as_usize());
     if output_count == 0 {
         return Vec::new();
     }
 
     let mut projected = Vec::with_capacity(output_count);
-    let mut candidate_ordinal = 0_usize;
     let mut output_ordinal = 0_usize;
     let mut next_target = 0_usize;
-    for (input_ordinal, point) in points.iter().copied().enumerate() {
-        if !is_visible(point) {
-            continue;
-        }
+    for (candidate_ordinal, (sequence, point)) in points.into_iter().enumerate() {
         if candidate_ordinal == next_target {
             let (coordinate, privacy_class) = privacy.project(point.sample().coordinate());
             projected.push(RouteDisplayPoint {
-                sequence: first_sequence.saturating_add(as_u64(input_ordinal)),
+                sequence: RidePointSequence::new(sequence),
                 segment_id: point.segment_id(),
                 coordinate,
                 privacy_class,
@@ -211,7 +272,6 @@ pub fn project_route_points(
             }
             next_target = evenly_spaced_ordinal(output_ordinal, output_count, candidate_count);
         }
-        candidate_ordinal += 1;
     }
     projected
 }

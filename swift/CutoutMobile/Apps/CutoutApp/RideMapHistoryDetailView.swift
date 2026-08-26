@@ -284,7 +284,7 @@ private struct RideMapHistoryDetailSummary: View {
                     rustSegmentCount: segmentCount,
                     decision: nil,
                     showsRecordedBounds: !pointsTruncated,
-                    hasRoute: !displayPoints.isEmpty
+                    hasRoute: displayPointCount > 0
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))
@@ -294,12 +294,14 @@ private struct RideMapHistoryDetailSummary: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button(localizedAppText("ride_map.show_full_ride")) {
-                        loadFullRide()
-                        mapPosition = .automatic
+                    if pointsTruncated {
+                        Button(localizedAppText("ride_map.show_full_ride")) {
+                            loadFullRide()
+                            mapPosition = .automatic
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(PevColors.primaryText)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(PevColors.primaryText)
 
                     ShareLink(item: shareText) {
                         Label(localizedAppText("ride_map.share"), systemImage: "square.and.arrow.up")

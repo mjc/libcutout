@@ -23,8 +23,6 @@ final class CutoutAppModel {
         case allTime
     }
 
-    // Keep this within the Rust persistence query limit (max 500).
-    private static let rideMapPointBatchLimit: UInt32 = 500
     private static let rideMapPreviewPointLimit = 4_096
     private static let rideMapHistoryDisplayPointLimit: UInt32 = 16_384
 
@@ -45,6 +43,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryError: MobileRideMapError?
     private(set) var rideMapHistoryRouteError: MobileRideMapError?
     private(set) var rideMapPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
     private(set) var rideMapHistoryCanLoadMore = false
@@ -292,25 +291,26 @@ final class CutoutAppModel {
         rideMapSnapshot = state.currentSnapshot()
         guard rideMapSnapshot != nil else { return }
         rideMapRestoreTask?.cancel()
-        let batchLimit = Self.rideMapPointBatchLimit
         let previewLimit = Self.rideMapPreviewPointLimit
         rideMapRestoreTask = Task { [weak self] in
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try Self.collectRideMapPoints(
+                    try Self.collectRideMapActiveTail(
                         state: state,
-                        batchLimit: batchLimit,
                         previewLimit: previewLimit
                     )
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 guard let result else { return }
                 self.rideMapPoints = result.0
-                self.rideMapLivePointsTruncated = result.1
+                self.rideMapLiveDisplayPoints = result.1.points
+                self.rideMapLivePointsTruncated =
+                    result.1.sourcePointCount > UInt64(result.1.points.count)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapLiveError = Self.mapRideMapError(error)
                 self.rideMapPoints = []
+                self.rideMapLiveDisplayPoints = []
             }
         }
     }
@@ -614,31 +614,15 @@ final class CutoutAppModel {
         return .Storage(String(describing: error))
     }
 
-    private nonisolated static func collectRideMapPoints(
+    private nonisolated static func collectRideMapActiveTail(
         state: MobileRideMapState,
-        batchLimit: UInt32,
         previewLimit: Int
-    ) throws -> ([MobileRideMapPointDto], Bool)? {
-        var points = [MobileRideMapPointDto]()
-        var cursor: UInt64?
-        repeat {
-            guard let batch = try state.pointsAfter(afterCursor: cursor, limit: batchLimit) else {
-                return nil
-            }
-            let remaining = previewLimit - points.count
-            if batch.points.count > remaining {
-                points.append(contentsOf: batch.points.prefix(remaining))
-                return (points, true)
-            }
-            points.append(contentsOf: batch.points)
-            cursor = batch.nextCursor
-            if points.count == previewLimit {
-                return (points, batch.hasMore)
-            }
-            if batch.hasMore == false {
-                return (points, false)
-            }
-        } while true
+    ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection)? {
+        guard let tail = try state.latestRoutePoints() else {
+            return nil
+        }
+        let projection = try state.projectPoints(budget: UInt32(previewLimit))
+        return (tail.points, projection)
     }
 
     private func applyRideMapDecision(
@@ -650,9 +634,16 @@ final class CutoutAppModel {
         rideMapLastDecision = decision
         if case let .accepted(point, _) = decision {
             rideMapPoints.append(point)
-            if rideMapPoints.count > Self.rideMapPreviewPointLimit {
-                rideMapPoints = Array(rideMapPoints.suffix(Self.rideMapPreviewPointLimit))
-                rideMapLivePointsTruncated = true
+            do {
+                let projection = try core.rideMapStateHandle.projectPoints(
+                    budget: UInt32(Self.rideMapPreviewPointLimit)
+                )
+                rideMapLiveDisplayPoints = projection.points
+                rideMapLivePointsTruncated =
+                    projection.sourcePointCount > UInt64(projection.points.count)
+            } catch {
+                rideMapLiveError = Self.mapRideMapError(error)
+                rideMapLiveDisplayPoints = []
             }
         }
     }
@@ -666,6 +657,7 @@ final class CutoutAppModel {
             rideMapLiveError = nil
             if resetPoints {
                 rideMapPoints.removeAll(keepingCapacity: true)
+                rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
                 rideMapLivePointsTruncated = false
                 rideMapLastDecision = nil
             }

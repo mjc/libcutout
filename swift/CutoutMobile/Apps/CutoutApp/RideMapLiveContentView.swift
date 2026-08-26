@@ -6,6 +6,7 @@ import CutoutMobileFFI
 
 struct RideMapLiveContentView: View {
     let points: [MobileRideMapPointDto]
+    let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
@@ -31,7 +32,7 @@ struct RideMapLiveContentView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(spacing: 0) {
             RideMapCanvasView(
-                points: points.map(MobileRideMapRouteDisplayPoint.init),
+                points: displayPoints,
                 routeID: routeID,
                 showsStartMarker: showsRecordedBounds,
                 showsEndMarker: showsRecordedBounds,
@@ -238,7 +239,8 @@ struct RideMapLiveContentView: View {
             latitude: latest.latitudeDegrees,
             longitude: latest.longitudeDegrees
         )
-        let span = RideMapCanvasView.region(for: points)?.span
+        let displayPoints = points.map(MobileRideMapRouteDisplayPoint.init)
+        let span = RideMapCanvasView.region(for: displayPoints)?.span
             ?? MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         return MKCoordinateRegion(center: center, span: span)
     }

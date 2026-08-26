@@ -1,4 +1,5 @@
 import CutoutMobileFFI
+import Foundation
 
 public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
     case checking
@@ -57,6 +58,26 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     public var monotonicMs: UInt64
     public var horizontalAccuracyMeters: Double
     public var telemetryState: MobileRideMapTelemetryStateDto
+
+    public init(
+        sequence: UInt64,
+        segmentId: UInt64,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+        wallClockUnixMs: UInt64,
+        monotonicMs: UInt64,
+        horizontalAccuracyMeters: Double,
+        telemetryState: MobileRideMapTelemetryStateDto
+    ) {
+        self.sequence = sequence
+        self.segmentId = segmentId
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.wallClockUnixMs = wallClockUnixMs
+        self.monotonicMs = monotonicMs
+        self.horizontalAccuracyMeters = horizontalAccuracyMeters
+        self.telemetryState = telemetryState
+    }
 }
 
 public struct MobileRideMapPointBatchDto: Equatable, Hashable, Sendable {
@@ -172,12 +193,28 @@ public final class MobileRideMapState: @unchecked Sendable {
     private let storageUnavailableError: MobileRideMapError?
 
 #if DEBUG
-    /// Creates an in-memory map state for deterministic tests only.
-    public init() {
-        core = MobileRideMapCore()
-        database = nil
-        initializationError = nil
-        storageUnavailableError = nil
+    private static let debugDatabase: RideDatabaseHandle? = {
+        if let shared = RustPersistenceStore.shared {
+            return shared
+        }
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cutout-map-test-\(UUID().uuidString).sqlite")
+            .path
+        return try? openRideDatabase(path: path)
+    }()
+
+    /// Creates an isolated, durable map state for deterministic tests only.
+    public convenience init() {
+        guard let database = Self.debugDatabase else {
+            self.init(storageUnavailable: "Rust ride database is unavailable")
+            return
+        }
+        self.init(database: database)
+        // A shared process database is required by the Rust service. Keep each DEBUG fixture
+        // isolated at the map-core level by discarding any recovered active ride before use.
+        if let core, core.currentSnapshot() != nil {
+            _ = try? core.discard()
+        }
     }
 #endif
 
@@ -309,10 +346,17 @@ public final class MobileRideMapState: @unchecked Sendable {
         try withCore { map(try $0.pointsAfter(afterCursor: afterCursor, limit: limit)) }
     }
 
+    /// Returns the Rust recorder's bounded active-route tail for live recovery.
+    ///
+    /// Unlike `pointsAfter`, this never starts at sequence zero or scans durable history.
+    public func latestRoutePoints() throws -> MobileRideMapPointBatchDto? {
+        try withCore { map(try $0.latestRoutePoints()) }
+    }
+
     /// Projects the Rust-owned recorder tail for a bounded map display.
     ///
-    /// This is a presentation projection over the active recorder tail. It does not replace the
-    /// paged SQLite history API; full-history viewport LOD remains a separate persistence task.
+    /// This is a presentation projection over the active recorder tail. Durable history uses
+    /// `projectStoredPoints`, so the application layer never performs route decimation itself.
     public func projectPoints(
         budget: UInt32,
         viewport: MobileGeoBoundsDto? = nil,

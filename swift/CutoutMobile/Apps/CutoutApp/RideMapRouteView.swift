@@ -107,6 +107,7 @@ struct RideMapRouteView: View {
     private var liveContent: some View {
         RideMapLiveContentView(
             points: model.rideMapPoints,
+            displayPoints: model.rideMapLiveDisplayPoints,
             routeID: model.rideMapSnapshot?.rideId ?? "live",
             snapshot: model.rideMapSnapshot,
             availability: model.rideMapAvailability,

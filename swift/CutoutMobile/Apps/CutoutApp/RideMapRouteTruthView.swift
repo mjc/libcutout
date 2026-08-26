@@ -8,7 +8,23 @@ struct RideMapRouteTruthView: View {
     let rustSegmentCount: UInt64
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
-    let hasRoute: Bool? = nil
+    let hasRoute: Bool?
+
+    init(
+        points: [MobileRideMapPointDto],
+        recordedPointCount: UInt64?,
+        rustSegmentCount: UInt64,
+        decision: MobileRideMapDecisionDto?,
+        showsRecordedBounds: Bool,
+        hasRoute: Bool? = nil
+    ) {
+        self.points = points
+        self.recordedPointCount = recordedPointCount
+        self.rustSegmentCount = rustSegmentCount
+        self.decision = decision
+        self.showsRecordedBounds = showsRecordedBounds
+        self.hasRoute = hasRoute
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {

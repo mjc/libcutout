@@ -3,6 +3,20 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    private func settle(
+        _ state: MobileRideMapState,
+        _ decision: MobileRideMapDecisionDto
+    ) -> MobileRideMapDecisionDto {
+        guard case .pending = decision else { return decision }
+        for _ in 0 ..< 100 {
+            if let terminal = state.pollLocationWrites().first {
+                return terminal
+            }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        return decision
+    }
+
     func testStorageUnavailableStateCannotCreateAnInMemoryRide() {
         let state = MobileRideMapState(storageUnavailable: "database unavailable")
 
@@ -90,26 +104,26 @@ final class RideMapStateTests: XCTestCase {
             state.currentSnapshot(atMs: 1_100)?.summary.durationMilliseconds,
             1_000
         )
-        let decision = try state.ingestLocation(
+        let decision = settle(state, try state.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 4
-        )
+        ))
         XCTAssertEqual(try state.observeVehicleConnection(platformIdentifier: "pev-1", atMs: 200), .associated)
 
         guard case let .accepted(point, _) = decision else {
             return XCTFail("expected the location to be admitted")
         }
         XCTAssertEqual(
-            try state.ingestLocation(
+            settle(state, try state.ingestLocation(
                 monotonicMs: 2_000,
                 wallClockUnixMs: 1_700_000_002_000,
                 latitudeDegrees: 39.7393,
                 longitudeDegrees: -104.9902,
                 horizontalAccuracyMeters: 4
-            ),
+            )),
             .accepted(
                 point: MobileRideMapPointDto(
                     sequence: 1,
@@ -145,13 +159,13 @@ final class RideMapStateTests: XCTestCase {
             (3_001, 40.0002),
             (4_001, 40.0003),
         ] {
-            _ = try state.ingestLocation(
+            _ = settle(state, try state.ingestLocation(
                 monotonicMs: UInt64(monotonicMs),
                 wallClockUnixMs: 1_700_000_000_000 + UInt64(monotonicMs),
                 latitudeDegrees: latitudeDegrees,
                 longitudeDegrees: -105.0,
                 horizontalAccuracyMeters: 3
-            )
+            ))
         }
 
         let projection = try state.projectPoints(
@@ -172,5 +186,27 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertThrowsError(try state.projectPoints(budget: 0)) { error in
             XCTAssertEqual(error as? MobileRideMapError, .InvalidRouteProjection)
         }
+    }
+
+    func testMapStateLatestRoutePointsReturnsTheRustBoundedTail() throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+        for offset in 0 ..< 4_100 {
+            let monotonicMs = UInt64(1_001 + offset)
+            _ = settle(state, try state.ingestLocation(
+                monotonicMs: monotonicMs,
+                wallClockUnixMs: 1_700_000_000_000 + monotonicMs,
+                latitudeDegrees: 40.0,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+        }
+
+        let tail = try state.latestRoutePoints()
+
+        XCTAssertEqual(tail?.points.count, 4_096)
+        XCTAssertEqual(tail?.points.first?.sequence, 4)
+        XCTAssertEqual(tail?.points.last?.sequence, 4_099)
+        XCTAssertEqual(tail?.hasMore, false)
     }
 }

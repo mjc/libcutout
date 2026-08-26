@@ -1270,6 +1270,10 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "migration fixture keeps both legacy schemas explicit"
+)]
 fn schema_ten_and_eleven_migrations_create_segment_rows_and_foreign_keys() {
     let _guard = test_guard();
     for version in [10_i64, 11_i64] {
@@ -1671,7 +1675,11 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
     database.transition(ride, RideEvent::Start).unwrap();
     for offset in 0..4_u64 {
         let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0 + offset as f64 / 10_000.0, -105.0).unwrap(),
+            Coordinate::from_degrees(
+                40.0 + f64::from(u32::try_from(offset).unwrap()) / 10_000.0,
+                -105.0,
+            )
+            .unwrap(),
             offset + 1,
             1_700_000_000_000 + offset,
             None,

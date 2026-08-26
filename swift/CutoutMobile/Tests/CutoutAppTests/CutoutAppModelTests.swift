@@ -14,6 +14,20 @@ final class CutoutAppModelTests: XCTestCase {
         writerError: nil
     )
 
+    private func settle(
+        _ state: MobileRideMapState,
+        _ decision: MobileRideMapDecisionDto
+    ) -> MobileRideMapDecisionDto {
+        guard case .pending = decision else { return decision }
+        for _ in 0 ..< 100 {
+            if let terminal = state.pollLocationWrites().first {
+                return terminal
+            }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        return decision
+    }
+
     override func setUp() {
         super.setUp()
         clear(RideSessionMarkerStore())
@@ -100,13 +114,13 @@ final class CutoutAppModelTests: XCTestCase {
             atMs: 100,
             lastConnectedVehicle: "pev-restored"
         )
-        _ = try driver.rideMapStateHandle.ingestLocation(
+        _ = settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
             monotonicMs: 100,
             wallClockUnixMs: 1_700_000_000_100,
             latitudeDegrees: 39.7392,
             longitudeDegrees: -104.9903,
             horizontalAccuracyMeters: 5
-        )
+        ))
         XCTAssertEqual(
             try driver.rideMapStateHandle.observeVehicleConnection(
                 platformIdentifier: "pev-restored",
@@ -210,13 +224,13 @@ final class CutoutAppModelTests: XCTestCase {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
         for sequence in 0 ..< 10 {
-            _ = try state.ingestLocation(
+            _ = settle(state, try state.ingestLocation(
                 monotonicMs: UInt64(1_000 + sequence * 1_000),
                 wallClockUnixMs: UInt64(1_700_000_000_000 + sequence * 1_000),
                 latitudeDegrees: 39.7 + Double(sequence) / 10_000,
                 longitudeDegrees: -104.9 - Double(sequence) / 10_000,
                 horizontalAccuracyMeters: 5
-            )
+            ))
         }
 
         let projection = try state.projectPoints(budget: 4)
