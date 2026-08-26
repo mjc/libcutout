@@ -3958,17 +3958,24 @@ fn mobile_route_projection_dto(
 fn mobile_segment_count(
     points: &[ride_maps::RideMapPoint],
     viewport: Option<ride_maps::RouteViewport>,
-) -> u64 {
-    let count = ride_maps::count_segment_runs(
-        points
-            .iter()
-            .copied()
-            .filter(|point| {
-                viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate()))
-            })
-            .map(ride_maps::RideMapPoint::segment_id),
-    );
-    u64::try_from(count).unwrap_or(u64::MAX)
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<u64, MobileRideMapCoreErrorDto> {
+    let mut previous_segment = None;
+    let mut count = 0usize;
+    for point in points.iter().copied() {
+        if is_cancelled() {
+            return Err(MobileRideMapCoreErrorDto::Cancelled);
+        }
+        if !viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate())) {
+            continue;
+        }
+        let segment_id = point.segment_id();
+        if previous_segment != Some(segment_id) {
+            count += 1;
+            previous_segment = Some(segment_id);
+        }
+    }
+    Ok(u64::try_from(count).unwrap_or(u64::MAX))
 }
 
 fn mobile_displayed_segment_count(points: &[MobileRideMapRouteDisplayPointDto]) -> u64 {
@@ -6109,10 +6116,7 @@ fn project_live_route_points(
     if is_cancelled() {
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
-    let candidate_segment_count = mobile_segment_count(&points, viewport);
-    if is_cancelled() {
-        return Err(MobileRideMapCoreErrorDto::Cancelled);
-    }
+    let candidate_segment_count = mobile_segment_count(&points, viewport, &mut is_cancelled)?;
     let points = ride_maps::project_route_points_cancellable(
         &points,
         first_sequence,
@@ -14168,6 +14172,35 @@ mod tests {
             state.resume().expect_err("stopped rides cannot resume"),
             MobileRideMapCoreErrorDto::InvalidTransition
         );
+    }
+
+    #[test]
+    fn mobile_segment_count_honors_cancellation_during_scan() {
+        let coordinate =
+            ride_maps::Coordinate::from_degrees(40.0, -105.0).expect("fixture coordinate is valid");
+        let points = [0, 0, 1, 1].map(|segment_id| {
+            ride_maps::RideMapPoint::new(
+                ride_maps::LocationSample::new(
+                    coordinate,
+                    ride_maps::MonotonicMilliseconds::new(1_000),
+                    ride_maps::WallClockUnixMilliseconds::new(1_700_000_000_000),
+                    Some(3_000),
+                    ride_maps::LocationSource::Live,
+                ),
+                ride_maps::RideMapSegmentId::new(segment_id),
+                ride_maps::RouteTelemetryState::GpsOnly,
+            )
+        });
+        let checks = std::cell::Cell::new(0);
+
+        let result = mobile_segment_count(&points, None, || {
+            let check = checks.get();
+            checks.set(check + 1);
+            check >= 2
+        });
+
+        assert_eq!(result, Err(MobileRideMapCoreErrorDto::Cancelled));
+        assert_eq!(checks.get(), 3);
     }
 
     #[test]
