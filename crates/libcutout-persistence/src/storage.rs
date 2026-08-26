@@ -1121,9 +1121,10 @@ impl RouteProjectionCancellation {
         }
     }
 
-    /// Requests cancellation of the associated projection.
+    /// Requests cancellation of the associated projection and interrupts an active SQLite query.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        self.interrupt();
     }
 
     /// Returns whether cancellation was requested.
@@ -1175,6 +1176,76 @@ impl RouteProjectionCancellation {
 impl Default for RouteProjectionCancellation {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod route_projection_cancellation_tests {
+    use super::RouteProjectionCancellation;
+    use rusqlite::{Connection, ErrorCode};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc::sync_channel,
+        },
+        thread,
+    };
+
+    #[test]
+    fn explicit_cancellation_interrupts_a_long_sqlite_query() {
+        let connection = Connection::open_in_memory().expect("SQLite opens");
+        let cancellation = RouteProjectionCancellation::new();
+        cancellation.install_interrupt(connection.get_interrupt_handle());
+        let (query_entered_sender, query_entered_receiver) = sync_channel(0);
+        let (query_release_sender, query_release_receiver) = sync_channel(0);
+        let first_progress_callback = Arc::new(AtomicBool::new(true));
+        let callback_is_first = Arc::clone(&first_progress_callback);
+        connection.progress_handler(
+            1_000,
+            Some(move || {
+                if callback_is_first.swap(false, Ordering::AcqRel) {
+                    query_entered_sender
+                        .send(())
+                        .expect("test query is waiting for cancellation");
+                    query_release_receiver
+                        .recv()
+                        .expect("test query release is sent");
+                }
+                false
+            }),
+        );
+
+        let query = thread::spawn(move || {
+            connection.query_row(
+                "WITH RECURSIVE numbers(value) AS (
+                     SELECT 1
+                     UNION ALL
+                     SELECT value + 1 FROM numbers LIMIT 5000000
+                 )
+                 SELECT sum(value) FROM numbers",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        });
+
+        query_entered_receiver
+            .recv()
+            .expect("query reached its first progress callback");
+        cancellation.cancel();
+        query_release_sender
+            .send(())
+            .expect("query release is received");
+
+        let error = query
+            .join()
+            .expect("query thread does not panic")
+            .expect_err("cancellation interrupts the query");
+        assert!(matches!(
+            error,
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.code == ErrorCode::OperationInterrupted
+        ));
     }
 }
 
