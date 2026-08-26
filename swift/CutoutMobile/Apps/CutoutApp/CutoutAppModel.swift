@@ -187,6 +187,7 @@ final class CutoutAppModel {
     private var rideMapHistoryViewportTask: Task<Void, Never>?
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapRestoreTask: Task<Void, Never>?
+    private var rideMapLiveProjectionTask: Task<Void, Never>?
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -696,14 +697,21 @@ final class CutoutAppModel {
         rideMapLastDecision = decision
         if case let .accepted(point, _) = decision {
             rideMapPoints.append(point)
-            do {
-                let projection = try core.rideMapStateHandle.projectPoints(
-                    budget: UInt32(Self.rideMapPreviewPointLimit)
-                )
-                applyLiveProjection(projection)
-            } catch {
-                rideMapLiveError = Self.mapRideMapError(error)
-                rideMapLiveDisplayPoints = []
+            rideMapLiveProjectionTask?.cancel()
+            let state = core.rideMapStateHandle
+            let budget = UInt32(Self.rideMapPreviewPointLimit)
+            rideMapLiveProjectionTask = Task { [weak self] in
+                do {
+                    let projection = try await Task.detached(priority: .userInitiated) {
+                        try state.projectPoints(budget: budget)
+                    }.value
+                    guard !Task.isCancelled, let self else { return }
+                    self.applyLiveProjection(projection)
+                } catch {
+                    guard !Task.isCancelled, let self else { return }
+                    self.rideMapLiveError = Self.mapRideMapError(error)
+                    self.rideMapLiveDisplayPoints = []
+                }
             }
         }
     }
@@ -721,6 +729,7 @@ final class CutoutAppModel {
             rideMapSnapshot = try command()
             rideMapLiveError = nil
             if resetPoints {
+                rideMapLiveProjectionTask?.cancel()
                 rideMapPoints.removeAll(keepingCapacity: true)
                 rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
                 rideMapLivePointsTruncated = false

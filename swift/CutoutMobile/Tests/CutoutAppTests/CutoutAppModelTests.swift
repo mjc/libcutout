@@ -140,6 +140,36 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveRideMapDecisionPublishesItsProjectionAsynchronously() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        _ = try driver.rideMapStateHandle.startGpsOnly(
+            atMs: 100,
+            lastConnectedVehicle: nil
+        )
+        let decision = settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 5
+        ))
+        guard case let .accepted(point, _) = decision else {
+            return XCTFail("expected the seeded location to be accepted, got \(decision)")
+        }
+        guard let snapshot = driver.rideMapStateHandle.currentSnapshot() else {
+            return XCTFail("expected an active ride-map snapshot")
+        }
+
+        driver.onRideMapDecisionChange?(snapshot, .accepted(point: point, segmentStarted: false))
+
+        for _ in 0 ..< 100 where model.rideMapLiveDisplayPoints.isEmpty {
+            await Task.yield()
+        }
+        XCTAssertFalse(model.rideMapLiveDisplayPoints.isEmpty)
+    }
+
+    @MainActor
     func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
