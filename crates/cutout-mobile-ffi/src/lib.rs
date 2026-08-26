@@ -3925,6 +3925,20 @@ fn mobile_route_display_point_dto(
     }
 }
 
+fn mobile_route_projection_dto(
+    projection: persistence::RoutePointProjection,
+) -> MobileRideMapRouteProjectionDto {
+    MobileRideMapRouteProjectionDto {
+        points: projection
+            .points()
+            .iter()
+            .copied()
+            .map(mobile_route_display_point_dto)
+            .collect(),
+        source_point_count: projection.source_point_count(),
+    }
+}
+
 fn mobile_query_limit(value: u32) -> Result<persistence::QueryLimit, MobileRideDatabaseError> {
     persistence::QueryLimit::new(value).map_err(map_ride_database_error)
 }
@@ -4206,15 +4220,7 @@ impl RideDatabaseHandle {
         let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
         self.inner
             .project_route_points(ride_id, viewport, budget, privacy)
-            .map(|projection| MobileRideMapRouteProjectionDto {
-                points: projection
-                    .points()
-                    .iter()
-                    .copied()
-                    .map(mobile_route_display_point_dto)
-                    .collect(),
-                source_point_count: projection.source_point_count(),
-            })
+            .map(mobile_route_projection_dto)
             .map_err(map_ride_database_error)
     }
 
@@ -4241,15 +4247,7 @@ impl RideDatabaseHandle {
                 privacy,
                 cancellation.inner.clone(),
             )
-            .map(|projection| MobileRideMapRouteProjectionDto {
-                points: projection
-                    .points()
-                    .iter()
-                    .copied()
-                    .map(mobile_route_display_point_dto)
-                    .collect(),
-                source_point_count: projection.source_point_count(),
-            })
+            .map(mobile_route_projection_dto)
             .map_err(map_ride_database_error)
     }
 
