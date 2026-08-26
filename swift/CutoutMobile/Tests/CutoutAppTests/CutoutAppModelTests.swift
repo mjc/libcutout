@@ -296,6 +296,54 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapStateHandle
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        _ = settle(state, try state.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7000,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = settle(state, try state.ingestLocation(
+            monotonicMs: 1_100,
+            wallClockUnixMs: 1_700_000_001_100,
+            latitudeDegrees: 39.7001,
+            longitudeDegrees: -104.9000,
+            horizontalAccuracyMeters: 5
+        ))
+        _ = try state.stop(atMs: 1_100)
+        let rideID = try state.save().rideId
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: rideID)
+        for _ in 0 ..< 200
+        where model.selectedRideMapHistoryID != rideID || model.rideMapHistoryDisplayPoints.isEmpty
+        {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
+        let historyPoints = model.rideMapHistoryDisplayPoints
+        XCTAssertEqual(historyPoints.count, 2)
+
+        model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
+            minimumLatitudeDegrees: 39.70009,
+            maximumLatitudeDegrees: 39.70011,
+            minimumLongitudeDegrees: -104.90001,
+            maximumLongitudeDegrees: -104.89999
+        ))
+        for _ in 0 ..< 100 where model.rideMapHistoryDetailDisplayPoints.count != 1 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints.count, 1)
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
+    }
+
+    @MainActor
     func testHistoryTelemetryStateUsesRustSummaryMetadata() {
         XCTAssertEqual(
             MobileRideMapHistorySummaryDto.telemetryState(

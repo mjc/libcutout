@@ -52,6 +52,8 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryVehicleFilter: String?
     private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryPointsTruncated = false
+    private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailPointsTruncated = false
     private(set) var rideMapHistoryRouteLoading = false
     private(set) var rideMapHistoryVehicleIdentities = [String]()
     private(set) var selectedRideMapHistoryID: String?
@@ -383,6 +385,8 @@ final class CutoutAppModel {
         }
         rideMapHistoryDisplayPoints = []
         rideMapHistoryPointsTruncated = false
+        rideMapHistoryDetailDisplayPoints = []
+        rideMapHistoryDetailPointsTruncated = false
         rideMapHistoryRouteLoading = false
         loadRideMapHistory()
         return true
@@ -442,6 +446,8 @@ final class CutoutAppModel {
                     self.selectedRideMapHistoryID = nil
                     self.rideMapHistoryDisplayPoints = []
                     self.rideMapHistoryPointsTruncated = false
+                    self.rideMapHistoryDetailDisplayPoints = []
+                    self.rideMapHistoryDetailPointsTruncated = false
                     self.rideMapHistoryRouteLoading = false
                     return
                 }
@@ -572,7 +578,7 @@ final class CutoutAppModel {
         selectRideMapHistory(rideID, previewLimit: Self.rideMapPreviewPointLimit)
     }
 
-    func projectRideMapHistoryViewport(_ viewport: MobileGeoBoundsDto?) {
+    func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
         guard let viewport,
               let selectedRideMapHistoryID,
               rideMapHistory.contains(where: { $0.rideId == selectedRideMapHistoryID })
@@ -600,7 +606,9 @@ final class CutoutAppModel {
                     cancellation.cancel()
                 })
                 guard !Task.isCancelled, let self else { return }
-                self.rideMapHistoryDisplayPoints = result.points
+                self.rideMapHistoryDetailDisplayPoints = result.points
+                self.rideMapHistoryDetailPointsTruncated = result.sourcePointCount
+                    > UInt64(result.points.count)
                 self.rideMapHistoryRouteError = nil
             } catch {
                 guard !Task.isCancelled, let self else { return }
@@ -632,6 +640,8 @@ final class CutoutAppModel {
         if selectingDifferentRide {
             rideMapHistoryDisplayPoints = []
             rideMapHistoryPointsTruncated = false
+            rideMapHistoryDetailDisplayPoints = []
+            rideMapHistoryDetailPointsTruncated = false
         }
         selectedRideMapHistoryID = rideID
         rideMapHistoryRouteError = nil
@@ -662,6 +672,9 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryDisplayPoints = result.points
                 self.rideMapHistoryPointsTruncated = result.sourcePointCount
+                    > UInt64(result.points.count)
+                self.rideMapHistoryDetailDisplayPoints = result.points
+                self.rideMapHistoryDetailPointsTruncated = result.sourcePointCount
                     > UInt64(result.points.count)
                 self.rideMapHistoryRouteLoading = false
             } catch {

@@ -534,8 +534,10 @@ public final class MobileRideMapState: @unchecked Sendable {
         )
     }
 
-    public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto? {
-        guard let database else { return nil }
+    public func storedPointsAfter(rideId: String, afterCursor: UInt64?, limit: UInt32) throws -> MobileRideMapPointBatchDto {
+        guard let database else {
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+        }
         do {
             let page = try database.routePoints(
                 rideId: MobileRideIdDto(value: rideId),

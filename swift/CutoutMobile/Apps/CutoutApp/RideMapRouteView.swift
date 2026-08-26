@@ -175,8 +175,8 @@ struct RideMapRouteView: View {
         RideMapHistoryDetailView(
             initialHistoryID: initialHistoryID,
             rides: model.rideMapHistory,
-            displayPoints: model.rideMapHistoryDisplayPoints,
-            pointsTruncated: model.rideMapHistoryPointsTruncated,
+            displayPoints: model.rideMapHistoryDetailDisplayPoints,
+            pointsTruncated: model.rideMapHistoryDetailPointsTruncated,
             historyError: model.rideMapHistoryError,
             routeError: model.rideMapHistoryRouteError,
             isLoading: model.rideMapHistoryRouteLoading,
@@ -187,7 +187,7 @@ struct RideMapRouteView: View {
             loadFullRide: { model.loadFullRideMapHistory() },
             vehicleName: model.rideMapVehicleName(for:),
             cameraDidChange: { region in
-                model.projectRideMapHistoryViewport(RideMapCanvasView.geoBounds(for: region))
+                model.projectRideMapHistoryDetailViewport(RideMapCanvasView.geoBounds(for: region))
             },
             mapPosition: $presentation.detailMapPosition,
             isApplyingCamera: $presentation.detailIsApplyingCamera,

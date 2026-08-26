@@ -50,6 +50,11 @@ final class RideMapStateTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
         }
+        XCTAssertThrowsError(
+            try state.storedPointsAfter(rideId: "missing", afterCursor: nil, limit: 10)
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
+        }
     }
 
     func testMapStateReportsTypedAdmissionReasons() throws {
