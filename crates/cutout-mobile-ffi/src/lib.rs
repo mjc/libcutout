@@ -5251,7 +5251,6 @@ impl MobileRideMapCoreInner {
             )
             .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
         self.admission_recorder = self.recorder.clone();
-        self.pending_locations.clear();
         self.active_ride_id = Some(id);
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
@@ -5318,11 +5317,15 @@ impl MobileRideMapCoreInner {
                             pending.sample,
                             pending.telemetry_state,
                         );
+                        decisions.push(MobileRideMapCoreDecisionDto::Accepted {
+                            point: pending.point,
+                            segment_started: pending.segment_started,
+                        });
+                    } else {
+                        decisions.push(MobileRideMapCoreDecisionDto::Ignored {
+                            reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+                        });
                     }
-                    decisions.push(MobileRideMapCoreDecisionDto::Accepted {
-                        point: pending.point,
-                        segment_started: pending.segment_started,
-                    });
                 }
                 Ok(admission) => {
                     decisions.push(location_admission_decision(admission));
@@ -10178,6 +10181,46 @@ mod tests {
         }
     }
 
+    fn assert_pending_location_is_ignored_after_terminal_action(
+        terminal_action: impl FnOnce(
+            &MobileRideMapCore,
+        )
+            -> Result<MobileRideMapCoreSnapshotDto, MobileRideMapCoreErrorDto>,
+    ) {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-terminal-action-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state.start_gps_only(1_000, None).expect("recording starts");
+        let pending = state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("location queues");
+        assert!(matches!(
+            pending,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        state.stop().expect("recording stops");
+        terminal_action(&state).expect("terminal action succeeds");
+
+        assert_eq!(
+            await_location_decision(&state, pending),
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+            }
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -14070,16 +14113,77 @@ mod tests {
 
         state.stop().expect("recording stops");
         let completed = await_location_decision(&state, pending);
-        assert!(matches!(
+        assert_eq!(
             completed,
-            MobileRideMapCoreDecisionDto::Accepted { .. }
-        ));
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+            }
+        );
 
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(inner.recorder.summary().point_count().as_u64(), 0);
         drop(inner);
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_drops_pending_location_when_recording_restarts() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-restarted-location-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let first = state
+            .start_gps_only(1_000, None)
+            .expect("first recording starts");
+        let old_pending = state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("old location queues");
+        assert!(matches!(
+            old_pending,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        state.stop().expect("first recording stops");
+
+        let second = state
+            .start_gps_only(2_000, None)
+            .expect("second recording starts");
+        assert_ne!(first.ride_id, second.ride_id);
+        let new_pending = state
+            .ingest_location(2_001, 1_700_000_000_002, 40.001, -105.0, 3.0)
+            .expect("new location queues");
+        assert!(matches!(
+            new_pending,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+
+        assert_eq!(
+            await_location_decision(&state, old_pending),
+            MobileRideMapCoreDecisionDto::Ignored {
+                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+            }
+        );
+        assert!(matches!(
+            await_location_decision(&state, new_pending),
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_drops_pending_location_after_save_and_discard() {
+        assert_pending_location_is_ignored_after_terminal_action(MobileRideMapCore::save);
+        assert_pending_location_is_ignored_after_terminal_action(MobileRideMapCore::discard);
     }
 
     #[test]
