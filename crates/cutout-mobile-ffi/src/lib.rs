@@ -5383,6 +5383,37 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    /// Settles every queued location before a lifecycle transition.
+    ///
+    /// A terminal action must not leave a write ticket behind: otherwise the durable point can
+    /// arrive after the ride has left the live projection and its result can never be reflected in
+    /// the terminal snapshot. Accepted writes are folded into the recorder; rejected and failed
+    /// writes are intentionally omitted because the transition owns their terminal outcome.
+    fn drain_pending_locations(&mut self) {
+        let pending_locations = std::mem::take(&mut self.pending_locations);
+        for pending in pending_locations {
+            if !matches!(
+                pending.write.wait_result(),
+                Ok(Ok(ride_maps::LocationAdmission::Accepted))
+            ) {
+                continue;
+            }
+            if self.active_ride_id.as_ref() == Some(&pending.ride_id)
+                && matches!(
+                    self.recorder.state(),
+                    Some(
+                        ride_maps::RideLifecycleState::Active
+                            | ride_maps::RideLifecycleState::Paused
+                    )
+                )
+            {
+                self.recorder
+                    .record_sample_with_telemetry_state(pending.sample, pending.telemetry_state);
+            }
+        }
+        self.reset_admission_projection();
+    }
+
     #[allow(
         clippy::while_let_loop,
         reason = "FIFO polling must stop at the first unresolved write"
@@ -6200,6 +6231,7 @@ impl MobileRideMapCoreInner {
         let next = current
             .apply(lifecycle_event)
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
+        self.drain_pending_locations();
         if let Some(database) = self.database.as_ref() {
             match at_milliseconds {
                 Some(at) => database
@@ -10336,7 +10368,7 @@ mod tests {
         }
     }
 
-    fn assert_pending_location_is_ignored_after_terminal_action(
+    fn assert_pending_location_is_drained_before_terminal_action(
         terminal_action: impl FnOnce(
             &MobileRideMapCore,
         )
@@ -10362,15 +10394,11 @@ mod tests {
             pending,
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        state.stop().expect("recording stops");
-        terminal_action(&state).expect("terminal action succeeds");
-
-        assert_eq!(
-            await_location_decision(&state, pending),
-            MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
-            }
-        );
+        let stopped = state.stop().expect("recording stops");
+        assert_eq!(stopped.summary.point_count, 1);
+        let terminal = terminal_action(&state).expect("terminal action succeeds");
+        assert_eq!(terminal.summary.point_count, 1);
+        assert!(state.poll_location_writes().is_empty());
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
@@ -14271,7 +14299,7 @@ mod tests {
     }
 
     #[test]
-    fn mobile_ride_map_core_does_not_replay_location_after_terminal_transition() {
+    fn mobile_ride_map_core_drains_location_before_terminal_transition() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -14295,24 +14323,19 @@ mod tests {
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
 
-        state.stop().expect("recording stops");
-        let completed = await_location_decision(&state, pending);
-        assert_eq!(
-            completed,
-            MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
-            }
-        );
+        let stopped = state.stop().expect("recording stops");
+        assert_eq!(stopped.summary.point_count, 1);
+        assert!(state.poll_location_writes().is_empty());
 
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        assert_eq!(inner.recorder.summary().point_count().as_u64(), 0);
+        assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
         drop(inner);
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn mobile_ride_map_core_drops_pending_location_when_recording_restarts() {
+    fn mobile_ride_map_core_drains_pending_location_when_recording_restarts() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -14335,7 +14358,9 @@ mod tests {
             old_pending,
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        state.stop().expect("first recording stops");
+        let stopped = state.stop().expect("first recording stops");
+        assert_eq!(stopped.summary.point_count, 1);
+        assert!(state.poll_location_writes().is_empty());
 
         let second = state
             .start_gps_only(2_000, None)
@@ -14349,12 +14374,6 @@ mod tests {
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
 
-        assert_eq!(
-            await_location_decision(&state, old_pending),
-            MobileRideMapCoreDecisionDto::Ignored {
-                reason: MobileRideMapDecisionReasonDto::RideNotRecording,
-            }
-        );
         assert!(matches!(
             await_location_decision(&state, new_pending),
             MobileRideMapCoreDecisionDto::Accepted { .. }
@@ -14366,8 +14385,112 @@ mod tests {
 
     #[test]
     fn mobile_ride_map_core_drops_pending_location_after_save_and_discard() {
-        assert_pending_location_is_ignored_after_terminal_action(MobileRideMapCore::save);
-        assert_pending_location_is_ignored_after_terminal_action(MobileRideMapCore::discard);
+        assert_pending_location_is_drained_before_terminal_action(MobileRideMapCore::save);
+        assert_pending_location_is_drained_before_terminal_action(MobileRideMapCore::discard);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_drains_pending_locations_before_stop() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-stop-drain-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        let pending = state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("location queues");
+        assert!(matches!(
+            pending,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+
+        let stopped = state.stop().expect("stop drains before transitioning");
+        assert_eq!(stopped.summary.point_count, 1);
+        assert_eq!(
+            state
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pending_locations
+                .len(),
+            0
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_stop_waits_for_a_saturated_location_queue() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-stop-saturated-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        let first = state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("first location queues");
+        assert!(matches!(
+            await_location_decision(&state, first),
+            MobileRideMapCoreDecisionDto::Accepted { .. }
+        ));
+
+        let mut queued_locations = 0_u64;
+        for index in 0..MAX_PENDING_LOCATION_WRITES {
+            let index_u64 = u64::try_from(index).expect("test index fits in u64");
+            let latitude_offset =
+                f64::from(u32::try_from(index).expect("test index fits in u32")) * 0.000_001;
+            let decision = state
+                .ingest_location(
+                    2_000 + index_u64 * 1_000,
+                    1_700_000_002_000 + index_u64 * 1_000,
+                    40.0001 + latitude_offset,
+                    -105.0,
+                    3.0,
+                )
+                .expect("location queues");
+            match decision {
+                MobileRideMapCoreDecisionDto::Pending { .. } => queued_locations += 1,
+                MobileRideMapCoreDecisionDto::StorageError { .. } => break,
+                other => panic!("unexpected location decision: {other:?}"),
+            }
+        }
+        assert!(queued_locations > 0);
+
+        let stopped = state.stop().expect("stop succeeds after queue saturation");
+        assert_eq!(stopped.summary.point_count, queued_locations + 1);
+        assert_eq!(
+            state
+                .inner
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pending_locations
+                .len(),
+            0
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
     }
 
     #[test]

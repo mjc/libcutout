@@ -1294,6 +1294,21 @@ impl PendingLocationWrite {
             Err(mpsc::TryRecvError::Disconnected) => Err(StorageError::ResponseDropped),
         }
     }
+
+    /// Waits for this queued write to reach a durable result.
+    ///
+    /// This is intended for lifecycle barriers that must settle location writes before changing
+    /// the ride state. The database worker remains the only owner of the `SQLite` connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn wait_result(self) -> Result<Result<LocationAdmission, StorageError>, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)
+    }
 }
 
 impl RideDatabase {
@@ -1850,17 +1865,20 @@ impl RideDatabase {
 
     /// Applies one lifecycle event to a ride.
     ///
+    /// The bounded command queue is waited on so lifecycle actions make progress even while
+    /// location writes fill it.
+    ///
     /// # Errors
     ///
     /// Returns [`StorageError`] when the ride is missing, the transition is invalid, or the
-    /// worker cannot process the command.
+    /// worker stops before accepting the command.
     pub fn transition(
         &self,
         ride_id: RideId,
         event: RideEvent,
     ) -> Result<RideLifecycleState, StorageError> {
         let occurred_at_ms = wall_clock_now_milliseconds()?;
-        self.request(move |reply| Command::Transition {
+        self.request_blocking(move |reply| Command::Transition {
             ride_id,
             event,
             occurred_at_ms,
@@ -1874,10 +1892,13 @@ impl RideDatabase {
     /// The wall-clock update remains owned by the database worker; the monotonic value is used
     /// only for canonical active-duration accounting.
     ///
+    /// The bounded command queue is waited on so lifecycle actions make progress even while
+    /// location writes fill it.
+    ///
     /// # Errors
     ///
     /// Returns [`StorageError`] when the ride is missing, the transition is invalid, or the
-    /// worker cannot process the command.
+    /// worker stops before accepting the command.
     pub fn transition_at(
         &self,
         ride_id: RideId,
@@ -1885,7 +1906,7 @@ impl RideDatabase {
         monotonic_at_ms: u64,
     ) -> Result<RideLifecycleState, StorageError> {
         let occurred_at_ms = wall_clock_now_milliseconds()?;
-        self.request(move |reply| Command::Transition {
+        self.request_blocking(move |reply| Command::Transition {
             ride_id,
             event,
             occurred_at_ms,
