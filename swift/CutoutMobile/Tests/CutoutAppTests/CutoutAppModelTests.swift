@@ -381,6 +381,31 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testLiveProjectionGenerationRejectsStaleOrDisabledResults() {
+        XCTAssertTrue(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 3,
+                currentGeneration: 3,
+                enabled: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 2,
+                currentGeneration: 3,
+                enabled: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.shouldApplyLiveProjection(
+                generation: 3,
+                currentGeneration: 3,
+                enabled: false
+            )
+        )
+    }
+
     func testRouteProjectionUsesRustBoundedProjection() throws {
         let state = MobileRideMapState()
         _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)

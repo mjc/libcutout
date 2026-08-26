@@ -36,6 +36,19 @@ public final class MobileRideMapProjectionCancellation: @unchecked Sendable {
     }
 }
 
+/// Swift-owned handle for cancelling one live in-memory route projection.
+public final class MobileLiveRideMapProjectionCancellation: @unchecked Sendable {
+    fileprivate let ffi: MobileLiveRouteProjectionCancellation
+
+    public init() {
+        ffi = MobileLiveRouteProjectionCancellation()
+    }
+
+    public func cancel() {
+        ffi.cancel()
+    }
+}
+
 public enum MobileRideMapStateDto: Equatable, Hashable, Sendable {
     case recording
     case paused
@@ -416,7 +429,8 @@ public final class MobileRideMapState: @unchecked Sendable {
     public func projectPoints(
         budget: UInt32,
         viewport: MobileGeoBoundsDto? = nil,
-        privacy: MobileRideMapRoutePrivacyPolicy = .precise
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise,
+        cancellation: MobileLiveRideMapProjectionCancellation? = nil
     ) throws -> MobileRideMapRouteProjection {
         try withCore {
             let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
@@ -426,11 +440,18 @@ public final class MobileRideMapState: @unchecked Sendable {
             case let .grid(e7):
                 mappedPrivacy = .grid(gridE7: e7)
             }
-            return map(try $0.projectPoints(options: MobileRideMapRouteProjectionOptionsDto(
+            let options = MobileRideMapRouteProjectionOptionsDto(
                 viewport: viewport,
                 budget: budget,
                 privacy: mappedPrivacy
-            )))
+            )
+            if let cancellation {
+                return map(try $0.projectPointsCancellable(
+                    options: options,
+                    cancellation: cancellation.ffi
+                ))
+            }
+            return map(try $0.projectPoints(options: options))
         }
     }
 
@@ -724,6 +745,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         case .InvalidTransition: return .InvalidTransition
         case .InvalidLocation: return .InvalidLocation
         case .InvalidRouteProjection: return .InvalidRouteProjection
+        case .Cancelled: return .cancelled
         case let .Storage(message): return .Storage(message)
         }
     }

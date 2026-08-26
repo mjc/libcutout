@@ -3153,6 +3153,9 @@ pub enum MobileRideMapCoreErrorDto {
     /// The route display budget, viewport, or privacy policy is invalid.
     #[error("invalid route projection")]
     InvalidRouteProjection,
+    /// A live route projection was cancelled by its caller.
+    #[error("live route projection cancelled")]
+    Cancelled,
     /// The canonical database rejected the operation.
     #[error("ride map storage failure: {0}")]
     Storage(String),
@@ -4099,6 +4102,36 @@ impl MobileRouteProjectionCancellation {
     /// Requests cancellation of the associated durable projection.
     pub fn cancel(&self) {
         self.inner.cancel();
+    }
+}
+
+/// Cooperative cancellation for one live in-memory route projection.
+///
+/// This token is intentionally separate from [`MobileRouteProjectionCancellation`]: live
+/// projections do not use the `SQLite` worker or its interrupt handle.
+#[derive(Debug, uniffi::Object)]
+pub struct MobileLiveRouteProjectionCancellation {
+    cancelled: Arc<AtomicBool>,
+}
+
+#[uniffi::export]
+impl MobileLiveRouteProjectionCancellation {
+    /// Creates an active live-projection cancellation token.
+    #[uniffi::constructor]
+    #[must_use]
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
+    /// Requests cancellation of the associated live projection.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
     }
 }
 
@@ -6032,28 +6065,77 @@ impl MobileRideMapCore {
         &self,
         options: MobileRideMapRouteProjectionOptionsDto,
     ) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
-        let state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        let (viewport, budget, privacy) = mobile_route_projection_options(&options)?;
-        let points = ride_maps::project_route_points(
-            state.recorder.points(),
-            state.recorder.first_point_sequence(),
-            viewport,
-            budget,
-            privacy,
-        )
-        .into_iter()
-        .map(mobile_route_display_point_dto)
-        .collect::<Vec<_>>();
-        let candidate_segment_count = mobile_segment_count(state.recorder.points(), viewport);
-        let displayed_segment_count = mobile_displayed_segment_count(&points);
-        Ok(MobileRideMapRouteProjectionDto {
-            points,
-            source_point_count: state.recorder.point_count(),
-            source_segment_count: state.recorder.segment_count().as_u64(),
-            candidate_segment_count,
-            displayed_segment_count,
-        })
+        project_live_route_points(self, &options, || false)
     }
+
+    /// Projects the Rust-owned route tail while honoring live-projection cancellation.
+    ///
+    /// The recorder snapshot is copied while the core mutex is held, then all route scanning and
+    /// projection work happens after the mutex is released. This keeps a long presentation
+    /// projection from blocking location admission or lifecycle transitions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MobileRideMapCoreErrorDto::Cancelled`] when the caller requests cancellation,
+    /// or [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] for invalid options.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_points_cancellable(
+        &self,
+        options: MobileRideMapRouteProjectionOptionsDto,
+        cancellation: Arc<MobileLiveRouteProjectionCancellation>,
+    ) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
+        project_live_route_points(self, &options, || cancellation.is_cancelled())
+    }
+}
+
+fn project_live_route_points(
+    core: &MobileRideMapCore,
+    options: &MobileRideMapRouteProjectionOptionsDto,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<MobileRideMapRouteProjectionDto, MobileRideMapCoreErrorDto> {
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    let (viewport, budget, privacy) = mobile_route_projection_options(options)?;
+    let (points, first_sequence, source_point_count, source_segment_count) = {
+        let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        (
+            state.recorder.points().to_vec(),
+            state.recorder.first_point_sequence(),
+            state.recorder.point_count(),
+            state.recorder.segment_count().as_u64(),
+        )
+    };
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    let candidate_segment_count = mobile_segment_count(&points, viewport);
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    let points = ride_maps::project_route_points_cancellable(
+        &points,
+        first_sequence,
+        viewport,
+        budget,
+        privacy,
+        &mut is_cancelled,
+    )
+    .map_err(|_| MobileRideMapCoreErrorDto::Cancelled)?
+    .into_iter()
+    .map(mobile_route_display_point_dto)
+    .collect::<Vec<_>>();
+    if is_cancelled() {
+        return Err(MobileRideMapCoreErrorDto::Cancelled);
+    }
+    let displayed_segment_count = mobile_displayed_segment_count(&points);
+    Ok(MobileRideMapRouteProjectionDto {
+        points,
+        source_point_count,
+        source_segment_count,
+        candidate_segment_count,
+        displayed_segment_count,
+    })
 }
 
 #[cfg(test)]
@@ -14559,6 +14641,40 @@ mod tests {
         );
         assert!((projection.points[0].latitude_degrees - 40.0).abs() < f64::EPSILON);
         assert!((projection.points[1].latitude_degrees - 40.0002).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_live_projection_cancellation_is_typed_and_non_durable() {
+        let state = MobileRideMapCore::new_for_testing();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        state
+            .ingest_location(1_001, 1_700_000_001_001, 40.0, -105.0, 3.0)
+            .expect("location is accepted");
+
+        let cancellation = MobileLiveRouteProjectionCancellation::new();
+        cancellation.cancel();
+        let error = state
+            .project_points_cancellable(
+                MobileRideMapRouteProjectionOptionsDto {
+                    viewport: None,
+                    budget: 1,
+                    privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+                },
+                cancellation,
+            )
+            .expect_err("cancelled live projection must not return a display result");
+        assert_eq!(error, MobileRideMapCoreErrorDto::Cancelled);
+
+        let projection = state
+            .project_points(MobileRideMapRouteProjectionOptionsDto {
+                viewport: None,
+                budget: 1,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+            })
+            .expect("the compatibility wrapper remains usable after cancellation");
+        assert_eq!(projection.points.len(), 1);
     }
 
     #[test]

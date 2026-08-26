@@ -33,19 +33,22 @@ pub use recording::{
 mod projection;
 pub use projection::{
     MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyClass,
-    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteViewport,
-    count_segment_runs, project_route_points, project_route_points_from_iter,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteProjectionError,
+    RouteViewport, count_segment_runs, project_route_points, project_route_points_cancellable,
+    project_route_points_from_iter,
 };
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+
     use super::{
         Coordinate, DistanceMillimetres, LatitudeE7, LocationAdmission, LocationSample,
         LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
         RideLifecycleState, RideMapRecorder, RidePointCount, RideSummary, RouteDisplayBudget,
-        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteViewport, TransitionError,
-        VehicleIdentity, WallClockUnixMilliseconds, project_route_points,
-        project_route_points_from_iter,
+        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError,
+        RouteViewport, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
+        project_route_points, project_route_points_cancellable, project_route_points_from_iter,
     };
 
     #[test]
@@ -255,5 +258,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 3]
         );
+    }
+
+    #[test]
+    fn cancellable_route_projection_returns_typed_cancellation_without_sleeping() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        for offset in 0..4_u32 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(40.0 + f64::from(offset) / 10_000.0, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000 + u64::from(offset) * 1_000),
+                WallClockUnixMilliseconds::new(1_700_000_000_000 + u64::from(offset) * 1_000),
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+            recorder.record_sample(sample);
+        }
+
+        let checks = Cell::new(0);
+        let error = project_route_points_cancellable(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            || {
+                let check = checks.get();
+                checks.set(check + 1);
+                check >= 5
+            },
+        )
+        .expect_err("the deterministic cancellation predicate must stop projection");
+
+        assert_eq!(error, RouteProjectionError::Cancelled);
+        assert!(checks.get() >= 5);
     }
 }

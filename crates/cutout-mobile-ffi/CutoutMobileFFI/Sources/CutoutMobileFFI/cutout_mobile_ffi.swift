@@ -1923,6 +1923,159 @@ public func FfiConverterTypeMobileChargeEstimator_lower(_ value: MobileChargeEst
 
 
 /**
+ * Cooperative cancellation for one live in-memory route projection.
+ *
+ * This token is intentionally separate from [`MobileRouteProjectionCancellation`]: live
+ * projections do not use the `SQLite` worker or its interrupt handle.
+ */
+public protocol MobileLiveRouteProjectionCancellationProtocol: AnyObject, Sendable {
+
+    /**
+     * Requests cancellation of the associated live projection.
+     */
+    func cancel()
+
+    func isCancelled()  -> Bool
+
+}
+/**
+ * Cooperative cancellation for one live in-memory route projection.
+ *
+ * This token is intentionally separate from [`MobileRouteProjectionCancellation`]: live
+ * projections do not use the `SQLite` worker or its interrupt handle.
+ */
+open class MobileLiveRouteProjectionCancellation: MobileLiveRouteProjectionCancellationProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobileliverouteprojectioncancellation(self.handle, $0) }
+    }
+    /**
+     * Creates an active live-projection cancellation token.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobileliverouteprojectioncancellation_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobileliverouteprojectioncancellation(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Requests cancellation of the associated live projection.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileliverouteprojectioncancellation_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+open func isCancelled() -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileliverouteprojectioncancellation_is_cancelled(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLiveRouteProjectionCancellation: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileLiveRouteProjectionCancellation
+
+    public static func lift(_ handle: UInt64) throws -> MobileLiveRouteProjectionCancellation {
+        return MobileLiveRouteProjectionCancellation(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileLiveRouteProjectionCancellation) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLiveRouteProjectionCancellation {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileLiveRouteProjectionCancellation, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLiveRouteProjectionCancellation_lift(_ handle: UInt64) throws -> MobileLiveRouteProjectionCancellation {
+    return try FfiConverterTypeMobileLiveRouteProjectionCancellation.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLiveRouteProjectionCancellation_lower(_ value: MobileLiveRouteProjectionCancellation) -> UInt64 {
+    return FfiConverterTypeMobileLiveRouteProjectionCancellation.lower(value)
+}
+
+
+
+
+
+
+/**
  * Mobile-facing builder for a PEVCAP capture export.
  */
 public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
@@ -2572,6 +2725,20 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     func projectPoints(options: MobileRideMapRouteProjectionOptionsDto) throws  -> MobileRideMapRouteProjectionDto
 
     /**
+     * Projects the Rust-owned route tail while honoring live-projection cancellation.
+     *
+     * The recorder snapshot is copied while the core mutex is held, then all route scanning and
+     * projection work happens after the mutex is released. This keeps a long presentation
+     * projection from blocking location admission or lifecycle transitions.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapCoreErrorDto::Cancelled`] when the caller requests cancellation,
+     * or [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] for invalid options.
+     */
+    func projectPointsCancellable(options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileLiveRouteProjectionCancellation) throws  -> MobileRideMapRouteProjectionDto
+
+    /**
      * Resumes the paused ride.
      *
      * # Errors
@@ -2946,6 +3113,28 @@ open func projectPoints(options: MobileRideMapRouteProjectionOptionsDto)throws  
     uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_project_points(
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),$0
+    )
+})
+}
+
+    /**
+     * Projects the Rust-owned route tail while honoring live-projection cancellation.
+     *
+     * The recorder snapshot is copied while the core mutex is held, then all route scanning and
+     * projection work happens after the mutex is released. This keeps a long presentation
+     * projection from blocking location admission or lifecycle transitions.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapCoreErrorDto::Cancelled`] when the caller requests cancellation,
+     * or [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] for invalid options.
+     */
+open func projectPointsCancellable(options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileLiveRouteProjectionCancellation)throws  -> MobileRideMapRouteProjectionDto  {
+    return try  FfiConverterTypeMobileRideMapRouteProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_project_points_cancellable(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),
+        FfiConverterTypeMobileLiveRouteProjectionCancellation_lower(cancellation),$0
     )
 })
 }
@@ -18797,6 +18986,10 @@ public enum MobileRideMapCoreErrorDto: Swift.Error, Equatable, Hashable, Foundat
      */
     case InvalidRouteProjection
     /**
+     * A live route projection was cancelled by its caller.
+     */
+    case Cancelled
+    /**
      * The canonical database rejected the operation.
      */
     case Storage(String
@@ -18835,7 +19028,8 @@ public struct FfiConverterTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer 
         case 3: return .InvalidTransition
         case 4: return .InvalidLocation
         case 5: return .InvalidRouteProjection
-        case 6: return .Storage(
+        case 6: return .Cancelled
+        case 7: return .Storage(
             try FfiConverterString.read(from: &buf)
             )
 
@@ -18870,8 +19064,12 @@ public struct FfiConverterTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer 
             writeInt(&buf, Int32(5))
 
 
-        case let .Storage(v1):
+        case .Cancelled:
             writeInt(&buf, Int32(6))
+
+
+        case let .Storage(v1):
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(v1, into: &buf)
 
         }
@@ -24769,6 +24967,12 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilechargeestimator_voltage_sag_model() != 1861) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileliverouteprojectioncancellation_cancel() != 59947) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileliverouteprojectioncancellation_is_cancelled() != 37752) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_add_advertised_service() != 1575) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -24857,6 +25061,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_project_points() != 12775) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_project_points_cancellable() != 38088) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {
@@ -25034,6 +25241,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilechargeestimator_new() != 7351) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobileliverouteprojectioncancellation_new() != 52672) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilepevcapcapturebuilder_new() != 58179) {

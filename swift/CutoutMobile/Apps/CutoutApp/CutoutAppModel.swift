@@ -192,6 +192,7 @@ final class CutoutAppModel {
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
+    private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
     private var rideMapLiveProjectionGeneration: UInt64 = 0
     private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
@@ -736,6 +737,14 @@ final class CutoutAppModel {
         }
     }
 
+    static func shouldApplyLiveProjection(
+        generation: UInt64,
+        currentGeneration: UInt64,
+        enabled: Bool
+    ) -> Bool {
+        enabled && generation == currentGeneration
+    }
+
     private func applyRideMapDecision(
         snapshot: MobileRideMapSnapshotDto,
         decision: MobileRideMapDecisionDto
@@ -755,14 +764,14 @@ final class CutoutAppModel {
 
     /// Serializes live projections while allowing a burst of accepted points to coalesce.
     ///
-    /// The synchronous Rust projection runs in a detached operation so the main actor remains
-    /// responsive. The worker itself is deliberately kept alive until that operation returns;
-    /// cancelling and replacing it would allow overlapping projections to contend on the same
-    /// Rust map core. A generation change discards the stale result and immediately projects the
-    /// latest route instead.
+    /// The Rust projection snapshots the recorder before doing its work, and the detached
+    /// operation receives a live-only cancellation token. A generation change cancels the
+    /// in-flight operation; the task remains alive until that operation returns so projections
+    /// never overlap on the same map core.
     private func requestLiveProjection() {
         rideMapLiveProjectionGeneration &+= 1
         rideMapLiveProjectionEnabled = true
+        rideMapLiveProjectionCancellation?.cancel()
         guard rideMapLiveProjectionTask == nil else { return }
 
         let state = core.rideMapStateHandle
@@ -770,30 +779,43 @@ final class CutoutAppModel {
         rideMapLiveProjectionTask = Task { [weak self] in
             while let self {
                 let generation = self.rideMapLiveProjectionGeneration
+                let cancellation = MobileLiveRideMapProjectionCancellation()
+                self.rideMapLiveProjectionCancellation = cancellation
                 do {
                     let projection = try await Task.detached(priority: .userInitiated) {
-                        try state.projectPoints(budget: budget)
+                        try state.projectPoints(budget: budget, cancellation: cancellation)
                     }.value
                     guard self.rideMapLiveProjectionEnabled else {
                         self.rideMapLiveProjectionTask = nil
+                        self.rideMapLiveProjectionCancellation = nil
                         return
                     }
-                    guard generation == self.rideMapLiveProjectionGeneration else {
+                    guard Self.shouldApplyLiveProjection(
+                        generation: generation,
+                        currentGeneration: self.rideMapLiveProjectionGeneration,
+                        enabled: self.rideMapLiveProjectionEnabled
+                    ) else {
                         continue
                     }
                     self.applyLiveProjection(projection)
                 } catch {
                     guard self.rideMapLiveProjectionEnabled else {
                         self.rideMapLiveProjectionTask = nil
+                        self.rideMapLiveProjectionCancellation = nil
                         return
                     }
-                    guard generation == self.rideMapLiveProjectionGeneration else {
+                    guard Self.shouldApplyLiveProjection(
+                        generation: generation,
+                        currentGeneration: self.rideMapLiveProjectionGeneration,
+                        enabled: self.rideMapLiveProjectionEnabled
+                    ) else {
                         continue
                     }
                     self.rideMapLiveError = Self.mapRideMapError(error)
                     self.rideMapLiveDisplayPoints = []
                 }
                 self.rideMapLiveProjectionTask = nil
+                self.rideMapLiveProjectionCancellation = nil
                 return
             }
         }
@@ -814,6 +836,7 @@ final class CutoutAppModel {
             if resetPoints {
                 rideMapLiveProjectionGeneration &+= 1
                 rideMapLiveProjectionEnabled = false
+                rideMapLiveProjectionCancellation?.cancel()
                 rideMapPoints.removeAll(keepingCapacity: true)
                 rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
                 rideMapLivePointsTruncated = false
