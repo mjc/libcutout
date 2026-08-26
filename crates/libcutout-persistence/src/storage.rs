@@ -23,7 +23,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -41,6 +41,7 @@ const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
+const DEFAULT_ROUTE_PROJECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
 struct PevcapRoutePoint {
@@ -1177,6 +1178,32 @@ impl Default for RouteProjectionCancellation {
     }
 }
 
+fn default_route_projection_cancellation() -> RouteProjectionCancellation {
+    let deadline = Instant::now()
+        .checked_add(DEFAULT_ROUTE_PROJECTION_TIMEOUT)
+        .unwrap_or_else(Instant::now);
+    RouteProjectionCancellation::with_deadline(deadline)
+}
+
+#[cfg(test)]
+mod default_route_projection_tests {
+    use super::{Instant, default_route_projection_cancellation};
+
+    #[test]
+    fn default_route_projection_cancellation_has_a_rust_owned_deadline() {
+        let cancellation = default_route_projection_cancellation();
+
+        assert!(!cancellation.is_cancelled());
+        assert!(!cancellation.is_expired());
+        assert!(
+            cancellation
+                .deadline()
+                .expect("default projection has a deadline")
+                > Instant::now()
+        );
+    }
+}
+
 impl PendingLocationWrite {
     /// Returns the durable result when the worker has completed this write.
     ///
@@ -2078,8 +2105,9 @@ impl RideDatabase {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::NotFound`] when the ride does not exist, or another typed storage
-    /// error when the route cannot be decoded.
+    /// Returns [`StorageError::DeadlineExceeded`] when the Rust-owned default timeout expires,
+    /// [`StorageError::NotFound`] when the ride does not exist, or another typed storage error
+    /// when the route cannot be decoded.
     pub fn project_route_points(
         &self,
         ride_id: RideId,
@@ -2087,14 +2115,13 @@ impl RideDatabase {
         budget: RouteDisplayBudget,
         privacy: RoutePrivacyPolicy,
     ) -> Result<RoutePointProjection, StorageError> {
-        self.request(move |reply| Command::ProjectRoutePoints {
+        self.project_route_points_cancellable(
             ride_id,
             viewport,
             budget,
             privacy,
-            cancellation: None,
-            reply,
-        })
+            default_route_projection_cancellation(),
+        )
     }
 
     /// Projects a durable route while honoring a cooperative cancellation token.
