@@ -25,8 +25,10 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
 public final class MobileRideMapProjectionCancellation: @unchecked Sendable {
     fileprivate let ffi: MobileRouteProjectionCancellation
 
-    public init() {
-        ffi = MobileRouteProjectionCancellation()
+    public init(timeoutMilliseconds: UInt64 = 2_000) {
+        ffi = MobileRouteProjectionCancellation.withTimeoutMilliseconds(
+            timeoutMilliseconds: timeoutMilliseconds
+        )
     }
 
     public func cancel() {
