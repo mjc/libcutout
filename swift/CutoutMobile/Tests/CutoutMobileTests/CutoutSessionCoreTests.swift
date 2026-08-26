@@ -310,6 +310,69 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertEqual(acceptedSegmentStarted, segmentStarted)
     }
 
+    func testPendingLocationQueueDoesNotCollideWhenAStoppedRideRestartsAtSequenceZero() {
+        let oldSample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+        let newSample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_100_100,
+            latitudeDegrees: 39.7393,
+            longitudeDegrees: -104.9904,
+            altitudeMeters: 1_601,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+        let oldPoint = MobileRideMapPointDto(
+            sequence: 0,
+            segmentId: 0,
+            latitudeDegrees: oldSample.latitudeDegrees,
+            longitudeDegrees: oldSample.longitudeDegrees,
+            wallClockUnixMs: oldSample.wallClockUnixMs,
+            monotonicMs: 100,
+            horizontalAccuracyMeters: oldSample.horizontalAccuracyMeters ?? 0,
+            telemetryState: .gpsOnly
+        )
+        let newPoint = MobileRideMapPointDto(
+            sequence: 0,
+            segmentId: 0,
+            latitudeDegrees: newSample.latitudeDegrees,
+            longitudeDegrees: newSample.longitudeDegrees,
+            wallClockUnixMs: newSample.wallClockUnixMs,
+            monotonicMs: 10_100,
+            horizontalAccuracyMeters: newSample.horizontalAccuracyMeters ?? 0,
+            telemetryState: .gpsOnly
+        )
+        let oldRideTerminalDecisions: [MobileRideMapDecisionDto] = [
+            .ignored(reason: .rideNotRecording),
+            .rejected(reason: .timestampOutOfOrder),
+            .storageError(message: "old ride write failed"),
+        ]
+        for terminalDecision in oldRideTerminalDecisions {
+            var queue = PendingPhoneLocationQueue()
+            queue.append(oldSample, sequence: oldPoint.sequence)
+            queue.append(newSample, sequence: newPoint.sequence)
+
+            XCTAssertEqual(queue.take(for: terminalDecision), oldSample)
+            XCTAssertEqual(
+                queue.take(for: .accepted(point: newPoint, segmentStarted: true)),
+                newSample
+            )
+        }
+    }
+
     func testPevcapLocationStateIsSeparateFromPhoneLocationReadback() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,

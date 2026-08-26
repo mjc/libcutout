@@ -316,6 +316,43 @@ struct BoundedDiagnosticLog {
     }
 }
 
+/// Retains phone samples until their durable map decision is published.
+///
+/// Rust emits polled write outcomes in enqueue order. Keeping that order here is important because
+/// point sequences restart at zero for every ride; a dictionary keyed only by sequence would let a
+/// late outcome for an older ride consume a newer ride's sample.
+struct PendingPhoneLocationQueue {
+    private struct Entry {
+        let sequence: UInt64
+        let sample: MobilePhoneLocationSampleDto
+    }
+
+    private var entries = [Entry]()
+
+    var isEmpty: Bool { entries.isEmpty }
+
+    mutating func append(_ sample: MobilePhoneLocationSampleDto, sequence: UInt64) {
+        entries.append(Entry(sequence: sequence, sample: sample))
+    }
+
+    mutating func take(for decision: MobileRideMapDecisionDto) -> MobilePhoneLocationSampleDto? {
+        let index: Int
+        switch decision {
+        case let .accepted(point, _):
+            guard let matchingIndex = entries.firstIndex(where: { $0.sequence == point.sequence }) else {
+                return nil
+            }
+            index = matchingIndex
+        case .rejected, .ignored, .storageError:
+            guard entries.isEmpty == false else { return nil }
+            index = entries.startIndex
+        case .pending:
+            return nil
+        }
+        return entries.remove(at: index).sample
+    }
+}
+
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
     public var rideMapStateHandle: MobileRideMapState { rideMapState }
@@ -395,8 +432,7 @@ public final class CutoutSessionCore: NSObject {
         qos: .utility
     )
     private let pendingPhoneLocationLock = NSLock()
-    private var pendingPhoneLocations: [UInt64: MobilePhoneLocationSampleDto] = [:]
-    private var pendingPhoneLocationOrder = [UInt64]()
+    private var pendingPhoneLocations = PendingPhoneLocationQueue()
     private var rideMapPollScheduled = false
     private let rideMapState: MobileRideMapState
     private var didRequestAlwaysLocationAuthorization = false
@@ -2741,10 +2777,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     ) {
         pendingPhoneLocationLock.lock()
         defer { pendingPhoneLocationLock.unlock() }
-        pendingPhoneLocations[sequence] = sample
-        if pendingPhoneLocationOrder.contains(sequence) == false {
-            pendingPhoneLocationOrder.append(sequence)
-        }
+        pendingPhoneLocations.append(sample, sequence: sequence)
     }
 
     private func takePendingPhoneLocation(
@@ -2752,29 +2785,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
     ) -> MobilePhoneLocationSampleDto? {
         pendingPhoneLocationLock.lock()
         defer { pendingPhoneLocationLock.unlock() }
-
-        if case let .accepted(point, _) = decision {
-            while let sequence = pendingPhoneLocationOrder.first,
-                  pendingPhoneLocations[sequence] == nil
-            {
-                pendingPhoneLocationOrder.removeFirst()
-            }
-            guard pendingPhoneLocations[point.sequence] != nil else { return nil }
-            return removePendingPhoneLocation(for: point.sequence)
-        }
-
-        while let sequence = pendingPhoneLocationOrder.first {
-            pendingPhoneLocationOrder.removeFirst()
-            if let sample = pendingPhoneLocations.removeValue(forKey: sequence) {
-                return sample
-            }
-        }
-        return nil
-    }
-
-    private func removePendingPhoneLocation(for sequence: UInt64) -> MobilePhoneLocationSampleDto? {
-        pendingPhoneLocationOrder.removeAll { $0 == sequence }
-        return pendingPhoneLocations.removeValue(forKey: sequence)
+        return pendingPhoneLocations.take(for: decision)
     }
 
     private func scheduleRideMapWritePoll() {
@@ -2793,7 +2804,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
             self.pendingPhoneLocationLock.lock()
             self.rideMapPollScheduled = false
-            let shouldPollAgain = !self.pendingPhoneLocationOrder.isEmpty
+            let shouldPollAgain = !self.pendingPhoneLocations.isEmpty
             self.pendingPhoneLocationLock.unlock()
             if shouldPollAgain {
                 self.scheduleRideMapWritePoll()
