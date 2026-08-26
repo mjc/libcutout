@@ -174,7 +174,6 @@ struct RideMapRouteView: View {
         RideMapHistoryDetailView(
             initialHistoryID: initialHistoryID,
             rides: model.rideMapHistory,
-            points: model.rideMapHistoryPoints,
             displayPoints: model.rideMapHistoryDisplayPoints,
             pointsTruncated: model.rideMapHistoryPointsTruncated,
             historyError: model.rideMapHistoryError,

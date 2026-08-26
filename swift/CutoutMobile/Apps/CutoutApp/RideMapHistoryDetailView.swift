@@ -6,7 +6,6 @@ import CutoutMobileFFI
 struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
-    let points: [MobileRideMapPointDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let pointsTruncated: Bool
     let historyError: MobileRideMapError?
@@ -74,9 +73,7 @@ struct RideMapHistoryDetailView: View {
     private var selectionTaskID: String { initialHistoryID ?? "" }
 
     private var isRouteLoading: Bool {
-        guard routeError == nil else { return false }
-        guard selectedRide != nil else { return initialHistoryID != nil && historyError == nil }
-        return isLoading
+        routeError == nil && isLoading
     }
 
     var body: some View {
@@ -132,7 +129,7 @@ struct RideMapHistoryDetailView: View {
                             ),
                             recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
                             vehicle: vehicleLabel(for: ride),
-                            points: points,
+                            telemetryState: ride.telemetryState,
                             displayPointCount: displayPoints.count,
                             recordedPointCount: ride.summary.pointCount,
                             pointsTruncated: pointsTruncated,
@@ -225,7 +222,7 @@ private struct RideMapHistoryDetailSummary: View {
     let averageSpeed: String
     let recordedAt: String
     let vehicle: String
-    let points: [MobileRideMapPointDto]
+    let telemetryState: MobileRideMapTelemetryStateDto
     let displayPointCount: Int
     let recordedPointCount: UInt64
     let pointsTruncated: Bool
@@ -280,12 +277,13 @@ private struct RideMapHistoryDetailSummary: View {
                     )
                 }
                 RideMapRouteTruthView(
-                    points: points,
+                    points: [],
                     recordedPointCount: recordedPointCount,
                     rustSegmentCount: segmentCount,
                     decision: nil,
                     showsRecordedBounds: !pointsTruncated,
-                    hasRoute: displayPointCount > 0
+                    hasRoute: displayPointCount > 0,
+                    telemetryState: telemetryState
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.history_truncated_count", displayPointCount))

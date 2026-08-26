@@ -218,6 +218,50 @@ final class CutoutAppModelTests: XCTestCase {
             ),
             "ride-1"
         )
+        XCTAssertNil(
+            CutoutAppModel.preferredHistorySelection(
+                requestedID: "ride-missing",
+                currentID: "ride-2",
+                summaryIDs: ["ride-1", "ride-2"]
+            )
+        )
+    }
+
+    @MainActor
+    func testHistoryPageAppendDoesNotDuplicateExistingRides() {
+        XCTAssertEqual(
+            CutoutAppModel.appendingUniqueHistory(
+                existing: ["ride-1", "ride-2"],
+                incoming: ["ride-2", "ride-3", "ride-1", "ride-4"],
+                id: { $0 }
+            ),
+            ["ride-1", "ride-2", "ride-3", "ride-4"]
+        )
+    }
+
+    @MainActor
+    func testHistoryTelemetryStateUsesRustSummaryMetadata() {
+        XCTAssertEqual(
+            MobileRideMapHistorySummaryDto.telemetryState(
+                associatedVehicle: nil,
+                lastTelemetryAtMilliseconds: nil
+            ),
+            .gpsOnly
+        )
+        XCTAssertEqual(
+            MobileRideMapHistorySummaryDto.telemetryState(
+                associatedVehicle: "vehicle-1",
+                lastTelemetryAtMilliseconds: nil
+            ),
+            .associatedNoTelemetry
+        )
+        XCTAssertEqual(
+            MobileRideMapHistorySummaryDto.telemetryState(
+                associatedVehicle: "vehicle-1",
+                lastTelemetryAtMilliseconds: 42
+            ),
+            .associatedFresh
+        )
     }
 
     func testRouteProjectionUsesRustBoundedProjection() throws {

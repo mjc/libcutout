@@ -163,6 +163,38 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
     public var createdAtMilliseconds: UInt64
     public var candidateVehicle: String?
     public var associatedVehicle: String?
+    /// Rust-derived telemetry provenance for the latest durable route evidence.
+    public var telemetryState: MobileRideMapTelemetryStateDto
+
+    public init(
+        rideId: String,
+        state: MobileRideMapStateDto,
+        summary: MobileRideMapSummaryDto,
+        segmentCount: UInt64,
+        createdAtMilliseconds: UInt64,
+        candidateVehicle: String?,
+        associatedVehicle: String?,
+        telemetryState: MobileRideMapTelemetryStateDto
+    ) {
+        self.rideId = rideId
+        self.state = state
+        self.summary = summary
+        self.segmentCount = segmentCount
+        self.createdAtMilliseconds = createdAtMilliseconds
+        self.candidateVehicle = candidateVehicle
+        self.associatedVehicle = associatedVehicle
+        self.telemetryState = telemetryState
+    }
+
+    /// Derives the historical telemetry label from Rust's persisted association metadata.
+    /// A timestamp proves that telemetry was observed; freshness is evaluated while recording.
+    public static func telemetryState(
+        associatedVehicle: String?,
+        lastTelemetryAtMilliseconds: UInt64?
+    ) -> MobileRideMapTelemetryStateDto {
+        guard associatedVehicle != nil else { return .gpsOnly }
+        return lastTelemetryAtMilliseconds == nil ? .associatedNoTelemetry : .associatedFresh
+    }
 }
 
 public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
@@ -489,7 +521,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             segmentCount: ride.segmentCount,
             createdAtMilliseconds: ride.createdAtMilliseconds,
             candidateVehicle: ride.candidateVehicle,
-            associatedVehicle: ride.associatedVehicle
+            associatedVehicle: ride.associatedVehicle,
+            telemetryState: MobileRideMapHistorySummaryDto.telemetryState(
+                associatedVehicle: ride.associatedVehicle,
+                lastTelemetryAtMilliseconds: ride.lastTelemetryAtMilliseconds
+            )
         )
     }
 

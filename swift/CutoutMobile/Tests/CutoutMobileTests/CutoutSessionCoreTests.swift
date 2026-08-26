@@ -81,7 +81,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
-    func testBatchedLocationsRejectDuplicateAndOutOfOrderSourceTimes() {
+    func testBatchedLocationsSkipDuplicateAndOutOfOrderSourceTimes() {
         let first = Date(timeIntervalSince1970: 1_700_000_000)
         let second = Date(timeIntervalSince1970: 1_700_000_001)
         let callback = Date(timeIntervalSince1970: 1_700_000_002)
@@ -92,7 +92,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 callbackMonotonicMs: MonotonicMilliseconds(20_000),
                 callbackWallClock: callback
             ),
-            []
+            [.some(MonotonicMilliseconds(20_000)), nil]
         )
         XCTAssertEqual(
             monotonicMillisecondsForLocationBatch(
@@ -100,7 +100,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 callbackMonotonicMs: MonotonicMilliseconds(20_000),
                 callbackWallClock: callback
             ),
-            []
+            [.some(MonotonicMilliseconds(20_000)), nil]
         )
     }
 
@@ -115,7 +115,7 @@ final class CutoutSessionCoreTests: XCTestCase {
                 callbackWallClock: callback,
                 lastAcceptedTimestamp: lastAccepted
             ),
-            []
+            [nil]
         )
         XCTAssertEqual(
             monotonicMillisecondsForLocationBatch(
@@ -124,8 +124,45 @@ final class CutoutSessionCoreTests: XCTestCase {
                 callbackWallClock: callback,
                 lastAcceptedTimestamp: lastAccepted
             ),
-            []
+            [nil]
         )
+    }
+
+    func testBatchedLocationsKeepValidSamplesAroundAnInvalidTimestamp() {
+        let first = Date(timeIntervalSince1970: 1_700_000_000)
+        let future = Date(timeIntervalSince1970: 1_700_000_010)
+        let last = Date(timeIntervalSince1970: 1_700_000_002)
+
+        XCTAssertEqual(
+            monotonicMillisecondsForLocationBatch(
+                timestamps: [first, future, last],
+                callbackMonotonicMs: MonotonicMilliseconds(20_000),
+                callbackWallClock: Date(timeIntervalSince1970: 1_700_000_003)
+            ),
+            [
+                .some(MonotonicMilliseconds(18_000)),
+                nil,
+                .some(MonotonicMilliseconds(20_000)),
+            ]
+        )
+    }
+
+    func testBatchedLocationsDoNotReuseAConstructedMonotonicTimestamp() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let result = monotonicMillisecondsForLocationBatch(
+            timestamps: [
+                base,
+                base.addingTimeInterval(0.0004),
+                base.addingTimeInterval(0.002),
+            ],
+            callbackMonotonicMs: MonotonicMilliseconds(20_000),
+            callbackWallClock: base.addingTimeInterval(0.002)
+        )
+
+        XCTAssertEqual(result[0], .some(MonotonicMilliseconds(19_998)))
+        XCTAssertNil(result[1])
+        XCTAssertEqual(result[2], .some(MonotonicMilliseconds(20_000)))
     }
 
     func testCoreLocationSentinelsBecomeTypedAbsence() {

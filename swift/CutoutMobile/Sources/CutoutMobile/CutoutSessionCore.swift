@@ -2674,9 +2674,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             callbackWallClock: wallClock.now(),
             lastAcceptedTimestamp: lastAcceptedLocationTimestamp
         )
-        guard monotonicMilliseconds.count == locations.count else { return }
-        lastAcceptedLocationTimestamp = locations.last?.timestamp
         for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
+            guard let monotonicMs else { continue }
+            lastAcceptedLocationTimestamp = location.timestamp
             let sample = MobilePhoneLocationSampleDto(location: location)
             // Current-location readback is independent of ride recording. The map
             // admission result below only controls the canonical capture context.
@@ -2797,42 +2797,46 @@ func monotonicMillisecondsForLocationBatch(
     callbackMonotonicMs: MonotonicMilliseconds,
     callbackWallClock: Date = Date(),
     lastAcceptedTimestamp: Date? = nil
-) -> [MonotonicMilliseconds] {
-    guard let newestTimestamp = timestamps.last,
-          callbackWallClock.timeIntervalSinceReferenceDate.isFinite,
-          newestTimestamp.timeIntervalSinceReferenceDate.isFinite
-    else {
-        return []
+) -> [MonotonicMilliseconds?] {
+    guard callbackWallClock.timeIntervalSinceReferenceDate.isFinite else {
+        return Array(repeating: nil, count: timestamps.count)
     }
 
     var previousTimestamp = lastAcceptedTimestamp
-    for timestamp in timestamps {
+    var accepted = [(index: Int, timestamp: Date)]()
+    for (index, timestamp) in timestamps.enumerated() {
         guard timestamp.timeIntervalSinceReferenceDate.isFinite,
               timestamp <= callbackWallClock,
               previousTimestamp.map({ timestamp > $0 }) ?? true
         else {
-            return []
+            continue
         }
+        accepted.append((index, timestamp))
         previousTimestamp = timestamp
     }
 
-    return timestamps.map { timestamp in
-        let elapsedSeconds = newestTimestamp.timeIntervalSince(timestamp)
-        guard elapsedSeconds.isFinite, elapsedSeconds > 0 else {
-            return callbackMonotonicMs
-        }
-        let elapsedMilliseconds = elapsedSeconds * 1_000
-        guard elapsedMilliseconds < Double(UInt64.max) else {
-            return MonotonicMilliseconds(0)
-        }
-        let offsetMilliseconds = UInt64(elapsedMilliseconds.rounded(.down))
-        let callbackMilliseconds = callbackMonotonicMs.rawValue
-        return MonotonicMilliseconds(
-            callbackMilliseconds >= offsetMilliseconds
-                ? callbackMilliseconds - offsetMilliseconds
-                : 0
-        )
+    guard let newestTimestamp = accepted.last?.timestamp else {
+        return Array(repeating: nil, count: timestamps.count)
     }
+
+    var result = Array<MonotonicMilliseconds?>(repeating: nil, count: timestamps.count)
+    var previousMonotonic: UInt64?
+    for entry in accepted {
+        let elapsedMilliseconds = newestTimestamp.timeIntervalSince(entry.timestamp) * 1_000
+        guard elapsedMilliseconds.isFinite, elapsedMilliseconds >= 0,
+              elapsedMilliseconds < Double(UInt64.max)
+        else {
+            continue
+        }
+        let offsetMilliseconds = UInt64(elapsedMilliseconds.rounded(.up))
+        let callbackMilliseconds = callbackMonotonicMs.rawValue
+        guard callbackMilliseconds >= offsetMilliseconds else { continue }
+        let monotonic = callbackMilliseconds - offsetMilliseconds
+        guard previousMonotonic.map({ monotonic > $0 }) ?? true else { continue }
+        result[entry.index] = MonotonicMilliseconds(monotonic)
+        previousMonotonic = monotonic
+    }
+    return result
 }
 
 /// Returns a phone sample only when the map accepted that exact sample into the ride.

@@ -50,7 +50,6 @@ final class CutoutAppModel {
     var rideMapHistorySearchText = ""
     private(set) var rideMapHistoryDateFilter = RideMapHistoryDateFilter.last30Days
     private(set) var rideMapHistoryVehicleFilter: String?
-    private(set) var rideMapHistoryPoints = [MobileRideMapPointDto]()
     private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistoryRouteLoading = false
@@ -379,7 +378,6 @@ final class CutoutAppModel {
         guard applyRideMapCommand({ try core.rideMapStateHandle.discard() }) else {
             return false
         }
-        rideMapHistoryPoints = []
         rideMapHistoryDisplayPoints = []
         rideMapHistoryPointsTruncated = false
         rideMapHistoryRouteLoading = false
@@ -439,7 +437,6 @@ final class CutoutAppModel {
                 )
                 guard let selectedID else {
                     self.selectedRideMapHistoryID = nil
-                    self.rideMapHistoryPoints = []
                     self.rideMapHistoryDisplayPoints = []
                     self.rideMapHistoryPointsTruncated = false
                     self.rideMapHistoryRouteLoading = false
@@ -477,9 +474,19 @@ final class CutoutAppModel {
         summaryIDs: [String]
     ) -> String? {
         if let requestedID {
-            return summaryIDs.first(where: { $0 == requestedID }) ?? summaryIDs.first
+            return summaryIDs.first(where: { $0 == requestedID })
         }
         return summaryIDs.first(where: { $0 == currentID }) ?? summaryIDs.first
+    }
+
+    @MainActor
+    static func appendingUniqueHistory<T>(
+        existing: [T],
+        incoming: [T],
+        id: (T) -> String
+    ) -> [T] {
+        var seen = Set(existing.map(id))
+        return existing + incoming.filter { seen.insert(id($0)).inserted }
     }
 
     @MainActor
@@ -502,7 +509,11 @@ final class CutoutAppModel {
                     try state.storedHistoryPage(cursor: cursor, limit: 50, filter: filter)
                 }.value
                 guard !Task.isCancelled, let self else { return }
-                self.rideMapHistory.append(contentsOf: page.summaries)
+                self.rideMapHistory = Self.appendingUniqueHistory(
+                    existing: self.rideMapHistory,
+                    incoming: page.summaries,
+                    id: \.rideId
+                )
                 self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
                     existing: self.rideMapHistoryVehicleIdentities,
                     incoming: page.summaries.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
@@ -616,7 +627,6 @@ final class CutoutAppModel {
         rideMapHistoryViewportTask?.cancel()
         let selectingDifferentRide = selectedRideMapHistoryID != rideID
         if selectingDifferentRide {
-            rideMapHistoryPoints = []
             rideMapHistoryDisplayPoints = []
             rideMapHistoryPointsTruncated = false
         }
@@ -647,7 +657,6 @@ final class CutoutAppModel {
                 })
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryRouteError = nil
-                self.rideMapHistoryPoints = []
                 self.rideMapHistoryDisplayPoints = result.points
                 self.rideMapHistoryPointsTruncated = result.sourcePointCount
                     > UInt64(result.points.count)

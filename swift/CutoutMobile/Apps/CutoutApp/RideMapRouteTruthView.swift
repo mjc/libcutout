@@ -9,6 +9,7 @@ struct RideMapRouteTruthView: View {
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
     let hasRoute: Bool?
+    let telemetryState: MobileRideMapTelemetryStateDto?
 
     init(
         points: [MobileRideMapPointDto],
@@ -16,7 +17,8 @@ struct RideMapRouteTruthView: View {
         rustSegmentCount: UInt64,
         decision: MobileRideMapDecisionDto?,
         showsRecordedBounds: Bool,
-        hasRoute: Bool? = nil
+        hasRoute: Bool? = nil,
+        telemetryState: MobileRideMapTelemetryStateDto? = nil
     ) {
         self.points = points
         self.recordedPointCount = recordedPointCount
@@ -24,6 +26,7 @@ struct RideMapRouteTruthView: View {
         self.decision = decision
         self.showsRecordedBounds = showsRecordedBounds
         self.hasRoute = hasRoute
+        self.telemetryState = telemetryState
     }
 
     var body: some View {
@@ -57,7 +60,7 @@ struct RideMapRouteTruthView: View {
     private var routeIsPresent: Bool { hasRoute ?? !points.isEmpty }
 
     private var telemetryText: String {
-        guard let state = points.last?.telemetryState else {
+        guard let state = telemetryState ?? points.last?.telemetryState else {
             return localizedAppText("ride_map.telemetry.gps_only")
         }
         switch state {

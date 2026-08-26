@@ -159,6 +159,36 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveCameraRegionUsesPrivacyProjectedCoordinates() {
+        let points = [
+            MobileRideMapRouteDisplayPoint(
+                sequence: 0,
+                segmentId: 0,
+                latitudeDegrees: 39.7,
+                longitudeDegrees: -104.9,
+                privacyClass: .gridRedacted
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 1,
+                segmentId: 0,
+                latitudeDegrees: 39.71,
+                longitudeDegrees: -104.89,
+                privacyClass: .gridRedacted
+            ),
+        ]
+
+        let region = RideMapLiveContentView.routeRegion(
+            centeredOn: points[1],
+            points: points
+        )
+
+        XCTAssertEqual(region.center.latitude, points[1].latitudeDegrees)
+        XCTAssertEqual(region.center.longitude, points[1].longitudeDegrees)
+        XCTAssertGreaterThan(region.span.latitudeDelta, 0)
+        XCTAssertGreaterThan(region.span.longitudeDelta, 0)
+    }
+
+    @MainActor
     func testRideMapSeparatesStartAndEndMarkersForSinglePointRoutes() {
         let coordinate = CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903)
         let offsets = RideMapCanvasView.markerOffsets(for: [coordinate])

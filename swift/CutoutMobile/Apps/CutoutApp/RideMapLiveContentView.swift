@@ -130,7 +130,7 @@ struct RideMapLiveContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear.frame(height: 92)
         }
-        .onChange(of: points.last?.sequence, initial: true) { _, _ in
+        .onChange(of: displayPoints.last?.sequence, initial: true) { _, _ in
             guard followsLatestPoint else { return }
             recenterOnLatestPoint()
         }
@@ -225,22 +225,21 @@ struct RideMapLiveContentView: View {
     }
 
     private func recenterOnLatestPoint() {
-        guard let point = points.last else { return }
+        guard let point = displayPoints.last else { return }
         followsLatestPoint = true
         isApplyingCamera = true
-        mapPosition = .region(Self.routeRegion(centeredOn: point, points: points))
+        mapPosition = .region(Self.routeRegion(centeredOn: point, points: displayPoints))
     }
 
     static func routeRegion(
-        centeredOn latest: MobileRideMapPointDto,
-        points: [MobileRideMapPointDto]
+        centeredOn latest: MobileRideMapRouteDisplayPoint,
+        points: [MobileRideMapRouteDisplayPoint]
     ) -> MKCoordinateRegion {
         let center = CLLocationCoordinate2D(
             latitude: latest.latitudeDegrees,
             longitude: latest.longitudeDegrees
         )
-        let displayPoints = points.map(MobileRideMapRouteDisplayPoint.init)
-        let span = RideMapCanvasView.region(for: displayPoints)?.span
+        let span = RideMapCanvasView.region(for: points)?.span
             ?? MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
         return MKCoordinateRegion(center: center, span: span)
     }
