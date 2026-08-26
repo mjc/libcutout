@@ -3224,8 +3224,8 @@ pub struct MobileRideMapCorePointDto {
     pub wall_clock_unix_ms: u64,
     /// Monotonic timestamp in milliseconds.
     pub monotonic_ms: u64,
-    /// Horizontal accuracy in metres.
-    pub horizontal_accuracy_meters: f64,
+    /// Horizontal accuracy in metres, when the source provided it.
+    pub horizontal_accuracy_meters: Option<f64>,
     /// Vehicle telemetry provenance.
     pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
 }
@@ -5182,7 +5182,7 @@ impl MobileRideMapCoreInner {
             monotonic_ms: location.monotonic_milliseconds,
             horizontal_accuracy_meters: location
                 .horizontal_accuracy_millimetres
-                .map_or(0.0, |value| f64::from(value) / 1_000.0),
+                .map(|value| f64::from(value) / 1_000.0),
             telemetry_state: telemetry_state.into(),
         }
     }
@@ -14072,7 +14072,7 @@ mod tests {
                     longitude_degrees: -105.0,
                     wall_clock_unix_ms: 1_700_000_003_002,
                     monotonic_ms: 3_002,
-                    horizontal_accuracy_meters: 3.0,
+                    horizontal_accuracy_meters: Some(3.0),
                     telemetry_state: MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry,
                 },
                 segment_started: true,
@@ -14792,7 +14792,7 @@ mod tests {
                     longitude_degrees: -105.0,
                     wall_clock_unix_ms: 1_700_000_039_000,
                     monotonic_ms: 40_000,
-                    horizontal_accuracy_meters: 3.0,
+                    horizontal_accuracy_meters: Some(3.0),
                     telemetry_state: MobileRideMapCoreTelemetryStateDto::GpsOnly,
                 },
                 segment_started: true,
@@ -14868,6 +14868,47 @@ mod tests {
                 reason: MobileRideMapDecisionReasonDto::DuplicateLocation,
             }
         );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_preserves_missing_accuracy_in_durable_points() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-missing-accuracy-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let snapshot = state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        database
+            .append_location(
+                MobileRideIdDto {
+                    value: snapshot.ride_id,
+                },
+                MobileRideLocationDto {
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    monotonic_milliseconds: 1_001,
+                    wall_clock_unix_milliseconds: 1_700_000_000_001,
+                    horizontal_accuracy_millimetres: None,
+                    source: MobileRideSourceDto::Live,
+                },
+            )
+            .expect("external durable append succeeds");
+
+        let points = state.points_after(None, 10).expect("route points load");
+        assert_eq!(points.points.len(), 1);
+        assert_eq!(points.points[0].horizontal_accuracy_meters, None);
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);

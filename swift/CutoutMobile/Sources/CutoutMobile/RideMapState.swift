@@ -72,7 +72,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     public var longitudeDegrees: Double
     public var wallClockUnixMs: UInt64
     public var monotonicMs: UInt64
-    public var horizontalAccuracyMeters: Double
+    public var horizontalAccuracyMeters: Double?
     public var telemetryState: MobileRideMapTelemetryStateDto
 
     public init(
@@ -82,7 +82,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
         longitudeDegrees: Double,
         wallClockUnixMs: UInt64,
         monotonicMs: UInt64,
-        horizontalAccuracyMeters: Double,
+        horizontalAccuracyMeters: Double?,
         telemetryState: MobileRideMapTelemetryStateDto
     ) {
         self.sequence = sequence
@@ -672,7 +672,9 @@ public final class MobileRideMapState: @unchecked Sendable {
             longitudeDegrees: point.location.longitudeDegrees,
             wallClockUnixMs: point.location.wallClockUnixMilliseconds,
             monotonicMs: point.location.monotonicMilliseconds,
-            horizontalAccuracyMeters: Double(point.location.horizontalAccuracyMillimetres ?? 0) / 1_000,
+            horizontalAccuracyMeters: point.location.horizontalAccuracyMillimetres.map {
+                Double($0) / 1_000
+            },
             telemetryState: map(point.telemetryState)
         )
     }

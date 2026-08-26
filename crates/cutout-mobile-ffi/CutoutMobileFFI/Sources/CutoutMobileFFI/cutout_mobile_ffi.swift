@@ -10591,9 +10591,9 @@ public struct MobileRideMapCorePointDto: Equatable, Hashable {
      */
     public var monotonicMs: UInt64
     /**
-     * Horizontal accuracy in metres.
+     * Horizontal accuracy in metres, when the source provided it.
      */
-    public var horizontalAccuracyMeters: Double
+    public var horizontalAccuracyMeters: Double?
     /**
      * Vehicle telemetry provenance.
      */
@@ -10621,8 +10621,8 @@ public struct MobileRideMapCorePointDto: Equatable, Hashable {
          * Monotonic timestamp in milliseconds.
          */monotonicMs: UInt64,
         /**
-         * Horizontal accuracy in metres.
-         */horizontalAccuracyMeters: Double,
+         * Horizontal accuracy in metres, when the source provided it.
+         */horizontalAccuracyMeters: Double?,
         /**
          * Vehicle telemetry provenance.
          */telemetryState: MobileRideMapCoreTelemetryStateDto) {
@@ -10658,7 +10658,7 @@ public struct FfiConverterTypeMobileRideMapCorePointDto: FfiConverterRustBuffer 
                 longitudeDegrees: FfiConverterDouble.read(from: &buf),
                 wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
                 monotonicMs: FfiConverterUInt64.read(from: &buf),
-                horizontalAccuracyMeters: FfiConverterDouble.read(from: &buf),
+                horizontalAccuracyMeters: FfiConverterOptionDouble.read(from: &buf),
                 telemetryState: FfiConverterTypeMobileRideMapCoreTelemetryStateDto.read(from: &buf)
         )
     }
@@ -10670,7 +10670,7 @@ public struct FfiConverterTypeMobileRideMapCorePointDto: FfiConverterRustBuffer 
         FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
         FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)
         FfiConverterUInt64.write(value.monotonicMs, into: &buf)
-        FfiConverterDouble.write(value.horizontalAccuracyMeters, into: &buf)
+        FfiConverterOptionDouble.write(value.horizontalAccuracyMeters, into: &buf)
         FfiConverterTypeMobileRideMapCoreTelemetryStateDto.write(value.telemetryState, into: &buf)
     }
 }
