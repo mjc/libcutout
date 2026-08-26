@@ -238,6 +238,36 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(sample?.courseAccuracyDegrees)
     }
 
+    func testConnectionAutoStartResetsLocationTimestampAdmissionForANewRide() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(20_000) },
+            wallClock: WallClock { timestamp },
+            testScript: CutoutSessionTestScript(
+                candidate: scriptedVescCandidate,
+                telemetry: nil,
+                connectionDelayMilliseconds: 60_000
+            )
+        )
+
+        core.start()
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        core.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [Self.location(timestamp: timestamp, latitude: 39.7392)]
+        )
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7392)
+
+        _ = try core.rideMapStateHandle.stop(atMs: 20_000)
+        XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
+        core.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [Self.location(timestamp: timestamp, latitude: 39.7402)]
+        )
+
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7402)
+    }
+
     func testPhoneLocationReadbackTracksAValidSampleWithoutAnActiveRide() {
         let core = CutoutSessionCore()
         let location = CLLocation(
@@ -256,6 +286,20 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7392)
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
+    }
+
+    private static func location(timestamp: Date, latitude: CLLocationDegrees) -> CLLocation {
+        CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 6,
+            course: 90,
+            courseAccuracy: 3,
+            speed: 2,
+            speedAccuracy: 0.2,
+            timestamp: timestamp
+        )
     }
 
     func testRejectedLocationDoesNotPoisonTheNextCallbackTimestamp() throws {

@@ -2242,10 +2242,14 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
     @discardableResult
     private func ensureRideMapRecordingForConnection(platformIdentifier: String) -> Bool {
         do {
+            let previousRideID = rideMapState.currentSnapshot()?.rideId
             let snapshot = try rideMapState.ensureRecordingForVehicle(
                 platformIdentifier: platformIdentifier,
                 atMs: clock.now().rawValue
             )
+            if snapshot.rideId != previousRideID {
+                resetRideMapLocationAdmission()
+            }
             publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
             return true
         } catch {
