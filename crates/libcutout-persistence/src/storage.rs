@@ -11,7 +11,7 @@ use cutout_ride_maps::{
     count_segment_runs,
 };
 use hex::encode as hex_encode;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -23,6 +23,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
+    time::Instant,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -1039,6 +1040,9 @@ pub enum StorageError {
     /// A durable route projection was cancelled at a worker checkpoint.
     #[error("route projection cancelled")]
     Cancelled,
+    /// A durable route projection exceeded its caller-provided deadline.
+    #[error("route projection deadline exceeded")]
+    DeadlineExceeded,
 }
 
 enum SpatialSchemaState {
@@ -1078,9 +1082,21 @@ pub struct PendingLocationWrite {
 }
 
 /// Cooperative cancellation shared by a durable route projection and its caller.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RouteProjectionCancellation {
     cancelled: Arc<AtomicBool>,
+    deadline: Option<Instant>,
+    interrupt: Arc<Mutex<Option<Arc<rusqlite::InterruptHandle>>>>,
+}
+
+impl std::fmt::Debug for RouteProjectionCancellation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RouteProjectionCancellation")
+            .field("cancelled", &self.is_cancelled())
+            .field("deadline", &self.deadline)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RouteProjectionCancellation {
@@ -1089,6 +1105,18 @@ impl RouteProjectionCancellation {
     pub fn new() -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: None,
+            interrupt: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Creates a cancellation token that expires at a monotonic deadline.
+    #[must_use]
+    pub fn with_deadline(deadline: Instant) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: Some(deadline),
+            interrupt: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1101,6 +1129,45 @@ impl RouteProjectionCancellation {
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+    }
+
+    fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    fn is_expired(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn abort_error(&self) -> Option<StorageError> {
+        if self.is_expired() {
+            Some(StorageError::DeadlineExceeded)
+        } else if self.is_cancelled() {
+            Some(StorageError::Cancelled)
+        } else {
+            None
+        }
+    }
+
+    fn install_interrupt(&self, handle: rusqlite::InterruptHandle) {
+        if let Ok(mut interrupt) = self.interrupt.lock() {
+            *interrupt = Some(Arc::new(handle));
+        }
+    }
+
+    fn clear_interrupt(&self) {
+        if let Ok(mut interrupt) = self.interrupt.lock() {
+            *interrupt = None;
+        }
+    }
+
+    fn interrupt(&self) {
+        if let Ok(interrupt) = self.interrupt.lock()
+            && let Some(handle) = interrupt.as_ref()
+        {
+            handle.interrupt();
+        }
     }
 }
 
@@ -2040,6 +2107,10 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError::Cancelled`] when cancellation is requested, or the same storage
     /// errors as [`Self::project_route_points`].
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the token is cloned into the worker-owned command"
+    )]
     pub fn project_route_points_cancellable(
         &self,
         ride_id: RideId,
@@ -2048,14 +2119,24 @@ impl RideDatabase {
         privacy: RoutePrivacyPolicy,
         cancellation: RouteProjectionCancellation,
     ) -> Result<RoutePointProjection, StorageError> {
-        self.request(move |reply| Command::ProjectRoutePoints {
+        let deadline = cancellation.deadline();
+        let (reply, response) = response_channel();
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            cancellation.cancel();
+            return Err(StorageError::DeadlineExceeded);
+        }
+        self.enqueue(Command::ProjectRoutePoints {
             ride_id,
             viewport,
             budget,
             privacy,
-            cancellation: Some(cancellation),
+            cancellation: Some(cancellation.clone()),
             reply,
-        })
+        })?;
+        match deadline {
+            Some(deadline) => receive_until(&response, deadline, &cancellation),
+            None => receive(&response),
+        }
     }
 
     /// Loads the newest live-projection-sized route tail in ascending sequence order.
@@ -2127,6 +2208,57 @@ fn response_channel<T>() -> (Reply<T>, Receiver<Result<T, StorageError>>) {
 
 fn receive<T>(response: &Receiver<Result<T, StorageError>>) -> Result<T, StorageError> {
     response.recv().map_err(|_| StorageError::ResponseDropped)?
+}
+
+fn receive_until<T>(
+    response: &Receiver<Result<T, StorageError>>,
+    deadline: Instant,
+    cancellation: &RouteProjectionCancellation,
+) -> Result<T, StorageError> {
+    let timeout = deadline.saturating_duration_since(Instant::now());
+    match response.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancellation.cancel();
+            cancellation.interrupt();
+            Err(StorageError::DeadlineExceeded)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
+    }
+}
+
+fn projection_checkpoint(
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<(), StorageError> {
+    if let Some(cancellation) = cancellation
+        && let Some(error) = cancellation.abort_error()
+    {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn projection_sqlite<T>(
+    result: rusqlite::Result<T>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<T, StorageError> {
+    result.map_err(|error| {
+        if matches!(
+            &error,
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.code == ErrorCode::OperationInterrupted
+        ) {
+            if cancellation.is_some_and(RouteProjectionCancellation::is_expired) {
+                StorageError::DeadlineExceeded
+            } else if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+                StorageError::Cancelled
+            } else {
+                StorageError::Sqlite(error)
+            }
+        } else {
+            StorageError::Sqlite(error)
+        }
+    })
 }
 
 enum PevcapBegin {
@@ -2664,14 +2796,21 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 cancellation,
                 reply,
             } => {
-                let _ = reply.send(project_route_points(
+                if let Some(cancellation) = cancellation.as_ref() {
+                    cancellation.install_interrupt(connection.get_interrupt_handle());
+                }
+                let result = project_route_points(
                     &connection,
                     ride_id,
                     viewport,
                     budget,
                     privacy,
                     cancellation.as_ref(),
-                ));
+                );
+                if let Some(cancellation) = cancellation.as_ref() {
+                    cancellation.clear_interrupt();
+                }
+                let _ = reply.send(result);
             }
             Command::LatestRoutePoints { ride_id, reply } => {
                 let _ = reply.send(latest_route_points(&connection, ride_id));
@@ -4595,7 +4734,7 @@ fn append_location_in_transaction(
             match insert_location(connection, &insert) {
                 Ok(()) => Ok(LocationAdmission::Accepted),
                 Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
-                    if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+                    if error.code == ErrorCode::ConstraintViolation =>
                 {
                     Ok(LocationAdmission::Duplicate)
                 }
@@ -5149,22 +5288,21 @@ fn project_route_points(
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<RoutePointProjection, StorageError> {
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
     let ride_id = ride_id.uuid().to_string();
-    let exists: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
-        [&ride_id],
-        |row| row.get(0),
+    let exists: bool = projection_sqlite(
+        connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+            [&ride_id],
+            |row| row.get(0),
+        ),
+        cancellation,
     )?;
     if !exists {
         return Err(StorageError::NotFound);
     }
 
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
 
     let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
     let RouteProjectionCounts {
@@ -5174,9 +5312,7 @@ fn project_route_points(
         candidate_segment_count,
         viewport_predicate,
     } = counts;
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
     let candidate_count = usize::try_from(candidate_count).unwrap_or(usize::MAX);
     if candidate_count == 0 {
         return Ok(RoutePointProjection {
@@ -5195,30 +5331,32 @@ fn project_route_points(
          WHERE ride_id = ?1{viewport_predicate}
          ORDER BY sequence ASC"
     );
-    let mut statement = connection.prepare(&select)?;
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
+    projection_checkpoint(cancellation)?;
     let rows = if let Some(viewport) = viewport {
-        statement.query_map(
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            route_point_from_row,
+        projection_sqlite(
+            statement.query_map(
+                params![
+                    ride_id,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                route_point_from_row,
+            ),
+            cancellation,
         )?
     } else {
-        statement.query_map([ride_id], route_point_from_row)?
+        projection_sqlite(
+            statement.query_map([ride_id], route_point_from_row),
+            cancellation,
+        )?
     };
     let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, row) in rows.enumerate() {
-        if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-            return Err(StorageError::Cancelled);
-        }
-        let point = row?;
+        projection_checkpoint(cancellation)?;
+        let point = projection_sqlite(row, cancellation)?;
         accumulator.push(
             candidate_ordinal,
             point.sequence().as_u64(),
@@ -5228,9 +5366,7 @@ fn project_route_points(
             break;
         }
     }
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
     let points = accumulator.finish();
     let displayed_segment_count = u64::try_from(count_segment_runs(
         points.iter().copied().map(RouteDisplayPoint::segment_id),
@@ -5259,19 +5395,24 @@ fn route_projection_counts(
     viewport: Option<RouteViewport>,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<RouteProjectionCounts, StorageError> {
-    let source_point_count = connection.query_row(
-        "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
-        [ride_id],
-        |row| row.get::<_, u64>(0),
+    let source_point_count = projection_sqlite(
+        connection.query_row(
+            "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
     )?;
-    let source_segment_count = connection.query_row(
-        "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
-        [ride_id],
-        |row| row.get::<_, u64>(0),
+    projection_checkpoint(cancellation)?;
+    let source_segment_count = projection_sqlite(
+        connection.query_row(
+            "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
     )?;
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
     let viewport_predicate = route_point_viewport_predicate(viewport);
     let (candidate_count, candidate_segment_count) = if let Some(viewport) = viewport {
         let parameters = params![
@@ -5281,24 +5422,32 @@ fn route_projection_counts(
             viewport.minimum_longitude().as_i32(),
             viewport.maximum_longitude().as_i32(),
         ];
-        let candidate_count = connection.query_row(
-            &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
-            parameters,
-            |row| row.get::<_, u64>(0),
-        )?;
-        let candidate_segment_count = connection.query_row(
-            &format!(
-                "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
+        let candidate_count = projection_sqlite(
+            connection.query_row(
+                &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
+                parameters,
+                |row| row.get::<_, u64>(0),
             ),
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get::<_, u64>(0),
+            cancellation,
         )?;
+        projection_checkpoint(cancellation)?;
+        let candidate_segment_count = projection_sqlite(
+            connection.query_row(
+                &format!(
+                    "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
+                ),
+                params![
+                    ride_id,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                |row| row.get::<_, u64>(0),
+            ),
+            cancellation,
+        )?;
+        projection_checkpoint(cancellation)?;
         (candidate_count, candidate_segment_count)
     } else {
         (source_point_count, source_segment_count)

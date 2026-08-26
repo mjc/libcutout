@@ -1,4 +1,7 @@
-use std::sync::Mutex;
+use std::{
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use cutout_core::{
     MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapPhoneLocation,
@@ -1825,6 +1828,36 @@ fn cancelled_durable_route_projection_returns_before_scanning() {
 
     assert!(matches!(error, StorageError::Cancelled));
     assert!(database.find_ride(ride).unwrap().is_some());
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn expired_durable_route_projection_returns_a_typed_deadline() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-deadline-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    let cancellation = RouteProjectionCancellation::with_deadline(
+        Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap(),
+    );
+
+    let error = database
+        .project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            cancellation,
+        )
+        .expect_err("an expired projection must not enter the worker");
+
+    assert!(matches!(error, StorageError::DeadlineExceeded));
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
