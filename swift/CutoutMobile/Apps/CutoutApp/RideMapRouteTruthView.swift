@@ -8,6 +8,7 @@ struct RideMapRouteTruthView: View {
     let rustSegmentCount: UInt64
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
+    let segmentsOmittedByBudget: Bool
     let hasRoute: Bool?
     let telemetryState: MobileRideMapTelemetryStateDto?
 
@@ -17,6 +18,7 @@ struct RideMapRouteTruthView: View {
         rustSegmentCount: UInt64,
         decision: MobileRideMapDecisionDto?,
         showsRecordedBounds: Bool,
+        segmentsOmittedByBudget: Bool = false,
         hasRoute: Bool? = nil,
         telemetryState: MobileRideMapTelemetryStateDto? = nil
     ) {
@@ -25,6 +27,7 @@ struct RideMapRouteTruthView: View {
         self.rustSegmentCount = rustSegmentCount
         self.decision = decision
         self.showsRecordedBounds = showsRecordedBounds
+        self.segmentsOmittedByBudget = segmentsOmittedByBudget
         self.hasRoute = hasRoute
         self.telemetryState = telemetryState
     }
@@ -44,6 +47,15 @@ struct RideMapRouteTruthView: View {
                         .font(.caption)
                         .foregroundStyle(PevColors.muted)
                 }
+            }
+            if segmentsOmittedByBudget {
+                Label(
+                    localizedAppText("ride_map.segments_omitted_by_budget"),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .accessibilityIdentifier("ride-map.segments-omitted")
             }
             if let decisionText {
                 Label(decisionText, systemImage: decisionSystemImage)

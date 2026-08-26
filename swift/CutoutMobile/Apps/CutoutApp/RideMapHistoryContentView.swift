@@ -12,6 +12,7 @@ struct RideMapHistoryContentView: View {
     let canLoadMore: Bool
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let pointsTruncated: Bool
+    let segmentsOmittedByBudget: Bool
     let isLoading: Bool
     let isRouteLoading: Bool
     let historyError: MobileRideMapError?
@@ -220,6 +221,18 @@ struct RideMapHistoryContentView: View {
                             .padding(.vertical, 8)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("ride-map.history-truncated")
+                    }
+
+                    if segmentsOmittedByBudget {
+                        Label(
+                            localizedAppText("ride_map.segments_omitted_by_budget"),
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .accessibilityIdentifier("ride-map.history-segments-omitted")
                     }
 
                     VStack(alignment: .leading, spacing: 10) {

@@ -64,6 +64,10 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("ride_map.live_route_truncated_count", 4_096),
             "Showing the newest 4,096 points; the full route remains stored."
         )
+        XCTAssertEqual(
+            localizedAppText("ride_map.segments_omitted_by_budget"),
+            "Some route segments are omitted from this map preview."
+        )
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
         XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Raw readback, available when we need to debug")
         XCTAssertEqual(localizedAppText("bms.display_modes"), "Display modes")

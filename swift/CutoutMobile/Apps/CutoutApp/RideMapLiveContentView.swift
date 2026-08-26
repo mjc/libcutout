@@ -15,6 +15,7 @@ struct RideMapLiveContentView: View {
     let mapError: MobileRideMapError?
     let lastDecision: MobileRideMapDecisionDto?
     let pointsTruncated: Bool
+    let segmentsOmittedByBudget: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     @Binding var followsLatestPoint: Bool
@@ -92,7 +93,8 @@ struct RideMapLiveContentView: View {
                     recordedPointCount: snapshot?.summary.pointCount,
                     rustSegmentCount: snapshot?.segmentCount ?? 0,
                     decision: lastDecision,
-                    showsRecordedBounds: showsRecordedBounds
+                    showsRecordedBounds: showsRecordedBounds,
+                    segmentsOmittedByBudget: segmentsOmittedByBudget
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated_count", points.count))

@@ -773,6 +773,10 @@
       "comment" : "History route warning with the number of points currently projected for map display; the durable route remains complete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %lld route points; the full route remains stored." } } }
     },
+    "ride_map.segments_omitted_by_budget" : {
+      "comment" : "Warning shown when the bounded route projection omits one or more candidate segments from the map preview.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Some route segments are omitted from this map preview." } } }
+    },
     "ride_map.history_loading" : {
       "comment" : "Historical ride detail state while the selected route is being loaded.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading ride…" } } }
