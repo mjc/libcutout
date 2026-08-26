@@ -34,6 +34,15 @@ protocol CutoutSessionDriving: AnyObject {
     func flushCapture() async -> Bool
     func disconnectAndScan()
     func resetRideMapLocationAdmission()
+    func startRideMapGpsOnly(
+        atMs: UInt64,
+        lastConnectedVehicle: String?
+    ) throws -> MobileRideMapSnapshotDto
+    func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto
+    func saveRideMap() throws -> MobileRideMapSnapshotDto
+    func discardRideMap() throws -> MobileRideMapSnapshotDto
     func now() -> MonotonicMilliseconds
 }
 
@@ -42,4 +51,36 @@ extension CutoutSessionCore: CutoutSessionDriving {}
 extension CutoutSessionDriving {
     var rideMapStorageError: String? { nil }
     var rideMapAvailability: MobileRideMapAvailability { .checking }
+
+    // Test and alternate drivers retain the legacy direct handle by default. The concrete
+    // CutoutSessionCore implementation overrides these witnesses with its lifecycle barrier.
+    func startRideMapGpsOnly(
+        atMs: UInt64,
+        lastConnectedVehicle: String?
+    ) throws -> MobileRideMapSnapshotDto {
+        try rideMapStateHandle.startGpsOnly(
+            atMs: atMs,
+            lastConnectedVehicle: lastConnectedVehicle
+        )
+    }
+
+    func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try rideMapStateHandle.pause(atMs: atMs)
+    }
+
+    func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try rideMapStateHandle.resume(atMs: atMs)
+    }
+
+    func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try rideMapStateHandle.stop(atMs: atMs)
+    }
+
+    func saveRideMap() throws -> MobileRideMapSnapshotDto {
+        try rideMapStateHandle.save()
+    }
+
+    func discardRideMap() throws -> MobileRideMapSnapshotDto {
+        try rideMapStateHandle.discard()
+    }
 }

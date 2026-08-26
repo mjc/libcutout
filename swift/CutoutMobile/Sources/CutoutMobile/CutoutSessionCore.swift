@@ -349,8 +349,14 @@ struct PendingPhoneLocationQueue {
 
     var isEmpty: Bool { entries.isEmpty }
 
+    var count: Int { entries.count }
+
     mutating func append(_ sample: MobilePhoneLocationSampleDto, sequence: UInt64) {
         entries.append(Entry(sequence: sequence, sample: sample))
+    }
+
+    mutating func removeAll() {
+        entries.removeAll(keepingCapacity: true)
     }
 
     mutating func take(for decision: MobileRideMapDecisionDto) -> MobilePhoneLocationSampleDto? {
@@ -472,8 +478,17 @@ public final class CutoutSessionCore: NSObject {
     private let phoneLocationState = MobilePhoneLocationState()
     private let admittedPhoneLocationState = MobilePhoneLocationState()
     private let rideMapPollScheduler: any RideMapWritePollingScheduling
+    /// Serializes Core Location ingestion, durable polling, and lifecycle transitions.
+    ///
+    /// Rust serializes its own state, but Swift also retains the sample associated with each
+    /// pending write so a later accepted outcome can enter PEVCAP. This lock makes retiring that
+    /// Swift-side context atomic with the Rust lifecycle transition; otherwise a callback could
+    /// append an old sample immediately after a terminal transition drained its Rust ticket.
+    private let rideMapLifecycleLock = NSLock()
     private let pendingPhoneLocationLock = NSLock()
     private var pendingPhoneLocations = PendingPhoneLocationQueue()
+    /// Protected by `pendingPhoneLocationLock`; stale scheduled work checks this generation.
+    private var rideMapPollGeneration: UInt64 = 0
     private var rideMapPollScheduled = false
     private let rideMapState: MobileRideMapState
     private var didRequestAlwaysLocationAuthorization = false
@@ -499,7 +514,87 @@ public final class CutoutSessionCore: NSObject {
 
     /// Starts a fresh location-admission boundary for a new ride-map recording.
     public func resetRideMapLocationAdmission() {
-        locationTimestampAdmission.reset()
+        withRideMapLifecycleLock {
+            locationTimestampAdmission.reset()
+        }
+    }
+
+    private func withRideMapLifecycleLock<Result>(
+        _ operation: () throws -> Result
+    ) rethrows -> Result {
+        rideMapLifecycleLock.lock()
+        defer { rideMapLifecycleLock.unlock() }
+        return try operation()
+    }
+
+    /// Retires the Swift-side context after Rust has completed a lifecycle transition.
+    ///
+    /// Rust consumes pending writes while stopping/saving/discarding. There is therefore no later
+    /// Rust decision for Swift to poll and use to remove its retained sample. A generation bump
+    /// invalidates already-scheduled work, while clearing the queue prevents sequence-zero reuse
+    /// from matching a previous ride's sample.
+    private func retirePendingPhoneLocations() {
+        pendingPhoneLocationLock.lock()
+        pendingPhoneLocations.removeAll()
+        rideMapPollGeneration &+= 1
+        rideMapPollScheduled = false
+        pendingPhoneLocationLock.unlock()
+    }
+
+    /// Starts a GPS-only ride through the Core-owned lifecycle barrier.
+    ///
+    /// App-layer lifecycle commands must use these methods instead of mutating
+    /// `rideMapStateHandle` directly. The barrier retires Swift's pending sample context whenever
+    /// Rust has completed a lifecycle transition, preventing delayed poll work from attaching a
+    /// prior ride's sample to a new ride.
+    public func startRideMapGpsOnly(
+        atMs: UInt64,
+        lastConnectedVehicle: String?
+    ) throws -> MobileRideMapSnapshotDto {
+        try withRideMapLifecycleLock {
+            let snapshot = try rideMapState.startGpsOnly(
+                atMs: atMs,
+                lastConnectedVehicle: lastConnectedVehicle
+            )
+            retirePendingPhoneLocations()
+            return snapshot
+        }
+    }
+
+    public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try withRideMapLifecycleLock {
+            try rideMapState.pause(atMs: atMs)
+        }
+    }
+
+    public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try withRideMapLifecycleLock {
+            try rideMapState.resume(atMs: atMs)
+        }
+    }
+
+    public func stopRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
+        try withRideMapLifecycleLock {
+            let snapshot = try rideMapState.stop(atMs: atMs)
+            retirePendingPhoneLocations()
+            return snapshot
+        }
+    }
+
+    public func saveRideMap() throws -> MobileRideMapSnapshotDto {
+        try withRideMapLifecycleLock {
+            let snapshot = try rideMapState.save()
+            retirePendingPhoneLocations()
+            return snapshot
+        }
+    }
+
+    public func discardRideMap() throws -> MobileRideMapSnapshotDto {
+        try withRideMapLifecycleLock {
+            let snapshot = try rideMapState.discard()
+            retirePendingPhoneLocations()
+            return snapshot
+        }
     }
 
 #if DEBUG
@@ -2260,20 +2355,23 @@ extension CutoutSessionCore: CBCentralManagerDelegate {
 
     @discardableResult
     private func ensureRideMapRecordingForConnection(platformIdentifier: String) -> Bool {
-        do {
-            let previousRideID = rideMapState.currentSnapshot()?.rideId
-            let snapshot = try rideMapState.ensureRecordingForVehicle(
-                platformIdentifier: platformIdentifier,
-                atMs: clock.now().rawValue
-            )
-            if snapshot.rideId != previousRideID {
-                resetRideMapLocationAdmission()
+        withRideMapLifecycleLock {
+            do {
+                let previousRideID = rideMapState.currentSnapshot()?.rideId
+                let snapshot = try rideMapState.ensureRecordingForVehicle(
+                    platformIdentifier: platformIdentifier,
+                    atMs: clock.now().rawValue
+                )
+                if snapshot.rideId != previousRideID {
+                    retirePendingPhoneLocations()
+                    locationTimestampAdmission.reset()
+                }
+                publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
+                return true
+            } catch {
+                publishRideMapError(error)
+                return false
             }
-            publishOnMain { self.onRideMapSnapshotChange?(snapshot) }
-            return true
-        } catch {
-            publishRideMapError(error)
-            return false
         }
     }
 
@@ -2773,21 +2871,23 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             callbackWallClock: wallClock.now(),
             lastAcceptedTimestamp: locationTimestampAdmission.lastAcceptedTimestamp
         )
-        for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
-            guard let monotonicMs else { continue }
-            guard let sample = MobilePhoneLocationSampleDto(location: location) else { continue }
-            // Current-location readback is independent of ride recording. The map
-            // admission result below only controls the canonical capture context.
-            phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
-            do {
-                let decision = try rideMapState.ingestLocation(
-                    monotonicMs: monotonicMs.rawValue,
-                    sample: sample
-                )
-                handleRideMapLocationDecision(decision, sample: sample)
-                locationTimestampAdmission.record(location.timestamp, decision: decision)
-            } catch {
-                publishRideMapError(error)
+        withRideMapLifecycleLock {
+            for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
+                guard let monotonicMs else { continue }
+                guard let sample = MobilePhoneLocationSampleDto(location: location) else { continue }
+                // Current-location readback is independent of ride recording. The map
+                // admission result below only controls the canonical capture context.
+                phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
+                do {
+                    let decision = try rideMapState.ingestLocation(
+                        monotonicMs: monotonicMs.rawValue,
+                        sample: sample
+                    )
+                    handleRideMapLocationDecision(decision, sample: sample)
+                    locationTimestampAdmission.record(location.timestamp, decision: decision)
+                } catch {
+                    publishRideMapError(error)
+                }
             }
         }
         publishPhoneLocationSnapshot()
@@ -2849,22 +2949,41 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             return
         }
         rideMapPollScheduled = true
+        let generation = rideMapPollGeneration
         pendingPhoneLocationLock.unlock()
 
         let work = { [weak self] in
             guard let self else { return }
-            let decisions = self.rideMapState.pollLocationWrites()
-            decisions.forEach { self.handleRideMapLocationDecision($0) }
-
-            self.pendingPhoneLocationLock.lock()
-            self.rideMapPollScheduled = false
-            let shouldPollAgain = !self.pendingPhoneLocations.isEmpty
-            self.pendingPhoneLocationLock.unlock()
-            if shouldPollAgain {
-                self.scheduleRideMapWritePoll()
-            }
+            self.pollRideMapWrites(generation: generation)
         }
         rideMapPollScheduler.schedule(after: 50, operation: work)
+    }
+
+    private func pollRideMapWrites(generation: UInt64) {
+        let shouldPollAgain = withRideMapLifecycleLock { () -> Bool in
+            pendingPhoneLocationLock.lock()
+            guard generation == rideMapPollGeneration else {
+                pendingPhoneLocationLock.unlock()
+                return false
+            }
+            pendingPhoneLocationLock.unlock()
+
+            let decisions = rideMapState.pollLocationWrites()
+            decisions.forEach { handleRideMapLocationDecision($0) }
+
+            pendingPhoneLocationLock.lock()
+            guard generation == rideMapPollGeneration else {
+                pendingPhoneLocationLock.unlock()
+                return false
+            }
+            rideMapPollScheduled = false
+            let shouldPollAgain = !pendingPhoneLocations.isEmpty
+            pendingPhoneLocationLock.unlock()
+            return shouldPollAgain
+        }
+        if shouldPollAgain {
+            scheduleRideMapWritePoll()
+        }
     }
 }
 

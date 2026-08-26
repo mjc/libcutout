@@ -495,6 +495,56 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertGreaterThan(scheduler.runCount, 0)
     }
 
+    func testTerminalRideMapTransitionClearsPendingSamplesAndStalePollWork() async throws {
+        guard RustPersistenceStore.shared != nil else {
+            throw XCTSkip("Rust ride database is unavailable in this test environment")
+        }
+        let scheduler = RecordingRideMapPollScheduler()
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(20_000) },
+            wallClock: WallClock { Date(timeIntervalSince1970: 1_700_000_020) },
+            rideMapPollScheduler: scheduler
+        )
+        defer {
+            _ = try? core.rideMapStateHandle.stop(atMs: 20_000)
+            _ = try? core.rideMapStateHandle.discard()
+        }
+
+        _ = try core.startRideMapGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        core.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [Self.location(
+                timestamp: Date(timeIntervalSince1970: 1_700_000_010),
+                latitude: 39.7392
+            )]
+        )
+        XCTAssertEqual(scheduler.scheduledCount, 1)
+
+        _ = try core.stopRideMap(atMs: 200)
+        XCTAssertTrue(scheduler.runNext())
+        XCTAssertEqual(scheduler.scheduledCount, 0)
+
+        _ = try core.startRideMapGpsOnly(atMs: 300, lastConnectedVehicle: nil)
+        core.locationManager(
+            CLLocationManager(),
+            didUpdateLocations: [Self.location(
+                timestamp: Date(timeIntervalSince1970: 1_700_000_011),
+                latitude: 39.7402
+            )]
+        )
+        for _ in 0 ..< 10_000 {
+            _ = scheduler.runNext()
+            if core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount == 1 {
+                break
+            }
+            await Task.yield()
+        }
+        XCTAssertEqual(
+            core.rideMapStateHandle.currentSnapshot(atMs: 20_000)?.summary.pointCount,
+            1
+        )
+    }
+
     func testPendingLocationQueueDoesNotCollideWhenAStoppedRideRestartsAtSequenceZero() {
         let oldSample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_100,

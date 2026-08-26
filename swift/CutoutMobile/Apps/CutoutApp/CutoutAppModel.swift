@@ -355,7 +355,7 @@ final class CutoutAppModel {
     @discardableResult
     func startGpsOnlyRide() -> Bool {
         let started = applyRideMapCommand(resetPoints: true) {
-            try core.rideMapStateHandle.startGpsOnly(
+            try core.startRideMapGpsOnly(
                 atMs: currentMonotonicTime.rawValue,
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
@@ -369,21 +369,21 @@ final class CutoutAppModel {
     @discardableResult
     func pauseRideMap() -> Bool {
         applyRideMapCommand {
-            try core.rideMapStateHandle.pause(atMs: currentMonotonicTime.rawValue)
+            try core.pauseRideMap(atMs: currentMonotonicTime.rawValue)
         }
     }
 
     @discardableResult
     func resumeRideMap() -> Bool {
         applyRideMapCommand {
-            try core.rideMapStateHandle.resume(atMs: currentMonotonicTime.rawValue)
+            try core.resumeRideMap(atMs: currentMonotonicTime.rawValue)
         }
     }
 
     @discardableResult
     func stopRideMap() -> Bool {
         let stopped = applyRideMapCommand {
-            try core.rideMapStateHandle.stop(atMs: currentMonotonicTime.rawValue)
+            try core.stopRideMap(atMs: currentMonotonicTime.rawValue)
         }
         if stopped {
             invalidateLiveProjection(clearPoints: false)
@@ -402,7 +402,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func saveRideMap() -> Bool {
-        guard applyRideMapCommand({ try core.rideMapStateHandle.save() }) else {
+        guard applyRideMapCommand({ try core.saveRideMap() }) else {
             return false
         }
         invalidateLiveProjection(clearPoints: false)
@@ -412,7 +412,7 @@ final class CutoutAppModel {
 
     @discardableResult
     func discardRideMap() -> Bool {
-        guard applyRideMapCommand({ try core.rideMapStateHandle.discard() }) else {
+        guard applyRideMapCommand({ try core.discardRideMap() }) else {
             return false
         }
         invalidateLiveProjection(clearPoints: true)
