@@ -475,7 +475,9 @@ public final class MobileRideMapState: @unchecked Sendable {
     }
 
     public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
-        guard let database else { return nil }
+        guard let database else {
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+        }
         do {
             let ride = try database.findRide(rideId: MobileRideIdDto(value: rideID))
             return ride.map(mapHistorySummary)
@@ -490,7 +492,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         filter: MobileRideHistoryFilterDto? = nil
     ) throws -> MobileRideMapHistoryPageDto {
         guard let database else {
-            return MobileRideMapHistoryPageDto(summaries: [], nextCursor: nil)
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
         }
         do {
             let filter = filter ?? MobileRideHistoryFilterDto(

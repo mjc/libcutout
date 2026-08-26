@@ -40,6 +40,16 @@ final class RideMapStateTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
         }
+        XCTAssertThrowsError(
+            try state.storedHistoryPage(cursor: nil, limit: 10)
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
+        }
+        XCTAssertThrowsError(
+            try state.storedHistoryRide(rideID: "missing")
+        ) { error in
+            XCTAssertEqual(error as? MobileRideMapError, .Storage("database unavailable"))
+        }
     }
 
     func testMapStateReportsTypedAdmissionReasons() throws {
