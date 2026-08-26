@@ -562,7 +562,7 @@ final class CutoutAppModel {
         MobileRideHistoryFilterDto(
             createdAfterMilliseconds: rideMapHistoryQueryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
             vehicleIdentity: rideMapHistoryVehicleFilter,
-            searchText: rideMapHistorySearchText
+            searchText: RideMapHistoryContentView.normalizedSearchText(rideMapHistorySearchText)
         )
     }
 

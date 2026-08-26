@@ -2742,7 +2742,9 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         pendingPhoneLocationLock.lock()
         defer { pendingPhoneLocationLock.unlock() }
         pendingPhoneLocations[sequence] = sample
-        pendingPhoneLocationOrder.append(sequence)
+        if pendingPhoneLocationOrder.contains(sequence) == false {
+            pendingPhoneLocationOrder.append(sequence)
+        }
     }
 
     private func takePendingPhoneLocation(
@@ -2751,28 +2753,28 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         pendingPhoneLocationLock.lock()
         defer { pendingPhoneLocationLock.unlock() }
 
-        let sequence: UInt64?
         if case let .accepted(point, _) = decision {
-            sequence = point.sequence
-            if pendingPhoneLocations[point.sequence] == nil {
-                // A lifecycle reset may have invalidated the Rust-side pending queue before its
-                // terminal result arrived. Drop the oldest retained sample rather than attaching
-                // a stale result to a newer route or polling forever.
-                guard let staleSequence = pendingPhoneLocationOrder.first else { return nil }
+            while let sequence = pendingPhoneLocationOrder.first,
+                  pendingPhoneLocations[sequence] == nil
+            {
                 pendingPhoneLocationOrder.removeFirst()
-                pendingPhoneLocations.removeValue(forKey: staleSequence)
-                return nil
             }
-        } else {
-            sequence = pendingPhoneLocationOrder.first
+            guard pendingPhoneLocations[point.sequence] != nil else { return nil }
+            return removePendingPhoneLocation(for: point.sequence)
         }
-        guard let sequence, let sample = pendingPhoneLocations.removeValue(forKey: sequence) else {
-            return nil
+
+        while let sequence = pendingPhoneLocationOrder.first {
+            pendingPhoneLocationOrder.removeFirst()
+            if let sample = pendingPhoneLocations.removeValue(forKey: sequence) {
+                return sample
+            }
         }
-        if let index = pendingPhoneLocationOrder.firstIndex(of: sequence) {
-            pendingPhoneLocationOrder.remove(at: index)
-        }
-        return sample
+        return nil
+    }
+
+    private func removePendingPhoneLocation(for sequence: UInt64) -> MobilePhoneLocationSampleDto? {
+        pendingPhoneLocationOrder.removeAll { $0 == sequence }
+        return pendingPhoneLocations.removeValue(forKey: sequence)
     }
 
     private func scheduleRideMapWritePoll() {

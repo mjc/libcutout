@@ -408,6 +408,14 @@ final class CutoutAppRouteTests: XCTestCase {
             RideMapHistoryContentView.searchDebounce(for: "NF2557"),
             .milliseconds(250)
         )
+        XCTAssertEqual(
+            RideMapHistoryContentView.searchDebounce(for: "  \n"),
+            .zero
+        )
+        XCTAssertEqual(
+            RideMapHistoryContentView.normalizedSearchText("  NF2557  "),
+            "NF2557"
+        )
     }
 
     @MainActor

@@ -47,8 +47,12 @@ struct RideMapHistoryDetailView: View {
         guard metersPerSecond.isFinite, metersPerSecond >= 0 else {
             return localizedAppText("ride_map.speed_unavailable")
         }
-        let milesPerHour = metersPerSecond * 2.236_936_292_054_4
-        return "\(milesPerHour.formatted(.number.precision(.fractionLength(1)))) mph"
+        let displayUnit: UnitSpeed = Locale.current.measurementSystem == .metric
+            ? .kilometersPerHour
+            : .milesPerHour
+        return Measurement(value: metersPerSecond, unit: UnitSpeed.metersPerSecond)
+            .converted(to: displayUnit)
+            .formatted(Measurement<UnitSpeed>.FormatStyle(width: .abbreviated))
     }
 
     @MainActor
@@ -199,7 +203,10 @@ struct RideMapHistoryDetailView: View {
     }
 
     private func recordedAtText(for milliseconds: UInt64) -> String {
-        Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+        guard milliseconds > 0 else {
+            return localizedAppText("ride_map.untitled_ride")
+        }
+        return Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
             .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
     }
 

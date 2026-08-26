@@ -69,12 +69,19 @@ struct RideMapHistoryContentView: View {
         dateFilter: CutoutAppModel.RideMapHistoryDateFilter,
         vehicleFilter: String?
     ) -> Bool {
-        !searchText.isEmpty || dateFilter != .last30Days || vehicleFilter != nil
+        !normalizedSearchText(searchText).isEmpty
+            || dateFilter != .last30Days
+            || vehicleFilter != nil
     }
 
     @MainActor
     static func searchDebounce(for searchText: String) -> Duration {
-        searchText.isEmpty ? .zero : .milliseconds(250)
+        normalizedSearchText(searchText).isEmpty ? .zero : .milliseconds(250)
+    }
+
+    @MainActor
+    static func normalizedSearchText(_ searchText: String) -> String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func vehicleLabel(for identity: String) -> String {
@@ -128,7 +135,9 @@ struct RideMapHistoryContentView: View {
                             .font(.subheadline.weight(.semibold))
                             .buttonStyle(.plain)
                             .foregroundStyle(PevColors.yellow)
+                            .frame(minHeight: 44)
                             .frame(maxWidth: .infinity, alignment: .trailing)
+                            .contentShape(Rectangle())
                             .padding(.horizontal, 16)
                             .padding(.bottom, 8)
                             .accessibilityIdentifier("ride-map.history-clear-filters")
