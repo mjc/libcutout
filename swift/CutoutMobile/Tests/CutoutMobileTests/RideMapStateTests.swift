@@ -8,11 +8,19 @@ final class RideMapStateTests: XCTestCase {
         _ decision: MobileRideMapDecisionDto
     ) async -> MobileRideMapDecisionDto {
         guard case .pending = decision else { return decision }
-        for _ in 0 ..< 10_000 {
-            if let terminal = state.pollLocationWrites().first {
-                return terminal
+        let deadline = Date().addingTimeInterval(10)
+        let terminal = await Task.detached(priority: .userInitiated) {
+            () async -> MobileRideMapDecisionDto? in
+            while Date() < deadline {
+                if let terminal = state.pollLocationWrites().first {
+                    return terminal
+                }
+                await Task.yield()
             }
-            await Task.yield()
+            return nil
+        }.value
+        if let terminal {
+            return terminal
         }
         XCTFail("timed out waiting for durable ride-map location outcome")
         return decision
