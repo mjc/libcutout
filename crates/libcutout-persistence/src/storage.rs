@@ -1877,14 +1877,7 @@ impl RideDatabase {
         ride_id: RideId,
         event: RideEvent,
     ) -> Result<RideLifecycleState, StorageError> {
-        let occurred_at_ms = wall_clock_now_milliseconds()?;
-        self.request_blocking(move |reply| Command::Transition {
-            ride_id,
-            event,
-            occurred_at_ms,
-            monotonic_at_ms: None,
-            reply,
-        })
+        self.transition_blocking_with_timestamp(ride_id, event, None)
     }
 
     /// Applies one lifecycle event using a caller-provided monotonic timestamp for duration.
@@ -1905,12 +1898,21 @@ impl RideDatabase {
         event: RideEvent,
         monotonic_at_ms: u64,
     ) -> Result<RideLifecycleState, StorageError> {
+        self.transition_blocking_with_timestamp(ride_id, event, Some(monotonic_at_ms))
+    }
+
+    fn transition_blocking_with_timestamp(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: Option<u64>,
+    ) -> Result<RideLifecycleState, StorageError> {
         let occurred_at_ms = wall_clock_now_milliseconds()?;
         self.request_blocking(move |reply| Command::Transition {
             ride_id,
             event,
             occurred_at_ms,
-            monotonic_at_ms: Some(monotonic_at_ms),
+            monotonic_at_ms,
             reply,
         })
     }
