@@ -86,6 +86,9 @@ struct RideMapHistoryListView: View {
     }
 
     private func rideTitle(for ride: MobileRideMapHistorySummaryDto) -> String {
+        guard ride.createdAtMilliseconds > 0 else {
+            return localizedAppText("ride_map.untitled_ride")
+        }
         let date = Date(timeIntervalSince1970: Double(ride.createdAtMilliseconds) / 1_000)
             .formatted(.dateTime.month(.abbreviated).day().year().hour().minute())
         return date.isEmpty ? localizedAppText("ride_map.untitled_ride") : date
