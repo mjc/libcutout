@@ -1935,8 +1935,6 @@ public protocol MobileLiveRouteProjectionCancellationProtocol: AnyObject, Sendab
      */
     func cancel()
 
-    func isCancelled()  -> Bool
-
 }
 /**
  * Cooperative cancellation for one live in-memory route projection.
@@ -2015,14 +2013,6 @@ open func cancel()  {try! rustCall() {
             self.uniffiCloneHandle(),$0
     )
 }
-}
-
-open func isCancelled() -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
-    uniffi_cutout_mobile_ffi_fn_method_mobileliverouteprojectioncancellation_is_cancelled(
-            self.uniffiCloneHandle(),$0
-    )
-})
 }
 
 
@@ -24968,9 +24958,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileliverouteprojectioncancellation_cancel() != 59947) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileliverouteprojectioncancellation_is_cancelled() != 37752) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_add_advertised_service() != 1575) {

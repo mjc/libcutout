@@ -4136,7 +4136,9 @@ impl MobileLiveRouteProjectionCancellation {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
     }
+}
 
+impl MobileLiveRouteProjectionCancellation {
     fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
