@@ -81,6 +81,16 @@ impl RideWriteState {
                 }
                 _ => {}
             }
+        } else if matches!(
+            (self.lifecycle, lifecycle),
+            (
+                RideLifecycleState::Paused,
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+            )
+        ) {
+            // Without a monotonic timestamp, preserve the known timing and close the terminal
+            // state rather than retaining a pause that can never be resumed.
+            paused_at_ms = None;
         }
         Ok(RideTransition {
             lifecycle,
@@ -276,5 +286,24 @@ mod tests {
             assert_eq!(transition.paused_at_milliseconds(), None);
             assert_eq!(transition.paused_duration_milliseconds(), 5_000);
         }
+    }
+
+    #[test]
+    fn terminal_transition_without_monotonic_time_clears_pause_marker() {
+        let state = RideWriteState::with_duration(
+            RideSource::Live,
+            RideLifecycleState::Paused,
+            20,
+            Some(1_000),
+            4_000,
+            Some(5_000),
+            2_000,
+        );
+
+        let transition = state.transition_at(RideEvent::Stop, 10_000, None).unwrap();
+
+        assert_eq!(transition.duration_milliseconds(), 4_000);
+        assert_eq!(transition.paused_at_milliseconds(), None);
+        assert_eq!(transition.paused_duration_milliseconds(), 2_000);
     }
 }
