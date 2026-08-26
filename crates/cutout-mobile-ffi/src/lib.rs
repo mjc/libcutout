@@ -3926,7 +3926,7 @@ fn mobile_route_display_point_dto(
 }
 
 fn mobile_route_projection_dto(
-    projection: persistence::RoutePointProjection,
+    projection: &persistence::RoutePointProjection,
 ) -> MobileRideMapRouteProjectionDto {
     MobileRideMapRouteProjectionDto {
         points: projection
@@ -4220,7 +4220,7 @@ impl RideDatabaseHandle {
         let (viewport, budget, privacy) = mobile_route_projection_options_for_database(&options)?;
         self.inner
             .project_route_points(ride_id, viewport, budget, privacy)
-            .map(mobile_route_projection_dto)
+            .map(|projection| mobile_route_projection_dto(&projection))
             .map_err(map_ride_database_error)
     }
 
@@ -4247,7 +4247,7 @@ impl RideDatabaseHandle {
                 privacy,
                 cancellation.inner.clone(),
             )
-            .map(mobile_route_projection_dto)
+            .map(|projection| mobile_route_projection_dto(&projection))
             .map_err(map_ride_database_error)
     }
 
