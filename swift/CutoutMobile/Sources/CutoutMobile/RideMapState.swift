@@ -461,19 +461,12 @@ public final class MobileRideMapState: @unchecked Sendable {
                 budget: budget,
                 privacy: mappedPrivacy
             )
-            let projection: MobileRideMapRouteProjectionDto
-            if let cancellation {
-                projection = try database.projectRoutePointsCancellable(
-                    rideId: MobileRideIdDto(value: rideID),
-                    options: options,
-                    cancellation: cancellation.ffi
-                )
-            } else {
-                projection = try database.projectRoutePoints(
-                    rideId: MobileRideIdDto(value: rideID),
-                    options: options
-                )
-            }
+            let projectionCancellation = cancellation ?? MobileRideMapProjectionCancellation()
+            let projection = try database.projectRoutePointsCancellable(
+                rideId: MobileRideIdDto(value: rideID),
+                options: options,
+                cancellation: projectionCancellation.ffi
+            )
             return map(projection)
         } catch {
             throw map(error)
