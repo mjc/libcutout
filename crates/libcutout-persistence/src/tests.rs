@@ -1863,6 +1863,84 @@ fn expired_durable_route_projection_returns_a_typed_deadline() {
 }
 
 #[test]
+fn cancelled_in_flight_route_projection_leaves_worker_usable() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0_u64..4 {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(
+                40.0 + f64::from(u32::try_from(sequence).unwrap()) / 10_000.0,
+                -105.0,
+            )
+            .unwrap(),
+            sequence + 1,
+            1_700_000_000_000 + sequence,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    database
+        .install_route_projection_test_gate(entered_sender, release_receiver)
+        .unwrap();
+
+    let cancellation = RouteProjectionCancellation::new();
+    let projection_database = database.clone();
+    let projection_cancellation = cancellation.clone();
+    let projection = std::thread::spawn(move || {
+        projection_database.project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            projection_cancellation,
+        )
+    });
+
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("projection reached a deliberately slow SQLite callback");
+    cancellation.cancel();
+    release_sender
+        .send(())
+        .expect("projection callback is released after cancellation");
+
+    let error = projection
+        .join()
+        .expect("projection thread does not panic")
+        .expect_err("an active projection reports typed cancellation");
+    assert!(matches!(error, StorageError::Cancelled));
+
+    assert!(database.find_ride(ride).unwrap().is_some());
+    let next_sample = LocationSample::new(
+        Coordinate::from_degrees(40.001, -105.0).unwrap(),
+        5,
+        1_700_000_000_005,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, next_sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

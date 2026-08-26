@@ -2237,6 +2237,20 @@ impl RideDatabase {
         }
     }
 
+    /// Installs a deterministic `SQLite` progress gate for an in-flight projection test.
+    #[cfg(test)]
+    pub(crate) fn install_route_projection_test_gate(
+        &self,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    ) -> Result<(), StorageError> {
+        self.request(|reply| Command::InstallRouteProjectionTestGate {
+            entered,
+            release,
+            reply,
+        })
+    }
+
     /// Loads the newest live-projection-sized route tail in ascending sequence order.
     ///
     /// # Errors
@@ -2564,6 +2578,12 @@ enum Command {
         privacy: RoutePrivacyPolicy,
         cancellation: Option<RouteProjectionCancellation>,
         reply: Reply<RoutePointProjection>,
+    },
+    #[cfg(test)]
+    InstallRouteProjectionTestGate {
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+        reply: Reply<()>,
     },
     LatestRoutePoints {
         ride_id: RideId,
@@ -2905,10 +2925,33 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     privacy,
                     cancellation.as_ref(),
                 );
+                #[cfg(test)]
+                connection.progress_handler(0, None::<fn() -> bool>);
                 if let Some(cancellation) = cancellation.as_ref() {
                     cancellation.clear_interrupt();
                 }
                 let _ = reply.send(result);
+            }
+            #[cfg(test)]
+            Command::InstallRouteProjectionTestGate {
+                entered,
+                release,
+                reply,
+            } => {
+                let first_progress_callback = Arc::new(AtomicBool::new(true));
+                let callback_is_first = Arc::clone(&first_progress_callback);
+                connection.progress_handler(
+                    1,
+                    Some(move || {
+                        if callback_is_first.swap(false, Ordering::AcqRel)
+                            && entered.send(()).is_ok()
+                        {
+                            let _ = release.recv();
+                        }
+                        false
+                    }),
+                );
+                let _ = reply.send(Ok(()));
             }
             Command::LatestRoutePoints { ride_id, reply } => {
                 let _ = reply.send(latest_route_points(&connection, ride_id));
