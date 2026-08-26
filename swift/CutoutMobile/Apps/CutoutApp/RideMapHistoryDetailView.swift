@@ -94,6 +94,7 @@ struct RideMapHistoryDetailView: View {
                             showsEndMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
                                 pointsTruncated: pointsTruncated
                             ),
+                            showsCurrentMarker: false,
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,

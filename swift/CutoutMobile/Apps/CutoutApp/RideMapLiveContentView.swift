@@ -36,6 +36,7 @@ struct RideMapLiveContentView: View {
                 routeID: routeID,
                 showsStartMarker: showsRecordedBounds,
                 showsEndMarker: showsRecordedBounds,
+                showsCurrentMarker: true,
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,

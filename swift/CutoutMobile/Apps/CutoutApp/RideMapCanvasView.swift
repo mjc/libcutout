@@ -21,6 +21,7 @@ struct RideMapCanvasView: View {
     let routeID: String
     let showsStartMarker: Bool
     let showsEndMarker: Bool
+    let showsCurrentMarker: Bool
     let fitsRouteOnChange: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
@@ -141,7 +142,7 @@ struct RideMapCanvasView: View {
                     .offset(x: endpointOffsets.start.width, y: endpointOffsets.start.height)
                 }
             }
-            if let last = points.last {
+            if (showsEndMarker || showsCurrentMarker), let last = points.last {
                 Annotation(
                     "",
                     coordinate: coordinate(for: last)
