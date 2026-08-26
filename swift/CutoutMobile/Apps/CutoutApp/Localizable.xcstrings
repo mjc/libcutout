@@ -769,10 +769,6 @@
       "comment" : "Map availability while Core Location status is being resolved.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checking location availability…" } } }
     },
-    "ride_map.history_truncated" : {
-      "comment" : "History route warning when the bounded UI point preview is incomplete.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the first 4,096 points." } } }
-    },
     "ride_map.history_truncated_count" : {
       "comment" : "History route warning with the number of points currently projected for map display; the durable route remains complete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %lld route points; the full route remains stored." } } }
@@ -813,9 +809,9 @@
       "comment" : "History vehicle filter showing rides for every vehicle.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "All vehicles" } } }
     },
-    "ride_map.live_route_truncated" : {
-      "comment" : "Live route warning when the in-memory map preview keeps only its bounded tail.",
-      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the newest 4,096 points; the full route remains stored." } } }
+    "ride_map.live_route_truncated_count" : {
+      "comment" : "Live route warning with the number of points currently projected for map display; the durable route remains complete.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing the newest %lld points; the full route remains stored." } } }
     },
     "ride_map.decision.ride_not_recording" : {
       "comment" : "Route truth status when a location update arrives outside active recording.",

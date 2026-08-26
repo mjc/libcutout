@@ -94,7 +94,7 @@ struct RideMapLiveContentView: View {
                     showsRecordedBounds: showsRecordedBounds
                 )
                 if pointsTruncated {
-                    Text(localizedAppText("ride_map.live_route_truncated"))
+                    Text(localizedAppText("ride_map.live_route_truncated_count", points.count))
                         .font(.caption)
                         .foregroundStyle(PevColors.muted)
                         .accessibilityIdentifier("ride-map.live-truncated")

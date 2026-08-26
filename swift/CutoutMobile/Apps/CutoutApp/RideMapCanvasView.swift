@@ -125,10 +125,7 @@ struct RideMapCanvasView: View {
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
                 MapPolyline(coordinates: segment.coordinates)
-                    .stroke(
-                        segment.id == 0 ? PevColors.yellow : PevColors.muted,
-                        style: StrokeStyle(lineWidth: 4, dash: segment.id == 0 ? [] : [7, 5])
-                    )
+                    .stroke(PevColors.yellow, style: StrokeStyle(lineWidth: 4))
             }
             if showsStartMarker, let first = points.first {
                 Annotation(
