@@ -141,6 +141,31 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapPointMetadataRetainsOnlyTheBoundedRustTail() {
+        var points = [MobileRideMapPointDto]()
+        for sequence in 0 ..< 4_097 {
+            CutoutAppModel.appendBoundedRideMapPoint(
+                MobileRideMapPointDto(
+                    sequence: UInt64(sequence),
+                    segmentId: 0,
+                    latitudeDegrees: 39.7392,
+                    longitudeDegrees: -104.9903,
+                    wallClockUnixMs: 1_700_000_000_000 + UInt64(sequence),
+                    monotonicMs: UInt64(sequence),
+                    horizontalAccuracyMeters: 5,
+                    telemetryState: .gpsOnly
+                ),
+                to: &points,
+                limit: 4_096
+            )
+        }
+
+        XCTAssertEqual(points.count, 4_096)
+        XCTAssertEqual(points.first?.sequence, 1)
+        XCTAssertEqual(points.last?.sequence, 4_096)
+    }
+
+    @MainActor
     func testLiveRideMapDecisionPublishesItsProjectionAsynchronously() async throws {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)

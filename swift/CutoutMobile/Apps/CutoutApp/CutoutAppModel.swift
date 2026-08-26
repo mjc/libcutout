@@ -188,6 +188,8 @@ final class CutoutAppModel {
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
+    private var rideMapLiveProjectionGeneration: UInt64 = 0
+    private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -305,7 +307,7 @@ final class CutoutAppModel {
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 guard let result else { return }
-                self.rideMapPoints = result.0
+                self.rideMapPoints = Array(result.0.suffix(previewLimit))
                 self.applyLiveProjection(result.1)
             } catch {
                 guard !Task.isCancelled, let self else { return }
@@ -688,6 +690,18 @@ final class CutoutAppModel {
         return (tail.points, projection)
     }
 
+    /// Keeps the Swift route-truth input bounded to the Rust live-route preview tail.
+    static func appendBoundedRideMapPoint(
+        _ point: MobileRideMapPointDto,
+        to points: inout [MobileRideMapPointDto],
+        limit: Int
+    ) {
+        points.append(point)
+        if points.count > limit {
+            points.removeFirst(points.count - limit)
+        }
+    }
+
     private func applyRideMapDecision(
         snapshot: MobileRideMapSnapshotDto,
         decision: MobileRideMapDecisionDto
@@ -696,22 +710,57 @@ final class CutoutAppModel {
         rideMapSnapshot = snapshot
         rideMapLastDecision = decision
         if case let .accepted(point, _) = decision {
-            rideMapPoints.append(point)
-            rideMapLiveProjectionTask?.cancel()
-            let state = core.rideMapStateHandle
-            let budget = UInt32(Self.rideMapPreviewPointLimit)
-            rideMapLiveProjectionTask = Task { [weak self] in
+            Self.appendBoundedRideMapPoint(
+                point,
+                to: &rideMapPoints,
+                limit: Self.rideMapPreviewPointLimit
+            )
+            requestLiveProjection()
+        }
+    }
+
+    /// Serializes live projections while allowing a burst of accepted points to coalesce.
+    ///
+    /// The synchronous Rust projection runs in a detached operation so the main actor remains
+    /// responsive. The worker itself is deliberately kept alive until that operation returns;
+    /// cancelling and replacing it would allow overlapping projections to contend on the same
+    /// Rust map core. A generation change discards the stale result and immediately projects the
+    /// latest route instead.
+    private func requestLiveProjection() {
+        rideMapLiveProjectionGeneration &+= 1
+        rideMapLiveProjectionEnabled = true
+        guard rideMapLiveProjectionTask == nil else { return }
+
+        let state = core.rideMapStateHandle
+        let budget = UInt32(Self.rideMapPreviewPointLimit)
+        rideMapLiveProjectionTask = Task { [weak self] in
+            while let self {
+                let generation = self.rideMapLiveProjectionGeneration
                 do {
                     let projection = try await Task.detached(priority: .userInitiated) {
                         try state.projectPoints(budget: budget)
                     }.value
-                    guard !Task.isCancelled, let self else { return }
+                    guard self.rideMapLiveProjectionEnabled else {
+                        self.rideMapLiveProjectionTask = nil
+                        return
+                    }
+                    guard generation == self.rideMapLiveProjectionGeneration else {
+                        continue
+                    }
                     self.applyLiveProjection(projection)
                 } catch {
-                    guard !Task.isCancelled, let self else { return }
+                    guard self.rideMapLiveProjectionEnabled else {
+                        self.rideMapLiveProjectionTask = nil
+                        return
+                    }
+                    guard generation == self.rideMapLiveProjectionGeneration else {
+                        continue
+                    }
                     self.rideMapLiveError = Self.mapRideMapError(error)
                     self.rideMapLiveDisplayPoints = []
                 }
+                self.rideMapLiveProjectionTask = nil
+                return
             }
         }
     }
@@ -729,7 +778,8 @@ final class CutoutAppModel {
             rideMapSnapshot = try command()
             rideMapLiveError = nil
             if resetPoints {
-                rideMapLiveProjectionTask?.cancel()
+                rideMapLiveProjectionGeneration &+= 1
+                rideMapLiveProjectionEnabled = false
                 rideMapPoints.removeAll(keepingCapacity: true)
                 rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
                 rideMapLivePointsTruncated = false
