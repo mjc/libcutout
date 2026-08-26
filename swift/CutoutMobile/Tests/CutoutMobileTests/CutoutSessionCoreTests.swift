@@ -219,7 +219,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             altitude: 1_600,
             horizontalAccuracy: -1,
             verticalAccuracy: -1,
-            course: -1,
+            course: 0,
             courseAccuracy: -1,
             speed: -1,
             speedAccuracy: -1,
@@ -234,8 +234,22 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(sample?.verticalAccuracyMeters)
         XCTAssertNil(sample?.speedMetersPerSecond)
         XCTAssertNil(sample?.speedAccuracyMetersPerSecond)
-        XCTAssertNil(sample?.courseDegrees)
+        XCTAssertEqual(sample?.courseDegrees, 0)
         XCTAssertNil(sample?.courseAccuracyDegrees)
+
+        let invalidCourseLocation = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: -1,
+            verticalAccuracy: -1,
+            course: -1,
+            courseAccuracy: -1,
+            speed: -1,
+            speedAccuracy: -1,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [invalidCourseLocation])
+        XCTAssertNil(core.phoneLocationSnapshot.latestSample?.courseDegrees)
     }
 
     func testConnectionAutoStartResetsLocationTimestampAdmissionForANewRide() throws {

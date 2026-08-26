@@ -3087,7 +3087,7 @@ private func nonNegativeFinite(_ value: Double) -> Double? {
 }
 
 private func validCourse(_ value: Double) -> Double? {
-    guard value.isFinite, (0 ..< 360).contains(value) else { return nil }
+    guard value.isFinite, value >= 0, value < 360 else { return nil }
     return value
 }
 
