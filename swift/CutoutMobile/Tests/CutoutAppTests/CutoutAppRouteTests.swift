@@ -203,6 +203,62 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapProjectionVersionInvalidatesSameShapePath() {
+        let initialPoints = [
+            MobileRideMapRouteDisplayPoint(
+                sequence: 0,
+                segmentId: 0,
+                latitudeDegrees: 39.70,
+                longitudeDegrees: -104.90,
+                privacyClass: .precise
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 1,
+                segmentId: 0,
+                latitudeDegrees: 39.71,
+                longitudeDegrees: -104.89,
+                privacyClass: .precise
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 2,
+                segmentId: 0,
+                latitudeDegrees: 39.72,
+                longitudeDegrees: -104.88,
+                privacyClass: .precise
+            ),
+        ]
+        let reprojectedPoints = [
+            initialPoints[0],
+            MobileRideMapRouteDisplayPoint(
+                sequence: 1,
+                segmentId: 0,
+                latitudeDegrees: 39.90,
+                longitudeDegrees: -104.50,
+                privacyClass: .precise
+            ),
+            initialPoints[2],
+        ]
+
+        let initialKey = RideMapCanvasView.pathKey(
+            routeID: "ride-1",
+            projectionVersion: 1,
+            points: initialPoints
+        )
+        let reprojectedKey = RideMapCanvasView.pathKey(
+            routeID: "ride-1",
+            projectionVersion: 2,
+            points: reprojectedPoints
+        )
+
+        XCTAssertEqual(initialKey.routeID, reprojectedKey.routeID)
+        XCTAssertEqual(initialKey.firstSequence, reprojectedKey.firstSequence)
+        XCTAssertEqual(initialKey.lastSequence, reprojectedKey.lastSequence)
+        XCTAssertEqual(initialKey.pointCount, reprojectedKey.pointCount)
+        XCTAssertNotEqual(initialPoints[1], reprojectedPoints[1])
+        XCTAssertNotEqual(initialKey, reprojectedKey)
+    }
+
+    @MainActor
     func testRideMapMarkerPolicyScalesForAccessibilityText() {
         let coordinate = CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903)
         let regular = RideMapCanvasView.markerOffsets(for: [coordinate, coordinate], dynamicTypeSize: .large)

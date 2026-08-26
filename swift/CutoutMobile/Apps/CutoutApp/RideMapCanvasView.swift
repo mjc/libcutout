@@ -10,8 +10,9 @@ struct RideMapCanvasView: View {
         var coordinates: [CLLocationCoordinate2D]
     }
 
-    private struct PathKey: Equatable {
+    struct PathKey: Equatable {
         let routeID: String
+        let projectionVersion: UInt64
         let firstSequence: UInt64?
         let lastSequence: UInt64?
         let pointCount: Int
@@ -19,6 +20,7 @@ struct RideMapCanvasView: View {
 
     let points: [MobileRideMapRouteDisplayPoint]
     let routeID: String
+    let projectionVersion: UInt64
     let showsStartMarker: Bool
     let showsEndMarker: Bool
     let showsCurrentMarker: Bool
@@ -58,6 +60,20 @@ struct RideMapCanvasView: View {
 
     static func shouldShowRecordedEndpointMarkers(pointsTruncated: Bool) -> Bool {
         !pointsTruncated
+    }
+
+    static func pathKey(
+        routeID: String,
+        projectionVersion: UInt64,
+        points: [MobileRideMapRouteDisplayPoint]
+    ) -> PathKey {
+        PathKey(
+            routeID: routeID,
+            projectionVersion: projectionVersion,
+            firstSequence: points.first?.sequence,
+            lastSequence: points.last?.sequence,
+            pointCount: points.count
+        )
     }
 
     static func region(for points: [MobileRideMapRouteDisplayPoint]) -> MKCoordinateRegion? {
@@ -183,11 +199,10 @@ struct RideMapCanvasView: View {
     }
 
     private var pathKey: PathKey {
-        PathKey(
+        Self.pathKey(
             routeID: routeID,
-            firstSequence: points.first?.sequence,
-            lastSequence: points.last?.sequence,
-            pointCount: points.count
+            projectionVersion: projectionVersion,
+            points: points
         )
     }
 

@@ -34,6 +34,7 @@ struct RideMapLiveContentView: View {
             RideMapCanvasView(
                 points: displayPoints,
                 routeID: routeID,
+                projectionVersion: 0,
                 showsStartMarker: showsRecordedBounds,
                 showsEndMarker: showsRecordedBounds,
                 showsCurrentMarker: true,

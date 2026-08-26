@@ -55,6 +55,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryDetailPointsTruncated = false
+    private(set) var rideMapHistoryDetailProjectionVersion: UInt64 = 0
     private(set) var rideMapHistoryRouteLoading = false
     private(set) var rideMapHistoryDetailRouteLoading = false
     private(set) var rideMapHistoryVehicleIdentities = [String]()
@@ -413,8 +414,7 @@ final class CutoutAppModel {
         invalidateLiveProjection(clearPoints: true)
         rideMapHistoryDisplayPoints = []
         rideMapHistoryPointsTruncated = false
-        rideMapHistoryDetailDisplayPoints = []
-        rideMapHistoryDetailPointsTruncated = false
+        replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
         rideMapHistoryRouteLoading = false
         rideMapHistoryDetailRouteError = nil
         rideMapHistoryDetailRouteLoading = false
@@ -478,8 +478,7 @@ final class CutoutAppModel {
                     self.selectedRideMapHistoryID = nil
                     self.rideMapHistoryDisplayPoints = []
                     self.rideMapHistoryPointsTruncated = false
-                    self.rideMapHistoryDetailDisplayPoints = []
-                    self.rideMapHistoryDetailPointsTruncated = false
+                    self.replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
                     self.rideMapHistoryRouteLoading = false
                     self.rideMapHistoryDetailRouteError = nil
                     self.rideMapHistoryDetailRouteLoading = false
@@ -643,9 +642,10 @@ final class CutoutAppModel {
                     cancellation.cancel()
                 })
                 guard !Task.isCancelled, let self else { return }
-                self.rideMapHistoryDetailDisplayPoints = result.points
-                self.rideMapHistoryDetailPointsTruncated = result.sourcePointCount
-                    > UInt64(result.points.count)
+                self.replaceRideMapHistoryDetailDisplayPoints(
+                    result.points,
+                    truncated: result.sourcePointCount > UInt64(result.points.count)
+                )
                 self.rideMapHistoryDetailRouteError = nil
                 self.rideMapHistoryDetailRouteLoading = false
             } catch {
@@ -681,8 +681,7 @@ final class CutoutAppModel {
         if selectingDifferentRide {
             rideMapHistoryDisplayPoints = []
             rideMapHistoryPointsTruncated = false
-            rideMapHistoryDetailDisplayPoints = []
-            rideMapHistoryDetailPointsTruncated = false
+            replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
         }
         selectedRideMapHistoryID = rideID
         rideMapHistoryRouteError = nil
@@ -717,9 +716,10 @@ final class CutoutAppModel {
                 self.rideMapHistoryDisplayPoints = result.points
                 self.rideMapHistoryPointsTruncated = result.sourcePointCount
                     > UInt64(result.points.count)
-                self.rideMapHistoryDetailDisplayPoints = result.points
-                self.rideMapHistoryDetailPointsTruncated = result.sourcePointCount
-                    > UInt64(result.points.count)
+                self.replaceRideMapHistoryDetailDisplayPoints(
+                    result.points,
+                    truncated: result.sourcePointCount > UInt64(result.points.count)
+                )
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteLoading = false
             } catch {
@@ -737,6 +737,15 @@ final class CutoutAppModel {
             return error
         }
         return .Storage(String(describing: error))
+    }
+
+    private func replaceRideMapHistoryDetailDisplayPoints(
+        _ points: [MobileRideMapRouteDisplayPoint],
+        truncated: Bool
+    ) {
+        rideMapHistoryDetailDisplayPoints = points
+        rideMapHistoryDetailPointsTruncated = truncated
+        rideMapHistoryDetailProjectionVersion &+= 1
     }
 
     private nonisolated static func collectRideMapActiveTail(

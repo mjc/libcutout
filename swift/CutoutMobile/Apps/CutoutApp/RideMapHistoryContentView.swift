@@ -162,6 +162,7 @@ struct RideMapHistoryContentView: View {
                         RideMapCanvasView(
                             points: displayPoints,
                             routeID: selectedRideID ?? "history",
+                            projectionVersion: 0,
                             showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
                                 pointsTruncated: pointsTruncated
                             ),

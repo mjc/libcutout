@@ -7,6 +7,7 @@ struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
+    let projectionVersion: UInt64
     let pointsTruncated: Bool
     let historyError: MobileRideMapError?
     let routeError: MobileRideMapError?
@@ -88,6 +89,7 @@ struct RideMapHistoryDetailView: View {
                         RideMapCanvasView(
                             points: displayPoints,
                             routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
+                            projectionVersion: projectionVersion,
                             showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
                                 pointsTruncated: pointsTruncated
                             ),
