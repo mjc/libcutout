@@ -334,12 +334,16 @@ final class CutoutAppModel {
 
     @discardableResult
     func startGpsOnlyRide() -> Bool {
-        applyRideMapCommand(resetPoints: true) {
+        let started = applyRideMapCommand(resetPoints: true) {
             try core.rideMapStateHandle.startGpsOnly(
                 atMs: currentMonotonicTime.rawValue,
                 lastConnectedVehicle: selectedDeviceStore.platformIdentifier
             )
         }
+        if started {
+            core.resetRideMapLocationAdmission()
+        }
+        return started
     }
 
     @discardableResult
@@ -358,9 +362,13 @@ final class CutoutAppModel {
 
     @discardableResult
     func stopRideMap() -> Bool {
-        applyRideMapCommand {
+        let stopped = applyRideMapCommand {
             try core.rideMapStateHandle.stop(atMs: currentMonotonicTime.rawValue)
         }
+        if stopped {
+            invalidateLiveProjection(clearPoints: false)
+        }
+        return stopped
     }
 
     func refreshRideMapDuration() {
@@ -377,6 +385,7 @@ final class CutoutAppModel {
         guard applyRideMapCommand({ try core.rideMapStateHandle.save() }) else {
             return false
         }
+        invalidateLiveProjection(clearPoints: false)
         loadRideMapHistory()
         return true
     }
@@ -386,6 +395,7 @@ final class CutoutAppModel {
         guard applyRideMapCommand({ try core.rideMapStateHandle.discard() }) else {
             return false
         }
+        invalidateLiveProjection(clearPoints: true)
         rideMapHistoryDisplayPoints = []
         rideMapHistoryPointsTruncated = false
         rideMapHistoryDetailDisplayPoints = []
@@ -826,6 +836,18 @@ final class CutoutAppModel {
         rideMapLivePointsTruncated = projection.sourcePointCount > UInt64(projection.points.count)
     }
 
+    private func invalidateLiveProjection(clearPoints: Bool) {
+        rideMapLiveProjectionGeneration &+= 1
+        rideMapLiveProjectionEnabled = false
+        rideMapLiveProjectionCancellation?.cancel()
+        if clearPoints {
+            rideMapPoints.removeAll(keepingCapacity: true)
+            rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
+            rideMapLivePointsTruncated = false
+            rideMapLastDecision = nil
+        }
+    }
+
     private func applyRideMapCommand(
         resetPoints: Bool = false,
         _ command: () throws -> MobileRideMapSnapshotDto
@@ -834,13 +856,7 @@ final class CutoutAppModel {
             rideMapSnapshot = try command()
             rideMapLiveError = nil
             if resetPoints {
-                rideMapLiveProjectionGeneration &+= 1
-                rideMapLiveProjectionEnabled = false
-                rideMapLiveProjectionCancellation?.cancel()
-                rideMapPoints.removeAll(keepingCapacity: true)
-                rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
-                rideMapLivePointsTruncated = false
-                rideMapLastDecision = nil
+                invalidateLiveProjection(clearPoints: true)
             }
             return true
         } catch {

@@ -33,6 +33,7 @@ protocol CutoutSessionDriving: AnyObject {
     func annotateCapture(key: String, value: String)
     func flushCapture() async -> Bool
     func disconnectAndScan()
+    func resetRideMapLocationAdmission()
     func now() -> MonotonicMilliseconds
 }
 

@@ -60,6 +60,36 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testLocationTimestampAdmissionAdvancesOnlyForAcceptedDecisionsAndResets() {
+        let point = MobileRideMapPointDto(
+            sequence: 0,
+            segmentId: 0,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            wallClockUnixMs: 1_700_000_000_000,
+            monotonicMs: 1_000,
+            horizontalAccuracyMeters: 4,
+            telemetryState: .gpsOnly
+        )
+        let first = Date(timeIntervalSince1970: 1_700_000_000)
+        let second = Date(timeIntervalSince1970: 1_700_000_001)
+        var admission = LocationTimestampAdmission()
+
+        admission.record(first, decision: .rejected(reason: .accuracyTooLow))
+        admission.record(first, decision: .ignored(reason: .rideNotRecording))
+        admission.record(first, decision: .storageError(message: "queue full"))
+        XCTAssertNil(admission.lastAcceptedTimestamp)
+
+        admission.record(first, decision: .pending(point: point, segmentStarted: true))
+        XCTAssertEqual(admission.lastAcceptedTimestamp, first)
+
+        admission.record(second, decision: .accepted(point: point, segmentStarted: false))
+        XCTAssertEqual(admission.lastAcceptedTimestamp, second)
+
+        admission.reset()
+        XCTAssertNil(admission.lastAcceptedTimestamp)
+    }
+
     func testBatchedLocationsPreserveTheirRecordedTimeSpacing() {
         let timestamps = [
             Date(timeIntervalSince1970: 1_700_000_000),
@@ -212,6 +242,56 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7392)
         XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
+    }
+
+    func testRejectedLocationDoesNotPoisonTheNextCallbackTimestamp() throws {
+        let core = CutoutSessionCore(
+            clock: MonotonicClock { MonotonicMilliseconds(20_000) },
+            wallClock: WallClock { Date(timeIntervalSince1970: 1_700_000_020) }
+        )
+        guard RustPersistenceStore.shared != nil else {
+            throw XCTSkip("Rust ride database is unavailable in this test environment")
+        }
+        defer {
+            _ = try? core.rideMapStateHandle.stop(atMs: 20_000)
+            _ = try? core.rideMapStateHandle.discard()
+        }
+        _ = try core.rideMapStateHandle.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+
+        let rejected = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 200,
+            verticalAccuracy: 6,
+            course: 90,
+            courseAccuracy: 3,
+            speed: 2,
+            speedAccuracy: 0.2,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_010)
+        )
+        let valid = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: 4,
+            verticalAccuracy: 6,
+            course: 90,
+            courseAccuracy: 3,
+            speed: 2,
+            speedAccuracy: 0.2,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_009)
+        )
+
+        core.locationManager(CLLocationManager(), didUpdateLocations: [rejected])
+        core.locationManager(CLLocationManager(), didUpdateLocations: [valid])
+
+        var snapshot: MobileRideMapSnapshotDto?
+        for _ in 0 ..< 100 {
+            _ = core.rideMapStateHandle.pollLocationWrites()
+            snapshot = core.rideMapStateHandle.currentSnapshot(atMs: 20_000)
+            if snapshot?.summary.pointCount == 1 { break }
+            Thread.sleep(forTimeInterval: 0.001)
+        }
+        XCTAssertEqual(snapshot?.summary.pointCount, 1)
     }
 
     func testPevcapLocationContextUsesOnlyAdmittedMapSamples() {

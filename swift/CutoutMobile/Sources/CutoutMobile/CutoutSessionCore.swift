@@ -353,6 +353,32 @@ struct PendingPhoneLocationQueue {
     }
 }
 
+/// Tracks the newest location admitted by the map recorder for timestamp ordering.
+///
+/// A location is admitted when Rust accepts it immediately or queues it for durable
+/// persistence. Rejected, ignored, and storage-error outcomes must not move this
+/// boundary, because they were not part of the recorded route.
+struct LocationTimestampAdmission {
+    private(set) var lastAcceptedTimestamp: Date?
+
+    mutating func record(
+        _ timestamp: Date,
+        decision: MobileRideMapDecisionDto
+    ) {
+        switch decision {
+        case .accepted, .pending:
+            guard timestamp.timeIntervalSinceReferenceDate.isFinite else { return }
+            lastAcceptedTimestamp = timestamp
+        case .rejected, .ignored, .storageError:
+            break
+        }
+    }
+
+    mutating func reset() {
+        lastAcceptedTimestamp = nil
+    }
+}
+
 public final class CutoutSessionCore: NSObject {
     public var rideSessionStateHandle: CutoutSessionStateHandle { rustSessionState }
     public var rideMapStateHandle: MobileRideMapState { rideMapState }
@@ -389,7 +415,7 @@ public final class CutoutSessionCore: NSObject {
 
     private let clock: MonotonicClock
     private let wallClock: WallClock
-    private var lastAcceptedLocationTimestamp: Date?
+    private var locationTimestampAdmission = LocationTimestampAdmission()
     private var diagnosticLog = BoundedDiagnosticLog(capacity: 2_048)
     private let bleQueue = DispatchQueue(label: "io.cutout.corebluetooth")
     private let bleQueueKey = DispatchSpecificKey<Void>()
@@ -456,6 +482,11 @@ public final class CutoutSessionCore: NSObject {
         self.init(clock: MonotonicClock())
     }
 
+    /// Starts a fresh location-admission boundary for a new ride-map recording.
+    public func resetRideMapLocationAdmission() {
+        locationTimestampAdmission.reset()
+    }
+
 #if DEBUG
     public convenience init(testScript: CutoutSessionTestScript) {
         self.init(clock: MonotonicClock(), testScript: testScript)
@@ -478,7 +509,7 @@ public final class CutoutSessionCore: NSObject {
         )
         self.clock = clock
         self.wallClock = wallClock
-        self.lastAcceptedLocationTimestamp = nil
+        self.locationTimestampAdmission = LocationTimestampAdmission()
         self.testScript = testScript
         self.reconnectController = ConnectionReconnectController(scheduler: reconnectScheduler)
         self.reconnectJitter = reconnectJitter
@@ -512,7 +543,7 @@ public final class CutoutSessionCore: NSObject {
         )
         self.clock = clock
         self.wallClock = wallClock
-        self.lastAcceptedLocationTimestamp = nil
+        self.locationTimestampAdmission = LocationTimestampAdmission()
         self.reconnectController = ConnectionReconnectController(scheduler: MainQueueReconnectScheduler())
         self.reconnectJitter = { Double.random(in: 0...1) }
         self.selectedDeviceStore = selectedDeviceStore
@@ -2717,11 +2748,10 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             timestamps: locations.map(\.timestamp),
             callbackMonotonicMs: MonotonicMilliseconds(callbackMonotonicMs),
             callbackWallClock: wallClock.now(),
-            lastAcceptedTimestamp: lastAcceptedLocationTimestamp
+            lastAcceptedTimestamp: locationTimestampAdmission.lastAcceptedTimestamp
         )
         for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
             guard let monotonicMs else { continue }
-            lastAcceptedLocationTimestamp = location.timestamp
             let sample = MobilePhoneLocationSampleDto(location: location)
             // Current-location readback is independent of ride recording. The map
             // admission result below only controls the canonical capture context.
@@ -2732,6 +2762,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
                     sample: sample
                 )
                 handleRideMapLocationDecision(decision, sample: sample)
+                locationTimestampAdmission.record(location.timestamp, decision: decision)
             } catch {
                 publishRideMapError(error)
             }

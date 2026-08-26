@@ -196,6 +196,40 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testDiscardRideMapInvalidatesAndClearsTheLiveProjection() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let model = CutoutAppModel(core: driver)
+        _ = try driver.rideMapStateHandle.startGpsOnly(
+            atMs: 100,
+            lastConnectedVehicle: nil
+        )
+        let decision = settle(driver.rideMapStateHandle, try driver.rideMapStateHandle.ingestLocation(
+            monotonicMs: 100,
+            wallClockUnixMs: 1_700_000_000_100,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 5
+        ))
+        guard case let .accepted(point, _) = decision else {
+            return XCTFail("expected the seeded location to be accepted, got \(decision)")
+        }
+        guard let snapshot = driver.rideMapStateHandle.currentSnapshot() else {
+            return XCTFail("expected an active ride-map snapshot")
+        }
+
+        driver.onRideMapDecisionChange?(snapshot, .accepted(point: point, segmentStarted: false))
+        for _ in 0 ..< 100 where model.rideMapLiveDisplayPoints.isEmpty {
+            await Task.yield()
+        }
+        XCTAssertFalse(model.rideMapLiveDisplayPoints.isEmpty)
+
+        XCTAssertTrue(model.discardRideMap())
+        XCTAssertTrue(model.rideMapPoints.isEmpty)
+        XCTAssertTrue(model.rideMapLiveDisplayPoints.isEmpty)
+        XCTAssertFalse(model.rideMapLivePointsTruncated)
+    }
+
+    @MainActor
     func testRideMapCommandFailureRemainsVisibleAsTheTypedRustError() {
         let driver = SessionDriverSpy(rows: [])
         let model = CutoutAppModel(core: driver)
@@ -239,6 +273,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertFalse(model.isRideMapRecording)
         XCTAssertTrue(model.startGpsOnlyRide())
+        XCTAssertEqual(driver.resetRideMapLocationAdmissionCount, 1)
         XCTAssertTrue(model.isRideMapRecording)
         XCTAssertTrue(model.pauseRideMap())
         XCTAssertFalse(model.isRideMapRecording)
@@ -2464,6 +2499,7 @@ private final class SessionDriverSpy: CutoutSessionDriving {
     private(set) var captureAnnotations = [String]()
     private(set) var flushCaptureCount = 0
     private(set) var disconnectCount = 0
+    private(set) var resetRideMapLocationAdmissionCount = 0
 
     init(
         rows: [DevicePickerRow],
@@ -2518,6 +2554,10 @@ private final class SessionDriverSpy: CutoutSessionDriving {
 
     func disconnectAndScan() {
         disconnectCount += 1
+    }
+
+    func resetRideMapLocationAdmission() {
+        resetRideMapLocationAdmissionCount += 1
     }
 
     func now() -> MonotonicMilliseconds {
