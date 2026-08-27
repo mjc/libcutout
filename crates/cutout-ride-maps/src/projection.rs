@@ -1,5 +1,6 @@
 use crate::{
     Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointSequence,
+    RideSegmentStartReason,
 };
 
 /// Failure returned when a route projection is cancelled before completion.
@@ -185,8 +186,90 @@ impl RouteViewport {
 pub struct RouteDisplayPoint {
     sequence: RidePointSequence,
     segment_id: RideMapSegmentId,
+    segment_start_reason: RideSegmentStartReason,
     coordinate: Coordinate,
     privacy_class: RoutePrivacyClass,
+}
+
+/// Bounded metadata needed to render one visible route segment.
+///
+/// The count and sequence range describe points retained in the bounded display projection, not
+/// the complete canonical segment. A segment with one retained point can be represented by an
+/// annotation or accessibility item even though a line renderer cannot draw it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RouteSegmentDisplayMetadata {
+    segment_id: RideMapSegmentId,
+    start_reason: RideSegmentStartReason,
+    visible_point_count: u64,
+    first_visible_sequence: Option<RidePointSequence>,
+    last_visible_sequence: Option<RidePointSequence>,
+}
+
+impl RouteSegmentDisplayMetadata {
+    /// Returns the canonical segment identity.
+    #[must_use]
+    pub const fn segment_id(self) -> RideMapSegmentId {
+        self.segment_id
+    }
+
+    /// Returns why this segment began.
+    #[must_use]
+    pub const fn start_reason(self) -> RideSegmentStartReason {
+        self.start_reason
+    }
+
+    /// Returns the number of projected points retained for this segment.
+    #[must_use]
+    pub const fn visible_point_count(self) -> u64 {
+        self.visible_point_count
+    }
+
+    /// Returns the first retained projected point sequence.
+    #[must_use]
+    pub const fn first_visible_sequence(self) -> Option<RidePointSequence> {
+        self.first_visible_sequence
+    }
+
+    /// Returns the last retained projected point sequence.
+    #[must_use]
+    pub const fn last_visible_sequence(self) -> Option<RidePointSequence> {
+        self.last_visible_sequence
+    }
+
+    /// Returns whether this segment has exactly one retained projected point.
+    #[must_use]
+    pub const fn is_singleton(self) -> bool {
+        self.visible_point_count == 1
+    }
+}
+
+/// Groups bounded projected points into ordered segment render metadata.
+///
+/// The input is expected in canonical sequence order, as returned by the projection APIs. The
+/// result is bounded by the number of projected points and therefore cannot grow with an
+/// unprojected route.
+#[must_use]
+pub fn route_segment_display_metadata(
+    points: impl IntoIterator<Item = RouteDisplayPoint>,
+) -> Vec<RouteSegmentDisplayMetadata> {
+    let mut segments: Vec<RouteSegmentDisplayMetadata> = Vec::new();
+    for point in points {
+        if let Some(segment) = segments.last_mut()
+            && segment.segment_id == point.segment_id
+        {
+            segment.visible_point_count = segment.visible_point_count.saturating_add(1);
+            segment.last_visible_sequence = Some(point.sequence);
+            continue;
+        }
+        segments.push(RouteSegmentDisplayMetadata {
+            segment_id: point.segment_id,
+            start_reason: point.segment_start_reason,
+            visible_point_count: 1,
+            first_visible_sequence: Some(point.sequence),
+            last_visible_sequence: Some(point.sequence),
+        });
+    }
+    segments
 }
 
 /// Canonical route endpoints and whether each endpoint is inside the requested viewport.
@@ -341,6 +424,7 @@ impl RouteProjectionAccumulator {
         self.projected.push(RouteDisplayPoint {
             sequence: RidePointSequence::new(sequence),
             segment_id: point.segment_id(),
+            segment_start_reason: point.segment_start_reason(),
             coordinate,
             privacy_class,
         });
@@ -375,6 +459,12 @@ impl RouteDisplayPoint {
     #[must_use]
     pub const fn segment_id(self) -> RideMapSegmentId {
         self.segment_id
+    }
+
+    /// Returns why the canonical segment began.
+    #[must_use]
+    pub const fn segment_start_reason(self) -> RideSegmentStartReason {
+        self.segment_start_reason
     }
 
     /// Returns the privacy-projected coordinate.

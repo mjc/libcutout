@@ -34,8 +34,9 @@ mod projection;
 pub use projection::{
     MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata,
     RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator,
-    RouteProjectionError, RouteViewport, count_segment_runs, project_route_points,
-    project_route_points_cancellable, project_route_points_from_iter, route_endpoint_metadata,
+    RouteProjectionError, RouteSegmentDisplayMetadata, RouteViewport, count_segment_runs,
+    project_route_points, project_route_points_cancellable, project_route_points_from_iter,
+    route_endpoint_metadata, route_segment_display_metadata,
 };
 
 #[cfg(test)]
@@ -46,11 +47,11 @@ mod tests {
         AverageSpeedMillimetresPerSecond, Coordinate, DistanceMillimetres, LatitudeE7,
         LocationAdmission, LocationSample, LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS,
         MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder,
-        RideMapSegmentId, RidePointCount, RidePointSequence, RideSummary, RouteDisplayBudget,
-        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError,
-        RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
+        RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary,
+        RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
+        RouteProjectionError, RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
         WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
-        project_route_points_from_iter, route_endpoint_metadata,
+        project_route_points_from_iter, route_endpoint_metadata, route_segment_display_metadata,
     };
 
     #[test]
@@ -267,6 +268,68 @@ mod tests {
         assert_eq!(
             projection.last().unwrap().sequence().as_u64(),
             MAX_ROUTE_DISPLAY_POINTS as u64
+        );
+    }
+
+    #[test]
+    fn projected_segments_preserve_reason_and_bounded_render_metadata() {
+        let sample = |offset| {
+            LocationSample::new(
+                Coordinate::from_degrees(40.0 + offset / 10_000.0, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000),
+                WallClockUnixMilliseconds::new(1_700_000_000_000),
+                None,
+                LocationSource::Live,
+            )
+        };
+        let points = [
+            RideMapPoint::new_with_start_reason(
+                sample(0.0),
+                RideMapSegmentId::new(0),
+                RouteTelemetryState::GpsOnly,
+                RideSegmentStartReason::Initial,
+            ),
+            RideMapPoint::new_with_start_reason(
+                sample(1.0),
+                RideMapSegmentId::new(1),
+                RouteTelemetryState::GpsOnly,
+                RideSegmentStartReason::Resume,
+            ),
+            RideMapPoint::new_with_start_reason(
+                sample(2.0),
+                RideMapSegmentId::new(2),
+                RouteTelemetryState::GpsOnly,
+                RideSegmentStartReason::BackgroundGap,
+            ),
+        ];
+        let projected = project_route_points_from_iter(
+            points
+                .into_iter()
+                .enumerate()
+                .map(|(sequence, point)| (u64::try_from(sequence).unwrap(), point)),
+            3,
+            RouteDisplayBudget::new(3).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        );
+
+        let segments = route_segment_display_metadata(projected);
+        assert_eq!(segments.len(), 3);
+        assert_eq!(segments[0].segment_id(), RideMapSegmentId::new(0));
+        assert_eq!(segments[0].start_reason(), RideSegmentStartReason::Initial);
+        assert_eq!(segments[0].visible_point_count(), 1);
+        assert_eq!(
+            segments[0].first_visible_sequence(),
+            Some(RidePointSequence::new(0))
+        );
+        assert_eq!(
+            segments[0].last_visible_sequence(),
+            Some(RidePointSequence::new(0))
+        );
+        assert!(segments[0].is_singleton());
+        assert_eq!(segments[1].start_reason(), RideSegmentStartReason::Resume);
+        assert_eq!(
+            segments[2].start_reason(),
+            RideSegmentStartReason::BackgroundGap
         );
     }
 

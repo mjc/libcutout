@@ -3332,6 +3332,19 @@ pub enum MobileRideMapRoutePrivacyPolicyDto {
     Grid { grid_e7: u32 },
 }
 
+/// Why a Rust-owned route segment began.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum MobileRideSegmentStartReasonDto {
+    /// The first accepted point in a ride.
+    Initial,
+    /// A paused ride resumed.
+    Resume,
+    /// A location gap exceeded the route continuity threshold.
+    BackgroundGap,
+    /// An imported artifact established the first route segment.
+    ImportBoundary,
+}
+
 /// Rust-owned options for a bounded route display projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapRouteProjectionOptionsDto {
@@ -3358,11 +3371,28 @@ pub struct MobileRideMapRouteDisplayPointDto {
     pub privacy_class: MobileRideMapRoutePrivacyClassDto,
 }
 
+/// Bounded metadata for one visible projected route segment.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideMapSegmentDisplayMetadataDto {
+    /// Canonical segment identity within the ride.
+    pub segment_id: u64,
+    /// Rust-owned reason this segment began.
+    pub start_reason: MobileRideSegmentStartReasonDto,
+    /// Number of projected points retained for this segment.
+    pub visible_point_count: u64,
+    /// First retained projected point sequence.
+    pub first_visible_sequence: Option<u64>,
+    /// Last retained projected point sequence.
+    pub last_visible_sequence: Option<u64>,
+}
+
 /// Bounded Rust route display projection.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileRideMapRouteProjectionDto {
     /// Evenly sampled points visible in the requested viewport.
     pub points: Vec<MobileRideMapRouteDisplayPointDto>,
+    /// Bounded metadata for the visible projected segment runs.
+    pub segments: Vec<MobileRideMapSegmentDisplayMetadataDto>,
     /// Total canonical point count before viewport filtering or display LOD.
     pub source_point_count: u64,
     /// Total canonical segment count before viewport filtering or display LOD.
@@ -3569,6 +3599,7 @@ pub struct MobileRoutePointCursorDto {
 pub struct MobileRoutePointDto {
     pub sequence: u64,
     pub segment_id: u64,
+    pub start_reason: MobileRideSegmentStartReasonDto,
     pub location: MobileRideLocationDto,
     pub telemetry_state: MobileRideMapCoreTelemetryStateDto,
 }
@@ -4042,6 +4073,37 @@ fn mobile_route_display_point_dto(
     }
 }
 
+fn mobile_segment_start_reason_dto(
+    reason: ride_maps::RideSegmentStartReason,
+) -> MobileRideSegmentStartReasonDto {
+    match reason {
+        ride_maps::RideSegmentStartReason::Initial => MobileRideSegmentStartReasonDto::Initial,
+        ride_maps::RideSegmentStartReason::Resume => MobileRideSegmentStartReasonDto::Resume,
+        ride_maps::RideSegmentStartReason::BackgroundGap => {
+            MobileRideSegmentStartReasonDto::BackgroundGap
+        }
+        ride_maps::RideSegmentStartReason::ImportBoundary => {
+            MobileRideSegmentStartReasonDto::ImportBoundary
+        }
+    }
+}
+
+fn mobile_segment_display_metadata_dto(
+    segment: ride_maps::RouteSegmentDisplayMetadata,
+) -> MobileRideMapSegmentDisplayMetadataDto {
+    MobileRideMapSegmentDisplayMetadataDto {
+        segment_id: segment.segment_id().value(),
+        start_reason: mobile_segment_start_reason_dto(segment.start_reason()),
+        visible_point_count: segment.visible_point_count(),
+        first_visible_sequence: segment
+            .first_visible_sequence()
+            .map(ride_maps::RidePointSequence::as_u64),
+        last_visible_sequence: segment
+            .last_visible_sequence()
+            .map(ride_maps::RidePointSequence::as_u64),
+    }
+}
+
 fn mobile_route_projection_dto(
     projection: &persistence::RoutePointProjection,
 ) -> MobileRideMapRouteProjectionDto {
@@ -4051,6 +4113,12 @@ fn mobile_route_projection_dto(
             .iter()
             .copied()
             .map(mobile_route_display_point_dto)
+            .collect(),
+        segments: projection
+            .segments()
+            .iter()
+            .copied()
+            .map(mobile_segment_display_metadata_dto)
             .collect(),
         source_point_count: projection.source_point_count(),
         source_segment_count: projection.source_segment_count(),
@@ -4457,6 +4525,7 @@ impl RideDatabaseHandle {
                     .map(|point| MobileRoutePointDto {
                         sequence: point.sequence().as_u64(),
                         segment_id: point.segment_id().value(),
+                        start_reason: mobile_segment_start_reason_dto(point.start_reason()),
                         location: mobile_ride_location_dto(point.sample()),
                         telemetry_state: point.telemetry_state().into(),
                     })
@@ -5278,10 +5347,11 @@ impl RideDatabaseHandle {
                 points
                     .into_iter()
                     .map(|point| {
-                        ride_maps::RideMapPoint::new(
+                        ride_maps::RideMapPoint::new_with_start_reason(
                             point.sample(),
                             point.segment_id(),
                             point.telemetry_state(),
+                            point.start_reason(),
                         )
                     })
                     .collect()
@@ -6474,10 +6544,15 @@ fn project_live_route_points(
         &mut is_cancelled,
     )
     .map_err(|_| MobileRideMapCoreErrorDto::Cancelled)?;
+    let segments = ride_maps::route_segment_display_metadata(projected_points.iter().copied())
+        .into_iter()
+        .map(mobile_segment_display_metadata_dto)
+        .collect();
     let points = mobile_route_display_points(projected_points, &mut is_cancelled)?;
     let displayed_segment_count = mobile_displayed_segment_count(&points);
     Ok(MobileRideMapRouteProjectionDto {
         points,
+        segments,
         source_point_count,
         source_segment_count,
         candidate_point_count,
@@ -14659,6 +14734,63 @@ mod tests {
     }
 
     #[test]
+    fn mobile_ride_map_core_projection_exports_typed_segment_metadata() {
+        let state = MobileRideMapCore::new_for_testing();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("initial location is accepted");
+        state.pause_at(2_000).expect("map recording pauses");
+        state.resume_at(3_000).expect("map recording resumes");
+        state
+            .ingest_location(3_001, 1_700_000_003_001, 40.0001, -105.0, 3.0)
+            .expect("resumed location is accepted");
+        state
+            .ingest_location(40_000, 1_700_000_040_000, 40.0002, -105.0, 3.0)
+            .expect("gapped location is accepted");
+
+        let projection = state
+            .project_points(MobileRideMapRouteProjectionOptionsDto {
+                viewport: None,
+                budget: 8,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+            })
+            .expect("route projection is valid");
+
+        assert_eq!(
+            projection
+                .segments
+                .iter()
+                .map(|segment| segment.start_reason)
+                .collect::<Vec<_>>(),
+            vec![
+                MobileRideSegmentStartReasonDto::Initial,
+                MobileRideSegmentStartReasonDto::Resume,
+                MobileRideSegmentStartReasonDto::BackgroundGap,
+            ]
+        );
+        assert!(
+            projection
+                .segments
+                .iter()
+                .all(|segment| segment.visible_point_count == 1)
+        );
+        assert_eq!(
+            projection
+                .segments
+                .iter()
+                .map(|segment| (
+                    segment.first_visible_sequence,
+                    segment.last_visible_sequence
+                ))
+                .collect::<Vec<_>>(),
+            vec![(Some(0), Some(0)), (Some(1), Some(1)), (Some(2), Some(2))]
+        );
+    }
+
+    #[test]
     fn mobile_segment_count_honors_cancellation_during_scan() {
         let coordinate =
             ride_maps::Coordinate::from_degrees(40.0, -105.0).expect("fixture coordinate is valid");
@@ -15929,6 +16061,83 @@ mod tests {
         assert_eq!(rides.rides.len(), 1);
         assert_eq!(rides.rides[0].candidate_vehicle.as_deref(), Some("pev-1"));
         assert_eq!(rides.rides[0].duration_milliseconds, 500_000);
+
+        database.shutdown().expect("reopened database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_restores_segment_start_reasons_after_reopen() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-segment-reason-recovery-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        {
+            let database =
+                open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+            let state = MobileRideMapCore::with_database(database.clone());
+            state
+                .start_gps_only(1_000, None)
+                .expect("map recording starts");
+            assert!(matches!(
+                await_location_decision(
+                    &state,
+                    state
+                        .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+                        .expect("initial location queues")
+                ),
+                MobileRideMapCoreDecisionDto::Accepted { .. }
+            ));
+            state.pause_at(2_000).expect("map recording pauses");
+            state.resume_at(3_000).expect("map recording resumes");
+            assert!(matches!(
+                await_location_decision(
+                    &state,
+                    state
+                        .ingest_location(3_001, 1_700_000_003_001, 40.0001, -105.0, 3.0)
+                        .expect("resumed location queues")
+                ),
+                MobileRideMapCoreDecisionDto::Accepted { .. }
+            ));
+            assert!(matches!(
+                await_location_decision(
+                    &state,
+                    state
+                        .ingest_location(40_000, 1_700_000_040_000, 40.0002, -105.0, 3.0)
+                        .expect("gapped location queues")
+                ),
+                MobileRideMapCoreDecisionDto::Accepted { .. }
+            ));
+            database.shutdown().expect("database shuts down");
+        }
+
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database reopens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        let projection = state
+            .project_points(MobileRideMapRouteProjectionOptionsDto {
+                viewport: None,
+                budget: 8,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+            })
+            .expect("restored route projection is valid");
+        assert_eq!(
+            projection
+                .segments
+                .iter()
+                .map(|segment| segment.start_reason)
+                .collect::<Vec<_>>(),
+            vec![
+                MobileRideSegmentStartReasonDto::Initial,
+                MobileRideSegmentStartReasonDto::Resume,
+                MobileRideSegmentStartReasonDto::BackgroundGap,
+            ]
+        );
 
         database.shutdown().expect("reopened database shuts down");
         let _ = fs::remove_file(path);

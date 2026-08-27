@@ -1,6 +1,6 @@
 use crate::{
-    DistanceMillimetres, LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent,
-    RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
+    DistanceMillimetres, LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
+    RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
     distance_between_millimetres,
 };
 
@@ -71,6 +71,7 @@ pub struct RideMapPoint {
     sample: LocationSample,
     segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
+    segment_start_reason: RideSegmentStartReason,
 }
 
 /// Stable segment identity within one ride recording.
@@ -240,10 +241,27 @@ impl RideMapPoint {
         segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
     ) -> Self {
+        Self::new_with_start_reason(
+            sample,
+            segment_id,
+            telemetry_state,
+            RideSegmentStartReason::Initial,
+        )
+    }
+
+    /// Creates a segmented route point with its segment start reason.
+    #[must_use]
+    pub const fn new_with_start_reason(
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        segment_start_reason: RideSegmentStartReason,
+    ) -> Self {
         Self {
             sample,
             segment_id,
             telemetry_state,
+            segment_start_reason,
         }
     }
 
@@ -263,6 +281,12 @@ impl RideMapPoint {
     #[must_use]
     pub const fn telemetry_state(self) -> RouteTelemetryState {
         self.telemetry_state
+    }
+
+    /// Returns why this point's segment began.
+    #[must_use]
+    pub const fn segment_start_reason(self) -> RideSegmentStartReason {
+        self.segment_start_reason
     }
 }
 
@@ -864,6 +888,7 @@ impl RideMapRecorder {
         let next_segment_id = self.segment_id_for_sample(&sample);
         let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
+        let segment_start_reason = self.segment_start_reason_for_sample(sample, next_segment_id);
         if gap_started {
             self.segment_id = next_segment_id;
         }
@@ -885,8 +910,12 @@ impl RideMapRecorder {
         self.last_monotonic_milliseconds = self
             .last_monotonic_milliseconds
             .max(sample.monotonic_milliseconds());
-        self.points
-            .push(RideMapPoint::new(sample, self.segment_id, telemetry_state));
+        self.points.push(RideMapPoint::new_with_start_reason(
+            sample,
+            self.segment_id,
+            telemetry_state,
+            segment_start_reason,
+        ));
         if self.points.len() > MAX_LIVE_ROUTE_POINTS {
             let excess = self.points.len() - MAX_LIVE_ROUTE_POINTS;
             self.points.drain(..excess);
@@ -900,13 +929,38 @@ impl RideMapRecorder {
         self.segment_started = false;
         segment_started
     }
+
+    fn segment_start_reason_for_sample(
+        &self,
+        sample: LocationSample,
+        next_segment_id: RideMapSegmentId,
+    ) -> RideSegmentStartReason {
+        if next_segment_id != self.segment_id {
+            return RideSegmentStartReason::BackgroundGap;
+        }
+        if !self.segment_started && self.points.last().is_some() {
+            return self
+                .points
+                .last()
+                .map_or(RideSegmentStartReason::Initial, |point| {
+                    point.segment_start_reason()
+                });
+        }
+        if self.points.is_empty() {
+            return match sample.source() {
+                LocationSource::Live => RideSegmentStartReason::Initial,
+                LocationSource::PevcapImport => RideSegmentStartReason::ImportBoundary,
+            };
+        }
+        RideSegmentStartReason::Resume
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RidePointSequence,
-        RideSegmentCount, VehicleAssociation,
+        RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
@@ -968,6 +1022,14 @@ mod tests {
                 .last()
                 .map(|point| point.segment_id().value()),
             Some(1)
+        );
+        assert_eq!(
+            recorder.points()[0].segment_start_reason(),
+            RideSegmentStartReason::Initial
+        );
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::Resume
         );
     }
 
@@ -1070,6 +1132,10 @@ mod tests {
         assert_eq!(recorder.current_segment_id().value(), 1);
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(recorder.summary().distance_millimetres(), 0);
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::BackgroundGap
+        );
     }
 
     #[test]

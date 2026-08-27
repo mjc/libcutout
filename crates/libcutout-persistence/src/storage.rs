@@ -4,8 +4,9 @@ use cutout_ride_maps::{
     LocationSource, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent,
     RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
     RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint,
-    RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteTelemetryState,
-    RouteViewport, TransitionError, WallClockUnixMilliseconds, count_segment_runs,
+    RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
+    WallClockUnixMilliseconds, count_segment_runs, route_segment_display_metadata,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -394,6 +395,7 @@ impl RoutePointCursor {
 pub struct RoutePoint {
     sequence: RidePointSequence,
     segment_id: RideMapSegmentId,
+    start_reason: RideSegmentStartReason,
     sample: LocationSample,
     telemetry_state: RouteTelemetryState,
 }
@@ -415,6 +417,12 @@ impl RoutePoint {
     #[must_use]
     pub const fn segment_identity(self) -> RideMapSegmentId {
         self.segment_id
+    }
+
+    /// Returns why this point's segment began.
+    #[must_use]
+    pub const fn start_reason(self) -> RideSegmentStartReason {
+        self.start_reason
     }
 
     /// Returns the admitted canonical sample.
@@ -503,6 +511,7 @@ pub struct RoutePointProjection {
     candidate_segment_count: u64,
     displayed_segment_count: u64,
     endpoint_metadata: RouteEndpointMetadata,
+    segments: Vec<RouteSegmentDisplayMetadata>,
 }
 
 impl RoutePointProjection {
@@ -546,6 +555,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn endpoint_metadata(&self) -> RouteEndpointMetadata {
         self.endpoint_metadata
+    }
+
+    /// Returns bounded metadata for the visible projected segment runs.
+    #[must_use]
+    pub fn segments(&self) -> &[RouteSegmentDisplayMetadata] {
+        &self.segments
     }
 }
 
@@ -6440,11 +6455,14 @@ fn route_points(
     });
     let fetch_limit = i64::from(limit.get()) + 1;
     let mut statement = connection.prepare(
-        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
-                horizontal_accuracy_mm, source
-         FROM ride_points
-         WHERE ride_id = ?1 AND sequence > ?2
-         ORDER BY sequence ASC
+        "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
+                points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
+                points.horizontal_accuracy_mm, points.source, segments.start_reason
+         FROM ride_points AS points
+         JOIN ride_segments AS segments
+           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+         WHERE points.ride_id = ?1 AND points.sequence > ?2
+         ORDER BY points.sequence ASC
          LIMIT ?3",
     )?;
     let rows = statement.query_map(
@@ -6585,10 +6603,11 @@ fn project_route_points(
             candidate_segment_count: counts.candidate_segment_count,
             displayed_segment_count: 0,
             endpoint_metadata,
+            segments: Vec::new(),
         });
     }
 
-    let (points, displayed_segment_count) = project_route_candidates(
+    let (points, displayed_segment_count, segments) = project_route_candidates(
         connection,
         &ride_id,
         &counts,
@@ -6605,6 +6624,7 @@ fn project_route_points(
         candidate_segment_count: counts.candidate_segment_count,
         displayed_segment_count,
         endpoint_metadata,
+        segments,
     })
 }
 
@@ -6616,13 +6636,23 @@ fn project_route_candidates(
     budget: RouteDisplayBudget,
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
-) -> Result<(Vec<RouteDisplayPoint>, u64), StorageError> {
+) -> Result<
+    (
+        Vec<RouteDisplayPoint>,
+        u64,
+        Vec<RouteSegmentDisplayMetadata>,
+    ),
+    StorageError,
+> {
     let select = format!(
-        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7,
-                longitude_e7, horizontal_accuracy_mm, source
-         FROM ride_points
-         WHERE ride_id = ?1{}
-         ORDER BY sequence ASC",
+        "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
+                points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
+                points.horizontal_accuracy_mm, points.source, segments.start_reason
+         FROM ride_points AS points
+         JOIN ride_segments AS segments
+           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+         WHERE points.ride_id = ?1{}
+         ORDER BY points.sequence ASC",
         counts.viewport_predicate
     );
     let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
@@ -6655,7 +6685,12 @@ fn project_route_candidates(
         accumulator.push(
             candidate_ordinal,
             point.sequence().as_u64(),
-            RideMapPoint::new(point.sample(), point.segment_id(), point.telemetry_state()),
+            RideMapPoint::new_with_start_reason(
+                point.sample(),
+                point.segment_id(),
+                point.telemetry_state(),
+                point.start_reason(),
+            ),
         );
         if accumulator.is_complete() {
             break;
@@ -6663,11 +6698,12 @@ fn project_route_candidates(
     }
     projection_checkpoint(cancellation)?;
     let points = accumulator.finish();
+    let segments = route_segment_display_metadata(points.iter().copied());
     let displayed_segment_count = u64::try_from(count_segment_runs(
         points.iter().copied().map(RouteDisplayPoint::segment_id),
     ))
     .unwrap_or(u64::MAX);
-    Ok((points, displayed_segment_count))
+    Ok((points, displayed_segment_count, segments))
 }
 
 fn route_endpoint_metadata_from_storage(
@@ -6873,11 +6909,14 @@ fn latest_route_points(
         return Err(StorageError::NotFound);
     }
     let mut statement = connection.prepare(
-        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
-                horizontal_accuracy_mm, source
-         FROM ride_points
-         WHERE ride_id = ?1
-         ORDER BY sequence DESC
+        "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
+                points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
+                points.horizontal_accuracy_mm, points.source, segments.start_reason
+         FROM ride_points AS points
+         JOIN ride_segments AS segments
+           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+         WHERE points.ride_id = ?1
+         ORDER BY points.sequence DESC
          LIMIT ?2",
     )?;
     let rows = statement.query_map(
@@ -6894,6 +6933,10 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     let source = source_from_db(&source_value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error))
     })?;
+    let start_reason_value: String = row.get(9)?;
+    let start_reason = segment_start_reason_from_db(&start_reason_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error))
+    })?;
     let coordinate = Coordinate::from_fixed_parts(row.get(5)?, row.get(6)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             5,
@@ -6904,6 +6947,7 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     Ok(RoutePoint {
         sequence: RidePointSequence::new(row.get(0)?),
         segment_id: RideMapSegmentId::new(row.get(1)?),
+        start_reason,
         telemetry_state: RouteTelemetryState::from_storage(row.get(2)?).ok_or_else(|| {
             rusqlite::Error::FromSqlConversionFailure(
                 2,

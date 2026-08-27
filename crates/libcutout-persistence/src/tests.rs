@@ -2608,6 +2608,74 @@ fn durable_route_projection_reports_segments_omitted_by_display_budget() {
 }
 
 #[test]
+fn durable_route_projection_exposes_typed_bounded_segment_metadata() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-segment-metadata-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for (monotonic_ms, segment_id, latitude) in [
+        (1_u64, 0_u64, 40.0),
+        (2_u64, 1_u64, 40.0001),
+        (40_000_u64, 2_u64, 40.0002),
+    ] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            None,
+            LocationSource::Live,
+        );
+        assert!(matches!(
+            database.append_location_with_segment_id(
+                ride,
+                sample,
+                RideMapSegmentId::new(segment_id),
+            ),
+            Ok(LocationAdmission::Accepted)
+        ));
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(3).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    let segments = projection.segments();
+    assert_eq!(segments.len(), 3);
+    assert_eq!(segments[0].start_reason(), RideSegmentStartReason::Initial);
+    assert_eq!(segments[1].start_reason(), RideSegmentStartReason::Resume);
+    assert_eq!(
+        segments[2].start_reason(),
+        RideSegmentStartReason::BackgroundGap
+    );
+    assert!(segments.iter().all(|segment| segment.is_singleton()));
+    assert_eq!(
+        segments
+            .iter()
+            .map(|segment| segment.first_visible_sequence().unwrap().as_u64())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(
+        segments
+            .iter()
+            .map(|segment| segment.last_visible_sequence().unwrap().as_u64())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn cancelled_durable_route_projection_returns_before_scanning() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
