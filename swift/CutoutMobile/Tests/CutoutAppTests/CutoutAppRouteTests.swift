@@ -558,6 +558,14 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideDetailMapHeightStaysWithinAvailableViewport() {
+        XCTAssertEqual(RideMapHistoryDetailView.mapHeight(for: 0), 0)
+        XCTAssertEqual(RideMapHistoryDetailView.mapHeight(for: 200), 200)
+        XCTAssertEqual(RideMapHistoryDetailView.mapHeight(for: 500), 290)
+        XCTAssertEqual(RideMapHistoryDetailView.mapHeight(for: 1_000), 520)
+    }
+
+    @MainActor
     func testRideHistoryPointCountUsesSingularAndPluralCopy() {
         XCTAssertEqual(RideMapHistoryListView.pointCountText(1), "1 point")
         XCTAssertEqual(RideMapHistoryListView.pointCountText(0), "0 points")

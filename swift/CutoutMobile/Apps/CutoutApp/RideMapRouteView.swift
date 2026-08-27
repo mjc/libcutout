@@ -86,21 +86,12 @@ struct RideMapRouteView: View {
         .foregroundStyle(PevColors.primaryText)
         .preferredColorScheme(.dark)
         .accessibilityIdentifier("ride-map.screen")
-        .toolbar {
-            if detailOnly {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(localizedAppText("ride_map.detail_back"), action: closeDetail ?? { dismiss() })
-                }
-            }
-        }
 #if os(iOS)
-        // The map route owns its header. Leaving the NavigationStack bar visible
-        // adds a second, empty title band above the mockup header.
-        .toolbar(detailOnly ? .visible : .hidden, for: .navigationBar)
-#endif
-        .navigationTitle(detailOnly ? localizedAppText("ride_map.detail_title") : "")
-#if os(iOS)
-        .navigationBarTitleDisplayMode(.inline)
+        // Ride Detail owns its compact header so it remains attached to the map
+        // when the destination is pushed from either Map entry path. Leaving the
+        // NavigationStack bar visible creates a second title band and pushes the
+        // detail content toward the middle of the screen.
+        .toolbar(.hidden, for: .navigationBar)
 #endif
     }
 
