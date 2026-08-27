@@ -25,6 +25,7 @@ struct RideMapCanvasView: View {
     let showsStartMarker: Bool
     let showsEndMarker: Bool
     let showsCurrentMarker: Bool
+    let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let fitsRouteOnChange: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
@@ -61,6 +62,15 @@ struct RideMapCanvasView: View {
 
     static func shouldShowRecordedEndpointMarkers(pointsTruncated: Bool) -> Bool {
         !pointsTruncated
+    }
+
+    static func canonicalEndpointPoint(
+        in points: [MobileRideMapRouteDisplayPoint],
+        sequence: UInt64?,
+        isVisible: Bool
+    ) -> MobileRideMapRouteDisplayPoint? {
+        guard isVisible, let sequence else { return nil }
+        return points.first { $0.sequence == sequence }
     }
 
     static func isGapSegment(previousSegmentID: UInt64?, currentSegmentID: UInt64) -> Bool {
@@ -143,6 +153,16 @@ struct RideMapCanvasView: View {
         let endpointOffsets = Self.markerOffsets(for: points.map {
             CLLocationCoordinate2D(latitude: $0.latitudeDegrees, longitude: $0.longitudeDegrees)
         }, dynamicTypeSize: dynamicTypeSize)
+        let startPoint = Self.canonicalEndpointPoint(
+            in: points,
+            sequence: endpointMetadata.canonicalStartSequence,
+            isVisible: endpointMetadata.canonicalStartVisible
+        )
+        let endPoint = Self.canonicalEndpointPoint(
+            in: points,
+            sequence: endpointMetadata.canonicalEndSequence,
+            isVisible: endpointMetadata.canonicalEndVisible
+        )
 
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
@@ -156,10 +176,10 @@ struct RideMapCanvasView: View {
                         )
                     )
             }
-            if showsStartMarker, let first = points.first {
+            if showsStartMarker, let startPoint {
                 Annotation(
                     "",
-                    coordinate: coordinate(for: first)
+                    coordinate: coordinate(for: startPoint)
                 ) {
                     RideMapRouteMarker(
                         title: localizedAppText("ride_map.start_marker"),
@@ -168,16 +188,26 @@ struct RideMapCanvasView: View {
                     .offset(x: endpointOffsets.start.width, y: endpointOffsets.start.height)
                 }
             }
-            if (showsEndMarker || showsCurrentMarker), let last = points.last {
+            if showsEndMarker, let endPoint {
+                Annotation(
+                    "",
+                    coordinate: coordinate(for: endPoint)
+                ) {
+                    RideMapRouteMarker(
+                        title: localizedAppText("ride_map.end_marker"),
+                        color: PevColors.red
+                    )
+                    .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
+                }
+            }
+            if showsCurrentMarker, !showsEndMarker, let last = points.last {
                 Annotation(
                     "",
                     coordinate: coordinate(for: last)
                 ) {
                     RideMapRouteMarker(
-                        title: showsEndMarker
-                            ? localizedAppText("ride_map.end_marker")
-                            : localizedAppText("ride_map.current_marker"),
-                        color: showsEndMarker ? PevColors.red : PevColors.green
+                        title: localizedAppText("ride_map.current_marker"),
+                        color: PevColors.green
                     )
                     .offset(x: endpointOffsets.end.width, y: endpointOffsets.end.height)
                 }

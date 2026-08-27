@@ -8,6 +8,7 @@ struct RideMapLiveContentView: View {
     let points: [MobileRideMapPointDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
+    let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
     let speed: SpeedReadout
@@ -39,6 +40,7 @@ struct RideMapLiveContentView: View {
                 showsStartMarker: showsRecordedBounds,
                 showsEndMarker: showsRecordedBounds,
                 showsCurrentMarker: true,
+                endpointMetadata: endpointMetadata,
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,

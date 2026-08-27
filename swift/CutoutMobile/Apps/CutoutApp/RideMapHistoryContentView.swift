@@ -11,6 +11,7 @@ struct RideMapHistoryContentView: View {
     @Binding var searchText: String
     let canLoadMore: Bool
     let displayPoints: [MobileRideMapRouteDisplayPoint]
+    let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     let isLoading: Bool
@@ -164,13 +165,10 @@ struct RideMapHistoryContentView: View {
                             points: displayPoints,
                             routeID: selectedRideID ?? "history",
                             projectionVersion: 0,
-                            showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
-                                pointsTruncated: pointsTruncated
-                            ),
-                            showsEndMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
-                                pointsTruncated: pointsTruncated
-                            ),
+                            showsStartMarker: true,
+                            showsEndMarker: true,
                             showsCurrentMarker: false,
+                            endpointMetadata: endpointMetadata,
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,

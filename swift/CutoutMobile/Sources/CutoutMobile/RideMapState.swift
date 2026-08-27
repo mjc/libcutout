@@ -179,6 +179,19 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var candidatePointCount: UInt64
     public var candidateSegmentCount: UInt64
     public var displayedSegmentCount: UInt64
+    public var canonicalStartSequence: UInt64?
+    public var canonicalEndSequence: UInt64?
+    public var canonicalStartVisible: Bool
+    public var canonicalEndVisible: Bool
+
+    public var endpointMetadata: MobileRideMapRouteEndpointMetadata {
+        MobileRideMapRouteEndpointMetadata(
+            canonicalStartSequence: canonicalStartSequence,
+            canonicalEndSequence: canonicalEndSequence,
+            canonicalStartVisible: canonicalStartVisible,
+            canonicalEndVisible: canonicalEndVisible
+        )
+    }
 
     /// Whether display LOD omitted candidate points after viewport filtering.
     public var pointsOmittedByBudget: Bool {
@@ -189,6 +202,31 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var segmentsOmittedByBudget: Bool {
         displayedSegmentCount < candidateSegmentCount
     }
+}
+
+/// Canonical endpoint identity and viewport visibility for a bounded route projection.
+///
+/// The Rust projection owns which points are the route endpoints. Swift only decides whether
+/// to annotate a displayed point when its canonical sequence matches this metadata.
+public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable {
+    public let canonicalStartSequence: UInt64?
+    public let canonicalEndSequence: UInt64?
+    public let canonicalStartVisible: Bool
+    public let canonicalEndVisible: Bool
+
+    public init(
+        canonicalStartSequence: UInt64? = nil,
+        canonicalEndSequence: UInt64? = nil,
+        canonicalStartVisible: Bool = false,
+        canonicalEndVisible: Bool = false
+    ) {
+        self.canonicalStartSequence = canonicalStartSequence
+        self.canonicalEndSequence = canonicalEndSequence
+        self.canonicalStartVisible = canonicalStartVisible
+        self.canonicalEndVisible = canonicalEndVisible
+    }
+
+    public static let empty = Self()
 }
 
 public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
@@ -684,7 +722,11 @@ public final class MobileRideMapState: @unchecked Sendable {
             sourceSegmentCount: projection.sourceSegmentCount,
             candidatePointCount: projection.candidatePointCount,
             candidateSegmentCount: projection.candidateSegmentCount,
-            displayedSegmentCount: projection.displayedSegmentCount
+            displayedSegmentCount: projection.displayedSegmentCount,
+            canonicalStartSequence: projection.canonicalStartSequence,
+            canonicalEndSequence: projection.canonicalEndSequence,
+            canonicalStartVisible: projection.canonicalStartVisible,
+            canonicalEndVisible: projection.canonicalEndVisible
         )
     }
 

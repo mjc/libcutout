@@ -7,6 +7,7 @@ struct RideMapHistoryDetailView: View {
     let initialHistoryID: String?
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
+    let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let projectionVersion: UInt64
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
@@ -92,7 +93,7 @@ struct RideMapHistoryDetailView: View {
                             points: displayPoints,
                             routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
                             projectionVersion: projectionVersion,
-                            pointsTruncated: pointsTruncated,
+                            endpointMetadata: endpointMetadata,
                             isLoading: isRouteLoading,
                             hasNoPoints: selectedRide?.summary.pointCount == 0,
                             routeError: routeError,
@@ -238,7 +239,7 @@ private struct RideMapHistoryDetailMap: View {
     let points: [MobileRideMapRouteDisplayPoint]
     let routeID: String
     let projectionVersion: UInt64
-    let pointsTruncated: Bool
+    let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let isLoading: Bool
     let hasNoPoints: Bool
     let routeError: MobileRideMapError?
@@ -252,13 +253,10 @@ private struct RideMapHistoryDetailMap: View {
                 points: points,
                 routeID: routeID,
                 projectionVersion: projectionVersion,
-                showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
-                    pointsTruncated: pointsTruncated
-                ),
-                showsEndMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
-                    pointsTruncated: pointsTruncated
-                ),
+                showsStartMarker: true,
+                showsEndMarker: true,
                 showsCurrentMarker: false,
+                endpointMetadata: endpointMetadata,
                 fitsRouteOnChange: true,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,

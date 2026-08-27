@@ -330,6 +330,49 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapOnlyAnnotatesDisplayedCanonicalEndpoints() {
+        let points = [
+            MobileRideMapRouteDisplayPoint(
+                sequence: 4,
+                segmentId: 0,
+                latitudeDegrees: 40,
+                longitudeDegrees: -105,
+                privacyClass: .precise
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 8,
+                segmentId: 0,
+                latitudeDegrees: 40.001,
+                longitudeDegrees: -105.001,
+                privacyClass: .precise
+            )
+        ]
+
+        XCTAssertNil(
+            RideMapCanvasView.canonicalEndpointPoint(
+                in: points,
+                sequence: 0,
+                isVisible: true
+            )
+        )
+        XCTAssertNil(
+            RideMapCanvasView.canonicalEndpointPoint(
+                in: points,
+                sequence: 4,
+                isVisible: false
+            )
+        )
+        XCTAssertEqual(
+            RideMapCanvasView.canonicalEndpointPoint(
+                in: points,
+                sequence: 8,
+                isVisible: true
+            )?.sequence,
+            8
+        )
+    }
+
+    @MainActor
     func testRideMapUsesASeparateStyleForEachSegmentAfterTheFirst() {
         XCTAssertFalse(RideMapCanvasView.isGapSegment(previousSegmentID: nil, currentSegmentID: 0))
         XCTAssertFalse(RideMapCanvasView.isGapSegment(previousSegmentID: 0, currentSegmentID: 0))
