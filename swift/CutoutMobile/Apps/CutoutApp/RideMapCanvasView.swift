@@ -105,7 +105,7 @@ struct RideMapCanvasView: View {
         let startReasonsBySegmentID = Dictionary(
             uniqueKeysWithValues: segments.map { ($0.segmentId, $0.startReason) }
         )
-        PathKey(
+        return PathKey(
             routeID: routeID,
             projectionVersion: projectionVersion,
             firstSequence: points.first?.sequence,

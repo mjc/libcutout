@@ -9,6 +9,7 @@ struct RideMapLiveContentView: View {
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let routeID: String
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
+    let segments: [MobileRideMapSegmentDisplayMetadata]
     let snapshot: MobileRideMapSnapshotDto?
     let availability: MobileRideMapAvailability
     let speed: SpeedReadout
@@ -41,6 +42,7 @@ struct RideMapLiveContentView: View {
                 showsEndMarker: showsRecordedBounds,
                 showsCurrentMarker: true,
                 endpointMetadata: endpointMetadata,
+                segments: segments,
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
@@ -96,7 +98,8 @@ struct RideMapLiveContentView: View {
                     rustSegmentCount: snapshot?.segmentCount ?? 0,
                     decision: lastDecision,
                     showsRecordedBounds: showsRecordedBounds,
-                    segmentsOmittedByBudget: segmentsOmittedByBudget
+                    segmentsOmittedByBudget: segmentsOmittedByBudget,
+                    segments: segments
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated_count", points.count))

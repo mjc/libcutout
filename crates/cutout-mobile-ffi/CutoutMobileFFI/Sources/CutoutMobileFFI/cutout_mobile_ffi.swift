@@ -11656,6 +11656,10 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
      */
     public var points: [MobileRideMapRouteDisplayPointDto]
     /**
+     * Bounded metadata for the visible projected segment runs.
+     */
+    public var segments: [MobileRideMapSegmentDisplayMetadataDto]
+    /**
      * Total canonical point count before viewport filtering or display LOD.
      */
     public var sourcePointCount: UInt64
@@ -11699,6 +11703,9 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
          * Evenly sampled points visible in the requested viewport.
          */points: [MobileRideMapRouteDisplayPointDto],
         /**
+         * Bounded metadata for the visible projected segment runs.
+         */segments: [MobileRideMapSegmentDisplayMetadataDto],
+        /**
          * Total canonical point count before viewport filtering or display LOD.
          */sourcePointCount: UInt64,
         /**
@@ -11726,6 +11733,7 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
          * Whether the canonical last point lies in the requested viewport.
          */canonicalEndVisible: Bool) {
         self.points = points
+        self.segments = segments
         self.sourcePointCount = sourcePointCount
         self.sourceSegmentCount = sourceSegmentCount
         self.candidatePointCount = candidatePointCount
@@ -11754,6 +11762,7 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
         return
             try MobileRideMapRouteProjectionDto(
                 points: FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.read(from: &buf),
+                segments: FfiConverterSequenceTypeMobileRideMapSegmentDisplayMetadataDto.read(from: &buf),
                 sourcePointCount: FfiConverterUInt64.read(from: &buf),
                 sourceSegmentCount: FfiConverterUInt64.read(from: &buf),
                 candidatePointCount: FfiConverterUInt64.read(from: &buf),
@@ -11768,6 +11777,7 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
 
     public static func write(_ value: MobileRideMapRouteProjectionDto, into buf: inout [UInt8]) {
         FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.write(value.points, into: &buf)
+        FfiConverterSequenceTypeMobileRideMapSegmentDisplayMetadataDto.write(value.segments, into: &buf)
         FfiConverterUInt64.write(value.sourcePointCount, into: &buf)
         FfiConverterUInt64.write(value.sourceSegmentCount, into: &buf)
         FfiConverterUInt64.write(value.candidatePointCount, into: &buf)
@@ -11872,6 +11882,105 @@ public func FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lift(_ buf: R
 #endif
 public func FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(_ value: MobileRideMapRouteProjectionOptionsDto) -> RustBuffer {
     return FfiConverterTypeMobileRideMapRouteProjectionOptionsDto.lower(value)
+}
+
+
+/**
+ * Bounded metadata for one visible projected route segment.
+ */
+public struct MobileRideMapSegmentDisplayMetadataDto: Equatable, Hashable {
+    /**
+     * Canonical segment identity within the ride.
+     */
+    public var segmentId: UInt64
+    /**
+     * Rust-owned reason this segment began.
+     */
+    public var startReason: MobileRideSegmentStartReasonDto
+    /**
+     * Number of projected points retained for this segment.
+     */
+    public var visiblePointCount: UInt64
+    /**
+     * First retained projected point sequence.
+     */
+    public var firstVisibleSequence: UInt64?
+    /**
+     * Last retained projected point sequence.
+     */
+    public var lastVisibleSequence: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Canonical segment identity within the ride.
+         */segmentId: UInt64,
+        /**
+         * Rust-owned reason this segment began.
+         */startReason: MobileRideSegmentStartReasonDto,
+        /**
+         * Number of projected points retained for this segment.
+         */visiblePointCount: UInt64,
+        /**
+         * First retained projected point sequence.
+         */firstVisibleSequence: UInt64?,
+        /**
+         * Last retained projected point sequence.
+         */lastVisibleSequence: UInt64?) {
+        self.segmentId = segmentId
+        self.startReason = startReason
+        self.visiblePointCount = visiblePointCount
+        self.firstVisibleSequence = firstVisibleSequence
+        self.lastVisibleSequence = lastVisibleSequence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapSegmentDisplayMetadataDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapSegmentDisplayMetadataDto {
+        return
+            try MobileRideMapSegmentDisplayMetadataDto(
+                segmentId: FfiConverterUInt64.read(from: &buf),
+                startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
+                visiblePointCount: FfiConverterUInt64.read(from: &buf),
+                firstVisibleSequence: FfiConverterOptionUInt64.read(from: &buf),
+                lastVisibleSequence: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapSegmentDisplayMetadataDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
+        FfiConverterUInt64.write(value.visiblePointCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.firstVisibleSequence, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastVisibleSequence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto_lift(_ buf: RustBuffer) throws -> MobileRideMapSegmentDisplayMetadataDto {
+    return try FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto_lower(_ value: MobileRideMapSegmentDisplayMetadataDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.lower(value)
 }
 
 
@@ -12442,14 +12551,16 @@ public func FfiConverterTypeMobileRoutePointCursorDto_lower(_ value: MobileRoute
 public struct MobileRoutePointDto: Equatable, Hashable {
     public var sequence: UInt64
     public var segmentId: UInt64
+    public var startReason: MobileRideSegmentStartReasonDto
     public var location: MobileRideLocationDto
     public var telemetryState: MobileRideMapCoreTelemetryStateDto
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, segmentId: UInt64, location: MobileRideLocationDto, telemetryState: MobileRideMapCoreTelemetryStateDto) {
+    public init(sequence: UInt64, segmentId: UInt64, startReason: MobileRideSegmentStartReasonDto, location: MobileRideLocationDto, telemetryState: MobileRideMapCoreTelemetryStateDto) {
         self.sequence = sequence
         self.segmentId = segmentId
+        self.startReason = startReason
         self.location = location
         self.telemetryState = telemetryState
     }
@@ -12472,6 +12583,7 @@ public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
             try MobileRoutePointDto(
                 sequence: FfiConverterUInt64.read(from: &buf),
                 segmentId: FfiConverterUInt64.read(from: &buf),
+                startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
                 location: FfiConverterTypeMobileRideLocationDto.read(from: &buf),
                 telemetryState: FfiConverterTypeMobileRideMapCoreTelemetryStateDto.read(from: &buf)
         )
@@ -12480,6 +12592,7 @@ public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
     public static func write(_ value: MobileRoutePointDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.sequence, into: &buf)
         FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
         FfiConverterTypeMobileRideLocationDto.write(value.location, into: &buf)
         FfiConverterTypeMobileRideMapCoreTelemetryStateDto.write(value.telemetryState, into: &buf)
     }
@@ -20311,6 +20424,102 @@ public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lower(_ value: 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * Why a Rust-owned route segment began.
+ */
+
+public enum MobileRideSegmentStartReasonDto: Equatable, Hashable {
+
+    /**
+     * The first accepted point in a ride.
+     */
+    case initial
+    /**
+     * A paused ride resumed.
+     */
+    case resume
+    /**
+     * A location gap exceeded the route continuity threshold.
+     */
+    case backgroundGap
+    /**
+     * An imported artifact established the first route segment.
+     */
+    case importBoundary
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSegmentStartReasonDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSegmentStartReasonDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSegmentStartReasonDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSegmentStartReasonDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .initial
+
+        case 2: return .resume
+
+        case 3: return .backgroundGap
+
+        case 4: return .importBoundary
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSegmentStartReasonDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .initial:
+            writeInt(&buf, Int32(1))
+
+
+        case .resume:
+            writeInt(&buf, Int32(2))
+
+
+        case .backgroundGap:
+            writeInt(&buf, Int32(3))
+
+
+        case .importBoundary:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSegmentStartReasonDto_lift(_ buf: RustBuffer) throws -> MobileRideSegmentStartReasonDto {
+    return try FfiConverterTypeMobileRideSegmentStartReasonDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSegmentStartReasonDto_lower(_ value: MobileRideSegmentStartReasonDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSegmentStartReasonDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * Whether the app UI is currently foregrounded.
  */
 
@@ -25338,6 +25547,31 @@ fileprivate struct FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto: Ff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileRideMapRouteDisplayPointDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideMapSegmentDisplayMetadataDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideMapSegmentDisplayMetadataDto]
+
+    public static func write(_ value: [MobileRideMapSegmentDisplayMetadataDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideMapSegmentDisplayMetadataDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideMapSegmentDisplayMetadataDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.read(from: &buf))
         }
         return seq
     }

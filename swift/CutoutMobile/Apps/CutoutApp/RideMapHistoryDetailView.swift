@@ -8,6 +8,7 @@ struct RideMapHistoryDetailView: View {
     let rides: [MobileRideMapHistorySummaryDto]
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
+    let segments: [MobileRideMapSegmentDisplayMetadata]
     let projectionVersion: UInt64
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
@@ -98,6 +99,7 @@ struct RideMapHistoryDetailView: View {
                             routeID: Self.routeID(for: initialHistoryID),
                             projectionVersion: projectionVersion,
                             endpointMetadata: endpointMetadata,
+                            segments: segments,
                             isLoading: isRouteLoading,
                             hasNoPoints: selectedRide?.summary.pointCount == 0,
                             routeError: routeError,
@@ -121,6 +123,7 @@ struct RideMapHistoryDetailView: View {
                                 recordedPointCount: ride.summary.pointCount,
                                 pointsTruncated: pointsTruncated,
                                 segmentCount: ride.segmentCount,
+                                segments: segments,
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
                                 error: routeError,
                                 isLoading: isRouteLoading,
@@ -244,6 +247,7 @@ private struct RideMapHistoryDetailMap: View {
     let routeID: String
     let projectionVersion: UInt64
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
+    let segments: [MobileRideMapSegmentDisplayMetadata]
     let isLoading: Bool
     let hasNoPoints: Bool
     let routeError: MobileRideMapError?
@@ -261,6 +265,7 @@ private struct RideMapHistoryDetailMap: View {
                 showsEndMarker: true,
                 showsCurrentMarker: false,
                 endpointMetadata: endpointMetadata,
+                segments: segments,
                 fitsRouteOnChange: true,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,
@@ -306,6 +311,7 @@ private struct RideMapHistoryDetailSummary: View {
     let recordedPointCount: UInt64
     let pointsTruncated: Bool
     let segmentCount: UInt64
+    let segments: [MobileRideMapSegmentDisplayMetadata]
     let segmentsOmittedByBudget: Bool
     let error: MobileRideMapError?
     let isLoading: Bool
@@ -363,6 +369,7 @@ private struct RideMapHistoryDetailSummary: View {
                     decision: nil,
                     showsRecordedBounds: !pointsTruncated,
                     segmentsOmittedByBudget: segmentsOmittedByBudget,
+                    segments: segments,
                     hasRoute: displayPointCount > 0,
                     telemetryState: telemetryState
                 )
