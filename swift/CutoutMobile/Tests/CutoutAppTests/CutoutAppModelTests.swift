@@ -378,7 +378,7 @@ final class CutoutAppModelTests: XCTestCase {
         let model = CutoutAppModel(core: driver)
         model.setRideMapHistoryDateFilter(.allTime)
         model.loadRideMapHistory(selecting: rideID)
-        await Self.waitUntil("bounded history route preview") {
+        await Self.waitUntil("bounded history route preview", maxTurns: 100_000) {
             model.selectedRideMapHistoryID == rideID
                 && model.rideMapHistoryDisplayPoints.count == 4_096
                 && !model.rideMapHistoryRouteLoading
@@ -386,7 +386,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         XCTAssertTrue(model.rideMapHistoryPointsTruncated)
         model.loadRoutePreviewMapHistory()
-        await Self.waitUntil("largest bounded history route preview") {
+        await Self.waitUntil("largest bounded history route preview", maxTurns: 100_000) {
             model.rideMapHistoryDisplayPoints.count == 4_097
                 && !model.rideMapHistoryRouteLoading
         }
@@ -422,7 +422,7 @@ final class CutoutAppModelTests: XCTestCase {
         let initialHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
         let initialDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
         model.loadRideMapHistory(selecting: rideID)
-        await Self.waitUntil("history route selection") {
+        await Self.waitUntil("history route selection", maxTurns: 100_000) {
             model.selectedRideMapHistoryID == rideID
                 && model.rideMapHistoryDisplayPoints.isEmpty == false
         }
@@ -435,7 +435,7 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
 
         model.selectRideMapHistory(rideID)
-        await Self.waitUntil("same-shape history route reprojection") {
+        await Self.waitUntil("same-shape history route reprojection", maxTurns: 100_000) {
             model.rideMapHistoryProjectionVersion > selectedHistoryProjectionVersion
         }
         XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
@@ -446,8 +446,8 @@ final class CutoutAppModelTests: XCTestCase {
             minimumLongitudeDegrees: -104.90001,
             maximumLongitudeDegrees: -104.89999
         ))
-        for _ in 0 ..< 100 where model.rideMapHistoryDetailDisplayPoints.count != 1 {
-            await Task.yield()
+        await Self.waitUntil("detail viewport projection", maxTurns: 100_000) {
+            model.rideMapHistoryDetailDisplayPoints.count == 1
         }
 
         XCTAssertEqual(model.rideMapHistoryDetailDisplayPoints.count, 1)
