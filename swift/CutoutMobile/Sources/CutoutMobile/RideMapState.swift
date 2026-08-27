@@ -174,6 +174,25 @@ public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
             return "Route point"
         }
     }
+
+    /// Accessibility text for a singleton retained by the bounded display projection.
+    ///
+    /// The wording intentionally describes the displayed point rather than claiming that the
+    /// canonical source segment contains one point or that this point is a route endpoint.
+    public var retainedSingletonAccessibilityLabel: String {
+        switch self {
+        case .initial:
+            return "Displayed route point; initial segment has one retained display point"
+        case .resume:
+            return "Displayed route point; resumed segment has one retained display point"
+        case .backgroundGap:
+            return "Displayed route point; background location gap segment has one retained display point"
+        case .importBoundary:
+            return "Displayed route point; imported route segment has one retained display point"
+        case .unknown:
+            return "Displayed route point; segment reason unavailable and one display point retained"
+        }
+    }
 }
 
 public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
@@ -212,6 +231,8 @@ public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
 public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable, Identifiable {
     public var segmentId: UInt64
     public var startReason: MobileRideMapSegmentStartReason
+    /// Number of points retained for this segment in the bounded display projection.
+    /// This is not the cardinality of the canonical source segment.
     public var visiblePointCount: UInt64
     public var firstVisibleSequence: UInt64?
     public var lastVisibleSequence: UInt64?
@@ -222,7 +243,10 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         startReason.isBackgroundGap
     }
 
-    public var isSingleton: Bool {
+    /// Whether exactly one point from this segment was retained for display.
+    ///
+    /// A retained singleton does not imply that the canonical source segment contains one point.
+    public var isRetainedSingleton: Bool {
         visiblePointCount == 1
     }
 

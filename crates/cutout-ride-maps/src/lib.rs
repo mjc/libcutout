@@ -325,7 +325,7 @@ mod tests {
             segments[0].last_visible_sequence(),
             Some(RidePointSequence::new(0))
         );
-        assert!(segments[0].is_singleton());
+        assert!(segments[0].is_retained_singleton());
         assert_eq!(segments[1].start_reason(), RideSegmentStartReason::Resume);
         assert_eq!(
             segments[2].start_reason(),

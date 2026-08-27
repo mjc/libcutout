@@ -75,14 +75,14 @@ struct RideMapCanvasView: View {
         return points.first { $0.sequence == sequence }
     }
 
-    static func singletonSegmentIDs(
+    static func retainedSingletonSegmentIDs(
         in points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata]
     ) -> Set<UInt64> {
         let displayedSegmentIDs = Set(points.map(\.segmentId))
         return Set(
             segments.lazy
-                .filter { $0.isSingleton && displayedSegmentIDs.contains($0.segmentId) }
+                .filter { $0.isRetainedSingleton && displayedSegmentIDs.contains($0.segmentId) }
                 .map(\.segmentId)
         )
     }
@@ -179,7 +179,7 @@ struct RideMapCanvasView: View {
             sequence: endpointMetadata.canonicalEndSequence,
             isVisible: endpointMetadata.canonicalEndVisible
         )
-        let singletonSegmentIDs = Self.singletonSegmentIDs(in: points, segments: segments)
+        let retainedSingletonSegmentIDs = Self.retainedSingletonSegmentIDs(in: points, segments: segments)
 
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
@@ -193,13 +193,13 @@ struct RideMapCanvasView: View {
                         )
                     )
             }
-            ForEach(segmentPaths.filter { singletonSegmentIDs.contains($0.id) }) { segment in
+            ForEach(segmentPaths.filter { retainedSingletonSegmentIDs.contains($0.id) }) { segment in
                 if let coordinate = segment.coordinates.first {
                     Annotation(
-                        segment.startReason.accessibilityLabel,
+                        segment.startReason.retainedSingletonAccessibilityLabel,
                         coordinate: coordinate
                     ) {
-                        RideMapSingletonSegmentMarker(startReason: segment.startReason)
+                        RideMapRetainedSingletonSegmentMarker(startReason: segment.startReason)
                     }
                 }
             }
@@ -413,7 +413,7 @@ struct RideMapCanvasView: View {
     }
 }
 
-private struct RideMapSingletonSegmentMarker: View {
+private struct RideMapRetainedSingletonSegmentMarker: View {
     let startReason: MobileRideMapSegmentStartReason
 
     var body: some View {
@@ -425,7 +425,7 @@ private struct RideMapSingletonSegmentMarker: View {
                     .stroke(.black, lineWidth: 2)
             }
             .accessibilityElement()
-            .accessibilityLabel(startReason.accessibilityLabel)
+            .accessibilityLabel(startReason.retainedSingletonAccessibilityLabel)
     }
 }
 

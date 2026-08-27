@@ -218,7 +218,9 @@ impl RouteSegmentDisplayMetadata {
         self.start_reason
     }
 
-    /// Returns the number of projected points retained for this segment.
+    /// Returns the number of points retained for this segment in this display projection.
+    ///
+    /// This is not the cardinality of the canonical source segment.
     #[must_use]
     pub const fn visible_point_count(self) -> u64 {
         self.visible_point_count
@@ -236,9 +238,12 @@ impl RouteSegmentDisplayMetadata {
         self.last_visible_sequence
     }
 
-    /// Returns whether this segment has exactly one retained projected point.
+    /// Returns whether this segment has exactly one retained display point.
+    ///
+    /// A retained singleton does not imply that the canonical source segment contains one point;
+    /// display-budget sampling may retain only one point from a larger source segment.
     #[must_use]
-    pub const fn is_singleton(self) -> bool {
+    pub const fn is_retained_singleton(self) -> bool {
         self.visible_point_count == 1
     }
 }

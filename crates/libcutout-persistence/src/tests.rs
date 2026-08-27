@@ -2655,7 +2655,7 @@ fn durable_route_projection_exposes_typed_bounded_segment_metadata() {
         segments[2].start_reason(),
         RideSegmentStartReason::BackgroundGap
     );
-    assert!(segments.iter().all(|segment| segment.is_singleton()));
+    assert!(segments.iter().all(|segment| segment.is_retained_singleton()));
     assert_eq!(
         segments
             .iter()
