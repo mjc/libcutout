@@ -19,11 +19,11 @@ use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
-    DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
-    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
+    drain_semantic_events_checked, DeviceEvent, GattChannel, GattFingerprint, HostSession,
+    LinkInfo, MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
     RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
     SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
-    WriteMode, drain_semantic_events_checked,
+    WriteMode, DEFAULT_REPLAY_OUTPUT_LIMIT,
 };
 
 /// PEVCAP file format magic bytes.
@@ -301,6 +301,12 @@ pub enum PevcapEvent {
 
     /// An independent Core Location observation.
     Location(PevcapLocationSample),
+
+    /// A location observation that decoded structurally but failed canonical validation.
+    ///
+    /// Streaming importers may skip this event while retaining the typed reason for diagnostics;
+    /// the original line or payload remains available in the managed PEVCAP artifact.
+    LocationRejected(PevcapLocationRejection),
 }
 
 #[cfg(feature = "serde")]
@@ -562,7 +568,7 @@ impl<R: Read> PevcapReader<R> {
             if let Some(record) = self.next_record()? {
                 return Ok(Some(PevcapEvent::Record(record)));
             }
-            return Ok(self.next_location()?.map(PevcapEvent::Location));
+            return self.next_binary_event();
         }
 
         let PevcapReaderState::Jsonl {
@@ -575,6 +581,51 @@ impl<R: Read> PevcapReader<R> {
             return Ok(None);
         };
         Self::next_jsonl_event(reader, line_number, line)
+    }
+
+    fn next_binary_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
+        let PevcapReaderState::Binary {
+            reader,
+            remaining_locations,
+            locations_count_read,
+            finished,
+            ..
+        } = &mut self.state
+        else {
+            return Ok(None);
+        };
+        if !*locations_count_read {
+            *remaining_locations = read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
+            *locations_count_read = true;
+        }
+        if *remaining_locations > 0 {
+            let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Location)?;
+            *remaining_locations -= 1;
+            let location =
+                serde_json::from_slice::<PevcapLocationJson>(&payload).map_err(|source| {
+                    PevcapBinaryError::Deserialize {
+                        section: PevcapBinarySection::Location,
+                        source,
+                    }
+                })?;
+            return Ok(Some(location_event(location)));
+        }
+        if *finished {
+            return Ok(None);
+        }
+        *finished = true;
+        let mut trailing = Vec::new();
+        reader
+            .read_to_end(&mut trailing)
+            .map_err(PevcapBinaryError::Io)?;
+        if trailing.is_empty() {
+            Ok(None)
+        } else {
+            Err(PevcapBinaryError::TrailingBytes {
+                len: trailing.len(),
+            }
+            .into())
+        }
     }
 
     /// Reads the next independent location sample, retaining no previously decoded samples.
@@ -694,14 +745,7 @@ impl<R: Read> PevcapReader<R> {
                             source,
                         })?,
                 ))),
-                PevcapJsonlLine::Location { location } => Ok(Some(PevcapEvent::Location(
-                    location
-                        .try_into_location()
-                        .map_err(|source| PevcapJsonlError::Location {
-                            line: *line_number,
-                            source,
-                        })?,
-                ))),
+                PevcapJsonlLine::Location { location } => Ok(Some(location_event(location))),
             };
         }
     }
@@ -756,6 +800,18 @@ impl<R: Read> PevcapReader<R> {
             }
             .into())
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+fn location_event(location: PevcapLocationJson) -> PevcapEvent {
+    let receipt_monotonic_ms = MonotonicTimestamp::new(location.receipt_monotonic_ms);
+    match location.try_into_location() {
+        Ok(location) => PevcapEvent::Location(location),
+        Err(reason) => PevcapEvent::LocationRejected(PevcapLocationRejection {
+            receipt_monotonic_ms,
+            reason,
+        }),
     }
 }
 
@@ -1461,6 +1517,16 @@ impl PevcapLocationSample {
         })
         .map_err(PevcapJsonlError::Serialize)
     }
+}
+
+/// Why a structurally decoded PEVCAP location could not become a canonical sample.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PevcapLocationRejection {
+    /// Capture-relative receipt time decoded from the location event.
+    pub receipt_monotonic_ms: MonotonicTimestamp,
+
+    /// Canonicalization failure for the source location.
+    pub reason: PevcapPhoneLocationError,
 }
 
 fn canonical_non_negative_finite(value: Option<f64>) -> Option<f64> {
@@ -3480,6 +3546,51 @@ mod tests {
         assert_eq!(
             reader.next_event().expect("record should decode"),
             Some(PevcapEvent::Record(record))
+        );
+        assert_eq!(reader.next_event().expect("stream should finish"), None);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn streaming_reader_surfaces_location_rejection_reason_without_stopping() {
+        let capture = sample_pevcap_capture();
+        let invalid_location = PevcapLocationJson {
+            receipt_monotonic_ms: 11,
+            location: PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_725_000_123_467,
+                latitude_degrees: 91.0,
+                longitude_degrees: -104.9,
+                altitude_meters: 1_600.0,
+                horizontal_accuracy_meters: Some(2.0),
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: Some(0.0),
+                course_accuracy_degrees: None,
+            },
+            simulated: None,
+            produced_by_accessory: None,
+        };
+        let input = format!(
+            "{}\n{}\n",
+            capture
+                .header
+                .to_jsonl_line()
+                .expect("header should encode"),
+            serde_json::to_string(&PevcapJsonlLine::Location {
+                location: invalid_location,
+            })
+            .expect("location should encode")
+        );
+        let mut reader = PevcapReader::new(Cursor::new(input.into_bytes()), PevcapEncoding::Jsonl)
+            .expect("reader should validate the header");
+
+        assert_eq!(
+            reader.next_event().expect("rejection should be observable"),
+            Some(PevcapEvent::LocationRejected(PevcapLocationRejection {
+                receipt_monotonic_ms: ms(11),
+                reason: PevcapPhoneLocationError::InvalidLatitude,
+            }))
         );
         assert_eq!(reader.next_event().expect("stream should finish"), None);
     }
