@@ -3677,6 +3677,20 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto) throws  -> MobilePevcapImportPreviewDto
 
     /**
+     * Projects bounded contextual routes for a history overview.
+     *
+     * The Rust worker owns history paging, selected-route exclusion, aggregate/per-route
+     * display bounds, viewport filtering, privacy, endpoint, and segment metadata. Swift only
+     * receives the bounded display projections.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the history filter, context budget, projection options,
+     * or database worker is invalid or unavailable.
+     */
+    func projectHistoryContext(options: MobileRideHistoryContextOptionsDto) throws  -> MobileRideHistoryContextProjectionDto
+
+    /**
      * Projects one durable route through Rust-owned viewport, LOD, and privacy policy.
      *
      * The database worker owns raw route paging and returns only the bounded display projection;
@@ -4295,6 +4309,27 @@ open func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto)throws
             self.uniffiCloneHandle(),
         FfiConverterString.lower(path),
         FfiConverterTypeMobilePevcapEncodingDto_lower(encoding),$0
+    )
+})
+}
+
+    /**
+     * Projects bounded contextual routes for a history overview.
+     *
+     * The Rust worker owns history paging, selected-route exclusion, aggregate/per-route
+     * display bounds, viewport filtering, privacy, endpoint, and segment metadata. Swift only
+     * receives the bounded display projections.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the history filter, context budget, projection options,
+     * or database worker is invalid or unavailable.
+     */
+open func projectHistoryContext(options: MobileRideHistoryContextOptionsDto)throws  -> MobileRideHistoryContextProjectionDto  {
+    return try  FfiConverterTypeMobileRideHistoryContextProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_project_history_context(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideHistoryContextOptionsDto_lower(options),$0
     )
 })
 }
@@ -10861,6 +10896,360 @@ public func FfiConverterTypeMobileRideCursorDto_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeMobileRideCursorDto_lower(_ value: MobileRideCursorDto) -> RustBuffer {
     return FfiConverterTypeMobileRideCursorDto.lower(value)
+}
+
+
+/**
+ * Rust-owned bounds for the history overview's contextual route projection.
+ */
+public struct MobileRideHistoryContextBudgetDto: Equatable, Hashable {
+    /**
+     * Maximum number of history records loaded for contextual projection.
+     */
+    public var historyPageLimit: UInt32
+    /**
+     * Maximum number of non-selected routes returned.
+     */
+    public var maxRoutes: UInt32
+    /**
+     * Maximum display points returned for one contextual route.
+     */
+    public var perRouteBudget: UInt32
+    /**
+     * Maximum display points returned across all contextual routes.
+     */
+    public var totalPointBudget: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Maximum number of history records loaded for contextual projection.
+         */historyPageLimit: UInt32,
+        /**
+         * Maximum number of non-selected routes returned.
+         */maxRoutes: UInt32,
+        /**
+         * Maximum display points returned for one contextual route.
+         */perRouteBudget: UInt32,
+        /**
+         * Maximum display points returned across all contextual routes.
+         */totalPointBudget: UInt32) {
+        self.historyPageLimit = historyPageLimit
+        self.maxRoutes = maxRoutes
+        self.perRouteBudget = perRouteBudget
+        self.totalPointBudget = totalPointBudget
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextBudgetDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextBudgetDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextBudgetDto {
+        return
+            try MobileRideHistoryContextBudgetDto(
+                historyPageLimit: FfiConverterUInt32.read(from: &buf),
+                maxRoutes: FfiConverterUInt32.read(from: &buf),
+                perRouteBudget: FfiConverterUInt32.read(from: &buf),
+                totalPointBudget: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextBudgetDto, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.historyPageLimit, into: &buf)
+        FfiConverterUInt32.write(value.maxRoutes, into: &buf)
+        FfiConverterUInt32.write(value.perRouteBudget, into: &buf)
+        FfiConverterUInt32.write(value.totalPointBudget, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextBudgetDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextBudgetDto {
+    return try FfiConverterTypeMobileRideHistoryContextBudgetDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextBudgetDto_lower(_ value: MobileRideHistoryContextBudgetDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextBudgetDto.lower(value)
+}
+
+
+/**
+ * Inputs for a bounded history overview context projection.
+ */
+public struct MobileRideHistoryContextOptionsDto: Equatable, Hashable {
+    /**
+     * Rust-owned history filters applied before route projection.
+     */
+    public var filter: MobileRideHistoryFilterDto
+    /**
+     * Selected ride omitted from the subdued contextual routes, when present.
+     */
+    public var selectedRideId: MobileRideIdDto?
+    /**
+     * Rust-enforced history and display bounds.
+     */
+    public var budget: MobileRideHistoryContextBudgetDto
+    /**
+     * Optional inclusive viewport shared by every contextual route.
+     */
+    public var viewport: MobileGeoBoundsDto?
+    /**
+     * Privacy policy applied before coordinates cross the FFI boundary.
+     */
+    public var privacy: MobileRideMapRoutePrivacyPolicyDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Rust-owned history filters applied before route projection.
+         */filter: MobileRideHistoryFilterDto,
+        /**
+         * Selected ride omitted from the subdued contextual routes, when present.
+         */selectedRideId: MobileRideIdDto?,
+        /**
+         * Rust-enforced history and display bounds.
+         */budget: MobileRideHistoryContextBudgetDto,
+        /**
+         * Optional inclusive viewport shared by every contextual route.
+         */viewport: MobileGeoBoundsDto?,
+        /**
+         * Privacy policy applied before coordinates cross the FFI boundary.
+         */privacy: MobileRideMapRoutePrivacyPolicyDto) {
+        self.filter = filter
+        self.selectedRideId = selectedRideId
+        self.budget = budget
+        self.viewport = viewport
+        self.privacy = privacy
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextOptionsDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextOptionsDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextOptionsDto {
+        return
+            try MobileRideHistoryContextOptionsDto(
+                filter: FfiConverterTypeMobileRideHistoryFilterDto.read(from: &buf),
+                selectedRideId: FfiConverterOptionTypeMobileRideIdDto.read(from: &buf),
+                budget: FfiConverterTypeMobileRideHistoryContextBudgetDto.read(from: &buf),
+                viewport: FfiConverterOptionTypeMobileGeoBoundsDto.read(from: &buf),
+                privacy: FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextOptionsDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRideHistoryFilterDto.write(value.filter, into: &buf)
+        FfiConverterOptionTypeMobileRideIdDto.write(value.selectedRideId, into: &buf)
+        FfiConverterTypeMobileRideHistoryContextBudgetDto.write(value.budget, into: &buf)
+        FfiConverterOptionTypeMobileGeoBoundsDto.write(value.viewport, into: &buf)
+        FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.write(value.privacy, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextOptionsDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextOptionsDto {
+    return try FfiConverterTypeMobileRideHistoryContextOptionsDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextOptionsDto_lower(_ value: MobileRideHistoryContextOptionsDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextOptionsDto.lower(value)
+}
+
+
+/**
+ * Bounded route context for a history overview.
+ */
+public struct MobileRideHistoryContextProjectionDto: Equatable, Hashable {
+    /**
+     * Contextual routes in newest-first history order.
+     */
+    public var routes: [MobileRideHistoryContextRouteDto]
+    /**
+     * Number of records loaded from the bounded history page.
+     */
+    public var sourceHistoryRouteCount: UInt64
+    /**
+     * Number of eligible routes after selected-ride exclusion.
+     */
+    public var contextRouteCount: UInt64
+    /**
+     * Total display points returned across contextual routes.
+     */
+    public var totalDisplayPointCount: UInt64
+    /**
+     * Whether route or aggregate point budgets omitted eligible context data.
+     */
+    public var routesOmittedByBudget: Bool
+    /**
+     * Whether the bounded history page has another page after it.
+     */
+    public var historyPageHasMore: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Contextual routes in newest-first history order.
+         */routes: [MobileRideHistoryContextRouteDto],
+        /**
+         * Number of records loaded from the bounded history page.
+         */sourceHistoryRouteCount: UInt64,
+        /**
+         * Number of eligible routes after selected-ride exclusion.
+         */contextRouteCount: UInt64,
+        /**
+         * Total display points returned across contextual routes.
+         */totalDisplayPointCount: UInt64,
+        /**
+         * Whether route or aggregate point budgets omitted eligible context data.
+         */routesOmittedByBudget: Bool,
+        /**
+         * Whether the bounded history page has another page after it.
+         */historyPageHasMore: Bool) {
+        self.routes = routes
+        self.sourceHistoryRouteCount = sourceHistoryRouteCount
+        self.contextRouteCount = contextRouteCount
+        self.totalDisplayPointCount = totalDisplayPointCount
+        self.routesOmittedByBudget = routesOmittedByBudget
+        self.historyPageHasMore = historyPageHasMore
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextProjectionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextProjectionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextProjectionDto {
+        return
+            try MobileRideHistoryContextProjectionDto(
+                routes: FfiConverterSequenceTypeMobileRideHistoryContextRouteDto.read(from: &buf),
+                sourceHistoryRouteCount: FfiConverterUInt64.read(from: &buf),
+                contextRouteCount: FfiConverterUInt64.read(from: &buf),
+                totalDisplayPointCount: FfiConverterUInt64.read(from: &buf),
+                routesOmittedByBudget: FfiConverterBool.read(from: &buf),
+                historyPageHasMore: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextProjectionDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRideHistoryContextRouteDto.write(value.routes, into: &buf)
+        FfiConverterUInt64.write(value.sourceHistoryRouteCount, into: &buf)
+        FfiConverterUInt64.write(value.contextRouteCount, into: &buf)
+        FfiConverterUInt64.write(value.totalDisplayPointCount, into: &buf)
+        FfiConverterBool.write(value.routesOmittedByBudget, into: &buf)
+        FfiConverterBool.write(value.historyPageHasMore, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextProjectionDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextProjectionDto {
+    return try FfiConverterTypeMobileRideHistoryContextProjectionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextProjectionDto_lower(_ value: MobileRideHistoryContextProjectionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextProjectionDto.lower(value)
+}
+
+
+/**
+ * One bounded contextual route paired with its stable ride identifier.
+ */
+public struct MobileRideHistoryContextRouteDto: Equatable, Hashable {
+    public var rideId: MobileRideIdDto
+    public var projection: MobileRideMapRouteProjectionDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rideId: MobileRideIdDto, projection: MobileRideMapRouteProjectionDto) {
+        self.rideId = rideId
+        self.projection = projection
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextRouteDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextRouteDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextRouteDto {
+        return
+            try MobileRideHistoryContextRouteDto(
+                rideId: FfiConverterTypeMobileRideIdDto.read(from: &buf),
+                projection: FfiConverterTypeMobileRideMapRouteProjectionDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextRouteDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRideIdDto.write(value.rideId, into: &buf)
+        FfiConverterTypeMobileRideMapRouteProjectionDto.write(value.projection, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextRouteDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextRouteDto {
+    return try FfiConverterTypeMobileRideHistoryContextRouteDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextRouteDto_lower(_ value: MobileRideHistoryContextRouteDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextRouteDto.lower(value)
 }
 
 
@@ -18985,6 +19374,10 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case InvalidGeographicBounds
     /**
+     * The history context page or display budgets are outside Rust's supported bounds.
+     */
+    case InvalidHistoryContextBudget
+    /**
      * The route display budget, viewport, or privacy policy is invalid.
      */
     case InvalidRouteProjection
@@ -19077,20 +19470,21 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
         case 6: return .IntegrityCheckFailed
         case 7: return .InvalidQueryLimit
         case 8: return .InvalidGeographicBounds
-        case 9: return .InvalidRouteProjection
-        case 10: return .PevcapLimitExceeded
-        case 11: return .PevcapPreviewChanged
-        case 12: return .PevcapImportInProgress
-        case 13: return .InvalidCoordinate
-        case 14: return .NotFound
-        case 15: return .InvalidTransition
-        case 16: return .InvalidRideState
-        case 17: return .InvalidSegmentId
-        case 18: return .QueueFull
-        case 19: return .Cancelled
-        case 20: return .DeadlineExceeded
-        case 21: return .WorkerStopped
-        case 22: return .StorageFailure
+        case 9: return .InvalidHistoryContextBudget
+        case 10: return .InvalidRouteProjection
+        case 11: return .PevcapLimitExceeded
+        case 12: return .PevcapPreviewChanged
+        case 13: return .PevcapImportInProgress
+        case 14: return .InvalidCoordinate
+        case 15: return .NotFound
+        case 16: return .InvalidTransition
+        case 17: return .InvalidRideState
+        case 18: return .InvalidSegmentId
+        case 19: return .QueueFull
+        case 20: return .Cancelled
+        case 21: return .DeadlineExceeded
+        case 22: return .WorkerStopped
+        case 23: return .StorageFailure
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -19135,60 +19529,64 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(8))
 
 
-        case .InvalidRouteProjection:
+        case .InvalidHistoryContextBudget:
             writeInt(&buf, Int32(9))
 
 
-        case .PevcapLimitExceeded:
+        case .InvalidRouteProjection:
             writeInt(&buf, Int32(10))
 
 
-        case .PevcapPreviewChanged:
+        case .PevcapLimitExceeded:
             writeInt(&buf, Int32(11))
 
 
-        case .PevcapImportInProgress:
+        case .PevcapPreviewChanged:
             writeInt(&buf, Int32(12))
 
 
-        case .InvalidCoordinate:
+        case .PevcapImportInProgress:
             writeInt(&buf, Int32(13))
 
 
-        case .NotFound:
+        case .InvalidCoordinate:
             writeInt(&buf, Int32(14))
 
 
-        case .InvalidTransition:
+        case .NotFound:
             writeInt(&buf, Int32(15))
 
 
-        case .InvalidRideState:
+        case .InvalidTransition:
             writeInt(&buf, Int32(16))
 
 
-        case .InvalidSegmentId:
+        case .InvalidRideState:
             writeInt(&buf, Int32(17))
 
 
-        case .QueueFull:
+        case .InvalidSegmentId:
             writeInt(&buf, Int32(18))
 
 
-        case .Cancelled:
+        case .QueueFull:
             writeInt(&buf, Int32(19))
 
 
-        case .DeadlineExceeded:
+        case .Cancelled:
             writeInt(&buf, Int32(20))
 
 
-        case .WorkerStopped:
+        case .DeadlineExceeded:
             writeInt(&buf, Int32(21))
 
 
-        case .StorageFailure:
+        case .WorkerStopped:
             writeInt(&buf, Int32(22))
+
+
+        case .StorageFailure:
+            writeInt(&buf, Int32(23))
 
         }
     }
@@ -25485,6 +25883,31 @@ fileprivate struct FfiConverterSequenceTypeMobileRawFloatFieldValueDto: FfiConve
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileRideHistoryContextRouteDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideHistoryContextRouteDto]
+
+    public static func write(_ value: [MobileRideHistoryContextRouteDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideHistoryContextRouteDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideHistoryContextRouteDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideHistoryContextRouteDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideHistoryContextRouteDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileRideHistoryVehicleOptionDto: FfiConverterRustBuffer {
     typealias SwiftType = [MobileRideHistoryVehicleOptionDto]
 
@@ -26350,6 +26773,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_preflight_pevcap() != 64663) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_history_context() != 53555) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_route_points() != 34152) {
