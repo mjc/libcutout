@@ -1,6 +1,6 @@
 use crate::{
-    DistanceMillimetres, LocationAdmission, LocationSample, MonotonicMilliseconds, RideEvent,
-    RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
+    DistanceMillimetres, LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
+    RideEvent, RideLifecycleState, RidePointCount, RideSummary, TransitionError, distance_between,
     distance_between_millimetres,
 };
 
@@ -71,6 +71,7 @@ pub struct RideMapPoint {
     sample: LocationSample,
     segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
+    segment_start_reason: RideSegmentStartReason,
 }
 
 /// Stable segment identity within one ride recording.
@@ -240,10 +241,27 @@ impl RideMapPoint {
         segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
     ) -> Self {
+        Self::new_with_start_reason(
+            sample,
+            segment_id,
+            telemetry_state,
+            RideSegmentStartReason::Initial,
+        )
+    }
+
+    /// Creates a segmented route point with its segment start reason.
+    #[must_use]
+    pub const fn new_with_start_reason(
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        segment_start_reason: RideSegmentStartReason,
+    ) -> Self {
         Self {
             sample,
             segment_id,
             telemetry_state,
+            segment_start_reason,
         }
     }
 
@@ -263,6 +281,12 @@ impl RideMapPoint {
     #[must_use]
     pub const fn telemetry_state(self) -> RouteTelemetryState {
         self.telemetry_state
+    }
+
+    /// Returns why this point's segment began.
+    #[must_use]
+    pub const fn segment_start_reason(self) -> RideSegmentStartReason {
+        self.segment_start_reason
     }
 }
 
@@ -295,6 +319,38 @@ pub struct RideMapMetadata {
     pub associated_at_milliseconds: Option<MonotonicMilliseconds>,
     /// Newest observed vehicle telemetry timestamp.
     pub last_telemetry_at_milliseconds: Option<MonotonicMilliseconds>,
+    /// Number of canonical segments started by a background location gap.
+    pub background_gap_count: BackgroundGapCount,
+}
+
+/// Number of canonical route segments started by a background location gap.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct BackgroundGapCount(u64);
+
+impl BackgroundGapCount {
+    /// Creates a count from its persisted representation.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the persisted representation.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    /// Adds one gap without overflowing.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+}
+
+impl From<u64> for BackgroundGapCount {
+    fn from(value: u64) -> Self {
+        Self::new(value)
+    }
 }
 
 /// Persisted lifecycle clock state used to restore a recording projection.
@@ -322,6 +378,7 @@ pub struct RideMapRecorder {
     summary: RideSummary,
     segment_id: RideMapSegmentId,
     segment_started: bool,
+    background_gap_count: BackgroundGapCount,
     last_monotonic_milliseconds: MonotonicMilliseconds,
     paused_at_milliseconds: Option<MonotonicMilliseconds>,
     paused_duration_milliseconds: RideDurationMilliseconds,
@@ -350,6 +407,7 @@ impl RideMapRecorder {
             summary: RideSummary::from_stored(RidePointCount::new(0), 0),
             segment_id: RideMapSegmentId::new(0),
             segment_started: false,
+            background_gap_count: BackgroundGapCount::new(0),
             last_monotonic_milliseconds: MonotonicMilliseconds::new(0),
             paused_at_milliseconds: None,
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
@@ -403,6 +461,7 @@ impl RideMapRecorder {
                 associated_vehicle,
                 associated_at_milliseconds,
                 last_telemetry_at_milliseconds,
+                background_gap_count: BackgroundGapCount::default(),
             },
             points,
             RideSummary::from_stored(point_count, distance_millimetres.as_u64()),
@@ -485,6 +544,10 @@ impl RideMapRecorder {
         let last_monotonic_milliseconds =
             point_last_monotonic_milliseconds.max(timing_last_monotonic_milliseconds);
         let completed_duration_milliseconds = timing.duration_milliseconds;
+        let observed_background_gap_count = points
+            .iter()
+            .filter(|point| point.segment_start_reason() == RideSegmentStartReason::BackgroundGap)
+            .count();
         Self {
             state: Some(state),
             created_at_milliseconds,
@@ -504,6 +567,9 @@ impl RideMapRecorder {
                 .last()
                 .map_or(RideMapSegmentId::new(0), |point| point.segment_id()),
             segment_started: false,
+            background_gap_count: metadata.background_gap_count.max(BackgroundGapCount::new(
+                u64::try_from(observed_background_gap_count).unwrap_or(u64::MAX),
+            )),
             first_point_sequence,
             summary,
             points,
@@ -572,6 +638,12 @@ impl RideMapRecorder {
         } else {
             RideSegmentCount::new(self.segment_id.value().saturating_add(1))
         }
+    }
+
+    /// Returns the total number of segments started by a background location gap.
+    #[must_use]
+    pub const fn background_gap_count(&self) -> BackgroundGapCount {
+        self.background_gap_count
     }
 
     /// Returns the projected canonical points.
@@ -667,6 +739,7 @@ impl RideMapRecorder {
         self.summary = RideSummary::from_stored(RidePointCount::new(0), 0);
         self.segment_id = RideMapSegmentId::new(0);
         self.segment_started = true;
+        self.background_gap_count = BackgroundGapCount::default();
         self.paused_at_milliseconds = None;
         self.paused_duration_milliseconds = RideDurationMilliseconds::new(0);
         self.completed_duration_milliseconds = RideDurationMilliseconds::new(0);
@@ -864,6 +937,12 @@ impl RideMapRecorder {
         let next_segment_id = self.segment_id_for_sample(&sample);
         let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
+        let segment_start_reason = self.segment_start_reason_for_sample(sample, next_segment_id);
+        if segment_started && segment_start_reason == RideSegmentStartReason::BackgroundGap {
+            self.background_gap_count = self
+                .background_gap_count
+                .saturating_add(BackgroundGapCount::new(1));
+        }
         if gap_started {
             self.segment_id = next_segment_id;
         }
@@ -885,8 +964,12 @@ impl RideMapRecorder {
         self.last_monotonic_milliseconds = self
             .last_monotonic_milliseconds
             .max(sample.monotonic_milliseconds());
-        self.points
-            .push(RideMapPoint::new(sample, self.segment_id, telemetry_state));
+        self.points.push(RideMapPoint::new_with_start_reason(
+            sample,
+            self.segment_id,
+            telemetry_state,
+            segment_start_reason,
+        ));
         if self.points.len() > MAX_LIVE_ROUTE_POINTS {
             let excess = self.points.len() - MAX_LIVE_ROUTE_POINTS;
             self.points.drain(..excess);
@@ -900,13 +983,38 @@ impl RideMapRecorder {
         self.segment_started = false;
         segment_started
     }
+
+    fn segment_start_reason_for_sample(
+        &self,
+        sample: LocationSample,
+        next_segment_id: RideMapSegmentId,
+    ) -> RideSegmentStartReason {
+        if next_segment_id != self.segment_id {
+            return RideSegmentStartReason::BackgroundGap;
+        }
+        if !self.segment_started && self.points.last().is_some() {
+            return self
+                .points
+                .last()
+                .map_or(RideSegmentStartReason::Initial, |point| {
+                    point.segment_start_reason()
+                });
+        }
+        if self.points.is_empty() {
+            return match sample.source() {
+                LocationSource::Live => RideSegmentStartReason::Initial,
+                LocationSource::PevcapImport => RideSegmentStartReason::ImportBoundary,
+            };
+        }
+        RideSegmentStartReason::Resume
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         MonotonicMilliseconds, RideDurationMilliseconds, RideMapRecorder, RidePointSequence,
-        RideSegmentCount, VehicleAssociation,
+        RideSegmentCount, RideSegmentStartReason, VehicleAssociation,
     };
     use crate::{
         Coordinate, LocationAdmission, LocationSample, LocationSource, RideEvent,
@@ -968,6 +1076,14 @@ mod tests {
                 .last()
                 .map(|point| point.segment_id().value()),
             Some(1)
+        );
+        assert_eq!(
+            recorder.points()[0].segment_start_reason(),
+            RideSegmentStartReason::Initial
+        );
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::Resume
         );
     }
 
@@ -1070,6 +1186,10 @@ mod tests {
         assert_eq!(recorder.current_segment_id().value(), 1);
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(recorder.summary().distance_millimetres(), 0);
+        assert_eq!(
+            recorder.points()[1].segment_start_reason(),
+            RideSegmentStartReason::BackgroundGap
+        );
     }
 
     #[test]
@@ -1103,13 +1223,14 @@ mod tests {
     fn recording_a_late_sample_does_not_move_the_monotonic_watermark_backwards() {
         let mut recorder = RideMapRecorder::new();
         recorder.start(monotonic(1_000), None).expect("starts");
-        recorder.record_sample(sample(2_000, 40.0));
+        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(3_000));
+        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(5_000));
 
-        recorder.record_sample(sample(1_500, 40.001));
+        recorder.record_sample(sample(4_000, 40.0));
 
         assert_eq!(
-            recorder.duration_milliseconds_at(monotonic(2_000)),
-            RideDurationMilliseconds::new(1_000)
+            recorder.duration_milliseconds(),
+            RideDurationMilliseconds::new(2_000)
         );
     }
 }
