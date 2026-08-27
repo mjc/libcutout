@@ -1309,6 +1309,9 @@ pub enum StorageError {
     /// the same sample blindly.
     #[error("ride database response was dropped")]
     ResponseDropped,
+    /// The terminal result for a pending location write was already consumed.
+    #[error("pending location write result was already consumed")]
+    ResponseConsumed,
     /// Reconciliation confirmed that a response-lost location was not committed.
     ///
     /// This is intentionally distinct from [`StorageError::ResponseDropped`]: callers have
@@ -1388,7 +1391,13 @@ pub struct RideDatabase {
 /// A location write accepted by the bounded database queue but not completed yet.
 #[derive(Debug)]
 pub struct PendingLocationWrite {
-    response: Receiver<Result<LocationAdmission, StorageError>>,
+    response: Mutex<PendingLocationResponse>,
+}
+
+#[derive(Debug)]
+enum PendingLocationResponse {
+    Open(Receiver<Result<LocationAdmission, StorageError>>),
+    Consumed,
 }
 
 /// Durable state found when reconciling a location whose worker response was lost.
@@ -1619,10 +1628,17 @@ mod spatial_identity_tests {
 }
 
 impl PendingLocationWrite {
+    fn new(response: Receiver<Result<LocationAdmission, StorageError>>) -> Self {
+        Self {
+            response: Mutex::new(PendingLocationResponse::Open(response)),
+        }
+    }
+
     /// Returns the durable result when the worker has completed this write.
     ///
-    /// `None` means that the write remains queued or in progress. This method never waits for
-    /// `SQLite` or the database worker.
+    /// `None` means that the write remains queued or in progress. Once a terminal result is
+    /// observed, the ticket is consumed and later polls return [`StorageError::ResponseConsumed`].
+    /// This method never waits for `SQLite` or the database worker.
     ///
     /// # Errors
     ///
@@ -1631,18 +1647,31 @@ impl PendingLocationWrite {
     pub fn try_result(
         &self,
     ) -> Result<Option<Result<LocationAdmission, StorageError>>, StorageError> {
-        match self.response.try_recv() {
-            Ok(result) => Ok(Some(result)),
-            Err(mpsc::TryRecvError::Empty) => Ok(None),
-            Err(mpsc::TryRecvError::Disconnected) => Err(StorageError::ResponseDropped),
+        let mut response = self
+            .response
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *response {
+            PendingLocationResponse::Consumed => Err(StorageError::ResponseConsumed),
+            PendingLocationResponse::Open(receiver) => match receiver.try_recv() {
+                Ok(result) => {
+                    *response = PendingLocationResponse::Consumed;
+                    Ok(Some(result))
+                }
+                Err(mpsc::TryRecvError::Empty) => Ok(None),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    *response = PendingLocationResponse::Consumed;
+                    Err(StorageError::ResponseDropped)
+                }
+            },
         }
     }
 
-    /// Waits for a durable result until a monotonic deadline without consuming this ticket.
+    /// Waits for a durable result until a monotonic deadline.
     ///
     /// `None` means that the worker is still delayed or queued when the deadline arrives; the
-    /// ticket can be polled again later. This bounds caller wait time without pretending that a
-    /// still-running `SQLite` command has been cancelled.
+    /// ticket can be polled again later. A terminal result consumes the ticket. This bounds caller
+    /// wait time without pretending that a still-running `SQLite` command has been cancelled.
     ///
     /// # Errors
     ///
@@ -1653,10 +1682,23 @@ impl PendingLocationWrite {
         deadline: Instant,
     ) -> Result<Option<Result<LocationAdmission, StorageError>>, StorageError> {
         let timeout = deadline.saturating_duration_since(Instant::now());
-        match self.response.recv_timeout(timeout) {
-            Ok(result) => Ok(Some(result)),
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
+        let mut response = self
+            .response
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match &mut *response {
+            PendingLocationResponse::Consumed => Err(StorageError::ResponseConsumed),
+            PendingLocationResponse::Open(receiver) => match receiver.recv_timeout(timeout) {
+                Ok(result) => {
+                    *response = PendingLocationResponse::Consumed;
+                    Ok(Some(result))
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    *response = PendingLocationResponse::Consumed;
+                    Err(StorageError::ResponseDropped)
+                }
+            },
         }
     }
 
@@ -1670,9 +1712,16 @@ impl PendingLocationWrite {
     /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
     /// sending a result.
     pub fn wait_result(self) -> Result<Result<LocationAdmission, StorageError>, StorageError> {
-        self.response
-            .recv()
-            .map_err(|_| StorageError::ResponseDropped)
+        match self
+            .response
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            PendingLocationResponse::Consumed => Err(StorageError::ResponseConsumed),
+            PendingLocationResponse::Open(response) => {
+                response.recv().map_err(|_| StorageError::ResponseDropped)
+            }
+        }
     }
 }
 
@@ -2484,7 +2533,7 @@ impl RideDatabase {
             telemetry_state,
             reply,
         })?;
-        Ok(PendingLocationWrite { response })
+        Ok(PendingLocationWrite::new(response))
     }
 
     /// Reconciles a location after [`StorageError::ResponseDropped`].
@@ -2530,7 +2579,7 @@ impl RideDatabase {
             release,
             reply,
         })?;
-        Ok(PendingLocationWrite { response })
+        Ok(PendingLocationWrite::new(response))
     }
 
     /// Enqueues a location while a `SQLite` progress callback holds the worker before the write.
@@ -2554,7 +2603,7 @@ impl RideDatabase {
             release,
             reply,
         })?;
-        Ok(PendingLocationWrite { response })
+        Ok(PendingLocationWrite::new(response))
     }
 
     /// Enqueues a location and deliberately loses its terminal response after worker failure.
@@ -2597,7 +2646,7 @@ impl RideDatabase {
             failure_point,
             reply,
         })?;
-        Ok(PendingLocationWrite { response })
+        Ok(PendingLocationWrite::new(response))
     }
 
     /// Enqueues a location, commits it, and deliberately loses its terminal response after

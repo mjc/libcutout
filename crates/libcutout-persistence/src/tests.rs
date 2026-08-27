@@ -323,6 +323,10 @@ fn async_location_write_reports_completion_without_waiting() {
         std::thread::yield_now();
     };
     assert!(matches!(result, Ok(LocationAdmission::Accepted)));
+    assert!(matches!(
+        pending.try_result(),
+        Err(StorageError::ResponseConsumed)
+    ));
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);

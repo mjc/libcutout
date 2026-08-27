@@ -3974,6 +3974,7 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::DeadlineExceeded => MobileRideDatabaseError::DeadlineExceeded,
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
+        | persistence::StorageError::ResponseConsumed
         | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
         persistence::StorageError::LocationWriteNotCommitted
         | persistence::StorageError::Sqlite(_)
