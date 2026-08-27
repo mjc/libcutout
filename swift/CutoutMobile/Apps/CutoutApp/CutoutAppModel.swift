@@ -693,7 +693,7 @@ final class CutoutAppModel {
     }
 
     func selectRideMapHistory(_ rideID: String) {
-        selectRideMapHistory(rideID, previewLimit: Self.rideMapPreviewPointLimit)
+        selectRideMapHistory(rideID, requestedPointLimit: Self.rideMapPreviewPointLimit)
     }
 
     static func detailPointsAreTruncated(
@@ -771,12 +771,13 @@ final class CutoutAppModel {
         }
     }
 
+    /// Loads the largest Rust-bounded route preview, never an unbounded route.
     func loadRoutePreviewMapHistory() {
         guard let selectedRideMapHistoryID else { return }
-        selectRideMapHistory(selectedRideMapHistoryID, previewLimit: nil)
+        selectRideMapHistory(selectedRideMapHistoryID, requestedPointLimit: nil)
     }
 
-    private func selectRideMapHistory(_ rideID: String, previewLimit: Int?) {
+    private func selectRideMapHistory(_ rideID: String, requestedPointLimit: Int?) {
         guard rideMapHistory.contains(where: { $0.rideId == rideID }) else {
             rideMapHistoryRouteLoading = false
             rideMapHistoryRouteError = nil
@@ -802,7 +803,7 @@ final class CutoutAppModel {
         rideMapHistorySelectionCancellation = cancellation
         let budget = UInt32(
             min(
-                previewLimit ?? Int(Self.rideMapHistoryPreviewPointLimit),
+                requestedPointLimit ?? Int(Self.rideMapHistoryPreviewPointLimit),
                 Int(Self.rideMapHistoryPreviewPointLimit)
             )
         )
