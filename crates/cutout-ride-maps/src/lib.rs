@@ -32,10 +32,10 @@ pub use recording::{
 };
 mod projection;
 pub use projection::{
-    MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyClass,
-    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteProjectionError,
-    RouteViewport, count_segment_runs, project_route_points, project_route_points_cancellable,
-    project_route_points_from_iter,
+    MAX_ROUTE_DISPLAY_POINTS, RouteDisplayBudget, RouteDisplayPoint, RouteEndpointMetadata,
+    RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionAccumulator,
+    RouteProjectionError, RouteViewport, count_segment_runs, project_route_points,
+    project_route_points_cancellable, project_route_points_from_iter, route_endpoint_metadata,
 };
 
 #[cfg(test)]
@@ -45,12 +45,12 @@ mod tests {
     use super::{
         AverageSpeedMillimetresPerSecond, Coordinate, DistanceMillimetres, LatitudeE7,
         LocationAdmission, LocationSample, LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS,
-        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapRecorder, RidePointCount,
-        RideMapPoint, RideMapSegmentId, RideSummary, RouteDisplayBudget, RoutePrivacyClass,
-        RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError, RouteTelemetryState,
-        RouteViewport, TransitionError, VehicleIdentity,
+        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder,
+        RideMapSegmentId, RidePointCount, RidePointSequence, RideSummary, RouteDisplayBudget,
+        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError,
+        RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
         WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
-        project_route_points_from_iter,
+        project_route_points_from_iter, route_endpoint_metadata,
     };
 
     #[test]
@@ -350,7 +350,7 @@ mod tests {
         recorder
             .start(MonotonicMilliseconds::new(1_000), None)
             .unwrap();
-        for (offset, latitude) in [(0, 40.0), (1_000, 40.001), (2_000, 40.002)] {
+        for (offset, latitude) in [(0, 40.0), (1_000, 40.0001), (2_000, 40.0002)] {
             let sample = LocationSample::new(
                 Coordinate::from_degrees(latitude, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + offset),
@@ -363,8 +363,8 @@ mod tests {
         }
 
         let viewport = RouteViewport::new(
-            LatitudeE7::new(400_010_000),
-            LatitudeE7::new(400_010_000),
+            LatitudeE7::new(400_001_000),
+            LatitudeE7::new(400_001_000),
             LongitudeE7::new(-1_050_000_000),
             LongitudeE7::new(-1_049_999_000),
         )
@@ -394,7 +394,7 @@ mod tests {
         recorder
             .start(MonotonicMilliseconds::new(1_000), None)
             .unwrap();
-        for (offset, latitude) in [(0, 40.0), (1_000, 40.001), (2_000, 40.002)] {
+        for (offset, latitude) in [(0, 40.0), (1_000, 40.0001), (2_000, 40.0002)] {
             let sample = LocationSample::new(
                 Coordinate::from_degrees(latitude, -105.0).unwrap(),
                 MonotonicMilliseconds::new(1_000 + offset),
@@ -420,7 +420,13 @@ mod tests {
             RoutePrivacyPolicy::Precise,
         );
 
-        assert_eq!(projection.iter().map(|point| point.sequence().as_u64()).collect::<Vec<_>>(), [0]);
+        assert_eq!(
+            projection
+                .iter()
+                .map(|point| point.sequence().as_u64())
+                .collect::<Vec<_>>(),
+            [0]
+        );
         assert_eq!(
             endpoints.start_sequence().map(RidePointSequence::as_u64),
             Some(0)

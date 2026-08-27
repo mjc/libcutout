@@ -189,6 +189,97 @@ pub struct RouteDisplayPoint {
     privacy_class: RoutePrivacyClass,
 }
 
+/// Canonical route endpoints and whether each endpoint is inside the requested viewport.
+///
+/// Endpoint visibility is intentionally separate from the bounded display points. A display
+/// budget may omit an endpoint even when it is in the viewport, and a viewport may omit an
+/// endpoint while still returning interior route points. Presentation code must use the sequence
+/// values to annotate only an actually displayed canonical endpoint.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RouteEndpointMetadata {
+    start_sequence: Option<RidePointSequence>,
+    end_sequence: Option<RidePointSequence>,
+    start_visible: bool,
+    end_visible: bool,
+}
+
+impl RouteEndpointMetadata {
+    /// Creates endpoint metadata for a canonical route.
+    #[must_use]
+    pub const fn new(
+        start_sequence: Option<RidePointSequence>,
+        end_sequence: Option<RidePointSequence>,
+        start_visible: bool,
+        end_visible: bool,
+    ) -> Self {
+        Self {
+            start_sequence,
+            end_sequence,
+            start_visible,
+            end_visible,
+        }
+    }
+
+    /// Returns the canonical first-point sequence, when the route has points.
+    #[must_use]
+    pub const fn start_sequence(self) -> Option<RidePointSequence> {
+        self.start_sequence
+    }
+
+    /// Returns the canonical last-point sequence, when the route has points.
+    #[must_use]
+    pub const fn end_sequence(self) -> Option<RidePointSequence> {
+        self.end_sequence
+    }
+
+    /// Returns whether the canonical first point lies in the requested viewport.
+    #[must_use]
+    pub const fn start_visible(self) -> bool {
+        self.start_visible
+    }
+
+    /// Returns whether the canonical last point lies in the requested viewport.
+    #[must_use]
+    pub const fn end_visible(self) -> bool {
+        self.end_visible
+    }
+}
+
+/// Computes endpoint metadata for a route slice with an explicit canonical point count.
+///
+/// `points` may be a bounded tail rather than the complete route. The explicit `source_point_count`
+/// therefore determines the canonical endpoint sequence values; a retained point is marked
+/// visible only when its sequence and coordinate match that canonical endpoint.
+#[must_use]
+pub fn route_endpoint_metadata(
+    points: &[RideMapPoint],
+    first_sequence: RidePointSequence,
+    source_point_count: u64,
+    viewport: Option<RouteViewport>,
+) -> RouteEndpointMetadata {
+    let Some(end_offset) = source_point_count.checked_sub(1) else {
+        return RouteEndpointMetadata::default();
+    };
+    let start_sequence = RidePointSequence::new(0);
+    let end_sequence = RidePointSequence::new(end_offset);
+    let visible = |sequence: RidePointSequence| {
+        points
+            .iter()
+            .enumerate()
+            .find_map(|(offset, point)| {
+                let point_sequence = first_sequence.saturating_add(as_u64(offset));
+                (point_sequence == sequence).then_some(point.sample().coordinate())
+            })
+            .is_some_and(|coordinate| viewport.is_none_or(|viewport| viewport.contains(coordinate)))
+    };
+    RouteEndpointMetadata::new(
+        Some(start_sequence),
+        Some(end_sequence),
+        visible(start_sequence),
+        visible(end_sequence),
+    )
+}
+
 /// Counts segment runs in canonical route order.
 ///
 /// Route points are ordered by their stable sequence before they reach the projection layer, so
