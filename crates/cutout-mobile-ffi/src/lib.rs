@@ -13680,19 +13680,21 @@ mod tests {
     fn phone_location_boundary_has_unit_typed_metrics() {
         let sample = capture_phone_location_fixture();
 
-        assert_eq!(sample.latitude_degrees.value, 39.739_235_8);
-        assert_eq!(sample.longitude_degrees.value, -104.990_251);
-        assert_eq!(sample.altitude_meters.value, 1_609.344);
-        assert_eq!(
-            sample
+        assert!((sample.latitude_degrees.value - 39.739_235_8).abs() < f64::EPSILON);
+        assert!((sample.longitude_degrees.value - -104.990_251).abs() < f64::EPSILON);
+        assert!((sample.altitude_meters.value - 1_609.344).abs() < f64::EPSILON);
+        assert!(
+            (sample
                 .horizontal_accuracy_meters
                 .expect("fixture accuracy")
-                .value,
-            0.8
+                .value
+                - 0.8)
+                .abs()
+                < f64::EPSILON
         );
-        assert_eq!(
-            sample.speed_meters_per_second.expect("fixture speed").value,
-            4.470_400_25
+        assert!(
+            (sample.speed_meters_per_second.expect("fixture speed").value - 4.470_400_25).abs()
+                < f64::EPSILON
         );
     }
 
