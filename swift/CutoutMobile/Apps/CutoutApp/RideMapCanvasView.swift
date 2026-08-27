@@ -75,15 +75,6 @@ struct RideMapCanvasView: View {
         return points.first { $0.sequence == sequence }
     }
 
-    static func isGapSegment(
-        previousSegmentID: UInt64?,
-        currentSegmentID: UInt64,
-        startReason: MobileRideMapSegmentStartReason?
-    ) -> Bool {
-        guard startReason?.isBackgroundGap == true else { return false }
-        return previousSegmentID != currentSegmentID
-    }
-
     static func singletonSegmentIDs(
         in points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata]

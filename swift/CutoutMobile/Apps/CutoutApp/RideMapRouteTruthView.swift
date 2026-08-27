@@ -35,12 +35,6 @@ struct RideMapRouteTruthView: View {
         self.telemetryState = telemetryState
     }
 
-    static func backgroundGapCount(
-        for segments: [MobileRideMapSegmentDisplayMetadata]
-    ) -> UInt64 {
-        UInt64(segments.lazy.filter(\.isBackgroundGap).count)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(localizedAppText("ride_map.route_truth", segmentCount, telemetryText))
@@ -79,7 +73,7 @@ struct RideMapRouteTruthView: View {
     private var segmentCount: UInt64 { rustSegmentCount }
 
     private var backgroundGapCount: UInt64 {
-        Self.backgroundGapCount(for: segments)
+        MobileRideMapSegmentDisplayMetadata.backgroundGapCount(for: segments)
     }
 
     private var routeIsPresent: Bool { hasRoute ?? !points.isEmpty }

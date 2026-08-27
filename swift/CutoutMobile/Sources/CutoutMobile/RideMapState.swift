@@ -223,6 +223,17 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         visiblePointCount == 1
     }
 
+    /// Counts only segments that represent a background location gap.
+    ///
+    /// Segment boundaries such as resume and import are intentionally excluded from this
+    /// presentation policy. Keep this predicate beside the segment reason so map rendering and
+    /// route truth cannot drift apart.
+    public static func backgroundGapCount(
+        for segments: [MobileRideMapSegmentDisplayMetadata]
+    ) -> UInt64 {
+        UInt64(segments.lazy.filter(\.isBackgroundGap).count)
+    }
+
     public init(
         segmentId: UInt64,
         startReason: MobileRideMapSegmentStartReason,
@@ -272,7 +283,7 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
 
     /// Number of displayed segments that represent an actual background location gap.
     public var backgroundGapCount: UInt64 {
-        UInt64(segments.lazy.filter(\.isBackgroundGap).count)
+        MobileRideMapSegmentDisplayMetadata.backgroundGapCount(for: segments)
     }
 }
 

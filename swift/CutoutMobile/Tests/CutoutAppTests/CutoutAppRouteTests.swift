@@ -366,48 +366,11 @@ final class CutoutAppRouteTests: XCTestCase {
 
     @MainActor
     func testRideMapStylesOnlyBackgroundGapSegmentsAsGaps() {
-        XCTAssertFalse(
-            RideMapCanvasView.isGapSegment(
-                previousSegmentID: nil,
-                currentSegmentID: 0,
-                startReason: .initial
-            )
-        )
-        XCTAssertTrue(
-            RideMapCanvasView.isGapSegment(
-                previousSegmentID: nil,
-                currentSegmentID: 1,
-                startReason: .backgroundGap
-            )
-        )
-        XCTAssertFalse(
-            RideMapCanvasView.isGapSegment(
-                previousSegmentID: 0,
-                currentSegmentID: 0,
-                startReason: .backgroundGap
-            )
-        )
-        XCTAssertFalse(
-            RideMapCanvasView.isGapSegment(
-                previousSegmentID: 0,
-                currentSegmentID: 1,
-                startReason: .resume
-            )
-        )
-        XCTAssertFalse(
-            RideMapCanvasView.isGapSegment(
-                previousSegmentID: 0,
-                currentSegmentID: 1,
-                startReason: .importBoundary
-            )
-        )
-        XCTAssertTrue(
-            RideMapCanvasView.isGapSegment(
-                previousSegmentID: 0,
-                currentSegmentID: 1,
-                startReason: .backgroundGap
-            )
-        )
+        XCTAssertFalse(MobileRideMapSegmentStartReason.initial.isBackgroundGap)
+        XCTAssertFalse(MobileRideMapSegmentStartReason.resume.isBackgroundGap)
+        XCTAssertTrue(MobileRideMapSegmentStartReason.backgroundGap.isBackgroundGap)
+        XCTAssertFalse(MobileRideMapSegmentStartReason.importBoundary.isBackgroundGap)
+        XCTAssertFalse(MobileRideMapSegmentStartReason.unknown.isBackgroundGap)
     }
 
     @MainActor
@@ -470,7 +433,7 @@ final class CutoutAppRouteTests: XCTestCase {
             RideMapCanvasView.singletonSegmentIDs(in: points, segments: segments),
             Set([UInt64(0), UInt64(2)])
         )
-        XCTAssertEqual(RideMapRouteTruthView.backgroundGapCount(for: segments), 1)
+        XCTAssertEqual(MobileRideMapSegmentDisplayMetadata.backgroundGapCount(for: segments), 1)
         XCTAssertTrue(segments[2].isSingleton)
         XCTAssertTrue(segments[2].isBackgroundGap)
         XCTAssertFalse(segments[1].isSingleton)
