@@ -259,6 +259,20 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         canonicalPointCount == 1
     }
 
+    /// Accessibility text that distinguishes a canonical singleton from a display-only LOD
+    /// singleton. A missing canonical count is intentionally left as the generic retained-point
+    /// wording used by live-tail projections.
+    public var singletonAccessibilityLabel: String? {
+        guard isRetainedSingleton else { return nil }
+        guard let canonicalPointCount else {
+            return startReason.retainedSingletonAccessibilityLabel
+        }
+        if canonicalPointCount == 1 {
+            return "\(startReason.accessibilityLabel); segment contains one recorded point"
+        }
+        return "\(startReason.accessibilityLabel); one display point represents \(canonicalPointCount) recorded points"
+    }
+
     /// Counts displayed segments that represent a background location gap.
     ///
     /// This is a visible-segment helper for secondary presentation diagnostics. Canonical route

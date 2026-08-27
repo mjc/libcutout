@@ -8,6 +8,7 @@ struct RideMapCanvasView: View {
     private struct SegmentPath: Identifiable {
         let id: UInt64
         let startReason: MobileRideMapSegmentStartReason
+        let singletonAccessibilityLabel: String?
         var coordinates: [CLLocationCoordinate2D]
 
         var isGap: Bool {
@@ -16,12 +17,19 @@ struct RideMapCanvasView: View {
     }
 
     struct PathKey: Equatable {
+        struct SegmentMetadata: Equatable {
+            let id: UInt64
+            let startReason: MobileRideMapSegmentStartReason
+            let visiblePointCount: UInt64
+            let canonicalPointCount: UInt64?
+        }
+
         let routeID: String
         let projectionVersion: UInt64
         let firstSequence: UInt64?
         let lastSequence: UInt64?
         let pointCount: Int
-        let segmentReasons: [MobileRideMapSegmentStartReason?]
+        let segmentMetadata: [SegmentMetadata]
     }
 
     let points: [MobileRideMapRouteDisplayPoint]
@@ -93,17 +101,19 @@ struct RideMapCanvasView: View {
         points: [MobileRideMapRouteDisplayPoint],
         segments: [MobileRideMapSegmentDisplayMetadata] = []
     ) -> PathKey {
-        let startReasonsBySegmentID = Dictionary(
-            uniqueKeysWithValues: segments.map { ($0.segmentId, $0.startReason) }
-        )
         return PathKey(
             routeID: routeID,
             projectionVersion: projectionVersion,
             firstSequence: points.first?.sequence,
             lastSequence: points.last?.sequence,
             pointCount: points.count,
-            segmentReasons: points.map { point in
-                startReasonsBySegmentID[point.segmentId]
+            segmentMetadata: segments.map {
+                PathKey.SegmentMetadata(
+                    id: $0.segmentId,
+                    startReason: $0.startReason,
+                    visiblePointCount: $0.visiblePointCount,
+                    canonicalPointCount: $0.canonicalPointCount
+                )
             }
         )
     }
@@ -198,10 +208,15 @@ struct RideMapCanvasView: View {
             }
             ForEach(retainedSingletonPaths) { segment in
                 Annotation(
-                    segment.startReason.retainedSingletonAccessibilityLabel,
+                    segment.singletonAccessibilityLabel
+                        ?? segment.startReason.retainedSingletonAccessibilityLabel,
                     coordinate: segment.coordinates[0]
                 ) {
-                    RideMapRetainedSingletonSegmentMarker(startReason: segment.startReason)
+                    RideMapRetainedSingletonSegmentMarker(
+                        startReason: segment.startReason,
+                        accessibilityLabel: segment.singletonAccessibilityLabel
+                            ?? segment.startReason.retainedSingletonAccessibilityLabel
+                    )
                 }
             }
             if showsStartMarker, let startPoint {
@@ -282,8 +297,17 @@ struct RideMapCanvasView: View {
         Dictionary(uniqueKeysWithValues: segments.map { ($0.segmentId, $0.startReason) })
     }
 
+    private var segmentMetadataByID: [UInt64: MobileRideMapSegmentDisplayMetadata] {
+        Dictionary(uniqueKeysWithValues: segments.map { ($0.segmentId, $0) })
+    }
+
     private func updatePaths(for key: PathKey) {
         guard let currentKey = renderedKey, currentKey.routeID == key.routeID else {
+            rebuildPaths(for: key)
+            return
+        }
+
+        guard currentKey.segmentMetadata == key.segmentMetadata else {
             rebuildPaths(for: key)
             return
         }
@@ -332,6 +356,8 @@ struct RideMapCanvasView: View {
                     SegmentPath(
                         id: point.segmentId,
                         startReason: startReasonsBySegmentID[point.segmentId] ?? .unknown,
+                        singletonAccessibilityLabel: segmentMetadataByID[point.segmentId]?
+                            .singletonAccessibilityLabel,
                         coordinates: [coordinate]
                     )
                 )
@@ -350,6 +376,8 @@ struct RideMapCanvasView: View {
                 SegmentPath(
                     id: point.segmentId,
                     startReason: startReasonsBySegmentID[point.segmentId] ?? .unknown,
+                    singletonAccessibilityLabel: segmentMetadataByID[point.segmentId]?
+                        .singletonAccessibilityLabel,
                     coordinates: [coordinate]
                 )
             )
@@ -416,6 +444,7 @@ struct RideMapCanvasView: View {
 
 private struct RideMapRetainedSingletonSegmentMarker: View {
     let startReason: MobileRideMapSegmentStartReason
+    let accessibilityLabel: String
 
     var body: some View {
         Circle()
@@ -426,7 +455,7 @@ private struct RideMapRetainedSingletonSegmentMarker: View {
                     .stroke(.black, lineWidth: 2)
             }
             .accessibilityElement()
-            .accessibilityLabel(startReason.retainedSingletonAccessibilityLabel)
+            .accessibilityLabel(accessibilityLabel)
     }
 }
 

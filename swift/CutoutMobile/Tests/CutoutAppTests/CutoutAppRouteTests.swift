@@ -504,6 +504,24 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertTrue(canonicalSingleton.isRetainedSingleton)
         XCTAssertTrue(canonicalSingleton.isCanonicalSingleton)
+        XCTAssertEqual(
+            canonicalSingleton.singletonAccessibilityLabel,
+            "Imported route segment; segment contains one recorded point"
+        )
+
+        let lodSingleton = MobileRideMapSegmentDisplayMetadata(
+            segmentId: 4,
+            startReason: .backgroundGap,
+            visiblePointCount: 1,
+            canonicalPointCount: 12,
+            firstVisibleSequence: 5,
+            lastVisibleSequence: 5
+        )
+        XCTAssertEqual(
+            lodSingleton.singletonAccessibilityLabel,
+            "Background location gap; one display point represents 12 recorded points"
+        )
+        XCTAssertNil(segments[1].singletonAccessibilityLabel)
     }
 
     @MainActor
