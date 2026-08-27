@@ -6251,52 +6251,19 @@ fn append_location_in_transaction(
     let write_state = load_ride_write_state(connection, ride_id)?;
     let previous = connection
         .query_row(
-            "SELECT sequence, segment_id, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source
-             FROM ride_points WHERE ride_id = ?1 ORDER BY sequence DESC LIMIT 1",
+            "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
+                    points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
+                    points.horizontal_accuracy_mm, points.source, segments.start_reason
+             FROM ride_points AS points
+             JOIN ride_segments AS segments
+               ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+             WHERE points.ride_id = ?1 ORDER BY points.sequence DESC LIMIT 1",
             params![ride_id.uuid().to_string()],
-            |row| {
-                let coordinate = Coordinate::from_fixed_parts(row.get(4)?, row.get(5)?).map_err(|_| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        4,
-                        rusqlite::types::Type::Integer,
-                        Box::new(StorageError::InvalidStoredValue {
-                            field: "coordinate",
-                            value: "out of range".to_owned(),
-                        }),
-                    )
-                })?;
-                let source = source_from_db(row.get::<_, String>(7)?.as_str()).map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        7,
-                        rusqlite::types::Type::Text,
-                        Box::new(error),
-                    )
-                })?;
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, u64>(1)?,
-                    LocationSample::new(
-                        coordinate,
-                        row.get::<_, u64>(2)?,
-                        row.get::<_, u64>(3)?,
-                        row.get::<_, Option<u32>>(6)?,
-                        source,
-                    ),
-                ))
-            },
+            route_point_from_row,
         )
         .optional()?;
     let decision = write_state
-        .decide_location(
-            previous
-                .as_ref()
-                .map(|(_, previous_segment_id, previous_sample)| {
-                    (*previous_segment_id, *previous_sample)
-                }),
-            sample,
-            segment_id,
-            mode,
-        )
+        .decide_location(previous, sample, segment_id, mode)
         .map_err(StorageError::InvalidRideState)?;
     validate_segment_id(previous.as_ref(), sample, segment_id)?;
     match decision {
@@ -6306,9 +6273,9 @@ fn append_location_in_transaction(
             duration_milliseconds,
         } => {
             ensure_ride_segment(connection, ride_id, previous.as_ref(), sample, segment_id)?;
-            let sequence = previous
-                .map(|(sequence, _, _)| sequence + 1)
-                .unwrap_or_default();
+            let sequence = previous.map_or(RidePointSequence::new(0), |point| {
+                point.sequence().saturating_add(1)
+            });
             let insert = LocationInsert {
                 ride_id,
                 sequence,
@@ -6336,7 +6303,7 @@ fn append_location_in_transaction(
 fn ensure_ride_segment(
     connection: &Connection,
     ride_id: RideId,
-    previous: Option<&(i64, u64, LocationSample)>,
+    previous: Option<&RoutePoint>,
     sample: LocationSample,
     segment_identity: RideMapSegmentId,
 ) -> Result<(), StorageError> {
@@ -6396,23 +6363,23 @@ fn ensure_ride_segment(
 }
 
 fn segment_start_reason(
-    previous: Option<&(i64, u64, LocationSample)>,
+    previous: Option<&RoutePoint>,
     sample: LocationSample,
     segment_id: RideMapSegmentId,
 ) -> RideSegmentStartReason {
-    let Some((_, previous_segment_id, previous_sample)) = previous else {
+    let Some(previous) = previous else {
         return match sample.source() {
             LocationSource::Live => RideSegmentStartReason::Initial,
             LocationSource::PevcapImport => RideSegmentStartReason::ImportBoundary,
         };
     };
-    if *previous_segment_id == segment_id.value() {
+    if previous.segment_id() == segment_id {
         return RideSegmentStartReason::Initial;
     }
     let gap_started = sample
         .monotonic_milliseconds()
         .as_u64()
-        .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+        .saturating_sub(previous.sample().monotonic_milliseconds().as_u64())
         > MAX_GAP_MILLISECONDS;
     if gap_started {
         RideSegmentStartReason::BackgroundGap
@@ -6422,34 +6389,37 @@ fn segment_start_reason(
 }
 
 fn validate_segment_id(
-    previous: Option<&(i64, u64, LocationSample)>,
+    previous: Option<&RoutePoint>,
     sample: LocationSample,
     segment_id: RideMapSegmentId,
 ) -> Result<(), StorageError> {
-    let expected_segment_id = previous.map_or(0, |(_, previous_segment_id, previous_sample)| {
+    let expected_segment_id = previous.map_or(0, |previous| {
         let gap_started = sample
             .monotonic_milliseconds()
             .as_u64()
-            .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+            .saturating_sub(previous.sample().monotonic_milliseconds().as_u64())
             > MAX_GAP_MILLISECONDS;
-        previous_segment_id.saturating_add(u64::from(gap_started))
+        previous
+            .segment_id()
+            .value()
+            .saturating_add(u64::from(gap_started))
     });
     // A +1 transition may come from a pause/resume boundary, which is persisted as
     // lifecycle state rather than a route-point row. A time gap must still account for
     // the increment itself, so it cannot be combined with an arbitrary jump.
     let segment_id_is_valid = match previous {
         None => segment_id.value() == 0,
-        Some((_, previous_segment_id, previous_sample)) => {
+        Some(previous) => {
             let gap_started = sample
                 .monotonic_milliseconds()
                 .as_u64()
-                .saturating_sub(previous_sample.monotonic_milliseconds().as_u64())
+                .saturating_sub(previous.sample().monotonic_milliseconds().as_u64())
                 > MAX_GAP_MILLISECONDS;
             if gap_started {
                 segment_id.value() == expected_segment_id
             } else {
-                segment_id.value() == *previous_segment_id
-                    || segment_id.value() == previous_segment_id.saturating_add(1)
+                segment_id.value() == previous.segment_id().value()
+                    || segment_id.value() == previous.segment_id().value().saturating_add(1)
             }
         }
     };
@@ -6509,7 +6479,7 @@ fn load_ride_write_state(
 #[derive(Clone, Copy)]
 struct LocationInsert {
     ride_id: RideId,
-    sequence: i64,
+    sequence: RidePointSequence,
     sample: LocationSample,
     segment_id: RideMapSegmentId,
     telemetry_state: RouteTelemetryState,
@@ -6529,6 +6499,11 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
         updated_at_ms,
         duration_milliseconds,
     } = *insert;
+    let sequence =
+        i64::try_from(sequence.as_u64()).map_err(|_| StorageError::InvalidStoredValue {
+            field: "route point sequence",
+            value: sequence.as_u64().to_string(),
+        })?;
     connection.execute(
         "INSERT INTO ride_points
             (ride_id, sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7, horizontal_accuracy_mm, source)

@@ -5,7 +5,7 @@ use cutout_ride_maps::{
     TransitionError, distance_between,
 };
 
-use super::RideSource;
+use super::{RideSource, RoutePoint};
 
 #[derive(Clone, Copy)]
 pub(super) enum LocationWriteMode {
@@ -128,7 +128,7 @@ impl RideWriteState {
 
     pub(super) fn decide_location(
         self,
-        previous: Option<(u64, LocationSample)>,
+        previous: Option<RoutePoint>,
         sample: LocationSample,
         segment_id: RideMapSegmentId,
         mode: LocationWriteMode,
@@ -137,15 +137,16 @@ impl RideWriteState {
             return Err(self.lifecycle);
         }
 
-        let admission = sample.admission(previous.as_ref().map(|(_, sample)| sample));
+        let previous_sample = previous.as_ref().map(|point| point.sample());
+        let admission = sample.admission(previous_sample.as_ref());
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }
 
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
-                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id.value())
-                .map(|(_, previous)| distance_between(previous, sample).as_u64())
+                .filter(|previous| previous.segment_id() == segment_id)
+                .map(|previous| distance_between(previous.sample(), sample).as_u64())
                 .unwrap_or_default(),
             updated_at_ms: self
                 .updated_at_ms
