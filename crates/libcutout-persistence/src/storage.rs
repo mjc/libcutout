@@ -1140,6 +1140,15 @@ pub struct PendingLocationWrite {
     response: Receiver<Result<LocationAdmission, StorageError>>,
 }
 
+/// Durable state found when reconciling a location whose worker response was lost.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LocationWriteReconciliation {
+    /// The exact location is present in durable storage; do not retry it.
+    Committed,
+    /// The exact location is absent from durable storage; a caller may retry it once.
+    NotCommitted,
+}
+
 /// Cooperative cancellation shared by a durable route projection and its caller.
 #[derive(Clone)]
 pub struct RouteProjectionCancellation {
@@ -2224,6 +2233,28 @@ impl RideDatabase {
         Ok(PendingLocationWrite { response })
     }
 
+    /// Reconciles a location after [`StorageError::ResponseDropped`].
+    ///
+    /// This performs a durable identity lookup after reacquiring the worker. `Committed` means
+    /// the location is already present and must not be retried. `NotCommitted` means the atomic
+    /// location transaction left no matching row and the caller may enqueue the sample once.
+    /// This method never retries a write itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot be reacquired or the lookup fails.
+    pub fn reconcile_location_write(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+    ) -> Result<LocationWriteReconciliation, StorageError> {
+        self.request(move |reply| Command::ReconcileLocationWrite {
+            ride_id,
+            sample,
+            reply,
+        })
+    }
+
     /// Enqueues a location behind a deterministic worker gate for persistence tests.
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_gate_for_test(
@@ -2237,6 +2268,30 @@ impl RideDatabase {
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
         self.enqueue(Command::AppendLocationWithWorkerGate {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            release,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
+    /// Enqueues a location while a SQLite progress callback holds the worker before the write.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_slow_sqlite_worker_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithSlowSqliteWorker {
             ride_id,
             sample,
             segment_id: RideMapSegmentId::new(segment_id),
@@ -2835,8 +2890,23 @@ enum Command {
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
     },
+    ReconcileLocationWrite {
+        ride_id: RideId,
+        sample: LocationSample,
+        reply: Reply<LocationWriteReconciliation>,
+    },
     #[cfg(test)]
     AppendLocationWithWorkerGate {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+        reply: Reply<LocationAdmission>,
+    },
+    #[cfg(test)]
+    AppendLocationWithSlowSqliteWorker {
         ride_id: RideId,
         sample: LocationSample,
         segment_id: RideMapSegmentId,
@@ -3190,6 +3260,13 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     telemetry_state,
                 ));
             }
+            Command::ReconcileLocationWrite {
+                ride_id,
+                sample,
+                reply,
+            } => {
+                let _ = reply.send(reconcile_location_write(&connection, ride_id, sample));
+            }
             #[cfg(test)]
             Command::AppendLocationWithWorkerGate {
                 ride_id,
@@ -3209,6 +3286,38 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     segment_id,
                     telemetry_state,
                 ));
+            }
+            #[cfg(test)]
+            Command::AppendLocationWithSlowSqliteWorker {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                entered,
+                release,
+                reply,
+            } => {
+                let first_progress_callback = Arc::new(AtomicBool::new(true));
+                let callback_is_first = Arc::clone(&first_progress_callback);
+                connection.progress_handler(
+                    1,
+                    Some(move || {
+                        if callback_is_first.swap(false, Ordering::AcqRel) {
+                            let _ = entered.send(());
+                            let _ = release.recv();
+                        }
+                        false
+                    }),
+                );
+                let result = append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                );
+                connection.progress_handler(0, None::<fn() -> bool>);
+                let _ = reply.send(result);
             }
             #[cfg(test)]
             Command::AppendLocationWithWorkerFailure {
@@ -5543,6 +5652,38 @@ fn append_location(
     )?;
     transaction.commit()?;
     Ok(admission)
+}
+
+fn reconcile_location_write(
+    connection: &Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+) -> Result<LocationWriteReconciliation, StorageError> {
+    let committed: bool = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM ride_points
+             WHERE ride_id = ?1
+               AND monotonic_ms = ?2
+               AND wall_clock_ms = ?3
+               AND latitude_e7 = ?4
+               AND longitude_e7 = ?5
+               AND source = ?6
+         )",
+        params![
+            ride_id.uuid().to_string(),
+            sample.monotonic_milliseconds().as_u64(),
+            sample.wall_clock_unix_milliseconds().as_u64(),
+            sample.coordinate().latitude().as_i32(),
+            sample.coordinate().longitude().as_i32(),
+            source_to_db(sample.source()),
+        ],
+        |row| row.get(0),
+    )?;
+    Ok(if committed {
+        LocationWriteReconciliation::Committed
+    } else {
+        LocationWriteReconciliation::NotCommitted
+    })
 }
 
 fn append_location_in_transaction(
