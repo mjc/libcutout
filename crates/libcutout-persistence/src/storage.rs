@@ -153,6 +153,27 @@ pub struct RideHistoryQuery {
     search_text: Option<String>,
 }
 
+/// A vehicle identity used by at least one visible ride, with its persisted display name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RideHistoryVehicleOption {
+    platform_identifier: String,
+    display_name: Option<String>,
+}
+
+impl RideHistoryVehicleOption {
+    /// Returns the stable platform-local identity.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        &self.platform_identifier
+    }
+
+    /// Returns the persisted display name, when one has been saved for this identity.
+    #[must_use]
+    pub fn display_name(&self) -> Option<&str> {
+        self.display_name.as_deref()
+    }
+}
+
 impl RideHistoryQuery {
     /// Creates a query from optional date, vehicle-identity, and user search filters.
     #[must_use]
@@ -211,6 +232,8 @@ pub struct RideRecord {
     segment_count: u64,
     candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
+    candidate_vehicle_name: Option<String>,
+    associated_vehicle_name: Option<String>,
     associated_at_ms: Option<u64>,
     last_telemetry_at_ms: Option<u64>,
 }
@@ -288,6 +311,14 @@ impl RideRecord {
         self.summary
     }
 
+    /// Returns the Rust-derived average speed when the ride has distance and elapsed time.
+    #[must_use]
+    pub fn average_speed_millimetres_per_second(&self) -> Option<u64> {
+        self.summary
+            .average_speed_millimetres_per_second(self.duration_ms)
+            .map(AverageSpeedMillimetresPerSecond::as_u64)
+    }
+
     /// Returns the number of persisted route segments.
     #[must_use]
     pub const fn segment_count(&self) -> u64 {
@@ -304,6 +335,18 @@ impl RideRecord {
     #[must_use]
     pub fn associated_vehicle(&self) -> Option<&str> {
         self.associated_vehicle.as_deref()
+    }
+
+    /// Returns the persisted display name for the candidate vehicle, when available.
+    #[must_use]
+    pub fn candidate_vehicle_name(&self) -> Option<&str> {
+        self.candidate_vehicle_name.as_deref()
+    }
+
+    /// Returns the persisted display name for the associated vehicle, when available.
+    #[must_use]
+    pub fn associated_vehicle_name(&self) -> Option<&str> {
+        self.associated_vehicle_name.as_deref()
     }
 
     /// Returns the monotonic association timestamp.
@@ -764,6 +807,12 @@ impl MapPointId {
     }
 }
 
+impl Default for MapPointId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Validated fixed-point WGS84 query bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GeoBounds {
@@ -970,9 +1019,19 @@ pub enum StorageError {
     /// The worker stopped before accepting a command.
     #[error("ride database worker stopped")]
     WorkerStopped,
-    /// The worker response channel was dropped.
+    /// The worker response channel was dropped before the command's outcome was observed.
+    ///
+    /// The command may already have committed. Callers must treat this as an unknown write
+    /// outcome, reacquire the service, and reconcile durable state before retrying; never retry
+    /// the same sample blindly.
     #[error("ride database response was dropped")]
     ResponseDropped,
+    /// Reconciliation confirmed that a response-lost location was not committed.
+    ///
+    /// This is intentionally distinct from [`StorageError::ResponseDropped`]: callers have
+    /// resolved the unknown outcome and must decide whether to re-admit the sample explicitly.
+    #[error("location write was not committed after response loss")]
+    LocationWriteNotCommitted,
     /// A second worker could not be started.
     #[error("could not start ride database worker: {0}")]
     WorkerStart(String),
@@ -1024,6 +1083,7 @@ struct OwnerEntry {
     service_id: Uuid,
     bootstrap: BootstrapSnapshot,
     sender: SyncSender<Command>,
+    worker_alive: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -1405,11 +1465,10 @@ impl RideDatabase {
     fn open_with_service_id(path: &Path, service_id: Uuid) -> Result<Self, StorageError> {
         let canonical_path = canonical_database_path(path)?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
-        if owner
-            .as_ref()
-            .and_then(|entry| entry.join.as_ref())
-            .is_some_and(JoinHandle::is_finished)
-        {
+        if owner.as_ref().is_some_and(|entry| {
+            entry.join.as_ref().is_some_and(JoinHandle::is_finished)
+                || !entry.worker_alive.load(Ordering::Acquire)
+        }) {
             if let Some(mut stale) = owner.take() {
                 if let Some(join) = stale.join.take() {
                     let _ = join.join();
@@ -1431,9 +1490,11 @@ impl RideDatabase {
         let mut connection = Connection::open(&canonical_path)?;
         let bootstrap = configure_connection(&mut connection)?;
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
+        let worker_alive = Arc::new(AtomicBool::new(true));
+        let worker_alive_for_thread = Arc::clone(&worker_alive);
         let join = thread::Builder::new()
             .name("cutout-ride-maps-db".to_owned())
-            .spawn(move || worker_loop(connection, &receiver))
+            .spawn(move || worker_loop(connection, &receiver, &worker_alive_for_thread))
             .map_err(|error| StorageError::WorkerStart(error.to_string()))?;
         let handle = Self {
             sender: sender.clone(),
@@ -1446,6 +1507,7 @@ impl RideDatabase {
             service_id,
             bootstrap,
             sender,
+            worker_alive,
             join: Some(join),
         });
         Ok(handle)
@@ -2118,6 +2180,28 @@ impl RideDatabase {
         })
     }
 
+    /// Reconciles a location after [`StorageError::ResponseDropped`].
+    ///
+    /// This performs a durable identity lookup after reacquiring the worker. `Committed` means
+    /// the location is already present and must not be retried. `NotCommitted` means the atomic
+    /// location transaction left no matching row and the caller may enqueue the sample once.
+    /// This method never retries a write itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot be reacquired or the lookup fails.
+    pub fn reconcile_location_write(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+    ) -> Result<LocationWriteReconciliation, StorageError> {
+        self.request(move |reply| Command::ReconcileLocationWrite {
+            ride_id,
+            sample,
+            reply,
+        })
+    }
+
     /// Enqueues a location behind a deterministic worker gate for persistence tests.
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_gate_for_test(
@@ -2145,15 +2229,59 @@ impl RideDatabase {
         })
     }
 
+    /// Enqueues a location while a `SQLite` progress callback holds the worker before the write.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_slow_sqlite_worker_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithSlowSqliteWorker {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            release,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
     /// Enqueues a location and deliberately loses its terminal response after worker failure.
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_failure_for_test(
         &self,
-        _ride_id: RideId,
-        _sample: LocationSample,
-        _segment_id: u64,
-        _telemetry_state: RouteTelemetryState,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        self.enqueue_location_worker_failure_for_test(
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+            entered,
+            WorkerFailurePoint::BeforeWrite,
+        )
+    }
+
+    #[cfg(test)]
+    fn enqueue_location_worker_failure_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        failure_point: WorkerFailurePoint,
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
         self.enqueue(Command::AppendLocationWithWorkerFailure { entered, reply })?;
@@ -2161,6 +2289,28 @@ impl RideDatabase {
             response,
             consumed: false,
         })
+    }
+
+    /// Enqueues a location, commits it, and deliberately loses its terminal response after
+    /// worker failure. This models a worker dying after `SQLite` commits but before the caller
+    /// observes the result.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_worker_failure_after_write_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        self.enqueue_location_worker_failure_for_test(
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+            entered,
+            WorkerFailurePoint::AfterWrite,
+        )
     }
 
     /// Loads the durable summary projection for one ride.
@@ -2171,6 +2321,19 @@ impl RideDatabase {
     /// prevents the query.
     pub fn summary(&self, ride_id: RideId) -> Result<RideSummary, StorageError> {
         self.request(move |reply| Command::Summary { ride_id, reply })
+    }
+
+    /// Loads a ride summary and its persisted elapsed duration without applying history filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or another worker error
+    /// prevents the query.
+    pub fn summary_with_duration(
+        &self,
+        ride_id: RideId,
+    ) -> Result<(RideSummary, u64), StorageError> {
+        self.request(move |reply| Command::SummaryWithDuration { ride_id, reply })
     }
 
     /// Loads one visible ride record by its stable identifier without paging through history.
@@ -2221,6 +2384,20 @@ impl RideDatabase {
             query,
             reply,
         })
+    }
+
+    /// Lists every vehicle identity referenced by a visible ride.
+    ///
+    /// The result is not derived from a history page, so older vehicles remain available to the
+    /// history filter even when the first page is full. Display names come from the device table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the options.
+    pub fn list_ride_history_vehicle_options(
+        &self,
+    ) -> Result<Vec<RideHistoryVehicleOption>, StorageError> {
+        self.request(|reply| Command::ListRideHistoryVehicleOptions { reply })
     }
 
     /// Loads one bounded page of canonical route points in ascending sequence order.
@@ -2370,39 +2547,59 @@ impl RideDatabase {
     }
 
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
+        if self.worker_has_exited() {
+            return self.enqueue_after_worker_exit(command);
+        }
         match self.sender.try_send(command) {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull),
             Err(mpsc::TrySendError::Disconnected(command)) => {
-                if !self.worker_can_restart() {
-                    return Err(StorageError::WorkerStopped);
-                }
-                let recovered = self.reopen()?;
-                recovered
-                    .sender
-                    .try_send(command)
-                    .map_err(|error| match error {
-                        mpsc::TrySendError::Full(_) => StorageError::QueueFull,
-                        mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
-                    })
+                self.enqueue_after_worker_exit(command)
             }
         }
     }
 
     fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
+        if self.worker_has_exited() {
+            return self.enqueue_after_worker_exit_blocking(command);
+        }
         match self.sender.send(command) {
             Ok(()) => Ok(()),
-            Err(mpsc::SendError(command)) => {
-                if !self.worker_can_restart() {
-                    return Err(StorageError::WorkerStopped);
-                }
-                let recovered = self.reopen()?;
-                recovered
-                    .sender
-                    .send(command)
-                    .map_err(|_| StorageError::WorkerStopped)
-            }
+            Err(mpsc::SendError(command)) => self.enqueue_after_worker_exit_blocking(command),
         }
+    }
+
+    fn enqueue_after_worker_exit(&self, command: Command) -> Result<(), StorageError> {
+        if !self.worker_can_restart() {
+            return Err(StorageError::WorkerStopped);
+        }
+        let recovered = self.reopen()?;
+        recovered
+            .sender
+            .try_send(command)
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => StorageError::QueueFull,
+                mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
+            })
+    }
+
+    fn enqueue_after_worker_exit_blocking(&self, command: Command) -> Result<(), StorageError> {
+        if !self.worker_can_restart() {
+            return Err(StorageError::WorkerStopped);
+        }
+        let recovered = self.reopen()?;
+        recovered
+            .sender
+            .send(command)
+            .map_err(|_| StorageError::WorkerStopped)
+    }
+
+    fn worker_has_exited(&self) -> bool {
+        owner().lock().ok().is_some_and(|owner| {
+            owner.as_ref().is_some_and(|entry| {
+                entry.service_id == self.service_id && !entry.worker_alive.load(Ordering::Acquire)
+            })
+        })
     }
 
     /// Returns whether this handle still belongs to a process-owned database service.
@@ -2488,6 +2685,13 @@ enum PevcapBegin {
 struct ManagedArtifact {
     path: PathBuf,
     created: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum WorkerFailurePoint {
+    BeforeWrite,
+    AfterWrite,
 }
 
 enum Command {
@@ -2670,13 +2874,21 @@ enum Command {
         reply: Reply<LocationWriteResult>,
     },
     #[cfg(test)]
-    AppendLocationWithWorkerFailure {
+    AppendLocationWithSlowSqliteWorker {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
         reply: Reply<LocationWriteResult>,
     },
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
+    },
+    SummaryWithDuration {
+        ride_id: RideId,
+        reply: Reply<(RideSummary, u64)>,
     },
     FindRide {
         ride_id: RideId,
@@ -2691,6 +2903,9 @@ enum Command {
         query: RideHistoryQuery,
         reply: Reply<RidePage>,
     },
+    ListRideHistoryVehicleOptions {
+        reply: Reply<Vec<RideHistoryVehicleOption>>,
+    },
     RoutePoints {
         ride_id: RideId,
         cursor: Option<RoutePointCursor>,
@@ -2703,6 +2918,15 @@ enum Command {
         budget: RouteDisplayBudget,
         privacy: RoutePrivacyPolicy,
         cancellation: Option<RouteProjectionCancellation>,
+        reply: Reply<RoutePointProjection>,
+    },
+    #[cfg(test)]
+    ProjectRoutePointsWithWorkerFailure {
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        entered: SyncSender<()>,
         reply: Reply<RoutePointProjection>,
     },
     #[cfg(test)]
@@ -2721,7 +2945,11 @@ enum Command {
 }
 
 #[allow(clippy::too_many_lines)]
-fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
+fn worker_loop(
+    mut connection: Connection,
+    receiver: &Receiver<Command>,
+    worker_alive: &AtomicBool,
+) {
     let mut spatial_schema = SpatialSchemaState::Uninitialized;
     while let Ok(command) = receiver.recv() {
         match command {
@@ -3053,13 +3281,55 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 let _ = reply.send(result);
             }
             #[cfg(test)]
-            Command::AppendLocationWithWorkerFailure { entered, reply } => {
+            Command::AppendLocationWithSlowSqliteWorker {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                entered,
+                release,
+                reply,
+            } => {
+                install_sqlite_progress_gate(&connection, entered, release);
+                let result = append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                );
+                connection.progress_handler(0, None::<fn() -> bool>);
+                let _ = reply.send(result);
+            }
+            #[cfg(test)]
+            Command::AppendLocationWithWorkerFailure {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                entered,
+                failure_point,
+                reply,
+            } => {
+                if matches!(failure_point, WorkerFailurePoint::AfterWrite) {
+                    let _ = append_location(
+                        &mut connection,
+                        ride_id,
+                        sample,
+                        segment_id,
+                        telemetry_state,
+                    );
+                }
+                worker_alive.store(false, Ordering::Release);
                 let _ = entered.send(());
                 drop(reply);
                 break;
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
+            }
+            Command::SummaryWithDuration { ride_id, reply } => {
+                let _ = reply.send(load_summary_with_duration(&connection, ride_id));
             }
             Command::FindRide { ride_id, reply } => {
                 let _ = reply.send(find_ride(&connection, ride_id));
@@ -3074,6 +3344,9 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 reply,
             } => {
                 let _ = reply.send(list_rides(&connection, cursor, limit, &query));
+            }
+            Command::ListRideHistoryVehicleOptions { reply } => {
+                let _ = reply.send(list_ride_history_vehicle_options(&connection));
             }
             Command::RoutePoints {
                 ride_id,
@@ -3110,37 +3383,62 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 let _ = reply.send(result);
             }
             #[cfg(test)]
+            Command::ProjectRoutePointsWithWorkerFailure {
+                ride_id,
+                viewport,
+                budget,
+                privacy,
+                entered,
+                reply,
+            } => {
+                let _ = project_route_points(&connection, ride_id, viewport, budget, privacy, None);
+                worker_alive.store(false, Ordering::Release);
+                let _ = entered.send(());
+                drop(reply);
+                break;
+            }
+            #[cfg(test)]
             Command::InstallRouteProjectionTestGate {
                 entered,
                 release,
                 reply,
             } => {
-                let first_progress_callback = Arc::new(AtomicBool::new(true));
-                let callback_is_first = Arc::clone(&first_progress_callback);
-                connection.progress_handler(
-                    1,
-                    Some(move || {
-                        if callback_is_first.swap(false, Ordering::AcqRel)
-                            && entered.send(()).is_ok()
-                        {
-                            let _ = release.recv();
-                        }
-                        false
-                    }),
-                );
+                install_sqlite_progress_gate(&connection, entered, release);
                 let _ = reply.send(Ok(()));
             }
             #[cfg(test)]
             Command::StopForTest { reply } => {
+                worker_alive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(()));
                 break;
             }
             Command::Shutdown { reply } => {
+                worker_alive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(()));
                 break;
             }
         }
     }
+    worker_alive.store(false, Ordering::Release);
+}
+
+#[cfg(test)]
+fn install_sqlite_progress_gate(
+    connection: &Connection,
+    entered: SyncSender<()>,
+    release: Receiver<()>,
+) {
+    let first_progress_callback = Arc::new(AtomicBool::new(true));
+    let callback_is_first = Arc::clone(&first_progress_callback);
+    connection.progress_handler(
+        1,
+        Some(move || {
+            if callback_is_first.swap(false, Ordering::AcqRel) && entered.send(()).is_ok() {
+                let _ = release.recv();
+            }
+            false
+        }),
+    );
 }
 
 fn canonical_database_path(path: &Path) -> Result<PathBuf, StorageError> {
@@ -5515,6 +5813,38 @@ fn append_location_with_result(
     Ok(result)
 }
 
+fn reconcile_location_write(
+    connection: &Connection,
+    ride_id: RideId,
+    sample: LocationSample,
+) -> Result<LocationWriteReconciliation, StorageError> {
+    let committed: bool = connection.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM ride_points
+             WHERE ride_id = ?1
+               AND monotonic_ms = ?2
+               AND wall_clock_ms = ?3
+               AND latitude_e7 = ?4
+               AND longitude_e7 = ?5
+               AND source = ?6
+         )",
+        params![
+            ride_id.uuid().to_string(),
+            sample.monotonic_milliseconds().as_u64(),
+            sample.wall_clock_unix_milliseconds().as_u64(),
+            sample.coordinate().latitude().as_i32(),
+            sample.coordinate().longitude().as_i32(),
+            source_to_db(sample.source()),
+        ],
+        |row| row.get(0),
+    )?;
+    Ok(if committed {
+        LocationWriteReconciliation::Committed
+    } else {
+        LocationWriteReconciliation::NotCommitted
+    })
+}
+
 fn append_location_in_transaction(
     connection: &Connection,
     ride_id: RideId,
@@ -6003,6 +6333,34 @@ fn list_rides(
             ride_id: last.id,
         });
     Ok(RidePage { rides, next_cursor })
+}
+
+fn list_ride_history_vehicle_options(
+    connection: &Connection,
+) -> Result<Vec<RideHistoryVehicleOption>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT identities.platform_identifier, devices.display_name
+         FROM (
+             SELECT associated_vehicle AS platform_identifier
+             FROM rides
+             WHERE state NOT IN ('draft', 'discarded') AND associated_vehicle IS NOT NULL
+             UNION
+             SELECT candidate_vehicle AS platform_identifier
+             FROM rides
+             WHERE state NOT IN ('draft', 'discarded') AND candidate_vehicle IS NOT NULL
+         ) AS identities
+         LEFT JOIN devices ON devices.platform_identifier = identities.platform_identifier
+         ORDER BY lower(COALESCE(devices.display_name, identities.platform_identifier)),
+                  identities.platform_identifier",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(RideHistoryVehicleOption {
+            platform_identifier: row.get(0)?,
+            display_name: row.get(1)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
 }
 
 fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord> {
