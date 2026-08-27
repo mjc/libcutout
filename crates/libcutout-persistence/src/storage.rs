@@ -35,6 +35,8 @@ const COMMAND_QUEUE_CAPACITY: usize = 64;
 const CURRENT_SCHEMA_VERSION: i64 = 15;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
+const MAX_HISTORY_CONTEXT_ROUTES: usize = 8;
+const MAX_HISTORY_CONTEXT_POINTS: usize = 4_096;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
@@ -115,6 +117,91 @@ impl QueryLimit {
 
     const fn get(self) -> u32 {
         self.0
+    }
+}
+
+/// Rust-owned bounds for one history overview context projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HistoryContextBudget {
+    history_page_limit: QueryLimit,
+    max_routes: usize,
+    per_route_budget: RouteDisplayBudget,
+    total_point_budget: usize,
+}
+
+impl HistoryContextBudget {
+    /// Creates bounded history-page, route-count, and point budgets.
+    ///
+    /// `history_page_limit` bounds the records loaded for the context query. `max_routes` bounds
+    /// the context routes returned after selected-ride exclusion. The point budgets apply after
+    /// viewport filtering and are enforced by the Rust projection worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::InvalidHistoryContextBudget`] when any bound is outside the
+    /// supported range.
+    pub fn new(
+        history_page_limit: u32,
+        max_routes: u32,
+        per_route_points: u32,
+        total_point_budget: u32,
+    ) -> Result<Self, StorageError> {
+        let history_page_limit = QueryLimit::new(history_page_limit)?;
+        let max_routes =
+            usize::try_from(max_routes).map_err(|_| StorageError::InvalidHistoryContextBudget {
+                field: "max routes",
+                value: max_routes,
+            })?;
+        if !(1..=MAX_HISTORY_CONTEXT_ROUTES).contains(&max_routes) {
+            return Err(StorageError::InvalidHistoryContextBudget {
+                field: "max routes",
+                value: u32::try_from(max_routes).unwrap_or(u32::MAX),
+            });
+        }
+        let per_route_budget = usize::try_from(per_route_points)
+            .ok()
+            .and_then(RouteDisplayBudget::new)
+            .ok_or(StorageError::InvalidHistoryContextBudget {
+                field: "per-route point budget",
+                value: per_route_points,
+            })?;
+        let total_point_budget = usize::try_from(total_point_budget)
+            .ok()
+            .filter(|value| (1..=MAX_HISTORY_CONTEXT_POINTS).contains(value))
+            .ok_or(StorageError::InvalidHistoryContextBudget {
+                field: "aggregate point budget",
+                value: total_point_budget,
+            })?;
+        Ok(Self {
+            history_page_limit,
+            max_routes,
+            per_route_budget,
+            total_point_budget,
+        })
+    }
+
+    /// Returns the bounded history page size.
+    #[must_use]
+    pub const fn history_page_limit(self) -> QueryLimit {
+        self.history_page_limit
+    }
+
+    /// Returns the maximum number of context routes.
+    #[must_use]
+    pub const fn max_routes(self) -> usize {
+        self.max_routes
+    }
+
+    /// Returns the per-route display budget.
+    #[must_use]
+    pub const fn per_route_budget(self) -> RouteDisplayBudget {
+        self.per_route_budget
+    }
+
+    /// Returns the aggregate display-point budget.
+    #[must_use]
+    pub const fn total_point_budget(self) -> usize {
+        self.total_point_budget
     }
 }
 
@@ -369,6 +456,76 @@ impl RidePage {
     #[must_use]
     pub const fn next_cursor(&self) -> Option<RideCursor> {
         self.next_cursor
+    }
+}
+
+/// One bounded contextual route from a history overview projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryContextRoute {
+    ride_id: RideId,
+    projection: RoutePointProjection,
+}
+
+impl HistoryContextRoute {
+    /// Returns the ride represented by this contextual route.
+    #[must_use]
+    pub const fn ride_id(&self) -> RideId {
+        self.ride_id
+    }
+
+    /// Returns the bounded route projection.
+    #[must_use]
+    pub const fn projection(&self) -> &RoutePointProjection {
+        &self.projection
+    }
+}
+
+/// Bounded context routes for a history overview.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryContextProjection {
+    routes: Vec<HistoryContextRoute>,
+    source_history_route_count: u64,
+    context_route_count: u64,
+    total_display_point_count: u64,
+    routes_omitted_by_budget: bool,
+    history_page_has_more: bool,
+}
+
+impl HistoryContextProjection {
+    /// Returns contextual routes in the same newest-first order as the history page.
+    #[must_use]
+    pub fn routes(&self) -> &[HistoryContextRoute] {
+        &self.routes
+    }
+
+    /// Returns the number of rides loaded from the bounded history page.
+    #[must_use]
+    pub const fn source_history_route_count(&self) -> u64 {
+        self.source_history_route_count
+    }
+
+    /// Returns the number of eligible context rides after selected-ride exclusion.
+    #[must_use]
+    pub const fn context_route_count(&self) -> u64 {
+        self.context_route_count
+    }
+
+    /// Returns the number of display points emitted across contextual routes.
+    #[must_use]
+    pub const fn total_display_point_count(&self) -> u64 {
+        self.total_display_point_count
+    }
+
+    /// Returns whether the point or route budget omitted eligible context data.
+    #[must_use]
+    pub const fn routes_omitted_by_budget(&self) -> bool {
+        self.routes_omitted_by_budget
+    }
+
+    /// Returns whether more history exists after the loaded bounded page.
+    #[must_use]
+    pub const fn history_page_has_more(&self) -> bool {
+        self.history_page_has_more
     }
 }
 
@@ -1099,6 +1256,14 @@ pub enum StorageError {
     /// A growing query was not bounded by a supported limit.
     #[error("invalid query limit {0}; expected 1..={MAX_QUERY_LIMIT}")]
     InvalidQueryLimit(u32),
+    /// A history context budget exceeded one of the Rust-owned limits.
+    #[error("invalid history context budget for {field}: {value}")]
+    InvalidHistoryContextBudget {
+        /// Human-readable budget component.
+        field: &'static str,
+        /// Rejected caller value.
+        value: u32,
+    },
     /// Geographic bounds were non-finite, out of range, or had reversed latitudes.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
@@ -2520,6 +2685,43 @@ impl RideDatabase {
         })
     }
 
+    /// Projects the bounded history page into subdued contextual routes.
+    ///
+    /// Rust loads at most the requested history page, excludes `selected_ride`, and projects
+    /// only the configured number of remaining routes. Each route uses the same viewport,
+    /// privacy, endpoint, and segment policy as selected-route projection. The aggregate point
+    /// budget prevents a dense history page from multiplying the per-route display budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::DeadlineExceeded`] when the Rust-owned projection deadline expires
+    /// or another typed storage error when the page or route cannot be decoded.
+    pub fn project_history_context(
+        &self,
+        query: RideHistoryQuery,
+        selected_ride: Option<RideId>,
+        budget: HistoryContextBudget,
+        viewport: Option<RouteViewport>,
+        privacy: RoutePrivacyPolicy,
+    ) -> Result<HistoryContextProjection, StorageError> {
+        let cancellation = default_route_projection_cancellation();
+        let deadline = cancellation.deadline();
+        let (reply, response) = response_channel();
+        self.enqueue(Command::ProjectHistoryContext {
+            query,
+            selected_ride,
+            budget,
+            viewport,
+            privacy,
+            cancellation: cancellation.clone(),
+            reply,
+        })?;
+        match deadline {
+            Some(deadline) => receive_until(&response, deadline, &cancellation),
+            None => receive(&response),
+        }
+    }
+
     /// Lists every vehicle identity referenced by a visible ride.
     ///
     /// The result is not derived from a history page, so older vehicles remain available to the
@@ -3111,6 +3313,15 @@ enum Command {
         query: RideHistoryQuery,
         reply: Reply<RidePage>,
     },
+    ProjectHistoryContext {
+        query: RideHistoryQuery,
+        selected_ride: Option<RideId>,
+        budget: HistoryContextBudget,
+        viewport: Option<RouteViewport>,
+        privacy: RoutePrivacyPolicy,
+        cancellation: RouteProjectionCancellation,
+        reply: Reply<HistoryContextProjection>,
+    },
     ListRideHistoryVehicleOptions {
         reply: Reply<Vec<RideHistoryVehicleOption>>,
     },
@@ -3540,6 +3751,30 @@ fn worker_loop(
                 reply,
             } => {
                 let _ = reply.send(list_rides(&connection, cursor, limit, &query));
+            }
+            Command::ProjectHistoryContext {
+                query,
+                selected_ride,
+                budget,
+                viewport,
+                privacy,
+                cancellation,
+                reply,
+            } => {
+                cancellation.install_interrupt(connection.get_interrupt_handle());
+                let result = project_history_context(
+                    &connection,
+                    &query,
+                    selected_ride,
+                    budget,
+                    viewport,
+                    privacy,
+                    &cancellation,
+                );
+                #[cfg(test)]
+                connection.progress_handler(0, None::<fn() -> bool>);
+                cancellation.clear_interrupt();
+                let _ = reply.send(result);
             }
             Command::ListRideHistoryVehicleOptions { reply } => {
                 let _ = reply.send(list_ride_history_vehicle_options(&connection));
@@ -6655,6 +6890,80 @@ fn background_gap_count(connection: &Connection, ride_id: RideId) -> Result<u64,
             |row| row.get(0),
         )
         .map_err(StorageError::from)
+}
+
+fn project_history_context(
+    connection: &Connection,
+    query: &RideHistoryQuery,
+    selected_ride: Option<RideId>,
+    budget: HistoryContextBudget,
+    viewport: Option<RouteViewport>,
+    privacy: RoutePrivacyPolicy,
+    cancellation: &RouteProjectionCancellation,
+) -> Result<HistoryContextProjection, StorageError> {
+    projection_checkpoint(Some(cancellation))?;
+    let page = list_rides(connection, None, budget.history_page_limit, query)?;
+    projection_checkpoint(Some(cancellation))?;
+
+    let source_history_route_count = u64::try_from(page.rides.len()).unwrap_or(u64::MAX);
+    let context_route_count = u64::try_from(
+        page.rides
+            .iter()
+            .filter(|ride| Some(ride.id) != selected_ride)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let mut routes = Vec::with_capacity(budget.max_routes);
+    let mut total_display_point_count = 0usize;
+    let mut routes_omitted_by_budget = false;
+
+    for ride in &page.rides {
+        if Some(ride.id) == selected_ride {
+            continue;
+        }
+        if routes.len() == budget.max_routes {
+            routes_omitted_by_budget = true;
+            break;
+        }
+        let remaining = budget
+            .total_point_budget
+            .saturating_sub(total_display_point_count);
+        if remaining == 0 {
+            routes_omitted_by_budget = true;
+            break;
+        }
+        projection_checkpoint(Some(cancellation))?;
+        let route_budget = RouteDisplayBudget::new(
+            budget.per_route_budget.as_usize().min(remaining),
+        )
+        .ok_or(StorageError::InvalidHistoryContextBudget {
+            field: "aggregate point budget",
+            value: u32::try_from(remaining).unwrap_or(u32::MAX),
+        })?;
+        let projection = project_route_points(
+            connection,
+            ride.id,
+            viewport,
+            route_budget,
+            privacy,
+            Some(cancellation),
+        )?;
+        total_display_point_count =
+            total_display_point_count.saturating_add(projection.points().len());
+        routes.push(HistoryContextRoute {
+            ride_id: ride.id,
+            projection,
+        });
+    }
+
+    Ok(HistoryContextProjection {
+        routes,
+        source_history_route_count,
+        context_route_count,
+        total_display_point_count: u64::try_from(total_display_point_count).unwrap_or(u64::MAX),
+        routes_omitted_by_budget,
+        history_page_has_more: page.next_cursor.is_some(),
+    })
 }
 
 fn project_route_points(

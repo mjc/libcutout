@@ -20,8 +20,8 @@ use cutout_ride_maps::RideLifecycleState;
 
 use super::{
     GeoBounds, HistoryContextBudget, LocationWriteReconciliation, PevcapImportOutcome, QueryLimit,
-    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource,
-    RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
+    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation,
+    StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -2560,7 +2560,8 @@ fn durable_history_context_projection_excludes_selected_and_bounds_each_route() 
         for point_index in 0..4_u64 {
             let sample = LocationSample::new(
                 Coordinate::from_degrees(
-                    40.0 + ride_index as f64 / 100.0 + point_index as f64 / 10_000.0,
+                    40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
+                        + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
                     -105.0,
                 )
                 .unwrap(),
@@ -2596,11 +2597,9 @@ fn durable_history_context_projection_excludes_selected_and_bounds_each_route() 
     assert!(projection.routes().iter().all(|route| {
         route.ride_id() != rides[1]
             && route.projection().points().len() <= 3
-            && route
-                .projection()
-                .points()
-                .iter()
-                .all(|point| point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted)
+            && route.projection().points().iter().all(|point| {
+                point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
+            })
     }));
 
     database.shutdown().unwrap();
@@ -2620,17 +2619,24 @@ fn durable_history_context_projection_reports_aggregate_budget_omissions() {
             .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
             .unwrap();
         database.transition(ride, RideEvent::Start).unwrap();
-        let sample = LocationSample::new(
-            Coordinate::from_degrees(40.0 + ride_index as f64 / 100.0, -105.0).unwrap(),
-            1,
-            1_700_000_000_000 + ride_index * 10_000,
-            None,
-            LocationSource::Live,
-        );
-        assert_eq!(
-            database.append_location(ride, sample).unwrap(),
-            LocationAdmission::Accepted
-        );
+        for point_index in 0..2_u64 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(
+                    40.0 + f64::from(u32::try_from(ride_index).unwrap()) / 100.0
+                        + f64::from(u32::try_from(point_index).unwrap()) / 10_000.0,
+                    -105.0,
+                )
+                .unwrap(),
+                point_index + 1,
+                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(
+                database.append_location(ride, sample).unwrap(),
+                LocationAdmission::Accepted
+            );
+        }
     }
 
     let projection = database
