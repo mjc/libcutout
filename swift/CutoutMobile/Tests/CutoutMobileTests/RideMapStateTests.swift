@@ -193,6 +193,7 @@ final class RideMapStateTests: XCTestCase {
                 point: MobileRideMapPointDto(
                     sequence: 1,
                     segmentId: 0,
+                    startReason: .initial,
                     latitudeDegrees: 39.7393,
                     longitudeDegrees: -104.9902,
                     wallClockUnixMs: 1_700_000_002_000,
@@ -211,7 +212,12 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertEqual(firstBatch?.points.count, 1)
         XCTAssertEqual(firstBatch?.nextCursor, 0)
         XCTAssertTrue(firstBatch?.hasMore == true)
+        XCTAssertEqual(firstBatch?.points.first?.startReason, .initial)
         XCTAssertEqual(try state.pointsAfter(afterCursor: firstBatch?.nextCursor, limit: 10)?.points.map(\.sequence), [1])
+        XCTAssertEqual(
+            try state.pointsAfter(afterCursor: firstBatch?.nextCursor, limit: 10)?.points.first?.startReason,
+            .initial
+        )
         XCTAssertEqual(try state.save().state, .saved)
     }
 
@@ -294,6 +300,9 @@ final class RideMapStateTests: XCTestCase {
         let rideID = try state.stop(atMs: 2_000).rideId
         _ = try state.save()
 
+        let storedPage = try state.storedPointsAfter(rideId: rideID, afterCursor: nil, limit: 10)
+        XCTAssertEqual(storedPage.points.first?.startReason, .initial)
+
         let cancellation = MobileRideMapProjectionCancellation()
         cancellation.cancel()
         XCTAssertThrowsError(
@@ -326,6 +335,7 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertEqual(tail?.points.count, 4_096)
         XCTAssertEqual(tail?.points.first?.sequence, 4)
         XCTAssertEqual(tail?.points.last?.sequence, 4_099)
+        XCTAssertEqual(tail?.points.first?.startReason, .initial)
         XCTAssertEqual(tail?.hasMore, false)
     }
 }

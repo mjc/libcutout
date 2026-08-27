@@ -11254,6 +11254,10 @@ public struct MobileRideMapCorePointDto: Equatable, Hashable {
      */
     public var segmentId: UInt64
     /**
+     * Rust-owned reason this segment began.
+     */
+    public var startReason: MobileRideSegmentStartReasonDto
+    /**
      * Latitude in WGS84 decimal degrees.
      */
     public var latitudeDegrees: Double
@@ -11288,6 +11292,9 @@ public struct MobileRideMapCorePointDto: Equatable, Hashable {
          * Segment sequence within the ride.
          */segmentId: UInt64,
         /**
+         * Rust-owned reason this segment began.
+         */startReason: MobileRideSegmentStartReasonDto,
+        /**
          * Latitude in WGS84 decimal degrees.
          */latitudeDegrees: Double,
         /**
@@ -11307,6 +11314,7 @@ public struct MobileRideMapCorePointDto: Equatable, Hashable {
          */telemetryState: MobileRideMapCoreTelemetryStateDto) {
         self.sequence = sequence
         self.segmentId = segmentId
+        self.startReason = startReason
         self.latitudeDegrees = latitudeDegrees
         self.longitudeDegrees = longitudeDegrees
         self.wallClockUnixMs = wallClockUnixMs
@@ -11333,6 +11341,7 @@ public struct FfiConverterTypeMobileRideMapCorePointDto: FfiConverterRustBuffer 
             try MobileRideMapCorePointDto(
                 sequence: FfiConverterUInt64.read(from: &buf),
                 segmentId: FfiConverterUInt64.read(from: &buf),
+                startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
                 latitudeDegrees: FfiConverterDouble.read(from: &buf),
                 longitudeDegrees: FfiConverterDouble.read(from: &buf),
                 wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
@@ -11345,6 +11354,7 @@ public struct FfiConverterTypeMobileRideMapCorePointDto: FfiConverterRustBuffer 
     public static func write(_ value: MobileRideMapCorePointDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.sequence, into: &buf)
         FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
         FfiConverterDouble.write(value.latitudeDegrees, into: &buf)
         FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
         FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)

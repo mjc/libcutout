@@ -96,6 +96,7 @@ public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
 public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     public var sequence: UInt64
     public var segmentId: UInt64
+    public var startReason: MobileRideMapSegmentStartReason
     public var latitudeDegrees: Double
     public var longitudeDegrees: Double
     public var wallClockUnixMs: UInt64
@@ -106,6 +107,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     public init(
         sequence: UInt64,
         segmentId: UInt64,
+        startReason: MobileRideMapSegmentStartReason = .unknown,
         latitudeDegrees: Double,
         longitudeDegrees: Double,
         wallClockUnixMs: UInt64,
@@ -115,6 +117,7 @@ public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
     ) {
         self.sequence = sequence
         self.segmentId = segmentId
+        self.startReason = startReason
         self.latitudeDegrees = latitudeDegrees
         self.longitudeDegrees = longitudeDegrees
         self.wallClockUnixMs = wallClockUnixMs
@@ -890,6 +893,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         MobileRideMapPointDto(
             sequence: point.sequence,
             segmentId: point.segmentId,
+            startReason: map(point.startReason),
             latitudeDegrees: point.latitudeDegrees,
             longitudeDegrees: point.longitudeDegrees,
             wallClockUnixMs: point.wallClockUnixMs,
@@ -903,6 +907,7 @@ public final class MobileRideMapState: @unchecked Sendable {
         MobileRideMapPointDto(
             sequence: point.sequence,
             segmentId: point.segmentId,
+            startReason: map(point.startReason),
             latitudeDegrees: point.location.latitudeDegrees,
             longitudeDegrees: point.location.longitudeDegrees,
             wallClockUnixMs: point.location.wallClockUnixMilliseconds,

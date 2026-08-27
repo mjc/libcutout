@@ -3289,6 +3289,8 @@ pub struct MobileRideMapCorePointDto {
     pub sequence: u64,
     /// Segment sequence within the ride.
     pub segment_id: u64,
+    /// Rust-owned reason this segment began.
+    pub start_reason: MobileRideSegmentStartReasonDto,
     /// Latitude in WGS84 decimal degrees.
     pub latitude_degrees: f64,
     /// Longitude in WGS84 decimal degrees.
@@ -4084,6 +4086,21 @@ fn mobile_segment_start_reason_dto(
         }
         ride_maps::RideSegmentStartReason::ImportBoundary => {
             MobileRideSegmentStartReasonDto::ImportBoundary
+        }
+    }
+}
+
+fn mobile_segment_start_reason(
+    reason: MobileRideSegmentStartReasonDto,
+) -> ride_maps::RideSegmentStartReason {
+    match reason {
+        MobileRideSegmentStartReasonDto::Initial => ride_maps::RideSegmentStartReason::Initial,
+        MobileRideSegmentStartReasonDto::Resume => ride_maps::RideSegmentStartReason::Resume,
+        MobileRideSegmentStartReasonDto::BackgroundGap => {
+            ride_maps::RideSegmentStartReason::BackgroundGap
+        }
+        MobileRideSegmentStartReasonDto::ImportBoundary => {
+            ride_maps::RideSegmentStartReason::ImportBoundary
         }
     }
 }
@@ -5479,11 +5496,13 @@ impl MobileRideMapCoreInner {
         location: MobileRideLocationDto,
         sequence: u64,
         segment_id: ride_maps::RideMapSegmentId,
+        start_reason: ride_maps::RideSegmentStartReason,
         telemetry_state: ride_maps::RouteTelemetryState,
     ) -> MobileRideMapCorePointDto {
         MobileRideMapCorePointDto {
             sequence,
             segment_id: segment_id.value(),
+            start_reason: mobile_segment_start_reason_dto(start_reason),
             latitude_degrees: location.latitude_degrees,
             longitude_degrees: location.longitude_degrees,
             wall_clock_unix_ms: location.wall_clock_unix_milliseconds,
@@ -5493,6 +5512,17 @@ impl MobileRideMapCoreInner {
                 .map(|value| f64::from(value) / 1_000.0),
             telemetry_state: telemetry_state.into(),
         }
+    }
+
+    fn last_point_start_reason(
+        recorder: &ride_maps::RideMapRecorder,
+    ) -> ride_maps::RideSegmentStartReason {
+        recorder
+            .points()
+            .last()
+            .map_or(ride_maps::RideSegmentStartReason::Initial, |point| {
+                point.segment_start_reason()
+            })
     }
 
     fn summary(&self) -> MobileRideMapCoreSummaryDto {
@@ -6274,6 +6304,7 @@ impl MobileRideMapCore {
                 location,
                 sequence,
                 segment_id,
+                MobileRideMapCoreInner::last_point_start_reason(&state.admission_recorder),
                 telemetry_state,
             );
             state.pending_locations.push_back(PendingLocation {
@@ -6298,6 +6329,7 @@ impl MobileRideMapCore {
             location,
             sequence,
             segment_id,
+            MobileRideMapCoreInner::last_point_start_reason(&state.recorder),
             telemetry_state,
         );
         Ok(MobileRideMapCoreDecisionDto::Accepted {
@@ -6382,6 +6414,7 @@ impl MobileRideMapCore {
                         point.location,
                         point.sequence,
                         ride_maps::RideMapSegmentId::new(point.segment_id),
+                        mobile_segment_start_reason(point.start_reason),
                         map_ride_telemetry_state(point.telemetry_state),
                     )
                 })
@@ -6411,6 +6444,7 @@ impl MobileRideMapCore {
                     mobile_ride_location_dto(sample.sample()),
                     sequence.as_u64(),
                     sample.segment_id(),
+                    sample.segment_start_reason(),
                     sample.telemetry_state(),
                 )
             })
@@ -6452,6 +6486,7 @@ impl MobileRideMapCore {
                     mobile_ride_location_dto(sample.sample()),
                     first_point_sequence.saturating_add(offset as u64).as_u64(),
                     sample.segment_id(),
+                    sample.segment_start_reason(),
                     sample.telemetry_state(),
                 )
             })
@@ -14684,6 +14719,64 @@ mod tests {
     }
 
     #[test]
+    fn mobile_pevcap_import_preserves_import_boundary_reason_in_route_page() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let database_path = std::env::temp_dir().join(format!(
+            "cutout-mobile-pevcap-route-{}.sqlite3",
+            Uuid::new_v4()
+        ));
+        let artifact_path = std::env::temp_dir().join(format!(
+            "cutout-mobile-pevcap-route-{}.jsonl",
+            Uuid::new_v4()
+        ));
+        let builder = MobilePevcapCaptureBuilder::new(
+            wc(1_700_000_000_000),
+            "ios-corebluetooth".into(),
+            None,
+        );
+        assert!(builder.start_writer(artifact_path.to_string_lossy().into_owned()));
+        assert!(builder.record_location_sample(
+            ms(7),
+            capture_phone_location_fixture(),
+            Some(false),
+            Some(true),
+        ));
+        assert!(builder.finish_writer());
+
+        let database = open_ride_database(database_path.to_string_lossy().into_owned()).unwrap();
+        let preview = database
+            .preflight_pevcap(
+                artifact_path.to_string_lossy().into_owned(),
+                MobilePevcapEncodingDto::Jsonl,
+            )
+            .unwrap();
+        assert_eq!(
+            preview.outcome,
+            MobilePevcapImportOutcomeDto::RideAndCapture
+        );
+        assert_eq!(preview.location_count, 1);
+        let receipt = database
+            .confirm_pevcap_import(preview, 1_700_000_000_100)
+            .unwrap();
+        let ride_id = receipt.ride_id.expect("route import creates a ride");
+        let page = database.route_points(ride_id, None, 10).unwrap();
+        assert_eq!(page.points.len(), 1);
+        assert_eq!(
+            page.points[0].start_reason,
+            MobileRideSegmentStartReasonDto::ImportBoundary
+        );
+
+        let managed_path = PathBuf::from(&receipt.managed_artifact_path);
+        database.shutdown().unwrap();
+        let _ = fs::remove_file(&managed_path);
+        let _ = fs::remove_dir(managed_path.parent().unwrap());
+        let _ = fs::remove_file(database_path);
+        let _ = fs::remove_file(artifact_path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_owns_lifecycle_and_vehicle_association() {
         let state = MobileRideMapCore::new_for_testing();
         assert_eq!(
@@ -14713,6 +14806,7 @@ mod tests {
                 point: MobileRideMapCorePointDto {
                     sequence: 1,
                     segment_id: 1,
+                    start_reason: MobileRideSegmentStartReasonDto::Resume,
                     latitude_degrees: 40.001,
                     longitude_degrees: -105.0,
                     wall_clock_unix_ms: 1_700_000_003_002,
@@ -15226,6 +15320,7 @@ mod tests {
             location,
             0,
             ride_maps::RideMapSegmentId::new(0),
+            ride_maps::RideSegmentStartReason::Initial,
             ride_maps::RouteTelemetryState::GpsOnly,
         );
 
@@ -15790,6 +15885,10 @@ mod tests {
         let second = state.points_after(first.next_cursor, 1).unwrap();
         assert_eq!(second.points[0].sequence, 1);
         assert_eq!(second.points[0].segment_id, 1);
+        assert_eq!(
+            second.points[0].start_reason,
+            MobileRideSegmentStartReasonDto::Resume
+        );
         assert!(!second.has_more);
 
         let empty = state.points_after(None, 0).unwrap();
@@ -15884,6 +15983,7 @@ mod tests {
                 point: MobileRideMapCorePointDto {
                     sequence: 1,
                     segment_id: 1,
+                    start_reason: MobileRideSegmentStartReasonDto::BackgroundGap,
                     latitude_degrees: 40.001,
                     longitude_degrees: -105.0,
                     wall_clock_unix_ms: 1_700_000_039_000,
