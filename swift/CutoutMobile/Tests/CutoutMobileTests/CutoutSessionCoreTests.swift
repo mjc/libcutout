@@ -3639,6 +3639,7 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
     }
 
     private let lock = NSLock()
+    private let writesChanged = NSCondition()
     private var recordedWrites: [Data] = []
     private var recordedEvents: [Event] = []
 
@@ -3662,24 +3663,34 @@ private final class RecordingOperationSink: CoreBluetoothOperationSink {
 
     func writeWithoutResponse(channel: BluetoothUuid, bytes: Data) {
         lock.lock()
-        defer { lock.unlock() }
         recordedWrites.append(bytes)
         recordedEvents.append(.write)
+        lock.unlock()
+
+        writesChanged.lock()
+        writesChanged.broadcast()
+        writesChanged.unlock()
     }
 
     func disconnect() {}
+
+    func waitForWrites(_ expectedCount: Int, timeout: TimeInterval) -> Bool {
+        writesChanged.lock()
+        defer { writesChanged.unlock() }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while writes.count < expectedCount {
+            guard writesChanged.wait(until: deadline) else { return false }
+        }
+        return true
+    }
 }
 
 private func waitForWrites(_ expectedCount: Int, in sink: RecordingOperationSink) {
-    let expectation = XCTestExpectation(description: "operation sink reaches (expectedCount) writes")
-    DispatchQueue.global().async {
-        let deadline = Date().addingTimeInterval(1.5)
-        while sink.writes.count < expectedCount, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.01)
-        }
-        expectation.fulfill()
-    }
-    _ = XCTWaiter().wait(for: [expectation], timeout: 2.0)
+    XCTAssertTrue(
+        sink.waitForWrites(expectedCount, timeout: 1.5),
+        "operation sink did not reach \(expectedCount) writes"
+    )
 }
 
 private func speedValue(_ value: Int32) -> Speed {
