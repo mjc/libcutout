@@ -210,6 +210,7 @@ impl DatabaseWorker<'_> {
                 artifact_size,
                 record_count,
                 location_count,
+                duration_milliseconds,
                 imported_at_ms,
                 reply,
             } => {
@@ -222,6 +223,7 @@ impl DatabaseWorker<'_> {
                     artifact_size,
                     record_count,
                     location_count,
+                    duration_milliseconds,
                     imported_at_ms,
                 ));
             }

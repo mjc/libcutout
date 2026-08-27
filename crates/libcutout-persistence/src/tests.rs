@@ -1250,9 +1250,18 @@ fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
         let database = RideDatabase::open(&database_path).unwrap();
         let preview = database.preflight_pevcap(&artifact_path, encoding).unwrap();
         assert_eq!(preview.location_count(), 2);
+        assert_eq!(preview.duration_milliseconds(), 1_000);
         let receipt = database
             .confirm_pevcap_import(&preview, 1_700_000_000_000)
             .unwrap();
+        assert_eq!(
+            database
+                .find_ride(receipt.ride_id.unwrap())
+                .unwrap()
+                .unwrap()
+                .duration_milliseconds(),
+            1_000
+        );
         let route = database
             .route_points(receipt.ride_id.unwrap(), None, QueryLimit::new(10).unwrap())
             .unwrap()

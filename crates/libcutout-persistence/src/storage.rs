@@ -2109,6 +2109,7 @@ impl RideDatabase {
                 artifact_size: preview.artifact_size,
                 record_count: preview.record_count,
                 location_count,
+                duration_milliseconds: preview.duration_milliseconds,
                 imported_at_ms: created_at_ms,
                 reply,
             })
@@ -2932,6 +2933,7 @@ enum Command {
         artifact_size: u64,
         record_count: u64,
         location_count: u64,
+        duration_milliseconds: u64,
         imported_at_ms: u64,
         reply: Reply<PevcapImportReceipt>,
     },
@@ -3820,16 +3822,9 @@ fn preflight_pevcap(
         }
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
-    let earliest_milliseconds = earliest_milliseconds
-        .into_iter()
-        .chain(location_earliest_milliseconds)
-        .min();
-    let latest_milliseconds = latest_milliseconds
-        .into_iter()
-        .chain(location_latest_milliseconds)
-        .max();
-    let duration_milliseconds = latest_milliseconds
-        .zip(earliest_milliseconds)
+    let duration_milliseconds = location_latest_milliseconds
+        .zip(location_earliest_milliseconds)
+        .or_else(|| latest_milliseconds.zip(earliest_milliseconds))
         .map_or(0, |(latest, earliest)| latest.saturating_sub(earliest));
     check_pevcap_limit(
         "duration milliseconds",
@@ -4272,6 +4267,7 @@ fn finish_pevcap_import(
     artifact_size: u64,
     record_count: u64,
     location_count: u64,
+    duration_milliseconds: u64,
     imported_at_ms: u64,
 ) -> Result<PevcapImportReceipt, StorageError> {
     let transaction = connection.transaction()?;
@@ -4291,6 +4287,10 @@ fn finish_pevcap_import(
             RideEvent::Import,
             imported_at_ms,
             None,
+        )?;
+        transaction.execute(
+            "UPDATE rides SET completed_duration_ms = MAX(completed_duration_ms, ?1) WHERE id = ?2",
+            params![duration_milliseconds, ride_id.uuid().to_string()],
         )?;
     }
     transaction.execute(
@@ -4632,7 +4632,7 @@ fn append_location_in_transaction(
                 .as_ref()
                 .map(|previous| (previous.segment_id.value(), previous.sample)),
             sample,
-            segment_id.value(),
+            segment_id,
             mode,
         )
         .map_err(StorageError::InvalidRideState)?;
