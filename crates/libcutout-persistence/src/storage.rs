@@ -1712,7 +1712,7 @@ impl RideDatabase {
         }
 
         let mut connection = Connection::open(&canonical_path)?;
-        let bootstrap = configure_connection(&mut connection)?;
+        let bootstrap = configure_connection(&mut connection, &canonical_path)?;
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let worker_alive = Arc::new(AtomicBool::new(true));
         let worker_alive_for_thread = Arc::clone(&worker_alive);
@@ -3918,7 +3918,10 @@ fn canonical_backup_path(path: &Path) -> Result<PathBuf, StorageError> {
     Ok(destination)
 }
 
-fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot, StorageError> {
+fn configure_connection(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<BootstrapSnapshot, StorageError> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
     let foreign_keys: i64 =
         connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
@@ -3936,7 +3939,7 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
     migrate(connection)?;
     repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
-    recover_abandoned_pevcap_imports(connection)?;
+    recover_abandoned_pevcap_imports(connection, database_path)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
@@ -3987,7 +3990,10 @@ pub(crate) fn repair_legacy_ride_creation_times(
     Ok(())
 }
 
-fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), StorageError> {
+fn recover_abandoned_pevcap_imports(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<(), StorageError> {
     let paths = {
         let mut statement = connection
             .prepare("SELECT artifact_path FROM pevcap_import_work ORDER BY artifact_digest")?;
@@ -4001,7 +4007,12 @@ fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), S
     )?;
     transaction.execute("DELETE FROM pevcap_import_work", [])?;
     transaction.commit()?;
+    let managed_directory = pevcap_import_directory(database_path);
     for path in paths {
+        let path = Path::new(&path);
+        if path.parent() != Some(managed_directory.as_path()) {
+            continue;
+        }
         if let Err(error) = fs::remove_file(path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -5596,9 +5607,7 @@ fn prepare_managed_pevcap(
     database_path: &Path,
     preview: &PevcapImportPreview,
 ) -> Result<ManagedArtifact, StorageError> {
-    let mut directory_name = database_path.as_os_str().to_owned();
-    directory_name.push(".pevcap-imports");
-    let directory = PathBuf::from(directory_name);
+    let directory = pevcap_import_directory(database_path);
     fs::create_dir_all(&directory)?;
     let extension = match preview.encoding {
         PevcapEncoding::Jsonl => "jsonl",
@@ -5650,14 +5659,17 @@ fn prepare_managed_pevcap(
     })
 }
 
+fn pevcap_import_directory(database_path: &Path) -> PathBuf {
+    let mut directory_name = database_path.as_os_str().to_owned();
+    directory_name.push(".pevcap-imports");
+    PathBuf::from(directory_name)
+}
+
 fn stream_pevcap_location_batches(
     path: &Path,
     encoding: PevcapEncoding,
     mut append: impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
 ) -> Result<u64, StorageError> {
-    let file = File::open(path)?;
-    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
     let mut batch = Vec::with_capacity(PEVCAP_LOCATION_BATCH_SIZE);
     let mut accepted = 0_u64;
     let mut recorder = RideMapRecorder::new();
@@ -5673,27 +5685,47 @@ fn stream_pevcap_location_batches(
             &mut append,
         )
     };
-    while let Some(event) = reader
-        .next_event()
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?
-    {
-        match event {
-            PevcapEvent::Record(record) => {
-                if let Some(location) = record.phone_location {
-                    append_location(location, record.monotonic_ms.as_milliseconds())?;
-                }
+
+    // Binary PEVCAP stores records and independent locations in separate sections. Replay both
+    // encodings in that same canonical order without buffering the capture in memory.
+    stream_pevcap_events(path, encoding, |event| {
+        if let PevcapEvent::Record(record) = event {
+            if let Some(location) = record.phone_location {
+                append_location(location, record.monotonic_ms.as_milliseconds())?;
             }
-            PevcapEvent::Location(location) => append_location(
+        }
+        Ok(())
+    })?;
+    stream_pevcap_events(path, encoding, |event| {
+        if let PevcapEvent::Location(location) = event {
+            append_location(
                 location.location,
                 location.receipt_monotonic_ms.as_milliseconds(),
-            )?,
-            PevcapEvent::LocationRejected(_) => {}
+            )?;
         }
-    }
+        Ok(())
+    })?;
     if !batch.is_empty() {
         accepted = accepted.saturating_add(append(batch)?);
     }
     Ok(accepted)
+}
+
+fn stream_pevcap_events(
+    path: &Path,
+    encoding: PevcapEncoding,
+    mut visit: impl FnMut(PevcapEvent) -> Result<(), StorageError>,
+) -> Result<(), StorageError> {
+    let file = File::open(path)?;
+    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
+        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
+    while let Some(event) = reader
+        .next_event()
+        .map_err(|error| StorageError::PevcapImport(error.to_string()))?
+    {
+        visit(event)?;
+    }
+    Ok(())
 }
 
 fn append_pevcap_location(
