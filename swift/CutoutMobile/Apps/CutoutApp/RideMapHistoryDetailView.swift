@@ -136,12 +136,14 @@ struct RideMapHistoryDetailView: View {
                         } else if initialHistoryID != nil {
                             VStack(spacing: 12) {
                                 ContentUnavailableView(
-                                    historyError == nil
+                                    historyError == nil && routeError == nil
                                         ? localizedAppText("ride_map.history_empty")
                                         : localizedAppText("ride_map.detail_error_title"),
-                                    systemImage: historyError == nil ? "map" : "exclamationmark.triangle"
+                                    systemImage: historyError == nil && routeError == nil
+                                        ? "map"
+                                        : "exclamationmark.triangle"
                                 )
-                                if historyError != nil {
+                                if historyError != nil || routeError != nil {
                                     Button(localizedAppText("ride_map.history_retry"), action: retry)
                                         .buttonStyle(.borderedProminent)
                                         .tint(PevColors.yellow)

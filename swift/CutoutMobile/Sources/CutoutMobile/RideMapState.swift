@@ -19,6 +19,7 @@ public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
     case InvalidTransition
     case InvalidLocation
     case InvalidRouteProjection
+    case RideNotFound
     case cancelled
     case Storage(String)
 }

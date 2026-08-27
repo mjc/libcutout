@@ -331,6 +331,19 @@ final class CutoutAppModelTests: XCTestCase {
                 summaryIDs: ["ride-1", "ride-2"]
             )
         )
+        XCTAssertEqual(
+            CutoutAppModel.historySelectionError(
+                requestedID: "ride-missing",
+                summaryIDs: ["ride-1", "ride-2"]
+            ),
+            .RideNotFound
+        )
+        XCTAssertNil(
+            CutoutAppModel.historySelectionError(
+                requestedID: "ride-2",
+                summaryIDs: ["ride-1", "ride-2"]
+            )
+        )
     }
 
     @MainActor

@@ -352,7 +352,16 @@ struct PendingPhoneLocationQueue {
     var count: Int { entries.count }
 
     mutating func append(_ sample: MobilePhoneLocationSampleDto, sequence: UInt64) {
+        guard entries.contains(where: { $0.sequence == sequence && $0.sample == sample }) == false else {
+            return
+        }
         entries.append(Entry(sequence: sequence, sample: sample))
+    }
+
+    mutating func remove(sequence: UInt64, sample: MobilePhoneLocationSampleDto? = nil) {
+        entries.removeAll { entry in
+            entry.sequence == sequence && (sample == nil || entry.sample == sample)
+        }
     }
 
     mutating func removeAll() {
@@ -2977,7 +2986,10 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             guard let sample else { return }
             rememberPendingPhoneLocation(sample, sequence: point.sequence)
             scheduleRideMapWritePoll()
-        case .accepted:
+        case let .accepted(point, _):
+            if sample != nil {
+                discardPendingPhoneLocation(sequence: point.sequence, sample: sample)
+            }
             let admittedSample = sample ?? takePendingPhoneLocation(for: decision)
             if let admittedSample {
                 _ = capturePhoneLocationSample(
@@ -3012,6 +3024,15 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         pendingPhoneLocationLock.lock()
         defer { pendingPhoneLocationLock.unlock() }
         return pendingPhoneLocations.take(for: decision)
+    }
+
+    private func discardPendingPhoneLocation(
+        sequence: UInt64,
+        sample: MobilePhoneLocationSampleDto?
+    ) {
+        pendingPhoneLocationLock.lock()
+        defer { pendingPhoneLocationLock.unlock() }
+        pendingPhoneLocations.remove(sequence: sequence, sample: sample)
     }
 
     private func scheduleRideMapWritePoll() {

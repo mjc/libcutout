@@ -489,6 +489,10 @@ final class CutoutAppModel {
                 self.rideMapHistoryCursor = result.1
                 self.rideMapHistoryCanLoadMore = result.1 != nil
                 self.rideMapHistoryError = nil
+                let selectionError = Self.historySelectionError(
+                    requestedID: requestedRideID,
+                    summaryIDs: result.0.map(\.rideId)
+                )
                 let selectedID = Self.preferredHistorySelection(
                     requestedID: requestedRideID,
                     currentID: existingSelectedID,
@@ -498,7 +502,8 @@ final class CutoutAppModel {
                     self.selectedRideMapHistoryID = nil
                     self.clearRideMapHistoryRouteProjection()
                     self.rideMapHistoryRouteLoading = false
-                    self.rideMapHistoryDetailRouteError = nil
+                    self.rideMapHistoryRouteError = selectionError
+                    self.rideMapHistoryDetailRouteError = selectionError
                     self.rideMapHistoryDetailRouteLoading = false
                     return
                 }
@@ -540,6 +545,15 @@ final class CutoutAppModel {
             return summaryIDs.first(where: { $0 == requestedID })
         }
         return summaryIDs.first(where: { $0 == currentID }) ?? summaryIDs.first
+    }
+
+    @MainActor
+    static func historySelectionError(
+        requestedID: String?,
+        summaryIDs: [String]
+    ) -> MobileRideMapError? {
+        guard let requestedID, summaryIDs.contains(requestedID) == false else { return nil }
+        return .RideNotFound
     }
 
     @MainActor

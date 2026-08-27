@@ -781,6 +781,28 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertTrue(queue.isEmpty)
     }
 
+    func testPendingPhoneLocationQueueDeduplicatesSequenceAndCanDiscardDirectOutcome() {
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_000,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+        var queue = PendingPhoneLocationQueue()
+        queue.append(sample, sequence: 7)
+        queue.append(sample, sequence: 7)
+
+        XCTAssertEqual(queue.count, 1)
+        queue.remove(sequence: 7, sample: sample)
+        XCTAssertTrue(queue.isEmpty)
+    }
+
     func testPevcapLocationStateIsSeparateFromPhoneLocationReadback() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,
