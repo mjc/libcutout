@@ -1295,6 +1295,28 @@ impl PendingLocationWrite {
         }
     }
 
+    /// Waits for a durable result until a monotonic deadline without consuming this ticket.
+    ///
+    /// `None` means that the worker is still delayed or queued when the deadline arrives; the
+    /// ticket can be polled again later. This bounds caller wait time without pretending that a
+    /// still-running SQLite command has been cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn wait_result_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<Option<Result<LocationAdmission, StorageError>>, StorageError> {
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        match self.response.recv_timeout(timeout) {
+            Ok(result) => Ok(Some(result)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
+        }
+    }
+
     /// Waits for this queued write to reach a durable result.
     ///
     /// This is intended for lifecycle barriers that must settle location writes before changing
@@ -1318,6 +1340,10 @@ impl RideDatabase {
     ///
     /// Returns a typed error when the path, schema, `SQLite` runtime, or worker cannot be opened.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
+        Self::open_with_service_id(path, Uuid::new_v4())
+    }
+
+    fn open_with_service_id(path: &Path, service_id: Uuid) -> Result<Self, StorageError> {
         let canonical_path = canonical_database_path(path)?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
         if owner
@@ -1345,7 +1371,6 @@ impl RideDatabase {
 
         let mut connection = Connection::open(&canonical_path)?;
         let bootstrap = configure_connection(&mut connection)?;
-        let service_id = Uuid::new_v4();
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let join = thread::Builder::new()
             .name("cutout-ride-maps-db".to_owned())
@@ -1377,7 +1402,7 @@ impl RideDatabase {
     ///
     /// Returns the same errors as [`Self::open`] when the service cannot be reacquired.
     pub fn reopen(&self) -> Result<Self, StorageError> {
-        Self::open(&self.path)
+        Self::open_with_service_id(&self.path, self.service_id)
     }
 
     /// Returns the process-wide service identity.
@@ -2287,6 +2312,15 @@ impl RideDatabase {
         })
     }
 
+    /// Installs a deterministic worker-failure gate for pending-write recovery tests.
+    #[cfg(test)]
+    pub(crate) fn install_worker_panic_test_gate(
+        &self,
+        entered: SyncSender<()>,
+    ) -> Result<(), StorageError> {
+        self.request(|reply| Command::InstallWorkerPanicTestGate { entered, reply })
+    }
+
     /// Stops the worker without releasing the owner entry, simulating an unexpected worker exit.
     #[cfg(test)]
     pub(crate) fn stop_worker_for_test(&self) -> Result<(), StorageError> {
@@ -2354,10 +2388,20 @@ impl RideDatabase {
     }
 
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
-        self.sender.try_send(command).map_err(|error| match error {
-            mpsc::TrySendError::Full(_) => StorageError::QueueFull,
-            mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
-        })
+        match self.sender.try_send(command) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull),
+            Err(mpsc::TrySendError::Disconnected(command)) => {
+                let recovered = self.reopen()?;
+                recovered
+                    .sender
+                    .try_send(command)
+                    .map_err(|error| match error {
+                        mpsc::TrySendError::Full(_) => StorageError::QueueFull,
+                        mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
+                    })
+            }
+        }
     }
 
     fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
@@ -2638,6 +2682,11 @@ enum Command {
     InstallRouteProjectionTestGate {
         entered: SyncSender<()>,
         release: Receiver<()>,
+        reply: Reply<()>,
+    },
+    #[cfg(test)]
+    InstallWorkerPanicTestGate {
+        entered: SyncSender<()>,
         reply: Reply<()>,
     },
     #[cfg(test)]
@@ -3008,6 +3057,17 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                             let _ = release.recv();
                         }
                         false
+                    }),
+                );
+                let _ = reply.send(Ok(()));
+            }
+            #[cfg(test)]
+            Command::InstallWorkerPanicTestGate { entered, reply } => {
+                connection.progress_handler(
+                    1,
+                    Some(move || {
+                        let _ = entered.send(());
+                        panic!("deliberate worker failure for persistence test");
                     }),
                 );
                 let _ = reply.send(Ok(()));

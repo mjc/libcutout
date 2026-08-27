@@ -491,7 +491,8 @@ public final class CutoutSessionCore: NSObject {
     private var rideMapPollGeneration: UInt64 = 0
     private var rideMapPollScheduled = false
     private let rideMapState: MobileRideMapState
-    private var didRequestAlwaysLocationAuthorization = false
+    private var didRequestWhenInUseLocationAuthorization = false
+    private var locationUpdatesStarted = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
     private let testScript: CutoutSessionTestScript?
@@ -503,10 +504,16 @@ public final class CutoutSessionCore: NSObject {
         let manager = CLLocationManager()
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+        manager.distanceFilter = 5
         manager.activityType = .fitness
-        manager.allowsBackgroundLocationUpdates = true
         return manager
     }()
+
+    deinit {
+        if locationUpdatesStarted {
+            locationManager.stopUpdatingLocation()
+        }
+    }
 
     public override convenience init() {
         self.init(clock: MonotonicClock())
@@ -557,19 +564,24 @@ public final class CutoutSessionCore: NSObject {
                 lastConnectedVehicle: lastConnectedVehicle
             )
             retirePendingPhoneLocations()
+            startLocationUpdatesIfAuthorized(locationManager)
             return snapshot
         }
     }
 
     public func pauseRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withRideMapLifecycleLock {
-            try rideMapState.pause(atMs: atMs)
+            let snapshot = try rideMapState.pause(atMs: atMs)
+            stopLocationUpdates()
+            return snapshot
         }
     }
 
     public func resumeRideMap(atMs: UInt64) throws -> MobileRideMapSnapshotDto {
         try withRideMapLifecycleLock {
-            try rideMapState.resume(atMs: atMs)
+            let snapshot = try rideMapState.resume(atMs: atMs)
+            startLocationUpdatesIfAuthorized(locationManager)
+            return snapshot
         }
     }
 
@@ -577,6 +589,7 @@ public final class CutoutSessionCore: NSObject {
         try withRideMapLifecycleLock {
             let snapshot = try rideMapState.stop(atMs: atMs)
             retirePendingPhoneLocations()
+            stopLocationUpdates()
             return snapshot
         }
     }
@@ -585,6 +598,7 @@ public final class CutoutSessionCore: NSObject {
         try withRideMapLifecycleLock {
             let snapshot = try rideMapState.save()
             retirePendingPhoneLocations()
+            stopLocationUpdates()
             return snapshot
         }
     }
@@ -593,6 +607,7 @@ public final class CutoutSessionCore: NSObject {
         try withRideMapLifecycleLock {
             let snapshot = try rideMapState.discard()
             retirePendingPhoneLocations()
+            stopLocationUpdates()
             return snapshot
         }
     }
@@ -2802,64 +2817,71 @@ extension CutoutSessionCore {
 
 extension CutoutSessionCore: CLLocationManagerDelegate {
     private func updateRideMapAvailability(_ status: CLAuthorizationStatus) {
-        guard rideMapStorageError == nil else {
-            guard rideMapAvailability != .storageUnavailable else { return }
-            rideMapAvailability = .storageUnavailable
-            publishOnMain { self.onRideMapAvailabilityChange?(.storageUnavailable) }
-            return
-        }
-        let availability: MobileRideMapAvailability
-        switch status {
-        case .notDetermined:
-            availability = .permissionRequired
-        case .authorizedAlways, .authorizedWhenInUse:
-            availability = .ready
-        case .denied:
-            availability = .denied
-        case .restricted:
-            availability = .restricted
-        @unknown default:
-            availability = .checking
-        }
+        let availability = locationAvailability(
+            servicesEnabled: CLLocationManager.locationServicesEnabled(),
+            authorizationStatus: status,
+            storageAvailable: rideMapStorageError == nil
+        )
         guard availability != rideMapAvailability else { return }
         rideMapAvailability = availability
         publishOnMain { self.onRideMapAvailabilityChange?(availability) }
     }
 
     private func startLocationUpdatesIfAuthorized(_ manager: CLLocationManager) {
+        guard CLLocationManager.locationServicesEnabled() else {
+            updateRideMapAvailability(manager.authorizationStatus)
+            return
+        }
         switch manager.authorizationStatus {
         case .authorizedAlways:
             manager.startUpdatingLocation()
+            locationUpdatesStarted = true
         case .authorizedWhenInUse:
-            requestAlwaysLocationAuthorizationIfNeeded()
             manager.startUpdatingLocation()
-        case .notDetermined, .denied, .restricted:
-            break
+            locationUpdatesStarted = true
+        case .notDetermined:
+            requestWhenInUseLocationAuthorizationIfNeeded()
+        case .denied, .restricted:
+            stopLocationUpdates()
         @unknown default:
             break
         }
     }
 
-    private func requestAlwaysLocationAuthorizationIfNeeded() {
-        guard !didRequestAlwaysLocationAuthorization else { return }
-        didRequestAlwaysLocationAuthorization = true
-        locationManager.requestAlwaysAuthorization()
+    private func requestWhenInUseLocationAuthorizationIfNeeded() {
+        guard !didRequestWhenInUseLocationAuthorization else { return }
+        didRequestWhenInUseLocationAuthorization = true
+        locationManager.requestWhenInUseAuthorization()
+    }
+
+    private func stopLocationUpdates() {
+        guard locationUpdatesStarted else { return }
+        locationManager.stopUpdatingLocation()
+        locationUpdatesStarted = false
     }
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         updateRideMapAvailability(manager.authorizationStatus)
         switch manager.authorizationStatus {
         case .notDetermined:
-            manager.requestWhenInUseAuthorization()
-        case .authorizedAlways:
-            startLocationUpdatesIfAuthorized(manager)
-        case .authorizedWhenInUse:
+            requestWhenInUseLocationAuthorizationIfNeeded()
+        case .authorizedAlways, .authorizedWhenInUse:
             startLocationUpdatesIfAuthorized(manager)
         case .denied, .restricted:
-            break
+            stopLocationUpdates()
         @unknown default:
             break
         }
+    }
+
+    public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        guard rideMapStorageError == nil else { return }
+        record("location_error=unavailable")
+        guard rideMapAvailability != .locationUnavailable else { return }
+        rideMapAvailability = .locationUnavailable
+        publishOnMain { self.onRideMapAvailabilityChange?(.locationUnavailable) }
+        _ = manager
+        _ = error
     }
 
     public func locationManager(_: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -2984,6 +3006,27 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         if shouldPollAgain {
             scheduleRideMapWritePoll()
         }
+    }
+}
+
+func locationAvailability(
+    servicesEnabled: Bool,
+    authorizationStatus: CLAuthorizationStatus,
+    storageAvailable: Bool
+) -> MobileRideMapAvailability {
+    guard storageAvailable else { return .storageUnavailable }
+    guard servicesEnabled else { return .servicesDisabled }
+    switch authorizationStatus {
+    case .notDetermined:
+        return .permissionRequired
+    case .authorizedAlways, .authorizedWhenInUse:
+        return .ready
+    case .denied:
+        return .denied
+    case .restricted:
+        return .restricted
+    @unknown default:
+        return .checking
     }
 }
 

@@ -769,6 +769,14 @@
       "comment" : "Map availability while Core Location status is being resolved.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Checking location availability…" } } }
     },
+    "ride_map.location_services_disabled" : {
+      "comment" : "Map availability when system-wide location services are disabled.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location Services are disabled on this device." } } }
+    },
+    "ride_map.location_unavailable" : {
+      "comment" : "Map availability after Core Location reports a recoverable location failure.",
+      "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Location is temporarily unavailable; Bluetooth capture can continue." } } }
+    },
     "ride_map.history_truncated_count" : {
       "comment" : "History route warning with the number of points currently projected for map display; the durable route remains complete.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %lld route points; the full route remains stored." } } }

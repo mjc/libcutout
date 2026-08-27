@@ -7,6 +7,8 @@ public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
     case permissionRequired
     case denied
     case restricted
+    case servicesDisabled
+    case locationUnavailable
     case storageUnavailable
 }
 

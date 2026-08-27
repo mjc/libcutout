@@ -104,6 +104,33 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testLocationAvailabilityDistinguishesServicesPermissionAndStorage() {
+        XCTAssertEqual(
+            locationAvailability(
+                servicesEnabled: false,
+                authorizationStatus: .authorizedAlways,
+                storageAvailable: true
+            ),
+            .servicesDisabled
+        )
+        XCTAssertEqual(
+            locationAvailability(
+                servicesEnabled: true,
+                authorizationStatus: .notDetermined,
+                storageAvailable: true
+            ),
+            .permissionRequired
+        )
+        XCTAssertEqual(
+            locationAvailability(
+                servicesEnabled: true,
+                authorizationStatus: .authorizedAlways,
+                storageAvailable: false
+            ),
+            .storageUnavailable
+        )
+    }
+
     func testBatchedLocationsPreserveTheirRecordedTimeSpacing() {
         let timestamps = [
             Date(timeIntervalSince1970: 1_700_000_000),

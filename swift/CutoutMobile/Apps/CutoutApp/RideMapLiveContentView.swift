@@ -188,6 +188,10 @@ struct RideMapLiveContentView: View {
             localizedAppText("ride_map.location_denied")
         case .restricted:
             localizedAppText("ride_map.location_restricted")
+        case .servicesDisabled:
+            localizedAppText("ride_map.location_services_disabled")
+        case .locationUnavailable:
+            localizedAppText("ride_map.location_unavailable")
         case .storageUnavailable:
             localizedAppText("ride_map.persistence_unavailable")
         }
