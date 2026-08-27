@@ -2211,6 +2211,52 @@ impl RideDatabase {
         Ok(PendingLocationWrite { response })
     }
 
+    /// Enqueues a location behind a deterministic worker gate for persistence tests.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_worker_gate_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithWorkerGate {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            release,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
+    /// Enqueues a location and deliberately loses its terminal response after worker failure.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_worker_failure_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithWorkerFailure {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
     /// Loads the durable summary projection for one ride.
     ///
     /// # Errors
@@ -2484,15 +2530,17 @@ impl RideDatabase {
         }
     }
 
-    /// Returns whether this stale handle still belongs to a process-owned worker that exited
-    /// unexpectedly. An explicit shutdown removes the owner entry, so stale handles must remain
-    /// unusable instead of silently starting a new service during a later callback.
+    /// Returns whether this handle still belongs to a process-owned database service.
+    ///
+    /// A handle may be stale after another command has already recovered the worker, so this
+    /// checks the stable service identity rather than the worker join state. An explicit shutdown
+    /// removes the owner entry, so stale handles remain unusable instead of silently starting a
+    /// new service during a later callback.
     fn worker_can_restart(&self) -> bool {
         owner().lock().ok().is_some_and(|owner| {
-            owner.as_ref().is_some_and(|entry| {
-                entry.service_id == self.service_id
-                    && entry.join.as_ref().is_some_and(JoinHandle::is_finished)
-            })
+            owner
+                .as_ref()
+                .is_some_and(|entry| entry.service_id == self.service_id)
         })
     }
 }
@@ -2729,6 +2777,25 @@ enum Command {
         sample: LocationSample,
         segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
+        reply: Reply<LocationAdmission>,
+    },
+    #[cfg(test)]
+    AppendLocationWithWorkerGate {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+        reply: Reply<LocationAdmission>,
+    },
+    #[cfg(test)]
+    AppendLocationWithWorkerFailure {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
         reply: Reply<LocationAdmission>,
     },
     Summary {
@@ -3065,6 +3132,39 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     segment_id,
                     telemetry_state,
                 ));
+            }
+            #[cfg(test)]
+            Command::AppendLocationWithWorkerGate {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                entered,
+                release,
+                reply,
+            } => {
+                let _ = entered.send(());
+                let _ = release.recv();
+                let _ = reply.send(append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                ));
+            }
+            #[cfg(test)]
+            Command::AppendLocationWithWorkerFailure {
+                ride_id: _,
+                sample: _,
+                segment_id: _,
+                telemetry_state: _,
+                entered,
+                reply,
+            } => {
+                let _ = entered.send(());
+                drop(reply);
+                break;
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));

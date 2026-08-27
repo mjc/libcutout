@@ -371,6 +371,98 @@ fn async_location_write_can_bound_wait_for_a_delayed_worker() {
 }
 
 #[test]
+fn async_location_write_can_bound_wait_for_a_worker_gate() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-worker-gate-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            sample,
+            0,
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the worker gate before SQLite");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now()),
+        Ok(None)
+    ));
+    release_sender.send(()).unwrap();
+    assert!(matches!(
+        pending.wait_result(),
+        Ok(Ok(LocationAdmission::Accepted))
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn consumed_location_write_reports_worker_failure_and_recovers() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-failure-location-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_with_worker_failure_for_test(
+            ride,
+            sample,
+            0,
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker consumed the location before failing");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now() + Duration::from_secs(1)),
+        Err(StorageError::ResponseDropped)
+    ));
+    assert!(
+        database.capabilities().is_ok(),
+        "worker should recover in place"
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_reopens_after_an_unexpected_worker_exit() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
