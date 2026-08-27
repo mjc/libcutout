@@ -4060,11 +4060,11 @@ fn mobile_route_projection_dto(
         canonical_start_sequence: projection
             .endpoint_metadata()
             .start_sequence()
-            .map(|sequence| sequence.as_u64()),
+            .map(ride_maps::RidePointSequence::as_u64),
         canonical_end_sequence: projection
             .endpoint_metadata()
             .end_sequence()
-            .map(|sequence| sequence.as_u64()),
+            .map(ride_maps::RidePointSequence::as_u64),
         canonical_start_visible: projection.endpoint_metadata().start_visible(),
         canonical_end_visible: projection.endpoint_metadata().end_visible(),
     }
@@ -6485,10 +6485,10 @@ fn project_live_route_points(
         displayed_segment_count,
         canonical_start_sequence: endpoint_metadata
             .start_sequence()
-            .map(|sequence| sequence.as_u64()),
+            .map(ride_maps::RidePointSequence::as_u64),
         canonical_end_sequence: endpoint_metadata
             .end_sequence()
-            .map(|sequence| sequence.as_u64()),
+            .map(ride_maps::RidePointSequence::as_u64),
         canonical_start_visible: endpoint_metadata.start_visible(),
         canonical_end_visible: endpoint_metadata.end_visible(),
     })

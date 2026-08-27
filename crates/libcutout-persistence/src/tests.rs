@@ -2525,11 +2525,11 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
     assert_eq!(projection.points()[1].sequence().as_u64(), 2);
     let endpoints = projection.endpoint_metadata();
     assert_eq!(
-        endpoints.start_sequence().map(|sequence| sequence.as_u64()),
+        endpoints.start_sequence().map(RidePointSequence::as_u64),
         Some(0)
     );
     assert_eq!(
-        endpoints.end_sequence().map(|sequence| sequence.as_u64()),
+        endpoints.end_sequence().map(RidePointSequence::as_u64),
         Some(3)
     );
     assert!(endpoints.start_visible());

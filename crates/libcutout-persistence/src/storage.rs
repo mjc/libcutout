@@ -6566,53 +6566,64 @@ fn project_route_points(
     projection_checkpoint(cancellation)?;
 
     let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
-    let RouteProjectionCounts {
-        source_point_count,
-        source_segment_count,
-        candidate_point_count,
-        candidate_segment_count,
-        viewport_predicate,
-        source_start_sequence,
-        source_end_sequence,
-    } = counts;
     projection_checkpoint(cancellation)?;
-    let candidate_count = usize::try_from(candidate_point_count).unwrap_or(usize::MAX);
-    let endpoint_metadata = RouteEndpointMetadata::new(
-        source_start_sequence.map(RidePointSequence::new),
-        source_end_sequence.map(RidePointSequence::new),
-        endpoint_is_visible(
-            connection,
-            &ride_id,
-            source_start_sequence,
-            viewport,
-            cancellation,
-        )?,
-        endpoint_is_visible(
-            connection,
-            &ride_id,
-            source_end_sequence,
-            viewport,
-            cancellation,
-        )?,
-    );
+    let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
+    let endpoint_metadata = route_endpoint_metadata_from_storage(
+        connection,
+        &ride_id,
+        counts.source_start_sequence,
+        counts.source_end_sequence,
+        viewport,
+        cancellation,
+    )?;
     if candidate_count == 0 {
         return Ok(RoutePointProjection {
             points: Vec::new(),
-            source_point_count,
-            source_segment_count,
-            candidate_point_count,
-            candidate_segment_count,
+            source_point_count: counts.source_point_count,
+            source_segment_count: counts.source_segment_count,
+            candidate_point_count: counts.candidate_point_count,
+            candidate_segment_count: counts.candidate_segment_count,
             displayed_segment_count: 0,
             endpoint_metadata,
         });
     }
 
+    let (points, displayed_segment_count) = project_route_candidates(
+        connection,
+        &ride_id,
+        &counts,
+        viewport,
+        budget,
+        privacy,
+        cancellation,
+    )?;
+    Ok(RoutePointProjection {
+        points,
+        source_point_count: counts.source_point_count,
+        source_segment_count: counts.source_segment_count,
+        candidate_point_count: counts.candidate_point_count,
+        candidate_segment_count: counts.candidate_segment_count,
+        displayed_segment_count,
+        endpoint_metadata,
+    })
+}
+
+fn project_route_candidates(
+    connection: &Connection,
+    ride_id: &str,
+    counts: &RouteProjectionCounts,
+    viewport: Option<RouteViewport>,
+    budget: RouteDisplayBudget,
+    privacy: RoutePrivacyPolicy,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<(Vec<RouteDisplayPoint>, u64), StorageError> {
     let select = format!(
         "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7,
                 longitude_e7, horizontal_accuracy_mm, source
          FROM ride_points
-         WHERE ride_id = ?1{viewport_predicate}
-         ORDER BY sequence ASC"
+         WHERE ride_id = ?1{}
+         ORDER BY sequence ASC",
+        counts.viewport_predicate
     );
     let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
     projection_checkpoint(cancellation)?;
@@ -6636,6 +6647,7 @@ fn project_route_points(
             cancellation,
         )?
     };
+    let candidate_count = usize::try_from(counts.candidate_point_count).unwrap_or(usize::MAX);
     let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, row) in rows.enumerate() {
         projection_checkpoint(cancellation)?;
@@ -6655,15 +6667,35 @@ fn project_route_points(
         points.iter().copied().map(RouteDisplayPoint::segment_id),
     ))
     .unwrap_or(u64::MAX);
-    Ok(RoutePointProjection {
-        points,
-        source_point_count,
-        source_segment_count,
-        candidate_point_count,
-        candidate_segment_count,
-        displayed_segment_count,
-        endpoint_metadata,
-    })
+    Ok((points, displayed_segment_count))
+}
+
+fn route_endpoint_metadata_from_storage(
+    connection: &Connection,
+    ride_id: &str,
+    source_start_sequence: Option<u64>,
+    source_end_sequence: Option<u64>,
+    viewport: Option<RouteViewport>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<RouteEndpointMetadata, StorageError> {
+    Ok(RouteEndpointMetadata::new(
+        source_start_sequence.map(RidePointSequence::new),
+        source_end_sequence.map(RidePointSequence::new),
+        endpoint_is_visible(
+            connection,
+            ride_id,
+            source_start_sequence,
+            viewport,
+            cancellation,
+        )?,
+        endpoint_is_visible(
+            connection,
+            ride_id,
+            source_end_sequence,
+            viewport,
+            cancellation,
+        )?,
+    ))
 }
 
 struct RouteProjectionCounts {
