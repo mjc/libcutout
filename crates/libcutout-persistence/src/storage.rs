@@ -771,7 +771,7 @@ impl RideSessionMarkerKey {
     }
 }
 
-/// Validated SQLite row identifier used only to connect a spatial table to its R*Tree row.
+/// Validated `SQLite` row identifier used only to connect a spatial table to its R*Tree row.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SpatialRowId(i64);
 
@@ -1369,7 +1369,7 @@ impl PendingLocationWrite {
     ///
     /// `None` means that the worker is still delayed or queued when the deadline arrives; the
     /// ticket can be polled again later. This bounds caller wait time without pretending that a
-    /// still-running SQLite command has been cancelled.
+    /// still-running `SQLite` command has been cancelled.
     ///
     /// # Errors
     ///

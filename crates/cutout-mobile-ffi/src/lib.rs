@@ -5391,7 +5391,7 @@ impl MobileRideMapCoreInner {
 
     fn settle_location(
         &mut self,
-        ride_id: MobileRideIdDto,
+        ride_id: &MobileRideIdDto,
         sample: ride_maps::LocationSample,
         telemetry_state: ride_maps::RouteTelemetryState,
         point: MobileRideMapCorePointDto,
@@ -5400,7 +5400,7 @@ impl MobileRideMapCoreInner {
     ) -> MobileRideMapCoreDecisionDto {
         match result {
             Ok(ride_maps::LocationAdmission::Accepted) => {
-                let can_update_projection = self.active_ride_id.as_ref() == Some(&ride_id)
+                let can_update_projection = self.active_ride_id.as_ref() == Some(ride_id)
                     && matches!(
                         self.recorder.state(),
                         Some(
@@ -5475,7 +5475,7 @@ impl MobileRideMapCoreInner {
                 Err(error) => Err(error),
             };
             let decision = self.settle_location(
-                ride_id,
+                &ride_id,
                 sample,
                 telemetry_state,
                 point,
@@ -5509,7 +5509,7 @@ impl MobileRideMapCoreInner {
                         .pop_front()
                         .expect("front pending location remains present");
                     decisions.push(self.settle_location(
-                        pending.ride_id,
+                        &pending.ride_id,
                         pending.sample,
                         pending.telemetry_state,
                         pending.point,
@@ -5524,7 +5524,7 @@ impl MobileRideMapCoreInner {
                 .pop_front()
                 .expect("front pending location remains present");
             decisions.push(self.settle_location(
-                pending.ride_id,
+                &pending.ride_id,
                 pending.sample,
                 pending.telemetry_state,
                 pending.point,
@@ -7863,6 +7863,10 @@ fn run_capture_writer(
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "the capture writer keeps its flush and finish state machine in one loop"
+)]
 fn write_capture_stream(
     path: &Path,
     header: &mut PevcapHeader,
@@ -7897,36 +7901,26 @@ fn write_capture_stream(
                     .take()
                     .ok_or_else(|| "capture record slot was empty".to_string())?;
                 let line = record.to_jsonl_line().map_err(|error| error.to_string())?;
-                let bytes = write_line(&mut writer, &line)? as u64;
-                state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
-                state
-                    .physical_bytes_written
-                    .fetch_add(bytes, Ordering::AcqRel);
-                bytes_since_flush = bytes_since_flush.saturating_add(bytes);
-                maybe_flush(
+                write_capture_event_line(
                     &mut writer,
+                    &line,
+                    state,
                     &mut bytes_since_flush,
                     &mut last_flush,
                     &mut last_sync,
-                    false,
                 )?;
             }
             CaptureWriterMessage::Location(location) => {
                 let line = location
                     .to_jsonl_line()
                     .map_err(|error| error.to_string())?;
-                let bytes = write_line(&mut writer, &line)? as u64;
-                state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
-                state
-                    .physical_bytes_written
-                    .fetch_add(bytes, Ordering::AcqRel);
-                bytes_since_flush = bytes_since_flush.saturating_add(bytes);
-                maybe_flush(
+                write_capture_event_line(
                     &mut writer,
+                    &line,
+                    state,
                     &mut bytes_since_flush,
                     &mut last_flush,
                     &mut last_sync,
-                    false,
                 )?;
             }
             CaptureWriterMessage::Metadata(metadata) => {
@@ -7989,6 +7983,23 @@ fn write_capture_stream(
         .get_mut()
         .sync_data()
         .map_err(|error| error.to_string())
+}
+
+fn write_capture_event_line(
+    writer: &mut BufWriter<File>,
+    line: &str,
+    state: &CaptureWriterState,
+    bytes_since_flush: &mut u64,
+    last_flush: &mut Instant,
+    last_sync: &mut Instant,
+) -> Result<(), String> {
+    let bytes = write_line(writer, line)? as u64;
+    state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
+    state
+        .physical_bytes_written
+        .fetch_add(bytes, Ordering::AcqRel);
+    *bytes_since_flush = (*bytes_since_flush).saturating_add(bytes);
+    maybe_flush(writer, bytes_since_flush, last_flush, last_sync, false)
 }
 
 fn reply_capture_writer_result(
@@ -8346,14 +8357,13 @@ impl MobilePevcapCaptureBuilder {
         let Some(sample) = sample.canonical() else {
             return false;
         };
-        let location = match PevcapLocationSample::new(
+        let Ok(location) = PevcapLocationSample::new(
             receipt_monotonic_ms.into_core(),
             sample.pevcap_location(),
             simulated,
             produced_by_accessory,
-        ) {
-            Ok(location) => location,
-            Err(_) => return false,
+        ) else {
+            return false;
         };
         self.send_location(location)
     }
@@ -13489,6 +13499,10 @@ mod tests {
         assert_eq!(sample.canonical(), None);
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the writer regression covers the complete exported capture contract"
+    )]
     #[test]
     fn mobile_capture_builder_exports_cli_readable_jsonl() {
         let path = std::env::temp_dir().join(format!(
