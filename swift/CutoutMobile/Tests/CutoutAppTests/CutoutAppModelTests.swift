@@ -531,6 +531,28 @@ final class CutoutAppModelTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testDetailViewportPreservesSourceSegmentBudgetOmission() {
+        XCTAssertTrue(
+            CutoutAppModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: true,
+                viewportSegmentsOmittedByBudget: false
+            )
+        )
+        XCTAssertTrue(
+            CutoutAppModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: false,
+                viewportSegmentsOmittedByBudget: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.detailSegmentsAreOmitted(
+                sourceSegmentsOmittedByBudget: false,
+                viewportSegmentsOmittedByBudget: false
+            )
+        )
+    }
+
     func testRouteDisplayPointConversionPreservesCanonicalGeometry() {
         let point = MobileRideMapPointDto(
             sequence: 4,
