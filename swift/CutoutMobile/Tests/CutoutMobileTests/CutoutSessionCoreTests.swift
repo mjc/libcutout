@@ -286,11 +286,11 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(sample?.verticalAccuracyMeters)
         XCTAssertNil(sample?.speedMetersPerSecond)
         XCTAssertNil(sample?.speedAccuracyMetersPerSecond)
-        XCTAssertEqual(sample?.courseDegrees, 0)
+        XCTAssertEqual(sample?.courseDegrees?.value, 0)
         XCTAssertNil(sample?.courseAccuracyDegrees)
-        XCTAssertEqual(sample?.latitudeDegrees, 39.7392)
-        XCTAssertEqual(sample?.longitudeDegrees, -104.9903)
-        XCTAssertEqual(sample?.altitudeMeters, 1_600)
+        XCTAssertEqual(sample?.latitudeDegrees.value, 39.7392)
+        XCTAssertEqual(sample?.longitudeDegrees.value, -104.9903)
+        XCTAssertEqual(sample?.altitudeMeters.value, 1_600)
 
         let invalidCourseLocation = CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
@@ -327,8 +327,8 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(nonFiniteSample?.speedAccuracyMetersPerSecond)
         XCTAssertNil(nonFiniteSample?.courseDegrees)
         XCTAssertNil(nonFiniteSample?.courseAccuracyDegrees)
-        XCTAssertEqual(nonFiniteSample?.latitudeDegrees, 39.7392)
-        XCTAssertEqual(nonFiniteSample?.longitudeDegrees, -104.9903)
+        XCTAssertEqual(nonFiniteSample?.latitudeDegrees.value, 39.7392)
+        XCTAssertEqual(nonFiniteSample?.longitudeDegrees.value, -104.9903)
     }
 
     func testConnectionAutoStartResetsLocationTimestampAdmissionForANewRide() throws {
@@ -349,7 +349,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             CLLocationManager(),
             didUpdateLocations: [Self.location(timestamp: timestamp, latitude: 39.7392)]
         )
-        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7392)
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees.value, 39.7392)
 
         _ = try core.rideMapStateHandle.stop(atMs: 20_000)
         XCTAssertTrue(core.pair(platformIdentifier: scriptedVescCandidate.platformIdentifier))
@@ -358,7 +358,7 @@ final class CutoutSessionCoreTests: XCTestCase {
             didUpdateLocations: [Self.location(timestamp: timestamp, latitude: 39.7402)]
         )
 
-        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7402)
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees.value, 39.7402)
     }
 
     func testPhoneLocationReadbackTracksAValidSampleWithoutAnActiveRide() {
@@ -377,8 +377,8 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         core.locationManager(CLLocationManager(), didUpdateLocations: [location])
 
-        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees, 39.7392)
-        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees, -104.9903)
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.latitudeDegrees.value, 39.7392)
+        XCTAssertEqual(core.phoneLocationSnapshot.latestSample?.longitudeDegrees.value, -104.9903)
     }
 
     private static func location(timestamp: Date, latitude: CLLocationDegrees) -> CLLocation {
@@ -461,11 +461,11 @@ final class CutoutSessionCoreTests: XCTestCase {
         let point = MobileRideMapPointDto(
             sequence: 0,
             segmentId: 0,
-            latitudeDegrees: sample.latitudeDegrees,
-            longitudeDegrees: sample.longitudeDegrees,
+            latitudeDegrees: sample.latitudeDegrees.value,
+            longitudeDegrees: sample.longitudeDegrees.value,
             wallClockUnixMs: sample.wallClockUnixMs,
             monotonicMs: 1_000,
-            horizontalAccuracyMeters: sample.horizontalAccuracyMeters ?? 0,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters?.value ?? 0,
             telemetryState: .gpsOnly
         )
 
@@ -689,21 +689,21 @@ final class CutoutSessionCoreTests: XCTestCase {
         let oldPoint = MobileRideMapPointDto(
             sequence: 0,
             segmentId: 0,
-            latitudeDegrees: oldSample.latitudeDegrees,
-            longitudeDegrees: oldSample.longitudeDegrees,
+            latitudeDegrees: oldSample.latitudeDegrees.value,
+            longitudeDegrees: oldSample.longitudeDegrees.value,
             wallClockUnixMs: oldSample.wallClockUnixMs,
             monotonicMs: 100,
-            horizontalAccuracyMeters: oldSample.horizontalAccuracyMeters ?? 0,
+            horizontalAccuracyMeters: oldSample.horizontalAccuracyMeters?.value ?? 0,
             telemetryState: .gpsOnly
         )
         let newPoint = MobileRideMapPointDto(
             sequence: 0,
             segmentId: 0,
-            latitudeDegrees: newSample.latitudeDegrees,
-            longitudeDegrees: newSample.longitudeDegrees,
+            latitudeDegrees: newSample.latitudeDegrees.value,
+            longitudeDegrees: newSample.longitudeDegrees.value,
             wallClockUnixMs: newSample.wallClockUnixMs,
             monotonicMs: 10_100,
-            horizontalAccuracyMeters: newSample.horizontalAccuracyMeters ?? 0,
+            horizontalAccuracyMeters: newSample.horizontalAccuracyMeters?.value ?? 0,
             telemetryState: .gpsOnly
         )
         let oldRideTerminalDecisions: [MobileRideMapDecisionDto] = [
@@ -740,11 +740,11 @@ final class CutoutSessionCoreTests: XCTestCase {
         let point = MobileRideMapPointDto(
             sequence: 0,
             segmentId: 0,
-            latitudeDegrees: sample.latitudeDegrees,
-            longitudeDegrees: sample.longitudeDegrees,
+            latitudeDegrees: sample.latitudeDegrees.value,
+            longitudeDegrees: sample.longitudeDegrees.value,
             wallClockUnixMs: sample.wallClockUnixMs,
             monotonicMs: 1_000,
-            horizontalAccuracyMeters: sample.horizontalAccuracyMeters ?? 0,
+            horizontalAccuracyMeters: sample.horizontalAccuracyMeters?.value ?? 0,
             telemetryState: .gpsOnly
         )
         let admittedState = MobilePhoneLocationState()

@@ -6137,6 +6137,65 @@ public func FfiConverterTypeDutyCycle_lower(_ value: DutyCycle) -> RustBuffer {
 
 
 /**
+ * Altitude above mean sea level in metres.
+ */
+public struct MobileAltitudeMeters: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAltitudeMeters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAltitudeMeters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAltitudeMeters {
+        return
+            try MobileAltitudeMeters(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAltitudeMeters, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAltitudeMeters_lift(_ buf: RustBuffer) throws -> MobileAltitudeMeters {
+    return try FfiConverterTypeMobileAltitudeMeters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAltitudeMeters_lower(_ value: MobileAltitudeMeters) -> RustBuffer {
+    return FfiConverterTypeMobileAltitudeMeters.lower(value)
+}
+
+
+/**
  * Begode/Gotway protocol identity probe evidence.
  */
 public struct MobileBegodeIdentityProbeDto: Equatable, Hashable {
@@ -7629,6 +7688,124 @@ public func FfiConverterTypeMobileChargeTimeEstimateDto_lower(_ value: MobileCha
 
 
 /**
+ * Course accuracy in degrees when available.
+ */
+public struct MobileCourseAccuracyDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileCourseAccuracyDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileCourseAccuracyDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCourseAccuracyDegrees {
+        return
+            try MobileCourseAccuracyDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileCourseAccuracyDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseAccuracyDegrees_lift(_ buf: RustBuffer) throws -> MobileCourseAccuracyDegrees {
+    return try FfiConverterTypeMobileCourseAccuracyDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseAccuracyDegrees_lower(_ value: MobileCourseAccuracyDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileCourseAccuracyDegrees.lower(value)
+}
+
+
+/**
+ * Direction of travel in degrees clockwise from true north when available.
+ */
+public struct MobileCourseDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileCourseDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileCourseDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCourseDegrees {
+        return
+            try MobileCourseDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileCourseDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseDegrees_lift(_ buf: RustBuffer) throws -> MobileCourseDegrees {
+    return try FfiConverterTypeMobileCourseDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseDegrees_lower(_ value: MobileCourseDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileCourseDegrees.lower(value)
+}
+
+
+/**
  * Current-rate summary used by an available estimate.
  */
 public struct MobileCurrentRateSummaryDto: Equatable, Hashable {
@@ -8337,6 +8514,65 @@ public func FfiConverterTypeMobileGeoBoundsDto_lower(_ value: MobileGeoBoundsDto
 
 
 /**
+ * Horizontal location accuracy in metres when available.
+ */
+public struct MobileHorizontalAccuracyMeters: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileHorizontalAccuracyMeters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileHorizontalAccuracyMeters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileHorizontalAccuracyMeters {
+        return
+            try MobileHorizontalAccuracyMeters(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileHorizontalAccuracyMeters, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHorizontalAccuracyMeters_lift(_ buf: RustBuffer) throws -> MobileHorizontalAccuracyMeters {
+    return try FfiConverterTypeMobileHorizontalAccuracyMeters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHorizontalAccuracyMeters_lower(_ value: MobileHorizontalAccuracyMeters) -> RustBuffer {
+    return FfiConverterTypeMobileHorizontalAccuracyMeters.lower(value)
+}
+
+
+/**
  * One Rust-authorized, bounded identification query write.
  */
 public struct MobileIdentificationProbeWriteDto: Equatable, Hashable {
@@ -8511,6 +8747,124 @@ public func FfiConverterTypeMobileIgnoredNotificationEvidenceDto_lift(_ buf: Rus
 #endif
 public func FfiConverterTypeMobileIgnoredNotificationEvidenceDto_lower(_ value: MobileIgnoredNotificationEvidenceDto) -> RustBuffer {
     return FfiConverterTypeMobileIgnoredNotificationEvidenceDto.lower(value)
+}
+
+
+/**
+ * WGS84 latitude in degrees. Rust validates the range before use.
+ */
+public struct MobileLatitudeDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileLatitudeDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLatitudeDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLatitudeDegrees {
+        return
+            try MobileLatitudeDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileLatitudeDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLatitudeDegrees_lift(_ buf: RustBuffer) throws -> MobileLatitudeDegrees {
+    return try FfiConverterTypeMobileLatitudeDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLatitudeDegrees_lower(_ value: MobileLatitudeDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileLatitudeDegrees.lower(value)
+}
+
+
+/**
+ * WGS84 longitude in degrees. Rust validates the range before use.
+ */
+public struct MobileLongitudeDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileLongitudeDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLongitudeDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLongitudeDegrees {
+        return
+            try MobileLongitudeDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileLongitudeDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLongitudeDegrees_lift(_ buf: RustBuffer) throws -> MobileLongitudeDegrees {
+    return try FfiConverterTypeMobileLongitudeDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLongitudeDegrees_lower(_ value: MobileLongitudeDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileLongitudeDegrees.lower(value)
 }
 
 
@@ -9919,19 +10273,19 @@ public func FfiConverterTypeMobilePevcapImportReceiptDto_lower(_ value: MobilePe
  */
 public struct MobilePhoneLocationSampleDto: Equatable, Hashable {
     public var wallClockUnixMs: UInt64
-    public var latitudeDegrees: Double
-    public var longitudeDegrees: Double
-    public var altitudeMeters: Double
-    public var horizontalAccuracyMeters: Double?
-    public var verticalAccuracyMeters: Double?
-    public var speedMetersPerSecond: Double?
-    public var speedAccuracyMetersPerSecond: Double?
-    public var courseDegrees: Double?
-    public var courseAccuracyDegrees: Double?
+    public var latitudeDegrees: MobileLatitudeDegrees
+    public var longitudeDegrees: MobileLongitudeDegrees
+    public var altitudeMeters: MobileAltitudeMeters
+    public var horizontalAccuracyMeters: MobileHorizontalAccuracyMeters?
+    public var verticalAccuracyMeters: MobileVerticalAccuracyMeters?
+    public var speedMetersPerSecond: MobileSpeedMetersPerSecond?
+    public var speedAccuracyMetersPerSecond: MobileSpeedAccuracyMetersPerSecond?
+    public var courseDegrees: MobileCourseDegrees?
+    public var courseAccuracyDegrees: MobileCourseAccuracyDegrees?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, altitudeMeters: Double, horizontalAccuracyMeters: Double?, verticalAccuracyMeters: Double?, speedMetersPerSecond: Double?, speedAccuracyMetersPerSecond: Double?, courseDegrees: Double?, courseAccuracyDegrees: Double?) {
+    public init(wallClockUnixMs: UInt64, latitudeDegrees: MobileLatitudeDegrees, longitudeDegrees: MobileLongitudeDegrees, altitudeMeters: MobileAltitudeMeters, horizontalAccuracyMeters: MobileHorizontalAccuracyMeters?, verticalAccuracyMeters: MobileVerticalAccuracyMeters?, speedMetersPerSecond: MobileSpeedMetersPerSecond?, speedAccuracyMetersPerSecond: MobileSpeedAccuracyMetersPerSecond?, courseDegrees: MobileCourseDegrees?, courseAccuracyDegrees: MobileCourseAccuracyDegrees?) {
         self.wallClockUnixMs = wallClockUnixMs
         self.latitudeDegrees = latitudeDegrees
         self.longitudeDegrees = longitudeDegrees
@@ -9961,29 +10315,29 @@ public struct FfiConverterTypeMobilePhoneLocationSampleDto: FfiConverterRustBuff
         return
             try MobilePhoneLocationSampleDto(
                 wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
-                latitudeDegrees: FfiConverterDouble.read(from: &buf),
-                longitudeDegrees: FfiConverterDouble.read(from: &buf),
-                altitudeMeters: FfiConverterDouble.read(from: &buf),
-                horizontalAccuracyMeters: FfiConverterOptionDouble.read(from: &buf),
-                verticalAccuracyMeters: FfiConverterOptionDouble.read(from: &buf),
-                speedMetersPerSecond: FfiConverterOptionDouble.read(from: &buf),
-                speedAccuracyMetersPerSecond: FfiConverterOptionDouble.read(from: &buf),
-                courseDegrees: FfiConverterOptionDouble.read(from: &buf),
-                courseAccuracyDegrees: FfiConverterOptionDouble.read(from: &buf)
+                latitudeDegrees: FfiConverterTypeMobileLatitudeDegrees.read(from: &buf),
+                longitudeDegrees: FfiConverterTypeMobileLongitudeDegrees.read(from: &buf),
+                altitudeMeters: FfiConverterTypeMobileAltitudeMeters.read(from: &buf),
+                horizontalAccuracyMeters: FfiConverterOptionTypeMobileHorizontalAccuracyMeters.read(from: &buf),
+                verticalAccuracyMeters: FfiConverterOptionTypeMobileVerticalAccuracyMeters.read(from: &buf),
+                speedMetersPerSecond: FfiConverterOptionTypeMobileSpeedMetersPerSecond.read(from: &buf),
+                speedAccuracyMetersPerSecond: FfiConverterOptionTypeMobileSpeedAccuracyMetersPerSecond.read(from: &buf),
+                courseDegrees: FfiConverterOptionTypeMobileCourseDegrees.read(from: &buf),
+                courseAccuracyDegrees: FfiConverterOptionTypeMobileCourseAccuracyDegrees.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobilePhoneLocationSampleDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)
-        FfiConverterDouble.write(value.latitudeDegrees, into: &buf)
-        FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
-        FfiConverterDouble.write(value.altitudeMeters, into: &buf)
-        FfiConverterOptionDouble.write(value.horizontalAccuracyMeters, into: &buf)
-        FfiConverterOptionDouble.write(value.verticalAccuracyMeters, into: &buf)
-        FfiConverterOptionDouble.write(value.speedMetersPerSecond, into: &buf)
-        FfiConverterOptionDouble.write(value.speedAccuracyMetersPerSecond, into: &buf)
-        FfiConverterOptionDouble.write(value.courseDegrees, into: &buf)
-        FfiConverterOptionDouble.write(value.courseAccuracyDegrees, into: &buf)
+        FfiConverterTypeMobileLatitudeDegrees.write(value.latitudeDegrees, into: &buf)
+        FfiConverterTypeMobileLongitudeDegrees.write(value.longitudeDegrees, into: &buf)
+        FfiConverterTypeMobileAltitudeMeters.write(value.altitudeMeters, into: &buf)
+        FfiConverterOptionTypeMobileHorizontalAccuracyMeters.write(value.horizontalAccuracyMeters, into: &buf)
+        FfiConverterOptionTypeMobileVerticalAccuracyMeters.write(value.verticalAccuracyMeters, into: &buf)
+        FfiConverterOptionTypeMobileSpeedMetersPerSecond.write(value.speedMetersPerSecond, into: &buf)
+        FfiConverterOptionTypeMobileSpeedAccuracyMetersPerSecond.write(value.speedAccuracyMetersPerSecond, into: &buf)
+        FfiConverterOptionTypeMobileCourseDegrees.write(value.courseDegrees, into: &buf)
+        FfiConverterOptionTypeMobileCourseAccuracyDegrees.write(value.courseAccuracyDegrees, into: &buf)
     }
 }
 
@@ -11209,6 +11563,10 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
      */
     public var sourceSegmentCount: UInt64
     /**
+     * Number of canonical points inside the requested viewport before display LOD.
+     */
+    public var candidatePointCount: UInt64
+    /**
      * Number of canonical segments with points inside the requested viewport.
      */
     public var candidateSegmentCount: UInt64
@@ -11230,6 +11588,9 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
          * Total canonical segment count before viewport filtering or display LOD.
          */sourceSegmentCount: UInt64,
         /**
+         * Number of canonical points inside the requested viewport before display LOD.
+         */candidatePointCount: UInt64,
+        /**
          * Number of canonical segments with points inside the requested viewport.
          */candidateSegmentCount: UInt64,
         /**
@@ -11238,6 +11599,7 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
         self.points = points
         self.sourcePointCount = sourcePointCount
         self.sourceSegmentCount = sourceSegmentCount
+        self.candidatePointCount = candidatePointCount
         self.candidateSegmentCount = candidateSegmentCount
         self.displayedSegmentCount = displayedSegmentCount
     }
@@ -11261,6 +11623,7 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
                 points: FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.read(from: &buf),
                 sourcePointCount: FfiConverterUInt64.read(from: &buf),
                 sourceSegmentCount: FfiConverterUInt64.read(from: &buf),
+                candidatePointCount: FfiConverterUInt64.read(from: &buf),
                 candidateSegmentCount: FfiConverterUInt64.read(from: &buf),
                 displayedSegmentCount: FfiConverterUInt64.read(from: &buf)
         )
@@ -11270,6 +11633,7 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
         FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.write(value.points, into: &buf)
         FfiConverterUInt64.write(value.sourcePointCount, into: &buf)
         FfiConverterUInt64.write(value.sourceSegmentCount, into: &buf)
+        FfiConverterUInt64.write(value.candidatePointCount, into: &buf)
         FfiConverterUInt64.write(value.candidateSegmentCount, into: &buf)
         FfiConverterUInt64.write(value.displayedSegmentCount, into: &buf)
     }
@@ -12647,6 +13011,124 @@ public func FfiConverterTypeMobileSettingsReadbackDto_lower(_ value: MobileSetti
 
 
 /**
+ * Ground-speed accuracy in metres per second when available.
+ */
+public struct MobileSpeedAccuracyMetersPerSecond: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSpeedAccuracyMetersPerSecond: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSpeedAccuracyMetersPerSecond: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSpeedAccuracyMetersPerSecond {
+        return
+            try MobileSpeedAccuracyMetersPerSecond(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSpeedAccuracyMetersPerSecond, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedAccuracyMetersPerSecond_lift(_ buf: RustBuffer) throws -> MobileSpeedAccuracyMetersPerSecond {
+    return try FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedAccuracyMetersPerSecond_lower(_ value: MobileSpeedAccuracyMetersPerSecond) -> RustBuffer {
+    return FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.lower(value)
+}
+
+
+/**
+ * Ground speed in metres per second when available.
+ */
+public struct MobileSpeedMetersPerSecond: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSpeedMetersPerSecond: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSpeedMetersPerSecond: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSpeedMetersPerSecond {
+        return
+            try MobileSpeedMetersPerSecond(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSpeedMetersPerSecond, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedMetersPerSecond_lift(_ buf: RustBuffer) throws -> MobileSpeedMetersPerSecond {
+    return try FfiConverterTypeMobileSpeedMetersPerSecond.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedMetersPerSecond_lower(_ value: MobileSpeedMetersPerSecond) -> RustBuffer {
+    return FfiConverterTypeMobileSpeedMetersPerSecond.lower(value)
+}
+
+
+/**
  * Runtime `SQLite` capabilities observed by Rust.
  */
 public struct MobileSqliteCapabilitiesDto: Equatable, Hashable {
@@ -13431,6 +13913,65 @@ public func FfiConverterTypeMobileVerifiedStringDto_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeMobileVerifiedStringDto_lower(_ value: MobileVerifiedStringDto) -> RustBuffer {
     return FfiConverterTypeMobileVerifiedStringDto.lower(value)
+}
+
+
+/**
+ * Vertical location accuracy in metres when available.
+ */
+public struct MobileVerticalAccuracyMeters: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileVerticalAccuracyMeters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileVerticalAccuracyMeters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVerticalAccuracyMeters {
+        return
+            try MobileVerticalAccuracyMeters(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileVerticalAccuracyMeters, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVerticalAccuracyMeters_lift(_ buf: RustBuffer) throws -> MobileVerticalAccuracyMeters {
+    return try FfiConverterTypeMobileVerticalAccuracyMeters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVerticalAccuracyMeters_lower(_ value: MobileVerticalAccuracyMeters) -> RustBuffer {
+    return FfiConverterTypeMobileVerticalAccuracyMeters.lower(value)
 }
 
 
@@ -22836,6 +23377,54 @@ fileprivate struct FfiConverterOptionTypeMobileChargeTimeEstimateDto: FfiConvert
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileCourseAccuracyDegrees: FfiConverterRustBuffer {
+    typealias SwiftType = MobileCourseAccuracyDegrees?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileCourseAccuracyDegrees.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileCourseAccuracyDegrees.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileCourseDegrees: FfiConverterRustBuffer {
+    typealias SwiftType = MobileCourseDegrees?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileCourseDegrees.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileCourseDegrees.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileFaultHistoryEntryDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileFaultHistoryEntryDto?
 
@@ -22924,6 +23513,30 @@ fileprivate struct FfiConverterOptionTypeMobileGeoBoundsDto: FfiConverterRustBuf
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileGeoBoundsDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileHorizontalAccuracyMeters: FfiConverterRustBuffer {
+    typealias SwiftType = MobileHorizontalAccuracyMeters?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileHorizontalAccuracyMeters.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileHorizontalAccuracyMeters.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -23436,6 +24049,54 @@ fileprivate struct FfiConverterOptionTypeMobileSettingsReadbackDto: FfiConverter
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileSpeedAccuracyMetersPerSecond: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSpeedAccuracyMetersPerSecond?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileSpeedMetersPerSecond: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSpeedMetersPerSecond?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSpeedMetersPerSecond.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSpeedMetersPerSecond.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileTrailSegmentCursorDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileTrailSegmentCursorDto?
 
@@ -23500,6 +24161,30 @@ fileprivate struct FfiConverterOptionTypeMobileVerifiedStringDto: FfiConverterRu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileVerifiedStringDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileVerticalAccuracyMeters: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVerticalAccuracyMeters?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileVerticalAccuracyMeters.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileVerticalAccuracyMeters.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }

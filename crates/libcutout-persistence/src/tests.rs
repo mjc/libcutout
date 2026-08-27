@@ -519,9 +519,7 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
         "worker should recover in place: {recovery:?}"
     );
     assert_eq!(
-        database
-            .reconcile_location_write(ride, sample)
-            .unwrap(),
+        database.reconcile_location_write(ride, sample).unwrap(),
         LocationWriteReconciliation::NotCommitted
     );
     database.shutdown().unwrap();
@@ -579,9 +577,7 @@ fn consumed_location_write_reconciles_after_worker_drops_response() {
     assert_eq!(summary.unwrap().point_count(), 1.into());
 
     assert_eq!(
-        database
-            .reconcile_location_write(ride, sample)
-            .unwrap(),
+        database.reconcile_location_write(ride, sample).unwrap(),
         LocationWriteReconciliation::Committed
     );
     let absent_sample = LocationSample::new(
@@ -2521,6 +2517,7 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
 
     assert_eq!(projection.source_point_count(), 4);
     assert_eq!(projection.source_segment_count(), 1);
+    assert_eq!(projection.candidate_point_count(), 3);
     assert_eq!(projection.candidate_segment_count(), 1);
     assert_eq!(projection.displayed_segment_count(), 1);
     assert_eq!(projection.points().len(), 2);
@@ -2583,6 +2580,7 @@ fn durable_route_projection_reports_segments_omitted_by_display_budget() {
 
     assert_eq!(projection.source_point_count(), 7);
     assert_eq!(projection.source_segment_count(), 3);
+    assert_eq!(projection.candidate_point_count(), 7);
     assert_eq!(projection.candidate_segment_count(), 3);
     assert_eq!(projection.displayed_segment_count(), 2);
     assert_eq!(

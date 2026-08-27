@@ -12,6 +12,45 @@ public typealias Voltage = CutoutMobileFFI.Voltage
 public typealias VoltageDelta = CutoutMobileFFI.VoltageDelta
 import Foundation
 
+/// Keeps the Core Location adapter source-compatible while the generated FFI carries units.
+public extension MobilePhoneLocationSampleDto {
+    init(
+        wallClockUnixMs: UInt64,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+        altitudeMeters: Double,
+        horizontalAccuracyMeters: Double?,
+        verticalAccuracyMeters: Double?,
+        speedMetersPerSecond: Double?,
+        speedAccuracyMetersPerSecond: Double?,
+        courseDegrees: Double?,
+        courseAccuracyDegrees: Double?
+    ) {
+        self.init(
+            wallClockUnixMs: wallClockUnixMs,
+            latitudeDegrees: MobileLatitudeDegrees(value: latitudeDegrees),
+            longitudeDegrees: MobileLongitudeDegrees(value: longitudeDegrees),
+            altitudeMeters: MobileAltitudeMeters(value: altitudeMeters),
+            horizontalAccuracyMeters: horizontalAccuracyMeters.map {
+                MobileHorizontalAccuracyMeters(value: $0)
+            },
+            verticalAccuracyMeters: verticalAccuracyMeters.map {
+                MobileVerticalAccuracyMeters(value: $0)
+            },
+            speedMetersPerSecond: speedMetersPerSecond.map {
+                MobileSpeedMetersPerSecond(value: $0)
+            },
+            speedAccuracyMetersPerSecond: speedAccuracyMetersPerSecond.map {
+                MobileSpeedAccuracyMetersPerSecond(value: $0)
+            },
+            courseDegrees: courseDegrees.map { MobileCourseDegrees(value: $0) },
+            courseAccuracyDegrees: courseAccuracyDegrees.map {
+                MobileCourseAccuracyDegrees(value: $0)
+            }
+        )
+    }
+}
+
 public struct MonotonicMilliseconds: Equatable, Hashable, Sendable {
     public let rawValue: UInt64
 

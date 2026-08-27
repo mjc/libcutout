@@ -163,8 +163,14 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var points: [MobileRideMapRouteDisplayPoint]
     public var sourcePointCount: UInt64
     public var sourceSegmentCount: UInt64
+    public var candidatePointCount: UInt64
     public var candidateSegmentCount: UInt64
     public var displayedSegmentCount: UInt64
+
+    /// Whether display LOD omitted candidate points after viewport filtering.
+    public var pointsOmittedByBudget: Bool {
+        UInt64(points.count) < candidatePointCount
+    }
 
     /// Whether route segments were omitted by the bounded display projection.
     public var segmentsOmittedByBudget: Bool {
@@ -616,6 +622,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             },
             sourcePointCount: projection.sourcePointCount,
             sourceSegmentCount: projection.sourceSegmentCount,
+            candidatePointCount: projection.candidatePointCount,
             candidateSegmentCount: projection.candidateSegmentCount,
             displayedSegmentCount: projection.displayedSegmentCount
         )

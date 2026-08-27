@@ -502,7 +502,9 @@ final class CutoutAppModelTests: XCTestCase {
 
         let projection = try state.projectPoints(budget: 4)
         XCTAssertEqual(projection.sourcePointCount, 10)
+        XCTAssertEqual(projection.candidatePointCount, 10)
         XCTAssertEqual(projection.points.count, 4)
+        XCTAssertTrue(projection.pointsOmittedByBudget)
         XCTAssertEqual(projection.points.first?.sequence, 0)
         XCTAssertEqual(projection.points.last?.sequence, 9)
     }

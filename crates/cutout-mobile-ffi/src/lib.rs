@@ -2889,19 +2889,67 @@ pub struct MobileFootpadTelemetryDto {
     pub adc2_milliunits: Option<i32>,
 }
 
+macro_rules! mobile_location_value {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+        pub struct $name {
+            /// Value in the unit named by the type.
+            pub value: f64,
+        }
+    };
+}
+
+mobile_location_value!(
+    MobileLatitudeDegrees,
+    "WGS84 latitude in degrees. Rust validates the range before use."
+);
+mobile_location_value!(
+    MobileLongitudeDegrees,
+    "WGS84 longitude in degrees. Rust validates the range before use."
+);
+mobile_location_value!(
+    MobileAltitudeMeters,
+    "Altitude above mean sea level in metres."
+);
+mobile_location_value!(
+    MobileHorizontalAccuracyMeters,
+    "Horizontal location accuracy in metres when available."
+);
+mobile_location_value!(
+    MobileVerticalAccuracyMeters,
+    "Vertical location accuracy in metres when available."
+);
+mobile_location_value!(
+    MobileSpeedMetersPerSecond,
+    "Ground speed in metres per second when available."
+);
+mobile_location_value!(
+    MobileSpeedAccuracyMetersPerSecond,
+    "Ground-speed accuracy in metres per second when available."
+);
+mobile_location_value!(
+    MobileCourseDegrees,
+    "Direction of travel in degrees clockwise from true north when available."
+);
+mobile_location_value!(
+    MobileCourseAccuracyDegrees,
+    "Course accuracy in degrees when available."
+);
+
 /// Raw phone location sample forwarded by the mobile platform.
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobilePhoneLocationSampleDto {
     pub wall_clock_unix_ms: u64,
-    pub latitude_degrees: f64,
-    pub longitude_degrees: f64,
-    pub altitude_meters: f64,
-    pub horizontal_accuracy_meters: Option<f64>,
-    pub vertical_accuracy_meters: Option<f64>,
-    pub speed_meters_per_second: Option<f64>,
-    pub speed_accuracy_meters_per_second: Option<f64>,
-    pub course_degrees: Option<f64>,
-    pub course_accuracy_degrees: Option<f64>,
+    pub latitude_degrees: MobileLatitudeDegrees,
+    pub longitude_degrees: MobileLongitudeDegrees,
+    pub altitude_meters: MobileAltitudeMeters,
+    pub horizontal_accuracy_meters: Option<MobileHorizontalAccuracyMeters>,
+    pub vertical_accuracy_meters: Option<MobileVerticalAccuracyMeters>,
+    pub speed_meters_per_second: Option<MobileSpeedMetersPerSecond>,
+    pub speed_accuracy_meters_per_second: Option<MobileSpeedAccuracyMetersPerSecond>,
+    pub course_degrees: Option<MobileCourseDegrees>,
+    pub course_accuracy_degrees: Option<MobileCourseAccuracyDegrees>,
 }
 
 impl MobilePhoneLocationSampleDto {
@@ -2912,28 +2960,48 @@ impl MobilePhoneLocationSampleDto {
     fn canonical(self) -> Option<Self> {
         let location = PevcapPhoneLocation {
             wall_clock_unix_ms: self.wall_clock_unix_ms,
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
-            altitude_meters: self.altitude_meters,
-            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
-            vertical_accuracy_meters: self.vertical_accuracy_meters,
-            speed_meters_per_second: self.speed_meters_per_second,
-            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
-            course_degrees: self.course_degrees,
-            course_accuracy_degrees: self.course_accuracy_degrees,
+            latitude_degrees: self.latitude_degrees.value,
+            longitude_degrees: self.longitude_degrees.value,
+            altitude_meters: self.altitude_meters.value,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters.map(|value| value.value),
+            vertical_accuracy_meters: self.vertical_accuracy_meters.map(|value| value.value),
+            speed_meters_per_second: self.speed_meters_per_second.map(|value| value.value),
+            speed_accuracy_meters_per_second: self
+                .speed_accuracy_meters_per_second
+                .map(|value| value.value),
+            course_degrees: self.course_degrees.map(|value| value.value),
+            course_accuracy_degrees: self.course_accuracy_degrees.map(|value| value.value),
         };
         let location = location.canonical().ok()?;
         Some(Self {
             wall_clock_unix_ms: location.wall_clock_unix_ms,
-            latitude_degrees: location.latitude_degrees,
-            longitude_degrees: location.longitude_degrees,
-            altitude_meters: location.altitude_meters,
-            horizontal_accuracy_meters: location.horizontal_accuracy_meters,
-            vertical_accuracy_meters: location.vertical_accuracy_meters,
-            speed_meters_per_second: location.speed_meters_per_second,
-            speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
-            course_degrees: location.course_degrees,
-            course_accuracy_degrees: location.course_accuracy_degrees,
+            latitude_degrees: MobileLatitudeDegrees {
+                value: location.latitude_degrees,
+            },
+            longitude_degrees: MobileLongitudeDegrees {
+                value: location.longitude_degrees,
+            },
+            altitude_meters: MobileAltitudeMeters {
+                value: location.altitude_meters,
+            },
+            horizontal_accuracy_meters: location
+                .horizontal_accuracy_meters
+                .map(|value| MobileHorizontalAccuracyMeters { value }),
+            vertical_accuracy_meters: location
+                .vertical_accuracy_meters
+                .map(|value| MobileVerticalAccuracyMeters { value }),
+            speed_meters_per_second: location
+                .speed_meters_per_second
+                .map(|value| MobileSpeedMetersPerSecond { value }),
+            speed_accuracy_meters_per_second: location
+                .speed_accuracy_meters_per_second
+                .map(|value| MobileSpeedAccuracyMetersPerSecond { value }),
+            course_degrees: location
+                .course_degrees
+                .map(|value| MobileCourseDegrees { value }),
+            course_accuracy_degrees: location
+                .course_accuracy_degrees
+                .map(|value| MobileCourseAccuracyDegrees { value }),
         })
     }
 
@@ -2945,12 +3013,12 @@ impl MobilePhoneLocationSampleDto {
             .horizontal_accuracy_meters
             .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?;
         Ok(MobileRideLocationDto {
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
+            latitude_degrees: self.latitude_degrees.value,
+            longitude_degrees: self.longitude_degrees.value,
             monotonic_milliseconds: monotonic_ms,
             wall_clock_unix_milliseconds: self.wall_clock_unix_ms,
             horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
-                horizontal_accuracy_meters,
+                horizontal_accuracy_meters.value,
             )?),
             source: MobileRideSourceDto::Live,
         })
@@ -2959,15 +3027,17 @@ impl MobilePhoneLocationSampleDto {
     fn pevcap_location(self) -> PevcapPhoneLocation {
         PevcapPhoneLocation {
             wall_clock_unix_ms: self.wall_clock_unix_ms,
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
-            altitude_meters: self.altitude_meters,
-            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
-            vertical_accuracy_meters: self.vertical_accuracy_meters,
-            speed_meters_per_second: self.speed_meters_per_second,
-            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
-            course_degrees: self.course_degrees,
-            course_accuracy_degrees: self.course_accuracy_degrees,
+            latitude_degrees: self.latitude_degrees.value,
+            longitude_degrees: self.longitude_degrees.value,
+            altitude_meters: self.altitude_meters.value,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters.map(|value| value.value),
+            vertical_accuracy_meters: self.vertical_accuracy_meters.map(|value| value.value),
+            speed_meters_per_second: self.speed_meters_per_second.map(|value| value.value),
+            speed_accuracy_meters_per_second: self
+                .speed_accuracy_meters_per_second
+                .map(|value| value.value),
+            course_degrees: self.course_degrees.map(|value| value.value),
+            course_accuracy_degrees: self.course_accuracy_degrees.map(|value| value.value),
         }
     }
 }
@@ -3297,6 +3367,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub source_point_count: u64,
     /// Total canonical segment count before viewport filtering or display LOD.
     pub source_segment_count: u64,
+    /// Number of canonical points inside the requested viewport before display LOD.
+    pub candidate_point_count: u64,
     /// Number of canonical segments with points inside the requested viewport.
     pub candidate_segment_count: u64,
     /// Number of segments represented by the bounded display points.
@@ -3950,6 +4022,7 @@ fn mobile_route_projection_dto(
             .collect(),
         source_point_count: projection.source_point_count(),
         source_segment_count: projection.source_segment_count(),
+        candidate_point_count: projection.candidate_point_count(),
         candidate_segment_count: projection.candidate_segment_count(),
         displayed_segment_count: projection.displayed_segment_count(),
     }
@@ -3973,6 +4046,23 @@ fn mobile_segment_count(
         if previous_segment != Some(segment_id) {
             count += 1;
             previous_segment = Some(segment_id);
+        }
+    }
+    Ok(u64::try_from(count).unwrap_or(u64::MAX))
+}
+
+fn mobile_point_count(
+    points: &[ride_maps::RideMapPoint],
+    viewport: Option<ride_maps::RouteViewport>,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<u64, MobileRideMapCoreErrorDto> {
+    let mut count = 0usize;
+    for point in points.iter().copied() {
+        if is_cancelled() {
+            return Err(MobileRideMapCoreErrorDto::Cancelled);
+        }
+        if viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate())) {
+            count += 1;
         }
     }
     Ok(u64::try_from(count).unwrap_or(u64::MAX))
@@ -6034,7 +6124,8 @@ impl MobileRideMapCore {
             location.longitude_degrees,
             sample
                 .horizontal_accuracy_meters
-                .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?,
+                .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?
+                .value,
         )
     }
 
@@ -6226,6 +6317,7 @@ fn project_live_route_points(
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
     let candidate_segment_count = mobile_segment_count(&points, viewport, &mut is_cancelled)?;
+    let candidate_point_count = mobile_point_count(&points, viewport, &mut is_cancelled)?;
     let projected_points = ride_maps::project_route_points_cancellable(
         &points,
         first_sequence,
@@ -6241,6 +6333,7 @@ fn project_live_route_points(
         points,
         source_point_count,
         source_segment_count,
+        candidate_point_count,
         candidate_segment_count,
         displayed_segment_count,
     })
@@ -8692,7 +8785,7 @@ fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedRea
     let speed_meters_per_second = sample.speed_meters_per_second?;
     Some(SpeedReading {
         value: Speed {
-            value: round_f64_to_i32(speed_meters_per_second * 1_000.0),
+            value: round_f64_to_i32(speed_meters_per_second.value * 1_000.0),
         },
         source: MobileValueSourceDto::Reported,
         quality: MobileValueQualityDto::Known,
@@ -13464,27 +13557,37 @@ mod tests {
     fn capture_phone_location_fixture() -> MobilePhoneLocationSampleDto {
         MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_000_008,
-            latitude_degrees: 39.739_235_8,
-            longitude_degrees: -104.990_251,
-            altitude_meters: 1_609.344,
-            horizontal_accuracy_meters: Some(0.8),
-            vertical_accuracy_meters: Some(1.2),
-            speed_meters_per_second: Some(4.470_400_25),
-            speed_accuracy_meters_per_second: Some(0.25),
-            course_degrees: Some(271.5),
-            course_accuracy_degrees: Some(3.0),
+            latitude_degrees: MobileLatitudeDegrees {
+                value: 39.739_235_8,
+            },
+            longitude_degrees: MobileLongitudeDegrees {
+                value: -104.990_251,
+            },
+            altitude_meters: MobileAltitudeMeters { value: 1_609.344 },
+            horizontal_accuracy_meters: Some(MobileHorizontalAccuracyMeters { value: 0.8 }),
+            vertical_accuracy_meters: Some(MobileVerticalAccuracyMeters { value: 1.2 }),
+            speed_meters_per_second: Some(MobileSpeedMetersPerSecond {
+                value: 4.470_400_25,
+            }),
+            speed_accuracy_meters_per_second: Some(MobileSpeedAccuracyMetersPerSecond {
+                value: 0.25,
+            }),
+            course_degrees: Some(MobileCourseDegrees { value: 271.5 }),
+            course_accuracy_degrees: Some(MobileCourseAccuracyDegrees { value: 3.0 }),
         }
     }
 
     #[test]
     fn phone_location_boundary_normalizes_core_location_sentinels_without_losing_fix() {
         let sample = MobilePhoneLocationSampleDto {
-            horizontal_accuracy_meters: Some(-1.0),
-            vertical_accuracy_meters: Some(f64::NAN),
-            speed_meters_per_second: Some(-1.0),
-            speed_accuracy_meters_per_second: Some(-1.0),
-            course_degrees: Some(-1.0),
-            course_accuracy_degrees: Some(-1.0),
+            horizontal_accuracy_meters: Some(MobileHorizontalAccuracyMeters { value: -1.0 }),
+            vertical_accuracy_meters: Some(MobileVerticalAccuracyMeters { value: f64::NAN }),
+            speed_meters_per_second: Some(MobileSpeedMetersPerSecond { value: -1.0 }),
+            speed_accuracy_meters_per_second: Some(MobileSpeedAccuracyMetersPerSecond {
+                value: -1.0,
+            }),
+            course_degrees: Some(MobileCourseDegrees { value: -1.0 }),
+            course_accuracy_degrees: Some(MobileCourseAccuracyDegrees { value: -1.0 }),
             ..capture_phone_location_fixture()
         };
 
@@ -13502,9 +13605,29 @@ mod tests {
     }
 
     #[test]
+    fn phone_location_boundary_has_unit_typed_metrics() {
+        let sample = capture_phone_location_fixture();
+
+        assert_eq!(sample.latitude_degrees.value, 39.739_235_8);
+        assert_eq!(sample.longitude_degrees.value, -104.990_251);
+        assert_eq!(sample.altitude_meters.value, 1_609.344);
+        assert_eq!(
+            sample
+                .horizontal_accuracy_meters
+                .expect("fixture accuracy")
+                .value,
+            0.8
+        );
+        assert_eq!(
+            sample.speed_meters_per_second.expect("fixture speed").value,
+            4.470_400_25
+        );
+    }
+
+    #[test]
     fn phone_location_boundary_rejects_invalid_required_fields() {
         let mut sample = capture_phone_location_fixture();
-        sample.latitude_degrees = f64::NAN;
+        sample.latitude_degrees = MobileLatitudeDegrees { value: f64::NAN };
         assert_eq!(sample.canonical(), None);
 
         let mut sample = capture_phone_location_fixture();
@@ -13572,7 +13695,7 @@ mod tests {
             Some(true)
         ));
         let mut invalid_location = capture_phone_location_fixture();
-        invalid_location.latitude_degrees = f64::NAN;
+        invalid_location.latitude_degrees = MobileLatitudeDegrees { value: f64::NAN };
         assert!(!builder.record_location_sample(ms(7), invalid_location, None, None));
         assert!(builder.record_notification_with_context(
             ms(8),
@@ -15005,6 +15128,7 @@ mod tests {
             .expect("route projection is valid");
 
         assert_eq!(projection.source_point_count, 4);
+        assert_eq!(projection.candidate_point_count, 3);
         assert_eq!(projection.points.len(), 2);
         assert_eq!(projection.points[0].sequence, 0);
         assert_eq!(projection.points[1].sequence, 2);
@@ -15169,6 +15293,7 @@ mod tests {
             vec![0, 0, 2, 2]
         );
         assert_eq!(projection.source_segment_count, 3);
+        assert_eq!(projection.candidate_point_count, 7);
         assert_eq!(projection.candidate_segment_count, 3);
         assert_eq!(projection.displayed_segment_count, 2);
     }

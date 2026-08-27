@@ -646,7 +646,7 @@ final class CutoutAppModel {
                 guard !Task.isCancelled, let self else { return }
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
-                    truncated: result.sourcePointCount > UInt64(result.points.count),
+                    truncated: result.pointsOmittedByBudget,
                     segmentsOmittedByBudget: result.segmentsOmittedByBudget
                 )
                 self.rideMapHistoryDetailRouteError = nil
@@ -715,12 +715,11 @@ final class CutoutAppModel {
                 self.rideMapHistoryRouteError = nil
                 self.rideMapHistoryDetailRouteError = nil
                 self.rideMapHistoryDisplayPoints = result.points
-                self.rideMapHistoryPointsTruncated = result.sourcePointCount
-                    > UInt64(result.points.count)
+                self.rideMapHistoryPointsTruncated = result.pointsOmittedByBudget
                 self.rideMapHistorySegmentsOmittedByBudget = result.segmentsOmittedByBudget
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
-                    truncated: result.sourcePointCount > UInt64(result.points.count),
+                    truncated: result.pointsOmittedByBudget,
                     segmentsOmittedByBudget: result.segmentsOmittedByBudget
                 )
                 self.rideMapHistoryRouteLoading = false
@@ -880,7 +879,7 @@ final class CutoutAppModel {
 
     private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
         rideMapLiveDisplayPoints = projection.points
-        rideMapLivePointsTruncated = projection.sourcePointCount > UInt64(projection.points.count)
+        rideMapLivePointsTruncated = projection.pointsOmittedByBudget
         rideMapLiveSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
     }
 

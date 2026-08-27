@@ -456,6 +456,7 @@ pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     source_point_count: u64,
     source_segment_count: u64,
+    candidate_point_count: u64,
     candidate_segment_count: u64,
     displayed_segment_count: u64,
 }
@@ -477,6 +478,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn source_segment_count(&self) -> u64 {
         self.source_segment_count
+    }
+
+    /// Returns the point count inside the requested viewport before display LOD.
+    #[must_use]
+    pub const fn candidate_point_count(&self) -> u64 {
+        self.candidate_point_count
     }
 
     /// Returns the segment count represented by points inside the requested viewport.
@@ -6338,17 +6345,18 @@ fn project_route_points(
     let RouteProjectionCounts {
         source_point_count,
         source_segment_count,
-        candidate_count,
+        candidate_point_count,
         candidate_segment_count,
         viewport_predicate,
     } = counts;
     projection_checkpoint(cancellation)?;
-    let candidate_count = usize::try_from(candidate_count).unwrap_or(usize::MAX);
+    let candidate_count = usize::try_from(candidate_point_count).unwrap_or(usize::MAX);
     if candidate_count == 0 {
         return Ok(RoutePointProjection {
             points: Vec::new(),
             source_point_count,
             source_segment_count,
+            candidate_point_count,
             candidate_segment_count,
             displayed_segment_count: 0,
         });
@@ -6406,6 +6414,7 @@ fn project_route_points(
         points,
         source_point_count,
         source_segment_count,
+        candidate_point_count,
         candidate_segment_count,
         displayed_segment_count,
     })
@@ -6414,7 +6423,7 @@ fn project_route_points(
 struct RouteProjectionCounts {
     source_point_count: u64,
     source_segment_count: u64,
-    candidate_count: u64,
+    candidate_point_count: u64,
     candidate_segment_count: u64,
     viewport_predicate: String,
 }
@@ -6444,7 +6453,7 @@ fn route_projection_counts(
     )?;
     projection_checkpoint(cancellation)?;
     let viewport_predicate = route_point_viewport_predicate(viewport);
-    let (candidate_count, candidate_segment_count) = if let Some(viewport) = viewport {
+    let (candidate_point_count, candidate_segment_count) = if let Some(viewport) = viewport {
         let parameters = params![
             ride_id,
             viewport.minimum_latitude().as_i32(),
@@ -6452,7 +6461,7 @@ fn route_projection_counts(
             viewport.minimum_longitude().as_i32(),
             viewport.maximum_longitude().as_i32(),
         ];
-        let candidate_count = projection_sqlite(
+        let candidate_point_count = projection_sqlite(
             connection.query_row(
                 &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
                 parameters,
@@ -6478,14 +6487,14 @@ fn route_projection_counts(
             cancellation,
         )?;
         projection_checkpoint(cancellation)?;
-        (candidate_count, candidate_segment_count)
+        (candidate_point_count, candidate_segment_count)
     } else {
         (source_point_count, source_segment_count)
     };
     Ok(RouteProjectionCounts {
         source_point_count,
         source_segment_count,
-        candidate_count,
+        candidate_point_count,
         candidate_segment_count,
         viewport_predicate,
     })
