@@ -1129,6 +1129,7 @@ struct OwnerEntry {
     service_id: Uuid,
     bootstrap: BootstrapSnapshot,
     sender: SyncSender<Command>,
+    worker_alive: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
 
@@ -1451,11 +1452,10 @@ impl RideDatabase {
     fn open_with_service_id(path: &Path, service_id: Uuid) -> Result<Self, StorageError> {
         let canonical_path = canonical_database_path(path)?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
-        if owner
-            .as_ref()
-            .and_then(|entry| entry.join.as_ref())
-            .is_some_and(JoinHandle::is_finished)
-        {
+        if owner.as_ref().is_some_and(|entry| {
+            entry.join.as_ref().is_some_and(JoinHandle::is_finished)
+                || !entry.worker_alive.load(Ordering::Acquire)
+        }) {
             if let Some(mut stale) = owner.take() {
                 if let Some(join) = stale.join.take() {
                     let _ = join.join();
@@ -1477,9 +1477,11 @@ impl RideDatabase {
         let mut connection = Connection::open(&canonical_path)?;
         let bootstrap = configure_connection(&mut connection)?;
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
+        let worker_alive = Arc::new(AtomicBool::new(true));
+        let worker_alive_for_thread = Arc::clone(&worker_alive);
         let join = thread::Builder::new()
             .name("cutout-ride-maps-db".to_owned())
-            .spawn(move || worker_loop(connection, &receiver))
+            .spawn(move || worker_loop(connection, &receiver, &worker_alive_for_thread))
             .map_err(|error| StorageError::WorkerStart(error.to_string()))?;
         let handle = Self {
             sender: sender.clone(),
@@ -1492,6 +1494,7 @@ impl RideDatabase {
             service_id,
             bootstrap,
             sender,
+            worker_alive,
             join: Some(join),
         });
         Ok(handle)
@@ -2552,6 +2555,28 @@ impl RideDatabase {
         })
     }
 
+    /// Runs one projection and drops its response while the worker exits.
+    #[cfg(test)]
+    pub(crate) fn project_route_points_with_worker_failure_for_test(
+        &self,
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        entered: SyncSender<()>,
+    ) -> Result<RoutePointProjection, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::ProjectRoutePointsWithWorkerFailure {
+            ride_id,
+            viewport,
+            budget,
+            privacy,
+            entered,
+            reply,
+        })?;
+        receive(&response)
+    }
+
     /// Stops the worker without releasing the owner entry, simulating an unexpected worker exit.
     #[cfg(test)]
     pub(crate) fn stop_worker_for_test(&self) -> Result<(), StorageError> {
@@ -2619,39 +2644,59 @@ impl RideDatabase {
     }
 
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
+        if self.worker_has_exited() {
+            return self.enqueue_after_worker_exit(command);
+        }
         match self.sender.try_send(command) {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull),
             Err(mpsc::TrySendError::Disconnected(command)) => {
-                if !self.worker_can_restart() {
-                    return Err(StorageError::WorkerStopped);
-                }
-                let recovered = self.reopen()?;
-                recovered
-                    .sender
-                    .try_send(command)
-                    .map_err(|error| match error {
-                        mpsc::TrySendError::Full(_) => StorageError::QueueFull,
-                        mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
-                    })
+                self.enqueue_after_worker_exit(command)
             }
         }
     }
 
     fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
+        if self.worker_has_exited() {
+            return self.enqueue_after_worker_exit_blocking(command);
+        }
         match self.sender.send(command) {
             Ok(()) => Ok(()),
-            Err(mpsc::SendError(command)) => {
-                if !self.worker_can_restart() {
-                    return Err(StorageError::WorkerStopped);
-                }
-                let recovered = self.reopen()?;
-                recovered
-                    .sender
-                    .send(command)
-                    .map_err(|_| StorageError::WorkerStopped)
-            }
+            Err(mpsc::SendError(command)) => self.enqueue_after_worker_exit_blocking(command),
         }
+    }
+
+    fn enqueue_after_worker_exit(&self, command: Command) -> Result<(), StorageError> {
+        if !self.worker_can_restart() {
+            return Err(StorageError::WorkerStopped);
+        }
+        let recovered = self.reopen()?;
+        recovered
+            .sender
+            .try_send(command)
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => StorageError::QueueFull,
+                mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
+            })
+    }
+
+    fn enqueue_after_worker_exit_blocking(&self, command: Command) -> Result<(), StorageError> {
+        if !self.worker_can_restart() {
+            return Err(StorageError::WorkerStopped);
+        }
+        let recovered = self.reopen()?;
+        recovered
+            .sender
+            .send(command)
+            .map_err(|_| StorageError::WorkerStopped)
+    }
+
+    fn worker_has_exited(&self) -> bool {
+        owner().lock().ok().is_some_and(|owner| {
+            owner.as_ref().is_some_and(|entry| {
+                entry.service_id == self.service_id && !entry.worker_alive.load(Ordering::Acquire)
+            })
+        })
     }
 
     /// Returns whether this handle still belongs to a process-owned database service.
@@ -2972,6 +3017,15 @@ enum Command {
         reply: Reply<RoutePointProjection>,
     },
     #[cfg(test)]
+    ProjectRoutePointsWithWorkerFailure {
+        ride_id: RideId,
+        viewport: Option<RouteViewport>,
+        budget: RouteDisplayBudget,
+        privacy: RoutePrivacyPolicy,
+        entered: SyncSender<()>,
+        reply: Reply<RoutePointProjection>,
+    },
+    #[cfg(test)]
     InstallRouteProjectionTestGate {
         entered: SyncSender<()>,
         release: Receiver<()>,
@@ -2991,7 +3045,11 @@ enum Command {
 }
 
 #[allow(clippy::too_many_lines)]
-fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
+fn worker_loop(
+    mut connection: Connection,
+    receiver: &Receiver<Command>,
+    worker_alive: &AtomicBool,
+) {
     let mut spatial_schema = SpatialSchemaState::Uninitialized;
     while let Ok(command) = receiver.recv() {
         match command {
@@ -3340,6 +3398,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                         telemetry_state,
                     );
                 }
+                worker_alive.store(false, Ordering::Release);
                 let _ = entered.send(());
                 drop(reply);
                 break;
@@ -3400,6 +3459,21 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 let _ = reply.send(result);
             }
             #[cfg(test)]
+            Command::ProjectRoutePointsWithWorkerFailure {
+                ride_id,
+                viewport,
+                budget,
+                privacy,
+                entered,
+                reply,
+            } => {
+                let _ = project_route_points(&connection, ride_id, viewport, budget, privacy, None);
+                worker_alive.store(false, Ordering::Release);
+                let _ = entered.send(());
+                drop(reply);
+                break;
+            }
+            #[cfg(test)]
             Command::InstallRouteProjectionTestGate {
                 entered,
                 release,
@@ -3410,6 +3484,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             }
             #[cfg(test)]
             Command::StopForTest { reply } => {
+                worker_alive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(()));
                 break;
             }
@@ -3417,11 +3492,13 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 let _ = reply.send(latest_route_points(&connection, ride_id));
             }
             Command::Shutdown { reply } => {
+                worker_alive.store(false, Ordering::Release);
                 let _ = reply.send(Ok(()));
                 break;
             }
         }
     }
+    worker_alive.store(false, Ordering::Release);
 }
 
 #[cfg(test)]

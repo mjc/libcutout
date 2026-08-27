@@ -2748,6 +2748,63 @@ fn cancelled_in_flight_route_projection_leaves_worker_usable() {
 }
 
 #[test]
+fn route_projection_recovers_after_worker_exits_after_consuming_request() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-worker-failure-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let projection_database = database.clone();
+    let projection = std::thread::spawn(move || {
+        projection_database.project_route_points_with_worker_failure_for_test(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            entered_sender,
+        )
+    });
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker consumes projection before exiting");
+
+    assert!(matches!(
+        projection.join().unwrap(),
+        Err(StorageError::ResponseDropped)
+    ));
+
+    let recovered = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .expect("the next projection transparently recovers the worker");
+    assert_eq!(recovered.points().len(), 1);
+    assert_eq!(recovered.source_point_count(), 1);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
