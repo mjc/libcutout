@@ -48,11 +48,14 @@ struct RideMapRouteTruthView: View {
                 Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(points.count)))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
-                if backgroundGapCount > 0 {
-                    Text(localizedAppText("ride_map.route_gaps", backgroundGapCount))
-                        .font(.caption)
-                        .foregroundStyle(PevColors.muted)
-                }
+            }
+            if Self.shouldShowBackgroundGapCount(
+                routeIsPresent: routeIsPresent,
+                canonicalBackgroundGapCount: backgroundGapCount
+            ) {
+                Text(localizedAppText("ride_map.route_gaps", backgroundGapCount))
+                    .font(.caption)
+                    .foregroundStyle(PevColors.muted)
             }
             if segmentsOmittedByBudget {
                 Label(
@@ -74,6 +77,13 @@ struct RideMapRouteTruthView: View {
     }
 
     private var segmentCount: UInt64 { rustSegmentCount }
+
+    static func shouldShowBackgroundGapCount(
+        routeIsPresent: Bool,
+        canonicalBackgroundGapCount: UInt64
+    ) -> Bool {
+        routeIsPresent && canonicalBackgroundGapCount > 0
+    }
 
     private var backgroundGapCount: UInt64 {
         canonicalBackgroundGapCount

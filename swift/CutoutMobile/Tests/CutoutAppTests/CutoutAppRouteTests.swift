@@ -18,6 +18,28 @@ final class CutoutAppRouteTests: XCTestCase {
         XCTAssertEqual(CutoutAppRoute.route(forNavigationTarget: .rideMap), .rideMap)
     }
 
+    @MainActor
+    func testRouteTruthShowsCanonicalGapCountForLiveAndTruncatedRoutes() {
+        XCTAssertTrue(
+            RideMapRouteTruthView.shouldShowBackgroundGapCount(
+                routeIsPresent: true,
+                canonicalBackgroundGapCount: 1
+            )
+        )
+        XCTAssertFalse(
+            RideMapRouteTruthView.shouldShowBackgroundGapCount(
+                routeIsPresent: true,
+                canonicalBackgroundGapCount: 0
+            )
+        )
+        XCTAssertFalse(
+            RideMapRouteTruthView.shouldShowBackgroundGapCount(
+                routeIsPresent: false,
+                canonicalBackgroundGapCount: 1
+            )
+        )
+    }
+
     func testNavigationLabelsResolveFromTheAppCatalog() {
         XCTAssertEqual(localizedAppText("navigation.tab.cells"), "Cells")
         XCTAssertEqual(localizedAppText("navigation.tab.faults"), "Faults")
@@ -433,7 +455,7 @@ final class CutoutAppRouteTests: XCTestCase {
             RideMapCanvasView.retainedSingletonSegmentIDs(in: points, segments: segments),
             Set([UInt64(0), UInt64(2)])
         )
-        XCTAssertEqual(MobileRideMapSegmentDisplayMetadata.backgroundGapCount(for: segments), 1)
+        XCTAssertEqual(MobileRideMapSegmentDisplayMetadata.visibleBackgroundGapCount(for: segments), 1)
         XCTAssertTrue(segments[2].isRetainedSingleton)
         XCTAssertTrue(segments[2].isBackgroundGap)
         XCTAssertFalse(segments[1].isRetainedSingleton)

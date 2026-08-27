@@ -748,6 +748,39 @@ final class CutoutSessionCoreTests: XCTestCase {
         }
     }
 
+    func testPendingPhoneLocationQueueDropsContextWhenAcceptedSequenceIsMissing() {
+        var queue = PendingPhoneLocationQueue()
+        queue.append(
+            MobilePhoneLocationSampleDto(
+                wallClockUnixMs: 1_700_000_000_000,
+                latitudeDegrees: 39.7392,
+                longitudeDegrees: -104.9903,
+                altitudeMeters: 1_600,
+                horizontalAccuracyMeters: 4,
+                verticalAccuracyMeters: 6,
+                speedMetersPerSecond: 2,
+                speedAccuracyMetersPerSecond: 0.2,
+                courseDegrees: 90,
+                courseAccuracyDegrees: 3
+            ),
+            sequence: 7
+        )
+
+        let missingSequencePoint = MobileRideMapPointDto(
+            sequence: 8,
+            segmentId: 0,
+            latitudeDegrees: 39.7393,
+            longitudeDegrees: -104.9904,
+            wallClockUnixMs: 1_700_000_001_000,
+            monotonicMs: 1_000,
+            horizontalAccuracyMeters: 4,
+            telemetryState: .gpsOnly
+        )
+
+        XCTAssertNil(queue.take(for: .accepted(point: missingSequencePoint, segmentStarted: false)))
+        XCTAssertTrue(queue.isEmpty)
+    }
+
     func testPevcapLocationStateIsSeparateFromPhoneLocationReadback() {
         let sample = MobilePhoneLocationSampleDto(
             wallClockUnixMs: 1_700_000_000_000,

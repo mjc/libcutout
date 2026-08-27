@@ -364,6 +364,11 @@ struct PendingPhoneLocationQueue {
         switch decision {
         case let .accepted(point, _):
             guard let matchingIndex = entries.firstIndex(where: { $0.sequence == point.sequence }) else {
+                // A terminal accepted outcome without its retained sample means the Swift and
+                // Rust queues no longer share a trustworthy generation. Drop the remaining
+                // context so polling cannot spin forever or attach a later sequence to the wrong
+                // ride.
+                entries.removeAll(keepingCapacity: true)
                 return nil
             }
             index = matchingIndex
