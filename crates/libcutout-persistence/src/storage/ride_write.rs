@@ -70,13 +70,27 @@ impl RideWriteState {
                     paused_at_ms = None;
                 }
                 (
-                    RideLifecycleState::Active,
+                    RideLifecycleState::Active | RideLifecycleState::Paused,
                     RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
                 ) => {
                     duration_ms = duration_ms.max(self.active_duration_at(at_ms));
+                    if let Some(paused_at_ms) = paused_at_ms.take() {
+                        paused_duration_ms =
+                            paused_duration_ms.saturating_add(at_ms.saturating_sub(paused_at_ms));
+                    }
                 }
                 _ => {}
             }
+        } else if matches!(
+            (self.lifecycle, lifecycle),
+            (
+                RideLifecycleState::Paused,
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+            )
+        ) {
+            // Without a monotonic timestamp, preserve the known timing and close the terminal
+            // state rather than retaining a pause that can never be resumed.
+            paused_at_ms = None;
         }
         Ok(RideTransition {
             lifecycle,
@@ -98,9 +112,16 @@ impl RideWriteState {
 
     const fn active_duration_at(&self, monotonic_at_ms: u64) -> u64 {
         match self.monotonic_created_at_ms {
-            Some(start_ms) => monotonic_at_ms
-                .saturating_sub(start_ms)
-                .saturating_sub(self.paused_duration_ms),
+            Some(start_ms) => {
+                let current_pause_ms = match self.paused_at_ms {
+                    Some(paused_at_ms) => monotonic_at_ms.saturating_sub(paused_at_ms),
+                    None => 0,
+                };
+                monotonic_at_ms
+                    .saturating_sub(start_ms)
+                    .saturating_sub(current_pause_ms)
+                    .saturating_sub(self.paused_duration_ms)
+            }
             None => self.duration_ms,
         }
     }
@@ -244,5 +265,45 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn terminal_transition_from_pause_freezes_duration_and_closes_pause() {
+        for event in [RideEvent::Stop, RideEvent::Interrupt] {
+            let state = RideWriteState::with_duration(
+                RideSource::Live,
+                RideLifecycleState::Paused,
+                20,
+                Some(1_000),
+                4_000,
+                Some(5_000),
+                0,
+            );
+
+            let transition = state.transition_at(event, 10_000, Some(10_000)).unwrap();
+
+            assert_eq!(transition.duration_milliseconds(), 4_000);
+            assert_eq!(transition.paused_at_milliseconds(), None);
+            assert_eq!(transition.paused_duration_milliseconds(), 5_000);
+        }
+    }
+
+    #[test]
+    fn terminal_transition_without_monotonic_time_clears_pause_marker() {
+        let state = RideWriteState::with_duration(
+            RideSource::Live,
+            RideLifecycleState::Paused,
+            20,
+            Some(1_000),
+            4_000,
+            Some(5_000),
+            2_000,
+        );
+
+        let transition = state.transition_at(RideEvent::Stop, 10_000, None).unwrap();
+
+        assert_eq!(transition.duration_milliseconds(), 4_000);
+        assert_eq!(transition.paused_at_milliseconds(), None);
+        assert_eq!(transition.paused_duration_milliseconds(), 2_000);
     }
 }

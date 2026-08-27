@@ -1,16 +1,14 @@
-use cutout_core::{
-    HostSession, PevcapEncoding, PevcapReader, PevcapReplayMode, ProtocolSession, SessionInput,
-    SessionOutput,
-};
+use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
     MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint,
     RideMapRecorder, RideMapSegmentId, RidePointSequence, RideSegmentStartReason, RideSummary,
     RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteTelemetryState, RouteViewport, TransitionError, WallClockUnixMilliseconds,
+    count_segment_runs,
 };
 use hex::encode as hex_encode;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{self, File, OpenOptions},
@@ -22,6 +20,7 @@ use std::{
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -32,13 +31,14 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
 const PEVCAP_LOCATION_BATCH_SIZE: usize = 256;
+const DEFAULT_ROUTE_PROJECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
 struct PevcapRoutePoint {
@@ -455,6 +455,9 @@ impl RideSegment {
 pub struct RoutePointProjection {
     points: Vec<RouteDisplayPoint>,
     source_point_count: u64,
+    source_segment_count: u64,
+    candidate_segment_count: u64,
+    displayed_segment_count: u64,
 }
 
 impl RoutePointProjection {
@@ -468,6 +471,24 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn source_point_count(&self) -> u64 {
         self.source_point_count
+    }
+
+    /// Returns the complete durable segment count before viewport filtering or display LOD.
+    #[must_use]
+    pub const fn source_segment_count(&self) -> u64 {
+        self.source_segment_count
+    }
+
+    /// Returns the segment count represented by points inside the requested viewport.
+    #[must_use]
+    pub const fn candidate_segment_count(&self) -> u64 {
+        self.candidate_segment_count
+    }
+
+    /// Returns the segment count represented by the bounded display points.
+    #[must_use]
+    pub const fn displayed_segment_count(&self) -> u64 {
+        self.displayed_segment_count
     }
 }
 
@@ -723,6 +744,51 @@ impl Default for TrailId {
     }
 }
 
+/// Stable key for the one selected-device row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SelectedDeviceKey(Uuid);
+
+impl SelectedDeviceKey {
+    pub(crate) const VALUE: Self = Self(Uuid::from_u128(1));
+
+    pub(crate) fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
+/// Stable key for the one ride-session marker row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RideSessionMarkerKey(Uuid);
+
+impl RideSessionMarkerKey {
+    const VALUE: Self = Self(Uuid::from_u128(2));
+
+    fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
+/// Validated `SQLite` row identifier used only to connect a spatial table to its R*Tree row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SpatialRowId(i64);
+
+impl SpatialRowId {
+    fn from_sqlite(value: i64) -> Result<Self, StorageError> {
+        if (1..=i64::from(i32::MAX)).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(StorageError::InvalidStoredValue {
+                field: "spatial row identifier",
+                value: value.to_string(),
+            })
+        }
+    }
+
+    const fn get(self) -> i64 {
+        self.0
+    }
+}
+
 /// One canonical trail segment stored in the spatial index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrailSegment {
@@ -747,20 +813,26 @@ pub struct MapPoint {
     pub coordinate: Coordinate,
 }
 
-/// Stable identifier for a stored map point.
+/// Stable UUID for a stored map point.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct MapPointId(u64);
+pub struct MapPointId(Uuid);
 
 impl MapPointId {
+    /// Creates an identifier for a newly stored point.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
     /// Restores an identifier returned by a previous query page.
     #[must_use]
-    pub const fn from_u64(value: u64) -> Self {
+    pub const fn from_uuid(value: Uuid) -> Self {
         Self(value)
     }
 
-    /// Returns the integer representation used at the mobile boundary.
+    /// Returns the UUID used at the mobile boundary.
     #[must_use]
-    pub const fn get(self) -> u64 {
+    pub const fn uuid(self) -> Uuid {
         self.0
     }
 }
@@ -1017,6 +1089,9 @@ pub enum StorageError {
     /// A durable route projection was cancelled at a worker checkpoint.
     #[error("route projection cancelled")]
     Cancelled,
+    /// A durable route projection exceeded its caller-provided deadline.
+    #[error("route projection deadline exceeded")]
+    DeadlineExceeded,
 }
 
 enum SpatialSchemaState {
@@ -1056,9 +1131,21 @@ pub struct PendingLocationWrite {
 }
 
 /// Cooperative cancellation shared by a durable route projection and its caller.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RouteProjectionCancellation {
     cancelled: Arc<AtomicBool>,
+    deadline: Option<Instant>,
+    interrupt: Arc<Mutex<Option<Arc<rusqlite::InterruptHandle>>>>,
+}
+
+impl std::fmt::Debug for RouteProjectionCancellation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RouteProjectionCancellation")
+            .field("cancelled", &self.is_cancelled())
+            .field("deadline", &self.deadline)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RouteProjectionCancellation {
@@ -1067,12 +1154,25 @@ impl RouteProjectionCancellation {
     pub fn new() -> Self {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: None,
+            interrupt: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Requests cancellation of the associated projection.
+    /// Creates a cancellation token that expires at a monotonic deadline.
+    #[must_use]
+    pub fn with_deadline(deadline: Instant) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: Some(deadline),
+            interrupt: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Requests cancellation of the associated projection and interrupts an active `SQLite` query.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        self.interrupt();
     }
 
     /// Returns whether cancellation was requested.
@@ -1080,11 +1180,171 @@ impl RouteProjectionCancellation {
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
     }
+
+    fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    fn is_expired(&self) -> bool {
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn abort_error(&self) -> Option<StorageError> {
+        if self.is_expired() {
+            Some(StorageError::DeadlineExceeded)
+        } else if self.is_cancelled() {
+            Some(StorageError::Cancelled)
+        } else {
+            None
+        }
+    }
+
+    fn install_interrupt(&self, handle: rusqlite::InterruptHandle) {
+        if let Ok(mut interrupt) = self.interrupt.lock() {
+            *interrupt = Some(Arc::new(handle));
+        }
+    }
+
+    fn clear_interrupt(&self) {
+        if let Ok(mut interrupt) = self.interrupt.lock() {
+            *interrupt = None;
+        }
+    }
+
+    fn interrupt(&self) {
+        if let Ok(interrupt) = self.interrupt.lock()
+            && let Some(handle) = interrupt.as_ref()
+        {
+            handle.interrupt();
+        }
+    }
 }
 
 impl Default for RouteProjectionCancellation {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod route_projection_cancellation_tests {
+    use super::RouteProjectionCancellation;
+    use rusqlite::{Connection, ErrorCode};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc::sync_channel,
+        },
+        thread,
+    };
+
+    #[test]
+    fn explicit_cancellation_interrupts_a_long_sqlite_query() {
+        let connection = Connection::open_in_memory().expect("SQLite opens");
+        let cancellation = RouteProjectionCancellation::new();
+        cancellation.install_interrupt(connection.get_interrupt_handle());
+        let (query_entered_sender, query_entered_receiver) = sync_channel(0);
+        let (query_release_sender, query_release_receiver) = sync_channel(0);
+        let first_progress_callback = Arc::new(AtomicBool::new(true));
+        let callback_is_first = Arc::clone(&first_progress_callback);
+        connection.progress_handler(
+            1_000,
+            Some(move || {
+                if callback_is_first.swap(false, Ordering::AcqRel) {
+                    query_entered_sender
+                        .send(())
+                        .expect("test query is waiting for cancellation");
+                    query_release_receiver
+                        .recv()
+                        .expect("test query release is sent");
+                }
+                false
+            }),
+        );
+
+        let query = thread::spawn(move || {
+            connection.query_row(
+                "WITH RECURSIVE numbers(value) AS (
+                     SELECT 1
+                     UNION ALL
+                     SELECT value + 1 FROM numbers LIMIT 5000000
+                 )
+                 SELECT sum(value) FROM numbers",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+        });
+
+        query_entered_receiver
+            .recv()
+            .expect("query reached its first progress callback");
+        cancellation.cancel();
+        query_release_sender
+            .send(())
+            .expect("query release is received");
+
+        let error = query
+            .join()
+            .expect("query thread does not panic")
+            .expect_err("cancellation interrupts the query");
+        assert!(matches!(
+            error,
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.code == ErrorCode::OperationInterrupted
+        ));
+    }
+}
+
+fn default_route_projection_cancellation() -> RouteProjectionCancellation {
+    let deadline = Instant::now()
+        .checked_add(DEFAULT_ROUTE_PROJECTION_TIMEOUT)
+        .unwrap_or_else(Instant::now);
+    RouteProjectionCancellation::with_deadline(deadline)
+}
+
+#[cfg(test)]
+mod default_route_projection_tests {
+    use super::{Instant, default_route_projection_cancellation};
+
+    #[test]
+    fn default_route_projection_cancellation_has_a_rust_owned_deadline() {
+        let cancellation = default_route_projection_cancellation();
+
+        assert!(!cancellation.is_cancelled());
+        assert!(!cancellation.is_expired());
+        assert!(
+            cancellation
+                .deadline()
+                .expect("default projection has a deadline")
+                > Instant::now()
+        );
+    }
+}
+
+#[cfg(test)]
+mod spatial_identity_tests {
+    use super::{SpatialRowId, StorageError};
+
+    #[test]
+    fn sqlite_row_ids_are_validated_before_cross_table_use() {
+        let id = SpatialRowId::from_sqlite(7).expect("positive SQLite row IDs are valid");
+        assert_eq!(id.get(), 7);
+        assert!(matches!(
+            SpatialRowId::from_sqlite(0),
+            Err(StorageError::InvalidStoredValue {
+                field: "spatial row identifier",
+                ..
+            })
+        ));
+        assert!(matches!(
+            SpatialRowId::from_sqlite(i64::from(i32::MAX) + 1),
+            Err(StorageError::InvalidStoredValue {
+                field: "spatial row identifier",
+                ..
+            })
+        ));
     }
 }
 
@@ -1107,6 +1367,43 @@ impl PendingLocationWrite {
             Err(mpsc::TryRecvError::Disconnected) => Err(StorageError::ResponseDropped),
         }
     }
+
+    /// Waits for a durable result until a monotonic deadline without consuming this ticket.
+    ///
+    /// `None` means that the worker is still delayed or queued when the deadline arrives; the
+    /// ticket can be polled again later. This bounds caller wait time without pretending that a
+    /// still-running `SQLite` command has been cancelled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn wait_result_until(
+        &self,
+        deadline: Instant,
+    ) -> Result<Option<Result<LocationAdmission, StorageError>>, StorageError> {
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        match self.response.recv_timeout(timeout) {
+            Ok(result) => Ok(Some(result)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
+        }
+    }
+
+    /// Waits for this queued write to reach a durable result.
+    ///
+    /// This is intended for lifecycle barriers that must settle location writes before changing
+    /// the ride state. The database worker remains the only owner of the `SQLite` connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::ResponseDropped`] when the database worker disappears before
+    /// sending a result.
+    pub fn wait_result(self) -> Result<Result<LocationAdmission, StorageError>, StorageError> {
+        self.response
+            .recv()
+            .map_err(|_| StorageError::ResponseDropped)
+    }
 }
 
 impl RideDatabase {
@@ -1116,6 +1413,10 @@ impl RideDatabase {
     ///
     /// Returns a typed error when the path, schema, `SQLite` runtime, or worker cannot be opened.
     pub fn open(path: &Path) -> Result<Self, StorageError> {
+        Self::open_with_service_id(path, Uuid::new_v4())
+    }
+
+    fn open_with_service_id(path: &Path, service_id: Uuid) -> Result<Self, StorageError> {
         let canonical_path = canonical_database_path(path)?;
         let mut owner = owner().lock().map_err(|_| StorageError::WorkerStopped)?;
         if owner
@@ -1143,7 +1444,6 @@ impl RideDatabase {
 
         let mut connection = Connection::open(&canonical_path)?;
         let bootstrap = configure_connection(&mut connection)?;
-        let service_id = Uuid::new_v4();
         let (sender, receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let join = thread::Builder::new()
             .name("cutout-ride-maps-db".to_owned())
@@ -1163,6 +1463,19 @@ impl RideDatabase {
             join: Some(join),
         });
         Ok(handle)
+    }
+
+    /// Reacquires the database service after its worker has exited.
+    ///
+    /// A worker failure disconnects the sender held by this handle; callers must replace the
+    /// failed handle with the returned handle before issuing more commands. If the worker is
+    /// still healthy, this returns another handle to the existing service.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::open`] when the service cannot be reacquired.
+    pub fn reopen(&self) -> Result<Self, StorageError> {
+        Self::open_with_service_id(&self.path, self.service_id)
     }
 
     /// Returns the process-wide service identity.
@@ -1663,23 +1976,19 @@ impl RideDatabase {
 
     /// Applies one lifecycle event to a ride.
     ///
+    /// The bounded command queue is waited on so lifecycle actions make progress even while
+    /// location writes fill it.
+    ///
     /// # Errors
     ///
     /// Returns [`StorageError`] when the ride is missing, the transition is invalid, or the
-    /// worker cannot process the command.
+    /// worker stops before accepting the command.
     pub fn transition(
         &self,
         ride_id: RideId,
         event: RideEvent,
     ) -> Result<RideLifecycleState, StorageError> {
-        let occurred_at_ms = wall_clock_now_milliseconds()?;
-        self.request(move |reply| Command::Transition {
-            ride_id,
-            event,
-            occurred_at_ms,
-            monotonic_at_ms: None,
-            reply,
-        })
+        self.transition_blocking_with_timestamp(ride_id, event, None)
     }
 
     /// Applies one lifecycle event using a caller-provided monotonic timestamp for duration.
@@ -1687,22 +1996,34 @@ impl RideDatabase {
     /// The wall-clock update remains owned by the database worker; the monotonic value is used
     /// only for canonical active-duration accounting.
     ///
+    /// The bounded command queue is waited on so lifecycle actions make progress even while
+    /// location writes fill it.
+    ///
     /// # Errors
     ///
     /// Returns [`StorageError`] when the ride is missing, the transition is invalid, or the
-    /// worker cannot process the command.
+    /// worker stops before accepting the command.
     pub fn transition_at(
         &self,
         ride_id: RideId,
         event: RideEvent,
         monotonic_at_ms: u64,
     ) -> Result<RideLifecycleState, StorageError> {
+        self.transition_blocking_with_timestamp(ride_id, event, Some(monotonic_at_ms))
+    }
+
+    fn transition_blocking_with_timestamp(
+        &self,
+        ride_id: RideId,
+        event: RideEvent,
+        monotonic_at_ms: Option<u64>,
+    ) -> Result<RideLifecycleState, StorageError> {
         let occurred_at_ms = wall_clock_now_milliseconds()?;
-        self.request(move |reply| Command::Transition {
+        self.request_blocking(move |reply| Command::Transition {
             ride_id,
             event,
             occurred_at_ms,
-            monotonic_at_ms: Some(monotonic_at_ms),
+            monotonic_at_ms,
             reply,
         })
     }
@@ -1893,6 +2214,45 @@ impl RideDatabase {
         Ok(PendingLocationWrite { response })
     }
 
+    /// Enqueues a location behind a deterministic worker gate for persistence tests.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_worker_gate_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithWorkerGate {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            release,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
+    /// Enqueues a location and deliberately loses its terminal response after worker failure.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_worker_failure_for_test(
+        &self,
+        _ride_id: RideId,
+        _sample: LocationSample,
+        _segment_id: u64,
+        _telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithWorkerFailure { entered, reply })?;
+        Ok(PendingLocationWrite { response })
+    }
+
     /// Loads the durable summary projection for one ride.
     ///
     /// # Errors
@@ -1989,8 +2349,9 @@ impl RideDatabase {
     ///
     /// # Errors
     ///
-    /// Returns [`StorageError::NotFound`] when the ride does not exist, or another typed storage
-    /// error when the route cannot be decoded.
+    /// Returns [`StorageError::DeadlineExceeded`] when the Rust-owned default timeout expires,
+    /// [`StorageError::NotFound`] when the ride does not exist, or another typed storage error
+    /// when the route cannot be decoded.
     pub fn project_route_points(
         &self,
         ride_id: RideId,
@@ -1998,14 +2359,13 @@ impl RideDatabase {
         budget: RouteDisplayBudget,
         privacy: RoutePrivacyPolicy,
     ) -> Result<RoutePointProjection, StorageError> {
-        self.request(move |reply| Command::ProjectRoutePoints {
+        self.project_route_points_cancellable(
             ride_id,
             viewport,
             budget,
             privacy,
-            cancellation: None,
-            reply,
-        })
+            default_route_projection_cancellation(),
+        )
     }
 
     /// Projects a durable route while honoring a cooperative cancellation token.
@@ -2018,6 +2378,10 @@ impl RideDatabase {
     ///
     /// Returns [`StorageError::Cancelled`] when cancellation is requested, or the same storage
     /// errors as [`Self::project_route_points`].
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the token is cloned into the worker-owned command"
+    )]
     pub fn project_route_points_cancellable(
         &self,
         ride_id: RideId,
@@ -2026,14 +2390,57 @@ impl RideDatabase {
         privacy: RoutePrivacyPolicy,
         cancellation: RouteProjectionCancellation,
     ) -> Result<RoutePointProjection, StorageError> {
-        self.request(move |reply| Command::ProjectRoutePoints {
+        let deadline = cancellation.deadline();
+        let (reply, response) = response_channel();
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            cancellation.cancel();
+            return Err(StorageError::DeadlineExceeded);
+        }
+        self.enqueue(Command::ProjectRoutePoints {
             ride_id,
             viewport,
             budget,
             privacy,
-            cancellation: Some(cancellation),
+            cancellation: Some(cancellation.clone()),
+            reply,
+        })?;
+        match deadline {
+            Some(deadline) => receive_until(&response, deadline, &cancellation),
+            None => receive(&response),
+        }
+    }
+
+    /// Installs a deterministic `SQLite` progress gate for an in-flight projection test.
+    #[cfg(test)]
+    pub(crate) fn install_route_projection_test_gate(
+        &self,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+    ) -> Result<(), StorageError> {
+        self.request(|reply| Command::InstallRouteProjectionTestGate {
+            entered,
+            release,
             reply,
         })
+    }
+
+    /// Stops the worker without releasing the owner entry, simulating an unexpected worker exit.
+    #[cfg(test)]
+    pub(crate) fn stop_worker_for_test(&self) -> Result<(), StorageError> {
+        let result = self.request(|reply| Command::StopForTest { reply });
+        if result.is_ok() {
+            loop {
+                let finished = owner()
+                    .lock()
+                    .ok()
+                    .and_then(|owner| owner.as_ref()?.join.as_ref().map(JoinHandle::is_finished));
+                if finished == Some(true) {
+                    break;
+                }
+                thread::yield_now();
+            }
+        }
+        result
     }
 
     /// Loads the newest live-projection-sized route tail in ascending sequence order.
@@ -2084,16 +2491,53 @@ impl RideDatabase {
     }
 
     fn enqueue(&self, command: Command) -> Result<(), StorageError> {
-        self.sender.try_send(command).map_err(|error| match error {
-            mpsc::TrySendError::Full(_) => StorageError::QueueFull,
-            mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
-        })
+        match self.sender.try_send(command) {
+            Ok(()) => Ok(()),
+            Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull),
+            Err(mpsc::TrySendError::Disconnected(command)) => {
+                if !self.worker_can_restart() {
+                    return Err(StorageError::WorkerStopped);
+                }
+                let recovered = self.reopen()?;
+                recovered
+                    .sender
+                    .try_send(command)
+                    .map_err(|error| match error {
+                        mpsc::TrySendError::Full(_) => StorageError::QueueFull,
+                        mpsc::TrySendError::Disconnected(_) => StorageError::WorkerStopped,
+                    })
+            }
+        }
     }
 
     fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
-        self.sender
-            .send(command)
-            .map_err(|_| StorageError::WorkerStopped)
+        match self.sender.send(command) {
+            Ok(()) => Ok(()),
+            Err(mpsc::SendError(command)) => {
+                if !self.worker_can_restart() {
+                    return Err(StorageError::WorkerStopped);
+                }
+                let recovered = self.reopen()?;
+                recovered
+                    .sender
+                    .send(command)
+                    .map_err(|_| StorageError::WorkerStopped)
+            }
+        }
+    }
+
+    /// Returns whether this handle still belongs to a process-owned database service.
+    ///
+    /// A handle may be stale after another command has already recovered the worker, so this
+    /// checks the stable service identity rather than the worker join state. An explicit shutdown
+    /// removes the owner entry, so stale handles remain unusable instead of silently starting a
+    /// new service during a later callback.
+    fn worker_can_restart(&self) -> bool {
+        owner().lock().ok().is_some_and(|owner| {
+            owner
+                .as_ref()
+                .is_some_and(|entry| entry.service_id == self.service_id)
+        })
     }
 }
 
@@ -2107,6 +2551,57 @@ fn receive<T>(response: &Receiver<Result<T, StorageError>>) -> Result<T, Storage
     response.recv().map_err(|_| StorageError::ResponseDropped)?
 }
 
+fn receive_until<T>(
+    response: &Receiver<Result<T, StorageError>>,
+    deadline: Instant,
+    cancellation: &RouteProjectionCancellation,
+) -> Result<T, StorageError> {
+    let timeout = deadline.saturating_duration_since(Instant::now());
+    match response.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancellation.cancel();
+            cancellation.interrupt();
+            Err(StorageError::DeadlineExceeded)
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(StorageError::ResponseDropped),
+    }
+}
+
+fn projection_checkpoint(
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<(), StorageError> {
+    if let Some(cancellation) = cancellation
+        && let Some(error) = cancellation.abort_error()
+    {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn projection_sqlite<T>(
+    result: rusqlite::Result<T>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<T, StorageError> {
+    result.map_err(|error| {
+        if matches!(
+            &error,
+            rusqlite::Error::SqliteFailure(failure, _)
+                if failure.code == ErrorCode::OperationInterrupted
+        ) {
+            if cancellation.is_some_and(RouteProjectionCancellation::is_expired) {
+                StorageError::DeadlineExceeded
+            } else if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
+                StorageError::Cancelled
+            } else {
+                StorageError::Sqlite(error)
+            }
+        } else {
+            StorageError::Sqlite(error)
+        }
+    })
+}
+
 enum PevcapBegin {
     Started { ride_id: Option<RideId> },
     Duplicate(PevcapImportReceipt),
@@ -2115,13 +2610,6 @@ enum PevcapBegin {
 struct ManagedArtifact {
     path: PathBuf,
     created: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct PevcapValidationSession;
-
-impl ProtocolSession for PevcapValidationSession {
-    fn handle(&mut self, _input: SessionInput<'_>, _output: &mut Vec<SessionOutput>) {}
 }
 
 enum Command {
@@ -2280,6 +2768,21 @@ enum Command {
         telemetry_state: RouteTelemetryState,
         reply: Reply<LocationAdmission>,
     },
+    #[cfg(test)]
+    AppendLocationWithWorkerGate {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+        reply: Reply<LocationAdmission>,
+    },
+    #[cfg(test)]
+    AppendLocationWithWorkerFailure {
+        entered: SyncSender<()>,
+        reply: Reply<LocationAdmission>,
+    },
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
@@ -2312,6 +2815,16 @@ enum Command {
         privacy: RoutePrivacyPolicy,
         cancellation: Option<RouteProjectionCancellation>,
         reply: Reply<RoutePointProjection>,
+    },
+    #[cfg(test)]
+    InstallRouteProjectionTestGate {
+        entered: SyncSender<()>,
+        release: Receiver<()>,
+        reply: Reply<()>,
+    },
+    #[cfg(test)]
+    StopForTest {
+        reply: Reply<()>,
     },
     LatestRoutePoints {
         ride_id: RideId,
@@ -2605,6 +3118,32 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     telemetry_state,
                 ));
             }
+            #[cfg(test)]
+            Command::AppendLocationWithWorkerGate {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                entered,
+                release,
+                reply,
+            } => {
+                let _ = entered.send(());
+                let _ = release.recv();
+                let _ = reply.send(append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                ));
+            }
+            #[cfg(test)]
+            Command::AppendLocationWithWorkerFailure { entered, reply } => {
+                let _ = entered.send(());
+                drop(reply);
+                break;
+            }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
             }
@@ -2642,14 +3181,49 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 cancellation,
                 reply,
             } => {
-                let _ = reply.send(project_route_points(
+                if let Some(cancellation) = cancellation.as_ref() {
+                    cancellation.install_interrupt(connection.get_interrupt_handle());
+                }
+                let result = project_route_points(
                     &connection,
                     ride_id,
                     viewport,
                     budget,
                     privacy,
                     cancellation.as_ref(),
-                ));
+                );
+                #[cfg(test)]
+                connection.progress_handler(0, None::<fn() -> bool>);
+                if let Some(cancellation) = cancellation.as_ref() {
+                    cancellation.clear_interrupt();
+                }
+                let _ = reply.send(result);
+            }
+            #[cfg(test)]
+            Command::InstallRouteProjectionTestGate {
+                entered,
+                release,
+                reply,
+            } => {
+                let first_progress_callback = Arc::new(AtomicBool::new(true));
+                let callback_is_first = Arc::clone(&first_progress_callback);
+                connection.progress_handler(
+                    1,
+                    Some(move || {
+                        if callback_is_first.swap(false, Ordering::AcqRel)
+                            && entered.send(()).is_ok()
+                        {
+                            let _ = release.recv();
+                        }
+                        false
+                    }),
+                );
+                let _ = reply.send(Ok(()));
+            }
+            #[cfg(test)]
+            Command::StopForTest { reply } => {
+                let _ = reply.send(Ok(()));
+                break;
             }
             Command::LatestRoutePoints { ride_id, reply } => {
                 let _ = reply.send(latest_route_points(&connection, ride_id));
@@ -2813,7 +3387,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 12;
+                PRAGMA user_version = 14;
                  COMMIT;",
             )?;
         }
@@ -2873,6 +3447,8 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         9 => migrate_v9_to_current(connection)?,
         10 => migrate_v10_to_current(connection)?,
         11 => migrate_v11_to_current(connection)?,
+        12 => migrate_v12_to_current(connection)?,
+        13 => migrate_v13_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -2937,7 +3513,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             FOREIGN KEY (ride_id, segment_id) REFERENCES ride_segments(ride_id, segment_id)
         );
         CREATE TABLE selected_device (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
         );
@@ -2955,7 +3531,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             last_learned_wall_clock_ms INTEGER NOT NULL CHECK (last_learned_wall_clock_ms >= 0)
         );
         CREATE TABLE ride_session_marker (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
             marker BLOB NOT NULL CHECK (length(marker) BETWEEN 1 AND 4096)
         );
         CREATE TABLE pevcap_imports (
@@ -2978,22 +3554,34 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512)
         );
         CREATE TABLE trail_segments (
-            id INTEGER PRIMARY KEY,
             trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             start_lat_e7 INTEGER NOT NULL CHECK (start_lat_e7 BETWEEN -900000000 AND 900000000),
             start_lon_e7 INTEGER NOT NULL CHECK (start_lon_e7 BETWEEN -1800000000 AND 1800000000),
             end_lat_e7 INTEGER NOT NULL CHECK (end_lat_e7 BETWEEN -900000000 AND 900000000),
             end_lon_e7 INTEGER NOT NULL CHECK (end_lon_e7 BETWEEN -1800000000 AND 1800000000),
+            PRIMARY KEY (trail_id, sequence)
+        );
+        CREATE TABLE trail_segment_spatial_keys (
+            rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+            trail_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            FOREIGN KEY (trail_id, sequence)
+                REFERENCES trail_segments(trail_id, sequence) ON DELETE CASCADE,
             UNIQUE (trail_id, sequence)
         );
         CREATE VIRTUAL TABLE trail_segments_rtree
             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
         CREATE TABLE map_points (
-            id INTEGER PRIMARY KEY,
+            id BLOB PRIMARY KEY NOT NULL CHECK (length(id) = 16),
             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
             latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
             longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000)
+        );
+        CREATE TABLE map_point_spatial_keys (
+            rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+            point_id BLOB NOT NULL UNIQUE CHECK (length(point_id) = 16),
+            FOREIGN KEY (point_id) REFERENCES map_points(id) ON DELETE CASCADE
         );
         CREATE VIRTUAL TABLE map_points_rtree
             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
@@ -3026,6 +3614,104 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageErr
         .map_err(StorageError::from)
 }
 
+fn copy_legacy_spatial_rows(transaction: &rusqlite::Transaction<'_>) -> Result<(), StorageError> {
+    let segments = {
+        let mut statement = transaction.prepare(
+            "SELECT id, trail_id, sequence, start_lat_e7, start_lon_e7,
+                    end_lat_e7, end_lon_e7
+             FROM trail_segments_legacy
+             ORDER BY id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (rtree_id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7) in
+        segments
+    {
+        let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
+        transaction.execute(
+            "INSERT INTO trail_segments
+                (trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                trail_id,
+                sequence,
+                start_lat_e7,
+                start_lon_e7,
+                end_lat_e7,
+                end_lon_e7,
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO trail_segment_spatial_keys (rtree_id, trail_id, sequence)
+             VALUES (?1, ?2, ?3)",
+            params![rtree_id.get(), trail_id, sequence],
+        )?;
+        transaction.execute(
+            "INSERT INTO trail_segments_rtree
+                (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
+             VALUES (?1, min(?2, ?3), max(?2, ?3), min(?4, ?5), max(?4, ?5))",
+            params![
+                rtree_id.get(),
+                start_lat_e7,
+                end_lat_e7,
+                start_lon_e7,
+                end_lon_e7,
+            ],
+        )?;
+    }
+
+    let points = {
+        let mut statement = transaction.prepare(
+            "SELECT id, name, latitude_e7, longitude_e7
+             FROM map_points_legacy
+             ORDER BY id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (rtree_id, name, latitude_e7, longitude_e7) in points {
+        let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
+        let point_id = MapPointId::new();
+        transaction.execute(
+            "INSERT INTO map_points (id, name, latitude_e7, longitude_e7)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![point_id.uuid().as_bytes(), name, latitude_e7, longitude_e7],
+        )?;
+        transaction.execute(
+            "INSERT INTO map_point_spatial_keys (rtree_id, point_id)
+             VALUES (?1, ?2)",
+            params![rtree_id.get(), point_id.uuid().as_bytes()],
+        )?;
+        transaction.execute(
+            "INSERT INTO map_points_rtree
+                (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
+             VALUES (?1, ?2, ?2, ?3, ?3)",
+            params![rtree_id.get(), latitude_e7, longitude_e7],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
     let has_spatial = table_exists(connection, "trails")?
@@ -3055,25 +3741,12 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     )?;
     create_current_schema(&transaction)?;
     if has_spatial {
+        transaction.execute_batch("INSERT INTO trails SELECT * FROM trails_legacy;")?;
+        copy_legacy_spatial_rows(&transaction)?;
         transaction.execute_batch(
-            "
-            INSERT INTO trails SELECT * FROM trails_legacy;
-            INSERT INTO trail_segments
-                (id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
-            SELECT id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7
-            FROM trail_segments_legacy;
-            INSERT INTO map_points SELECT * FROM map_points_legacy;
-            INSERT INTO trail_segments_rtree
-            SELECT id,
-                   min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
-                   min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
-            FROM trail_segments;
-            INSERT INTO map_points_rtree
-            SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
-            DROP TABLE trail_segments_legacy;
-            DROP TABLE trails_legacy;
-            DROP TABLE map_points_legacy;
-            ",
+            "DROP TABLE trail_segments_legacy;
+             DROP TABLE trails_legacy;
+             DROP TABLE map_points_legacy;",
         )?;
     }
     transaction.execute_batch(
@@ -3095,9 +3768,15 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         SELECT ride_id, sequence, 0, 0, monotonic_ms, wall_clock_ms, latitude_e7,
                longitude_e7, horizontal_accuracy_mm, source
         FROM ride_points_legacy;
-        INSERT INTO selected_device SELECT * FROM selected_device_legacy;
+        INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+        SELECT X'00000000000000000000000000000001', platform_identifier, updated_at_ms
+        FROM selected_device_legacy
+        WHERE id = 1;
         INSERT INTO voltage_sag_models SELECT * FROM voltage_sag_models_legacy;
-        INSERT INTO ride_session_marker SELECT * FROM ride_session_marker_legacy;
+        INSERT INTO ride_session_marker (singleton_key, marker)
+        SELECT X'00000000000000000000000000000002', marker
+        FROM ride_session_marker_legacy
+        WHERE id = 1;
         INSERT INTO pevcap_imports
             (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
              record_count, location_count, imported_at_ms)
@@ -3111,7 +3790,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 12;
+                PRAGMA user_version = 14;
         ",
     )?;
     transaction.commit()?;
@@ -3165,18 +3844,22 @@ fn migrate_v4_to_current(connection: &mut Connection) -> Result<(), StorageError
             ",
         )?;
     }
-    transaction.execute_batch(
-        "
-        INSERT INTO trail_segments_rtree
-        SELECT id,
-               min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
-               min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
-        FROM trail_segments;
-        INSERT INTO map_points_rtree
-        SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
-        PRAGMA user_version = 5;
-        ",
-    )?;
+    if has_spatial {
+        transaction.execute_batch(
+            "
+            INSERT INTO trail_segments_rtree
+            SELECT id,
+                   min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
+                   min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
+            FROM trail_segments;
+            INSERT INTO map_points_rtree
+            SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+            PRAGMA user_version = 5;
+            ",
+        )?;
+    } else {
+        transaction.execute_batch("PRAGMA user_version = 5;")?;
+    }
     transaction.commit()?;
     migrate_v5_to_current(connection)
 }
@@ -3291,7 +3974,7 @@ fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "PRAGMA application_id = 1129665615;
              PRAGMA user_version = 12;",
         )?;
-        return Ok(());
+        return migrate_v12_to_current(connection);
     }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
@@ -3345,7 +4028,141 @@ fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageErro
         ",
     )?;
     transaction.commit()?;
+    migrate_v12_to_current(connection)
+}
+
+fn migrate_v12_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let selected_device_has_uuid_key =
+        table_has_column(connection, "selected_device", "singleton_key")?;
+    let ride_session_marker_has_uuid_key =
+        table_has_column(connection, "ride_session_marker", "singleton_key")?;
+    if selected_device_has_uuid_key && ride_session_marker_has_uuid_key {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 13;",
+        )?;
+        return migrate_v13_to_current(connection);
+    }
+
+    let transaction = connection.transaction()?;
+    if !selected_device_has_uuid_key {
+        transaction.execute_batch(
+            "ALTER TABLE selected_device RENAME TO selected_device_legacy;
+             CREATE TABLE selected_device (
+                 singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
+                 platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+                 updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+             );
+             INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+             SELECT X'00000000000000000000000000000001', platform_identifier, updated_at_ms
+             FROM selected_device_legacy
+             WHERE id = 1;
+             DROP TABLE selected_device_legacy;",
+        )?;
+    }
+    if !ride_session_marker_has_uuid_key {
+        transaction.execute_batch(
+            "ALTER TABLE ride_session_marker RENAME TO ride_session_marker_legacy;
+             CREATE TABLE ride_session_marker (
+                 singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
+                 marker BLOB NOT NULL CHECK (length(marker) BETWEEN 1 AND 4096)
+             );
+             INSERT INTO ride_session_marker (singleton_key, marker)
+             SELECT X'00000000000000000000000000000002', marker
+             FROM ride_session_marker_legacy
+             WHERE id = 1;
+             DROP TABLE ride_session_marker_legacy;",
+        )?;
+    }
+    transaction.execute_batch(
+        "PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 13;",
+    )?;
+    transaction.commit()?;
+    migrate_v13_to_current(connection)
+}
+
+fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let map_points_are_uuid_backed: bool = connection.query_row(
+        "SELECT COALESCE(
+             (SELECT type = 'BLOB' FROM pragma_table_info('map_points') WHERE name = 'id'),
+             0
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    let trail_segments_are_composite = !table_has_column(connection, "trail_segments", "id")?
+        && table_exists(connection, "trail_segment_spatial_keys")?
+        && table_exists(connection, "map_point_spatial_keys")?;
+    if map_points_are_uuid_backed && trail_segments_are_composite {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 14;",
+        )?;
+        return Ok(());
+    }
+
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "DROP TABLE IF EXISTS trail_segments_rtree;
+         DROP TABLE IF EXISTS map_points_rtree;
+         ALTER TABLE trail_segments RENAME TO trail_segments_legacy;
+         ALTER TABLE map_points RENAME TO map_points_legacy;
+         CREATE TABLE trail_segments (
+             trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             start_lat_e7 INTEGER NOT NULL CHECK (start_lat_e7 BETWEEN -900000000 AND 900000000),
+             start_lon_e7 INTEGER NOT NULL CHECK (start_lon_e7 BETWEEN -1800000000 AND 1800000000),
+             end_lat_e7 INTEGER NOT NULL CHECK (end_lat_e7 BETWEEN -900000000 AND 900000000),
+             end_lon_e7 INTEGER NOT NULL CHECK (end_lon_e7 BETWEEN -1800000000 AND 1800000000),
+             PRIMARY KEY (trail_id, sequence)
+         );
+         CREATE TABLE trail_segment_spatial_keys (
+             rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+             trail_id TEXT NOT NULL,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             FOREIGN KEY (trail_id, sequence)
+                 REFERENCES trail_segments(trail_id, sequence) ON DELETE CASCADE,
+             UNIQUE (trail_id, sequence)
+         );
+         CREATE VIRTUAL TABLE trail_segments_rtree
+             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+         CREATE TABLE map_points (
+             id BLOB PRIMARY KEY NOT NULL CHECK (length(id) = 16),
+             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
+             latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
+             longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000)
+         );
+         CREATE TABLE map_point_spatial_keys (
+             rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+             point_id BLOB NOT NULL UNIQUE CHECK (length(point_id) = 16),
+             FOREIGN KEY (point_id) REFERENCES map_points(id) ON DELETE CASCADE
+         );
+         CREATE VIRTUAL TABLE map_points_rtree
+             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);",
+    )?;
+    copy_legacy_spatial_rows(&transaction)?;
+    transaction.execute_batch(
+        "DROP TABLE trail_segments_legacy;
+         DROP TABLE map_points_legacy;
+         PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 14;",
+    )?;
+    transaction.commit()?;
     Ok(())
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, StorageError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(columns
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column))
 }
 
 fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
@@ -3366,8 +4183,10 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
         "pevcap_import_work",
         "trails",
         "trail_segments",
+        "trail_segment_spatial_keys",
         "trail_segments_rtree",
         "map_points",
+        "map_point_spatial_keys",
         "map_points_rtree",
     ] {
         let exists: bool = connection.query_row(
@@ -3378,6 +4197,89 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
         if !exists {
             return Err(StorageError::InvalidDatabaseIdentity);
         }
+    }
+    verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
+    verify_singleton_schema(connection, "ride_session_marker", "marker")?;
+    verify_device_schema(connection)?;
+    verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_spatial_identity_schema(connection: &Connection) -> Result<(), StorageError> {
+    let map_point_id_type: Option<String> = connection
+        .query_row(
+            "SELECT type FROM pragma_table_info('map_points') WHERE name = 'id'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if map_point_id_type.as_deref() != Some("BLOB")
+        || table_has_column(connection, "trail_segments", "id")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    for table in ["map_point_spatial_keys", "trail_segment_spatial_keys"] {
+        let columns: Vec<String> = connection
+            .prepare(&format!("PRAGMA table_info({table})"))?
+            .query_map([], |row| row.get(1))?
+            .collect::<Result<_, _>>()?;
+        if !columns.iter().any(|column| column == "rtree_id") {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
+    Ok(())
+}
+
+fn verify_singleton_schema(
+    connection: &Connection,
+    table: &str,
+    value_column: &str,
+) -> Result<(), StorageError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let valid = if value_column == "marker" {
+        columns.len() == 2
+            && columns[0] == ("singleton_key".to_owned(), "BLOB".to_owned(), 1, 1)
+            && columns[1] == ("marker".to_owned(), "BLOB".to_owned(), 1, 0)
+    } else {
+        columns.len() == 3
+            && columns[0] == ("singleton_key".to_owned(), "BLOB".to_owned(), 1, 1)
+            && columns[1] == (value_column.to_owned(), "TEXT".to_owned(), 1, 0)
+            && columns[2] == ("updated_at_ms".to_owned(), "INTEGER".to_owned(), 1, 0)
+    };
+    if !valid {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    Ok(())
+}
+
+fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
+    let mut statement = connection.prepare("PRAGMA table_info(devices)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if columns.len() != 3
+        || columns[0] != ("platform_identifier".to_owned(), "TEXT".to_owned(), 1, 1)
+        || columns[1] != ("display_name".to_owned(), "TEXT".to_owned(), 1, 0)
+        || columns[2] != ("updated_at_ms".to_owned(), "INTEGER".to_owned(), 1, 0)
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
 }
@@ -3569,8 +4471,10 @@ fn ensure_spatial_schema(
     for table in [
         "trails",
         "trail_segments",
+        "trail_segment_spatial_keys",
         "trail_segments_rtree",
         "map_points",
+        "map_point_spatial_keys",
         "map_points_rtree",
     ] {
         if !table_exists(connection, table)? {
@@ -3635,7 +4539,14 @@ fn append_trail_segment(
             end.longitude().as_i32(),
         ],
     )?;
-    let segment_id = transaction.last_insert_rowid();
+    let rtree_id = transaction.query_row(
+        "INSERT INTO trail_segment_spatial_keys (trail_id, sequence)
+         VALUES (?1, ?2)
+         RETURNING rtree_id",
+        params![trail, sequence],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
     let min_lat = start.latitude().as_i32().min(end.latitude().as_i32());
     let max_lat = start.latitude().as_i32().max(end.latitude().as_i32());
     let min_lon = start.longitude().as_i32().min(end.longitude().as_i32());
@@ -3644,7 +4555,7 @@ fn append_trail_segment(
         "INSERT INTO trail_segments_rtree
             (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![segment_id, min_lat, max_lat, min_lon, max_lon],
+        params![rtree_id.get(), min_lat, max_lat, min_lon, max_lon],
     )?;
     transaction.commit()?;
     Ok(())
@@ -3662,7 +4573,8 @@ fn trail_segments_in_bounds(
         "SELECT s.trail_id, s.sequence, s.start_lat_e7, s.start_lon_e7,
                 s.end_lat_e7, s.end_lon_e7
          FROM trail_segments_rtree r
-         JOIN trail_segments s ON s.id = r.id
+         JOIN trail_segment_spatial_keys k ON k.rtree_id = r.id
+         JOIN trail_segments s ON s.trail_id = k.trail_id AND s.sequence = k.sequence
          WHERE r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
            AND ((?5 = 0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4)
              OR (?5 = 1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
@@ -3742,32 +4654,37 @@ fn create_map_point(
     }
     ensure_spatial_schema(connection, state)?;
     let transaction = connection.transaction()?;
+    let point_id = MapPointId::new();
     transaction.execute(
-        "INSERT INTO map_points (name, latitude_e7, longitude_e7) VALUES (?1, ?2, ?3)",
+        "INSERT INTO map_points (id, name, latitude_e7, longitude_e7)
+         VALUES (?1, ?2, ?3, ?4)",
         params![
+            point_id.uuid().as_bytes(),
             name,
             coordinate.latitude().as_i32(),
             coordinate.longitude().as_i32()
         ],
     )?;
-    let id = transaction.last_insert_rowid();
+    let rtree_id = transaction.query_row(
+        "INSERT INTO map_point_spatial_keys (point_id)
+         VALUES (?1)
+         RETURNING rtree_id",
+        params![point_id.uuid().as_bytes()],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
     transaction.execute(
         "INSERT INTO map_points_rtree
             (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?2, ?3, ?3)",
         params![
-            id,
+            rtree_id.get(),
             coordinate.latitude().as_i32(),
             coordinate.longitude().as_i32()
         ],
     )?;
     transaction.commit()?;
-    u64::try_from(id)
-        .map(MapPointId)
-        .map_err(|_| StorageError::InvalidStoredValue {
-            field: "map point identifier",
-            value: id.to_string(),
-        })
+    Ok(point_id)
 }
 
 fn map_points_in_bounds(
@@ -3780,22 +4697,17 @@ fn map_points_in_bounds(
     ensure_spatial_schema(connection, state)?;
     let mut statement = connection.prepare(
         "SELECT p.id, p.name, p.latitude_e7, p.longitude_e7
-         FROM map_points_rtree r JOIN map_points p ON p.id = r.id
+         FROM map_points_rtree r
+         JOIN map_point_spatial_keys k ON k.rtree_id = r.id
+         JOIN map_points p ON p.id = k.point_id
          WHERE r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
            AND ((?5 = 0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4)
              OR (?5 = 1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
-           AND p.id > ?6
-         ORDER BY p.id
+           AND (?6 IS NULL OR p.id > ?6)
+           ORDER BY p.id
          LIMIT ?7",
     )?;
-    let after = cursor
-        .map(|cursor| i64::try_from(cursor.0.get()))
-        .transpose()
-        .map_err(|_| StorageError::InvalidStoredValue {
-            field: "map point cursor",
-            value: "out of range".to_owned(),
-        })?
-        .unwrap_or(0);
+    let after = cursor.map(|cursor| cursor.0.uuid().as_bytes().to_vec());
     let rows = statement.query_map(
         params![
             bounds.minimum_latitude,
@@ -3807,10 +4719,21 @@ fn map_points_in_bounds(
             i64::from(limit.get()) + 1,
         ],
         |row| {
+            let id_bytes: Vec<u8> = row.get(0)?;
+            let id = Uuid::from_slice(&id_bytes).map_err(|_| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Blob,
+                    Box::new(StorageError::InvalidStoredValue {
+                        field: "map point identifier",
+                        value: hex_encode(id_bytes),
+                    }),
+                )
+            })?;
             let coordinate = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             Ok(MapPoint {
-                id: MapPointId(row.get(0)?),
+                id: MapPointId::from_uuid(id),
                 name: row.get(1)?,
                 coordinate,
             })
@@ -3840,14 +4763,24 @@ fn rebuild_spatial_indexes(
     transaction.execute_batch(
         "
         DELETE FROM trail_segments_rtree;
+        DELETE FROM trail_segment_spatial_keys;
+        INSERT INTO trail_segment_spatial_keys (trail_id, sequence)
+        SELECT trail_id, sequence FROM trail_segments ORDER BY trail_id, sequence;
         INSERT INTO trail_segments_rtree
-        SELECT id,
+        SELECT k.rtree_id,
                min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
                min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
-        FROM trail_segments;
+        FROM trail_segments s
+        JOIN trail_segment_spatial_keys k
+          ON k.trail_id = s.trail_id AND k.sequence = s.sequence;
         DELETE FROM map_points_rtree;
+        DELETE FROM map_point_spatial_keys;
+        INSERT INTO map_point_spatial_keys (point_id)
+        SELECT id FROM map_points ORDER BY id;
         INSERT INTO map_points_rtree
-        SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+        SELECT k.rtree_id, p.latitude_e7, p.latitude_e7, p.longitude_e7, p.longitude_e7
+        FROM map_points p
+        JOIN map_point_spatial_keys k ON k.point_id = p.id;
         ",
     )?;
     transaction.commit()?;
@@ -3884,29 +4817,23 @@ fn preflight_pevcap(
     let file = File::open(&path)?;
     let mut reader = PevcapReader::new(BufReader::new(file), encoding)
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-    let mut host = HostSession::new(PevcapValidationSession);
-    let mut outputs = Vec::new();
-    reader
-        .replay_into_host(PevcapReplayMode::Whole, &mut host, &mut outputs)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-
-    let file = File::open(&path)?;
-    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
     let mut record_count = 0_u64;
     let mut earliest_milliseconds = None::<u64>;
     let mut latest_milliseconds = None::<u64>;
-    while let Some(record) = reader
-        .next_record()
+    while let Some(event) = reader
+        .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
     {
-        record_count = record_count.saturating_add(1);
-        check_pevcap_limit("records", MAX_PEVCAP_RECORDS, record_count)?;
-        let milliseconds = record.monotonic_ms.as_milliseconds();
-        earliest_milliseconds =
-            Some(earliest_milliseconds.map_or(milliseconds, |current| current.min(milliseconds)));
-        latest_milliseconds =
-            Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
+        if let PevcapEvent::Record(record) = event {
+            record_count = record_count.saturating_add(1);
+            check_pevcap_limit("records", MAX_PEVCAP_RECORDS, record_count)?;
+            let milliseconds = record.monotonic_ms.as_milliseconds();
+            earliest_milliseconds = Some(
+                earliest_milliseconds.map_or(milliseconds, |current| current.min(milliseconds)),
+            );
+            latest_milliseconds =
+                Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
+        }
     }
     let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
@@ -4022,59 +4949,91 @@ fn stream_pevcap_location_batches(
     let mut accepted = 0_u64;
     let mut recorder = RideMapRecorder::new();
     let mut started = false;
-    while let Some(record) = reader
-        .next_record()
+    let mut append_location = |location, monotonic_ms| {
+        append_pevcap_location(
+            location,
+            monotonic_ms,
+            &mut recorder,
+            &mut started,
+            &mut batch,
+            &mut accepted,
+            &mut append,
+        )
+    };
+    while let Some(event) = reader
+        .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
     {
-        let Some(location) = record.phone_location else {
-            continue;
-        };
-        if location.wall_clock_unix_ms == 0 {
-            continue;
-        }
-        let Ok(coordinate) =
-            Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
-        else {
-            continue;
-        };
-        let Some(horizontal_accuracy_millimetres) =
-            pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
-        else {
-            continue;
-        };
-        let sample = LocationSample::new(
-            coordinate,
-            record.monotonic_ms.as_milliseconds(),
-            location.wall_clock_unix_ms,
-            Some(horizontal_accuracy_millimetres),
-            LocationSource::PevcapImport,
-        );
-        if !started {
-            recorder
-                .start(sample.monotonic_milliseconds(), None)
-                .map_err(|_| StorageError::InvalidRideState(RideLifecycleState::Active))?;
-            started = true;
-        }
-        let segment_id = recorder.segment_id_for_sample(&sample);
-        if recorder.check_sample(&sample) != LocationAdmission::Accepted {
-            continue;
-        }
-        let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
-        recorder.record_sample_with_telemetry_state(sample, telemetry_state);
-        batch.push(PevcapRoutePoint {
-            sample,
-            segment_id,
-            telemetry_state,
-        });
-        if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
-            accepted = accepted.saturating_add(append(std::mem::take(&mut batch))?);
-            batch.reserve(PEVCAP_LOCATION_BATCH_SIZE);
+        match event {
+            PevcapEvent::Record(record) => {
+                if let Some(location) = record.phone_location {
+                    append_location(location, record.monotonic_ms.as_milliseconds())?;
+                }
+            }
+            PevcapEvent::Location(location) => append_location(
+                location.location,
+                location.receipt_monotonic_ms.as_milliseconds(),
+            )?,
+            PevcapEvent::LocationRejected(_) => {}
         }
     }
     if !batch.is_empty() {
         accepted = accepted.saturating_add(append(batch)?);
     }
     Ok(accepted)
+}
+
+fn append_pevcap_location(
+    location: PevcapPhoneLocation,
+    monotonic_ms: u64,
+    recorder: &mut RideMapRecorder,
+    started: &mut bool,
+    batch: &mut Vec<PevcapRoutePoint>,
+    accepted: &mut u64,
+    append: &mut impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
+) -> Result<(), StorageError> {
+    let Ok(location) = location.canonical() else {
+        return Ok(());
+    };
+    let Ok(coordinate) =
+        Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
+    else {
+        return Ok(());
+    };
+    let Some(horizontal_accuracy_millimetres) =
+        pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
+    else {
+        return Ok(());
+    };
+    let sample = LocationSample::new(
+        coordinate,
+        monotonic_ms,
+        location.wall_clock_unix_ms,
+        Some(horizontal_accuracy_millimetres),
+        LocationSource::PevcapImport,
+    );
+    if !*started {
+        recorder
+            .start(sample.monotonic_milliseconds(), None)
+            .map_err(|_| StorageError::InvalidRideState(RideLifecycleState::Active))?;
+        *started = true;
+    }
+    let segment_id = recorder.segment_id_for_sample(&sample);
+    if recorder.check_sample(&sample) != LocationAdmission::Accepted {
+        return Ok(());
+    }
+    let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
+    recorder.record_sample_with_telemetry_state(sample, telemetry_state);
+    batch.push(PevcapRoutePoint {
+        sample,
+        segment_id,
+        telemetry_state,
+    });
+    if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
+        *accepted = accepted.saturating_add(append(std::mem::take(batch))?);
+        batch.reserve(PEVCAP_LOCATION_BATCH_SIZE);
+    }
+    Ok(())
 }
 
 fn pevcap_accuracy_millimetres(metres: Option<f64>) -> Option<u32> {
@@ -4301,11 +5260,11 @@ fn save_selected_device(
     updated_at_ms: u64,
 ) -> Result<(), StorageError> {
     connection.execute(
-        "INSERT INTO selected_device (id, platform_identifier, updated_at_ms)
-         VALUES (1, ?1, ?2)
-         ON CONFLICT(id) DO UPDATE SET platform_identifier = excluded.platform_identifier,
+        "INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(singleton_key) DO UPDATE SET platform_identifier = excluded.platform_identifier,
              updated_at_ms = excluded.updated_at_ms",
-        params![platform_identifier, updated_at_ms],
+        params![SelectedDeviceKey::VALUE.blob(), platform_identifier, updated_at_ms],
     )?;
     Ok(())
 }
@@ -4313,8 +5272,8 @@ fn save_selected_device(
 fn selected_device(connection: &Connection) -> Result<Option<String>, StorageError> {
     connection
         .query_row(
-            "SELECT platform_identifier FROM selected_device WHERE id = 1",
-            [],
+            "SELECT platform_identifier FROM selected_device WHERE singleton_key = ?1",
+            [SelectedDeviceKey::VALUE.blob()],
             |row| row.get(0),
         )
         .optional()
@@ -4322,7 +5281,10 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
 }
 
 fn clear_selected_device(connection: &Connection) -> Result<(), StorageError> {
-    connection.execute("DELETE FROM selected_device WHERE id = 1", [])?;
+    connection.execute(
+        "DELETE FROM selected_device WHERE singleton_key = ?1",
+        [SelectedDeviceKey::VALUE.blob()],
+    )?;
     Ok(())
 }
 fn save_device_name(
@@ -4422,9 +5384,9 @@ fn save_ride_session_marker(connection: &Connection, marker: &[u8]) -> Result<()
         return clear_ride_session_marker(connection);
     }
     connection.execute(
-        "INSERT INTO ride_session_marker (id, marker) VALUES (1, ?1)
-         ON CONFLICT(id) DO UPDATE SET marker = excluded.marker",
-        params![marker],
+        "INSERT INTO ride_session_marker (singleton_key, marker) VALUES (?1, ?2)
+         ON CONFLICT(singleton_key) DO UPDATE SET marker = excluded.marker",
+        params![RideSessionMarkerKey::VALUE.blob(), marker],
     )?;
     Ok(())
 }
@@ -4432,8 +5394,8 @@ fn save_ride_session_marker(connection: &Connection, marker: &[u8]) -> Result<()
 fn ride_session_marker(connection: &Connection) -> Result<Option<Vec<u8>>, StorageError> {
     connection
         .query_row(
-            "SELECT marker FROM ride_session_marker WHERE id = 1",
-            [],
+            "SELECT marker FROM ride_session_marker WHERE singleton_key = ?1",
+            [RideSessionMarkerKey::VALUE.blob()],
             |row| row.get(0),
         )
         .optional()
@@ -4441,7 +5403,10 @@ fn ride_session_marker(connection: &Connection) -> Result<Option<Vec<u8>>, Stora
 }
 
 fn clear_ride_session_marker(connection: &Connection) -> Result<(), StorageError> {
-    connection.execute("DELETE FROM ride_session_marker WHERE id = 1", [])?;
+    connection.execute(
+        "DELETE FROM ride_session_marker WHERE singleton_key = ?1",
+        [RideSessionMarkerKey::VALUE.blob()],
+    )?;
     Ok(())
 }
 
@@ -4573,7 +5538,7 @@ fn append_location_in_transaction(
             match insert_location(connection, &insert) {
                 Ok(()) => Ok(LocationAdmission::Accepted),
                 Err(StorageError::Sqlite(rusqlite::Error::SqliteFailure(error, _)))
-                    if error.code == rusqlite::ErrorCode::ConstraintViolation =>
+                    if error.code == ErrorCode::ConstraintViolation =>
                 {
                     Ok(LocationAdmission::Duplicate)
                 }
@@ -5127,55 +6092,39 @@ fn project_route_points(
     privacy: RoutePrivacyPolicy,
     cancellation: Option<&RouteProjectionCancellation>,
 ) -> Result<RoutePointProjection, StorageError> {
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
     let ride_id = ride_id.uuid().to_string();
-    let exists: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
-        [&ride_id],
-        |row| row.get(0),
+    let exists: bool = projection_sqlite(
+        connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+            [&ride_id],
+            |row| row.get(0),
+        ),
+        cancellation,
     )?;
     if !exists {
         return Err(StorageError::NotFound);
     }
 
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
 
-    let source_point_count = connection.query_row(
-        "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
-        [&ride_id],
-        |row| row.get::<_, u64>(0),
-    )?;
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
-    let viewport_predicate = route_point_viewport_predicate(viewport);
-    let candidate_count = if let Some(viewport) = viewport {
-        connection.query_row(
-            &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            |row| row.get::<_, u64>(0),
-        )?
-    } else {
-        source_point_count
-    };
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    let counts = route_projection_counts(connection, &ride_id, viewport, cancellation)?;
+    let RouteProjectionCounts {
+        source_point_count,
+        source_segment_count,
+        candidate_count,
+        candidate_segment_count,
+        viewport_predicate,
+    } = counts;
+    projection_checkpoint(cancellation)?;
     let candidate_count = usize::try_from(candidate_count).unwrap_or(usize::MAX);
     if candidate_count == 0 {
         return Ok(RoutePointProjection {
             points: Vec::new(),
             source_point_count,
+            source_segment_count,
+            candidate_segment_count,
+            displayed_segment_count: 0,
         });
     }
 
@@ -5186,30 +6135,32 @@ fn project_route_points(
          WHERE ride_id = ?1{viewport_predicate}
          ORDER BY sequence ASC"
     );
-    let mut statement = connection.prepare(&select)?;
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    let mut statement = projection_sqlite(connection.prepare(&select), cancellation)?;
+    projection_checkpoint(cancellation)?;
     let rows = if let Some(viewport) = viewport {
-        statement.query_map(
-            params![
-                ride_id,
-                viewport.minimum_latitude().as_i32(),
-                viewport.maximum_latitude().as_i32(),
-                viewport.minimum_longitude().as_i32(),
-                viewport.maximum_longitude().as_i32(),
-            ],
-            route_point_from_row,
+        projection_sqlite(
+            statement.query_map(
+                params![
+                    ride_id,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                route_point_from_row,
+            ),
+            cancellation,
         )?
     } else {
-        statement.query_map([ride_id], route_point_from_row)?
+        projection_sqlite(
+            statement.query_map([ride_id], route_point_from_row),
+            cancellation,
+        )?
     };
     let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, row) in rows.enumerate() {
-        if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-            return Err(StorageError::Cancelled);
-        }
-        let point = row?;
+        projection_checkpoint(cancellation)?;
+        let point = projection_sqlite(row, cancellation)?;
         accumulator.push(
             candidate_ordinal,
             point.sequence().as_u64(),
@@ -5219,12 +6170,98 @@ fn project_route_points(
             break;
         }
     }
-    if cancellation.is_some_and(RouteProjectionCancellation::is_cancelled) {
-        return Err(StorageError::Cancelled);
-    }
+    projection_checkpoint(cancellation)?;
+    let points = accumulator.finish();
+    let displayed_segment_count = u64::try_from(count_segment_runs(
+        points.iter().copied().map(RouteDisplayPoint::segment_id),
+    ))
+    .unwrap_or(u64::MAX);
     Ok(RoutePointProjection {
-        points: accumulator.finish(),
+        points,
         source_point_count,
+        source_segment_count,
+        candidate_segment_count,
+        displayed_segment_count,
+    })
+}
+
+struct RouteProjectionCounts {
+    source_point_count: u64,
+    source_segment_count: u64,
+    candidate_count: u64,
+    candidate_segment_count: u64,
+    viewport_predicate: String,
+}
+
+fn route_projection_counts(
+    connection: &Connection,
+    ride_id: &str,
+    viewport: Option<RouteViewport>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<RouteProjectionCounts, StorageError> {
+    let source_point_count = projection_sqlite(
+        connection.query_row(
+            "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
+    )?;
+    projection_checkpoint(cancellation)?;
+    let source_segment_count = projection_sqlite(
+        connection.query_row(
+            "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
+    )?;
+    projection_checkpoint(cancellation)?;
+    let viewport_predicate = route_point_viewport_predicate(viewport);
+    let (candidate_count, candidate_segment_count) = if let Some(viewport) = viewport {
+        let parameters = params![
+            ride_id,
+            viewport.minimum_latitude().as_i32(),
+            viewport.maximum_latitude().as_i32(),
+            viewport.minimum_longitude().as_i32(),
+            viewport.maximum_longitude().as_i32(),
+        ];
+        let candidate_count = projection_sqlite(
+            connection.query_row(
+                &format!("SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"),
+                parameters,
+                |row| row.get::<_, u64>(0),
+            ),
+            cancellation,
+        )?;
+        projection_checkpoint(cancellation)?;
+        let candidate_segment_count = projection_sqlite(
+            connection.query_row(
+                &format!(
+                    "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1{viewport_predicate}"
+                ),
+                params![
+                    ride_id,
+                    viewport.minimum_latitude().as_i32(),
+                    viewport.maximum_latitude().as_i32(),
+                    viewport.minimum_longitude().as_i32(),
+                    viewport.maximum_longitude().as_i32(),
+                ],
+                |row| row.get::<_, u64>(0),
+            ),
+            cancellation,
+        )?;
+        projection_checkpoint(cancellation)?;
+        (candidate_count, candidate_segment_count)
+    } else {
+        (source_point_count, source_segment_count)
+    };
+    Ok(RouteProjectionCounts {
+        source_point_count,
+        source_segment_count,
+        candidate_count,
+        candidate_segment_count,
+        viewport_predicate,
     })
 }
 

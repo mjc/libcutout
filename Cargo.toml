@@ -41,7 +41,7 @@ hex-literal = "1"
 mio = "1"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "termina"] }
 proptest = "1"
-rusqlite = { version = "0.37", default-features = false, features = ["bundled", "limits"] }
+rusqlite = { version = "0.37", default-features = false, features = ["bundled", "hooks", "limits"] }
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

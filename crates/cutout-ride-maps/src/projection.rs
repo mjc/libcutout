@@ -2,6 +2,14 @@ use crate::{
     Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointSequence,
 };
 
+/// Failure returned when a route projection is cancelled before completion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum RouteProjectionError {
+    /// The caller requested that the projection stop.
+    #[error("route projection cancelled")]
+    Cancelled,
+}
+
 /// Hard upper bound for a route projection returned to a presentation client.
 pub const MAX_ROUTE_DISPLAY_POINTS: usize = 16_384;
 
@@ -148,7 +156,9 @@ impl RouteViewport {
         self.minimum_longitude.as_i32() > self.maximum_longitude.as_i32()
     }
 
-    fn contains(self, coordinate: Coordinate) -> bool {
+    /// Returns whether a coordinate lies inside this viewport.
+    #[must_use]
+    pub fn contains(self, coordinate: Coordinate) -> bool {
         let latitude = coordinate.latitude().as_i32();
         let longitude = coordinate.longitude().as_i32();
         let latitude_visible =
@@ -170,6 +180,24 @@ pub struct RouteDisplayPoint {
     segment_id: RideMapSegmentId,
     coordinate: Coordinate,
     privacy_class: RoutePrivacyClass,
+}
+
+/// Counts segment runs in canonical route order.
+///
+/// Route points are ordered by their stable sequence before they reach the projection layer, so
+/// each segment is represented by one contiguous run. Keeping this operation run-based avoids
+/// allocating a set while callers stream a durable route.
+#[must_use]
+pub fn count_segment_runs(segment_ids: impl IntoIterator<Item = RideMapSegmentId>) -> usize {
+    let mut previous = None;
+    let mut count = 0;
+    for segment_id in segment_ids {
+        if previous != Some(segment_id) {
+            count += 1;
+            previous = Some(segment_id);
+        }
+    }
+    count
 }
 
 /// Incremental bounded route projection state.
@@ -277,29 +305,59 @@ pub fn project_route_points(
     budget: RouteDisplayBudget,
     privacy: RoutePrivacyPolicy,
 ) -> Vec<RouteDisplayPoint> {
+    project_route_points_cancellable(points, first_sequence, viewport, budget, privacy, || false)
+        .unwrap_or_default()
+}
+
+/// Projects canonical route points while checking a caller-owned cancellation predicate.
+///
+/// The predicate is checked before scanning candidates and between every candidate. Callers that
+/// need a typed cancellation result should use this function; [`project_route_points`] remains a
+/// compatibility wrapper for projections that cannot be cancelled.
+///
+/// # Errors
+///
+/// Returns [`RouteProjectionError::Cancelled`] when the predicate requests cancellation.
+pub fn project_route_points_cancellable(
+    points: &[RideMapPoint],
+    first_sequence: RidePointSequence,
+    viewport: Option<RouteViewport>,
+    budget: RouteDisplayBudget,
+    privacy: RoutePrivacyPolicy,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<Vec<RouteDisplayPoint>, RouteProjectionError> {
+    if is_cancelled() {
+        return Err(RouteProjectionError::Cancelled);
+    }
     let is_visible = |point: RideMapPoint| {
         viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate()))
     };
-    let candidate_count = points
-        .iter()
-        .copied()
-        .filter(|point| is_visible(*point))
-        .count();
-    project_route_points_from_iter(
-        points
-            .iter()
-            .copied()
-            .enumerate()
-            .filter_map(|(offset, point)| {
-                is_visible(point).then_some((
-                    first_sequence.saturating_add(as_u64(offset)).as_u64(),
-                    point,
-                ))
-            }),
-        candidate_count,
-        budget,
-        privacy,
-    )
+    let candidate_count = points.iter().copied().try_fold(0usize, |count, point| {
+        if is_cancelled() {
+            return Err(RouteProjectionError::Cancelled);
+        }
+        Ok(count + usize::from(is_visible(point)))
+    })?;
+    let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
+    let mut candidate_ordinal = 0;
+    for (offset, point) in points.iter().copied().enumerate() {
+        if is_cancelled() {
+            return Err(RouteProjectionError::Cancelled);
+        }
+        if !is_visible(point) {
+            continue;
+        }
+        let sequence = first_sequence.saturating_add(as_u64(offset)).as_u64();
+        accumulator.push(candidate_ordinal, sequence, point);
+        candidate_ordinal += 1;
+        if accumulator.is_complete() {
+            break;
+        }
+    }
+    if is_cancelled() {
+        return Err(RouteProjectionError::Cancelled);
+    }
+    Ok(accumulator.finish())
 }
 
 /// Projects a stream of already viewport-filtered canonical points without retaining the route.
