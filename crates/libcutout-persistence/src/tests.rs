@@ -474,6 +474,60 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
 }
 
 #[test]
+fn consumed_location_write_reconciles_after_worker_drops_response() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-response-loss-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_with_worker_failure_after_write_for_test(
+            ride,
+            sample,
+            0,
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker commits the location before dropping its response");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now() + Duration::from_secs(1)),
+        Err(StorageError::ResponseDropped)
+    ));
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut summary = Err(StorageError::WorkerStopped);
+    while Instant::now() < deadline {
+        summary = database
+            .reopen()
+            .and_then(|database| database.summary(ride));
+        if summary.is_ok() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(summary.unwrap().point_count(), 1.into());
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_reopens_after_an_unexpected_worker_exit() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

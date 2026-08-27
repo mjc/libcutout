@@ -1058,7 +1058,11 @@ pub enum StorageError {
     /// The worker stopped before accepting a command.
     #[error("ride database worker stopped")]
     WorkerStopped,
-    /// The worker response channel was dropped.
+    /// The worker response channel was dropped before the command's outcome was observed.
+    ///
+    /// The command may already have committed. Callers must treat this as an unknown write
+    /// outcome, reacquire the service, and reconcile durable state before retrying; never retry
+    /// the same sample blindly.
     #[error("ride database response was dropped")]
     ResponseDropped,
     /// A second worker could not be started.
@@ -2259,6 +2263,30 @@ impl RideDatabase {
         Ok(PendingLocationWrite { response })
     }
 
+    /// Enqueues a location, commits it, and deliberately loses its terminal response after
+    /// worker failure. This models a worker dying after `SQLite` commits but before the caller
+    /// observes the result.
+    #[cfg(test)]
+    pub(crate) fn enqueue_location_with_worker_failure_after_write_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocationWithWorkerFailureAfterWrite {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            reply,
+        })?;
+        Ok(PendingLocationWrite { response })
+    }
+
     /// Loads the durable summary projection for one ride.
     ///
     /// # Errors
@@ -2789,6 +2817,15 @@ enum Command {
         entered: SyncSender<()>,
         reply: Reply<LocationAdmission>,
     },
+    #[cfg(test)]
+    AppendLocationWithWorkerFailureAfterWrite {
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: RideMapSegmentId,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        reply: Reply<LocationAdmission>,
+    },
     Summary {
         ride_id: RideId,
         reply: Reply<RideSummary>,
@@ -3147,6 +3184,27 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             #[cfg(test)]
             Command::AppendLocationWithWorkerFailure { entered, reply } => {
                 let _ = entered.send(());
+                drop(reply);
+                break;
+            }
+            #[cfg(test)]
+            Command::AppendLocationWithWorkerFailureAfterWrite {
+                ride_id,
+                sample,
+                segment_id,
+                telemetry_state,
+                entered,
+                reply,
+            } => {
+                let result = append_location(
+                    &mut connection,
+                    ride_id,
+                    sample,
+                    segment_id,
+                    telemetry_state,
+                );
+                let _ = entered.send(());
+                let _ = result;
                 drop(reply);
                 break;
             }
