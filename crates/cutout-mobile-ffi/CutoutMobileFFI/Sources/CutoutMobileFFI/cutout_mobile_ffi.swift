@@ -12276,6 +12276,10 @@ public struct MobileRideSummaryDto: Equatable, Hashable {
      * Accumulated path distance in millimetres.
      */
     public var distanceMillimetres: UInt64
+    /**
+     * Rust-derived average speed in millimetres per second, when meaningful.
+     */
+    public var averageSpeedMillimetresPerSecond: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -12285,9 +12289,13 @@ public struct MobileRideSummaryDto: Equatable, Hashable {
          */pointCount: UInt64,
         /**
          * Accumulated path distance in millimetres.
-         */distanceMillimetres: UInt64) {
+         */distanceMillimetres: UInt64,
+        /**
+         * Rust-derived average speed in millimetres per second, when meaningful.
+         */averageSpeedMillimetresPerSecond: UInt64?) {
         self.pointCount = pointCount
         self.distanceMillimetres = distanceMillimetres
+        self.averageSpeedMillimetresPerSecond = averageSpeedMillimetresPerSecond
     }
 
 
@@ -12307,13 +12315,15 @@ public struct FfiConverterTypeMobileRideSummaryDto: FfiConverterRustBuffer {
         return
             try MobileRideSummaryDto(
                 pointCount: FfiConverterUInt64.read(from: &buf),
-                distanceMillimetres: FfiConverterUInt64.read(from: &buf)
+                distanceMillimetres: FfiConverterUInt64.read(from: &buf),
+                averageSpeedMillimetresPerSecond: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileRideSummaryDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.pointCount, into: &buf)
         FfiConverterUInt64.write(value.distanceMillimetres, into: &buf)
+        FfiConverterOptionUInt64.write(value.averageSpeedMillimetresPerSecond, into: &buf)
     }
 }
 
