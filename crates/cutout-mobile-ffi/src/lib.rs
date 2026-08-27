@@ -3555,6 +3555,34 @@ pub struct MobileRideHistoryFilterDto {
     pub search_text: Option<String>,
 }
 
+/// Rust-owned bounds for the history overview's contextual route projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryContextBudgetDto {
+    /// Maximum number of history records loaded for contextual projection.
+    pub history_page_limit: u32,
+    /// Maximum number of non-selected routes returned.
+    pub max_routes: u32,
+    /// Maximum display points returned for one contextual route.
+    pub per_route_budget: u32,
+    /// Maximum display points returned across all contextual routes.
+    pub total_point_budget: u32,
+}
+
+/// Inputs for a bounded history overview context projection.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryContextOptionsDto {
+    /// Rust-owned history filters applied before route projection.
+    pub filter: MobileRideHistoryFilterDto,
+    /// Selected ride omitted from the subdued contextual routes, when present.
+    pub selected_ride_id: Option<MobileRideIdDto>,
+    /// Rust-enforced history and display bounds.
+    pub budget: MobileRideHistoryContextBudgetDto,
+    /// Optional inclusive viewport shared by every contextual route.
+    pub viewport: Option<MobileGeoBoundsDto>,
+    /// Privacy policy applied before coordinates cross the FFI boundary.
+    pub privacy: MobileRideMapRoutePrivacyPolicyDto,
+}
+
 /// One bounded ride-history projection.
 #[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileRideRecordDto {
@@ -3592,6 +3620,30 @@ pub struct MobileRideHistoryVehicleOptionDto {
 pub struct MobileRidePageDto {
     pub rides: Vec<MobileRideRecordDto>,
     pub next_cursor: Option<MobileRideCursorDto>,
+}
+
+/// One bounded contextual route paired with its stable ride identifier.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryContextRouteDto {
+    pub ride_id: MobileRideIdDto,
+    pub projection: MobileRideMapRouteProjectionDto,
+}
+
+/// Bounded route context for a history overview.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryContextProjectionDto {
+    /// Contextual routes in newest-first history order.
+    pub routes: Vec<MobileRideHistoryContextRouteDto>,
+    /// Number of records loaded from the bounded history page.
+    pub source_history_route_count: u64,
+    /// Number of eligible routes after selected-ride exclusion.
+    pub context_route_count: u64,
+    /// Total display points returned across contextual routes.
+    pub total_display_point_count: u64,
+    /// Whether route or aggregate point budgets omitted eligible context data.
+    pub routes_omitted_by_budget: bool,
+    /// Whether the bounded history page has another page after it.
+    pub history_page_has_more: bool,
 }
 
 /// Stable cursor for a subsequent route-point page.
@@ -3827,6 +3879,9 @@ pub enum MobileRideDatabaseError {
     /// Geographic query bounds were non-finite, out of range, or had reversed latitudes.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
+    /// The history context page or display budgets are outside Rust's supported bounds.
+    #[error("invalid history context budget")]
+    InvalidHistoryContextBudget,
     /// The route display budget, viewport, or privacy policy is invalid.
     #[error("invalid route projection")]
     InvalidRouteProjection,
@@ -3895,6 +3950,9 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         }
         persistence::StorageError::InvalidGeographicBounds => {
             MobileRideDatabaseError::InvalidGeographicBounds
+        }
+        persistence::StorageError::InvalidHistoryContextBudget { .. } => {
+            MobileRideDatabaseError::InvalidHistoryContextBudget
         }
         persistence::StorageError::PevcapLimitExceeded { .. } => {
             MobileRideDatabaseError::PevcapLimitExceeded
@@ -4160,6 +4218,28 @@ fn mobile_route_projection_dto(
             .map(ride_maps::RidePointSequence::as_u64),
         canonical_start_visible: projection.endpoint_metadata().start_visible(),
         canonical_end_visible: projection.endpoint_metadata().end_visible(),
+    }
+}
+
+fn mobile_history_context_projection_dto(
+    projection: &persistence::HistoryContextProjection,
+) -> MobileRideHistoryContextProjectionDto {
+    MobileRideHistoryContextProjectionDto {
+        routes: projection
+            .routes()
+            .iter()
+            .map(|route| MobileRideHistoryContextRouteDto {
+                ride_id: MobileRideIdDto {
+                    value: route.ride_id().uuid().to_string(),
+                },
+                projection: mobile_route_projection_dto(route.projection()),
+            })
+            .collect(),
+        source_history_route_count: projection.source_history_route_count(),
+        context_route_count: projection.context_route_count(),
+        total_display_point_count: projection.total_display_point_count(),
+        routes_omitted_by_budget: projection.routes_omitted_by_budget(),
+        history_page_has_more: projection.history_page_has_more(),
     }
 }
 
@@ -4609,6 +4689,51 @@ impl RideDatabaseHandle {
                 cancellation.inner.clone(),
             )
             .map(|projection| mobile_route_projection_dto(&projection))
+            .map_err(map_ride_database_error)
+    }
+
+    /// Projects bounded contextual routes for a history overview.
+    ///
+    /// The Rust worker owns history paging, selected-route exclusion, aggregate/per-route
+    /// display bounds, viewport filtering, privacy, endpoint, and segment metadata. Swift only
+    /// receives the bounded display projections.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the history filter, context budget, projection options,
+    /// or database worker is invalid or unavailable.
+    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
+    pub fn project_history_context(
+        &self,
+        options: MobileRideHistoryContextOptionsDto,
+    ) -> Result<MobileRideHistoryContextProjectionDto, MobileRideDatabaseError> {
+        let selected_ride = options
+            .selected_ride_id
+            .as_ref()
+            .map(parse_mobile_ride_id)
+            .transpose()?;
+        let route_options = MobileRideMapRouteProjectionOptionsDto {
+            viewport: options.viewport,
+            budget: options.budget.per_route_budget,
+            privacy: options.privacy,
+        };
+        let (viewport, _, privacy) = mobile_route_projection_options_for_database(&route_options)?;
+        let budget = persistence::HistoryContextBudget::new(
+            options.budget.history_page_limit,
+            options.budget.max_routes,
+            options.budget.per_route_budget,
+            options.budget.total_point_budget,
+        )
+        .map_err(map_ride_database_error)?;
+        self.inner
+            .project_history_context(
+                mobile_history_query(&options.filter),
+                selected_ride,
+                budget,
+                viewport,
+                privacy,
+            )
+            .map(|projection| mobile_history_context_projection_dto(&projection))
             .map_err(map_ride_database_error)
     }
 
@@ -15918,9 +16043,7 @@ mod tests {
                         MobileRideLocationDto {
                             latitude_degrees: 40.0 + f64::from(point_index) / 10_000.0,
                             longitude_degrees: -105.0,
-                            monotonic_milliseconds: ride_index * 10
-                                + point_index_milliseconds
-                                + 1,
+                            monotonic_milliseconds: ride_index * 10 + point_index_milliseconds + 1,
                             wall_clock_unix_milliseconds: 1_700_000_000_000
                                 + ride_index * 10
                                 + point_index_milliseconds,
@@ -15959,10 +16082,12 @@ mod tests {
         assert_eq!(projection.total_display_point_count, 4);
         assert!(!projection.routes_omitted_by_budget);
         assert!(!projection.history_page_has_more);
-        assert!(projection
-            .routes
-            .iter()
-            .all(|route| route.ride_id != rides[1] && route.projection.points.len() <= 3));
+        assert!(
+            projection
+                .routes
+                .iter()
+                .all(|route| route.ride_id != rides[1] && route.projection.points.len() <= 3)
+        );
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
