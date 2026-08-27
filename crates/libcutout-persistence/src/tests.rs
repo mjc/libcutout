@@ -9,9 +9,10 @@ use cutout_core::{
 };
 use cutout_ride_maps::{
     Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
-    MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideMapSegmentId, RidePointSequence,
-    RideSegmentStartReason, RouteDisplayBudget, RoutePrivacyGridE7, RoutePrivacyPolicy,
-    RouteTelemetryState, RouteViewport, WallClockUnixMilliseconds,
+    MAX_LIVE_ROUTE_POINTS, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
+    RideMapSegmentId, RidePointSequence, RideSegmentStartReason, RouteDisplayBudget,
+    RoutePrivacyGridE7, RoutePrivacyPolicy, RouteTelemetryState, RouteViewport,
+    WallClockUnixMilliseconds,
 };
 use rusqlite::Connection;
 
@@ -2671,6 +2672,54 @@ fn current_schema_requires_segment_point_counts() {
         RideDatabase::open(&path),
         Err(StorageError::InvalidDatabaseIdentity)
     ));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_projection_keeps_long_routes_bounded_with_exact_source_counts() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-long-route-projection-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0..=MAX_ROUTE_DISPLAY_POINTS {
+        let sequence = u64::try_from(sequence).unwrap();
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(
+                40.0 + f64::from(u32::try_from(sequence).unwrap()) / 1_000_000.0,
+                -105.0,
+            )
+            .unwrap(),
+            sequence + 1,
+            1_700_000_000_000 + sequence,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let projection = database
+        .project_route_points(
+            ride,
+            None,
+            RouteDisplayBudget::new(64).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+    assert_eq!(
+        projection.source_point_count(),
+        u64::try_from(MAX_ROUTE_DISPLAY_POINTS + 1).unwrap()
+    );
+    assert_eq!(projection.source_segment_count(), 1);
+    assert!(projection.points().len() <= 64);
+
+    database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
 
