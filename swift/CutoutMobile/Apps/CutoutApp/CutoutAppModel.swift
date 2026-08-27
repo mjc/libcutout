@@ -13,6 +13,19 @@ private enum RideSessionRestorationState {
 @MainActor
 @Observable
 final class CutoutAppModel {
+    enum RideMapMode: String {
+        case live
+        case history
+    }
+
+    enum RideMapHistoryDateFilter: String {
+        case last30Days
+        case allTime
+    }
+
+    private static let rideMapPreviewPointLimit = 4_096
+    private static let rideMapHistoryPreviewPointLimit: UInt32 = 16_384
+
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
     private(set) var devicePickerScanState: DevicePickerScanState?
@@ -23,6 +36,55 @@ final class CutoutAppModel {
     private(set) var phoneLocationReadback = PhoneLocationReadback(
         snapshot: MobilePhoneLocationSnapshotDto(latestSample: nil, gpsSpeed: nil)
     )
+    private(set) var rideMapSnapshot: MobileRideMapSnapshotDto?
+    private(set) var rideMapStorageError: String?
+    private(set) var rideMapAvailability = MobileRideMapAvailability.checking
+    private(set) var rideMapLiveError: MobileRideMapError?
+    private(set) var rideMapHistoryError: MobileRideMapError?
+    private(set) var rideMapHistoryRouteError: MobileRideMapError?
+    private(set) var rideMapHistoryDetailRouteError: MobileRideMapError?
+    private(set) var rideMapPoints = [MobileRideMapPointDto]()
+    private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
+    private(set) var rideMapLiveSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapLiveBackgroundGapCount: UInt64 = 0
+    private(set) var rideMapLivePointsTruncated = false
+    private(set) var rideMapLiveSegmentsOmittedByBudget = false
+    private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
+    private(set) var rideMapHistoryCanLoadMore = false
+    var rideMapHistorySearchText = ""
+    private(set) var rideMapHistoryDateFilter = RideMapHistoryDateFilter.last30Days
+    private(set) var rideMapHistoryVehicleFilter: String?
+    private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
+    private(set) var rideMapHistorySegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapHistoryBackgroundGapCount: UInt64 = 0
+    private(set) var rideMapHistoryPointsTruncated = false
+    private(set) var rideMapHistorySegmentsOmittedByBudget = false
+    private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
+    private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
+    private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapHistoryDetailBackgroundGapCount: UInt64 = 0
+    private(set) var rideMapHistoryDetailPointsTruncated = false
+    private(set) var rideMapHistoryDetailSourcePointsOmittedByBudget = false
+    private(set) var rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
+    private(set) var rideMapHistoryDetailSegmentsOmittedByBudget = false
+    private(set) var rideMapHistoryContextRoutes = [MobileRideMapHistoryContextRoute]()
+    private(set) var rideMapHistoryContextProjection: MobileRideMapHistoryContextProjection?
+    private(set) var rideMapHistoryProjectionVersion: UInt64 = 0
+    private(set) var rideMapHistoryDetailProjectionVersion: UInt64 = 0
+    private(set) var rideMapHistoryRouteLoading = false
+    private(set) var rideMapHistoryDetailRouteLoading = false
+    private(set) var rideMapHistoryVehicleIdentities = [String]()
+    private(set) var rideMapHistoryVehicleNames = [String: String]()
+    private(set) var selectedRideMapHistoryID: String?
+    private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
+    var rideMapMode = RideMapMode.live
+    private(set) var rideMapHistoryLoading = false
+
+    /// Compatibility projection for callers that only display the live map.
+    /// New route presentations should use the explicitly scoped error properties.
+    var rideMapError: MobileRideMapError? { rideMapLiveError }
     private(set) var captureStatus: CaptureStatus?
     private(set) var captureProgress: CaptureProgress?
     private(set) var liveActivityError: LiveActivityRideLifecycleError?
@@ -36,6 +98,51 @@ final class CutoutAppModel {
         connectionState.selection?.title
     }
 
+    /// Stable identity/name pair used to relabel persisted ride-history vehicles.
+    /// The persisted selection is the fallback when the connection state has not rebuilt yet.
+    var rideMapVehicleIdentity: String? {
+        connectionState.selection?.platformIdentifier ?? selectedDeviceStore.platformIdentifier
+    }
+
+    var rideMapVehicleName: String? {
+        if let identity = rideMapVehicleIdentity,
+           let persisted = selectedDeviceStore.displayName(for: identity) {
+            return persisted
+        }
+        if let identity = rideMapVehicleIdentity,
+           let candidate = core.protocolIdentityCandidate,
+           candidate.platformIdentifier == identity,
+           candidate.displayName != identity,
+           !candidate.displayName.isEmpty {
+            return candidate.displayName
+        }
+        guard let identity = rideMapVehicleIdentity else {
+            return connectionState.selection?.title
+        }
+        return Self.meaningfulDeviceName(connectionState.selection?.title, identity: identity)
+            ?? Self.meaningfulDeviceName(
+                devicePickerScanState?.rows.first(where: { $0.id == identity })?.title,
+                identity: identity
+            )
+    }
+
+    func rideMapVehicleName(for identity: String?) -> String? {
+        guard let identity else { return nil }
+        return rideMapHistoryVehicleNames[identity]
+            ?? selectedDeviceStore.displayName(for: identity)
+            ?? (identity == rideMapVehicleIdentity ? rideMapVehicleName : nil)
+    }
+
+    static func meaningfulDeviceName(_ candidate: String?, identity: String) -> String? {
+        guard let candidate,
+              !candidate.isEmpty,
+              candidate != identity
+        else {
+            return nil
+        }
+        return candidate
+    }
+
     var selectedConnectionRoute: DevicePickerConnectionRoute? {
         connectionState.selection?.route
     }
@@ -46,6 +153,14 @@ final class CutoutAppModel {
 
     var currentMonotonicTime: MonotonicMilliseconds {
         core.now()
+    }
+
+    var isRideMapRecording: Bool {
+        rideMapSnapshot?.state == .recording
+    }
+
+    var isRideMapPaused: Bool {
+        rideMapSnapshot?.state == .paused
     }
 
     var rideState: EucRideScreenState {
@@ -87,6 +202,20 @@ final class CutoutAppModel {
     private var permitsStoredDeviceAutoPairing = true
     private var rideSessionRestorationState = RideSessionRestorationState.complete
     private var restorationMarkerAtLaunch: Data?
+    private var rideMapHistoryCursor: MobileRideCursorDto?
+    private var rideMapHistoryQueryDateAfterMilliseconds: UInt64?
+    private var rideMapHistoryLoadTask: Task<Void, Never>?
+    private var rideMapHistoryPageTask: Task<Void, Never>?
+    private var rideMapHistorySelectionTask: Task<Void, Never>?
+    private var rideMapHistorySelectionCancellation: MobileRideMapProjectionCancellation?
+    private var rideMapHistoryViewportTask: Task<Void, Never>?
+    private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
+    private var rideMapHistoryContextTask: Task<Void, Never>?
+    private var rideMapRestoreTask: Task<Void, Never>?
+    private var rideMapLiveProjectionTask: Task<Void, Never>?
+    private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
+    private var rideMapLiveProjectionGeneration: UInt64 = 0
+    private var rideMapLiveProjectionEnabled = false
     private static let liveActivityUpdateIntervalMilliseconds: UInt64 = 1_000
 
     convenience init() {
@@ -128,6 +257,8 @@ final class CutoutAppModel {
     ) {
         self.permitsStoredDeviceAutoPairing = permitsStoredDeviceAutoPairing
         self.core = core
+        rideMapStorageError = core.rideMapStorageError
+        rideMapAvailability = core.rideMapAvailability
         liveActivityCoordinator = LiveActivityRideLifecycleCoordinator(
             manager: liveActivityManager,
             sessionState: core.rideSessionStateHandle,
@@ -136,6 +267,7 @@ final class CutoutAppModel {
         self.selectedDeviceStore = selectedDeviceStore
         self.rideSessionMarkerStore = rideSessionMarkerStore
         hasSavedDevice = selectedDeviceStore.platformIdentifier != nil
+        restoreRideMapState()
         self.core.onDisplayStateChange = { [weak self] displayState in
             self?.displayState = displayState
             self?.syncLiveActivity()
@@ -162,6 +294,18 @@ final class CutoutAppModel {
         self.core.onPhoneLocationSnapshotChange = { [weak self] snapshot, receivedAt in
             self?.phoneLocationReadback = PhoneLocationReadback(snapshot: snapshot, receivedAt: receivedAt)
         }
+        self.core.onRideMapDecisionChange = { [weak self] snapshot, decision in
+            self?.applyRideMapDecision(snapshot: snapshot, decision: decision)
+        }
+        self.core.onRideMapSnapshotChange = { [weak self] snapshot in
+            self?.rideMapSnapshot = snapshot
+        }
+        self.core.onRideMapErrorChange = { [weak self] error in
+            self?.rideMapLiveError = error
+        }
+        self.core.onRideMapAvailabilityChange = { [weak self] availability in
+            self?.rideMapAvailability = availability
+        }
         self.core.onProtocolIdentityCandidateChange = { [weak self] candidate in
             self?.applyProtocolIdentityCandidate(candidate)
         }
@@ -173,6 +317,48 @@ final class CutoutAppModel {
         }
     }
 
+    private func restoreRideMapState() {
+        let state = core.rideMapStateHandle
+        rideMapSnapshot = state.currentSnapshot()
+        guard rideMapSnapshot != nil else { return }
+        rideMapRestoreTask?.cancel()
+        let previewLimit = Self.rideMapPreviewPointLimit
+        let restorationGeneration = rideMapLiveProjectionGeneration
+        rideMapRestoreTask = Task { [weak self] in
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    try Self.collectRideMapActiveTail(
+                        state: state,
+                        previewLimit: previewLimit
+                    )
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                guard Self.shouldApplyRestoredLiveProjection(
+                    restorationGeneration: restorationGeneration,
+                    currentGeneration: self.rideMapLiveProjectionGeneration,
+                    liveProjectionEnabled: self.rideMapLiveProjectionEnabled
+                ) else {
+                    return
+                }
+                guard let result else { return }
+                self.rideMapPoints = Array(result.0.suffix(previewLimit))
+                self.applyLiveProjection(result.1)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                guard Self.shouldApplyRestoredLiveProjection(
+                    restorationGeneration: restorationGeneration,
+                    currentGeneration: self.rideMapLiveProjectionGeneration,
+                    liveProjectionEnabled: self.rideMapLiveProjectionEnabled
+                ) else {
+                    return
+                }
+                self.rideMapLiveError = Self.mapRideMapError(error)
+                self.rideMapPoints = []
+                self.clearLiveProjectionState()
+            }
+        }
+    }
+
     func start() {
         guard hasStarted == false else { return }
         hasStarted = true
@@ -180,6 +366,772 @@ final class CutoutAppModel {
         restorationMarkerAtLaunch = rideSessionMarkerStore.marker
         rideSessionRestorationState = .awaitingBluetooth
         core.start()
+    }
+
+    @discardableResult
+    func startGpsOnlyRide() -> Bool {
+        let started = applyRideMapCommand(resetPoints: true) {
+            try core.startRideMapGpsOnly(
+                atMs: currentMonotonicTime.rawValue,
+                lastConnectedVehicle: selectedDeviceStore.platformIdentifier
+            )
+        }
+        if started {
+            core.resetRideMapLocationAdmission()
+        }
+        return started
+    }
+
+    @discardableResult
+    func pauseRideMap() -> Bool {
+        applyRideMapCommand {
+            try core.pauseRideMap(atMs: currentMonotonicTime.rawValue)
+        }
+    }
+
+    @discardableResult
+    func resumeRideMap() -> Bool {
+        applyRideMapCommand {
+            try core.resumeRideMap(atMs: currentMonotonicTime.rawValue)
+        }
+    }
+
+    @discardableResult
+    func stopRideMap() -> Bool {
+        let stopped = applyRideMapCommand {
+            try core.stopRideMap(atMs: currentMonotonicTime.rawValue)
+        }
+        if stopped {
+            invalidateLiveProjection(clearPoints: false)
+        }
+        return stopped
+    }
+
+    func refreshRideMapDuration() {
+        guard let snapshot = core.rideMapStateHandle.currentSnapshot(atMs: currentMonotonicTime.rawValue),
+              snapshot.state == .recording
+        else {
+            return
+        }
+        rideMapSnapshot = snapshot
+    }
+
+    @discardableResult
+    func saveRideMap() -> Bool {
+        guard applyRideMapCommand({ try core.saveRideMap() }) else {
+            return false
+        }
+        invalidateLiveProjection(clearPoints: false)
+        loadRideMapHistory()
+        return true
+    }
+
+    @discardableResult
+    func discardRideMap() -> Bool {
+        guard applyRideMapCommand({ try core.discardRideMap() }) else {
+            return false
+        }
+        invalidateLiveProjection(clearPoints: true)
+        clearRideMapHistoryRouteProjection()
+        rideMapHistoryRouteLoading = false
+        rideMapHistoryDetailRouteError = nil
+        rideMapHistoryDetailRouteLoading = false
+        loadRideMapHistory()
+        return true
+    }
+
+    func loadRideMapHistory(selecting requestedRideID: String? = nil) {
+        rideMapHistoryLoadTask?.cancel()
+        rideMapHistoryPageTask?.cancel()
+        // A reload changes the query that owns the selected route. Do not let an
+        // older route request repopulate points after the new page arrives.
+        rideMapHistorySelectionTask?.cancel()
+        rideMapHistorySelectionCancellation?.cancel()
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextTask = nil
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+        rideMapHistoryError = nil
+        rideMapHistoryRouteError = nil
+        rideMapHistoryDetailRouteError = nil
+        rideMapHistoryLoading = true
+        rideMapHistoryRouteLoading = false
+        rideMapHistoryDetailRouteLoading = false
+        rideMapHistoryQueryDateAfterMilliseconds = historyDateAfterMilliseconds
+        if let rideMapStorageError {
+            rideMapHistoryLoading = false
+            rideMapHistoryError = .Storage(rideMapStorageError)
+            return
+        }
+        let state = core.rideMapStateHandle
+        let filter = rideMapHistoryFilter
+        let existingSelectedID = selectedRideMapHistoryID
+        rideMapHistoryLoadTask = Task { [weak self] in
+            do {
+                let result = try await Task.detached(priority: .userInitiated) {
+                    let page = try state.storedHistoryPage(cursor: nil, limit: 50, filter: filter)
+                    let vehicleOptions = try state.storedHistoryVehicleOptions()
+                    var summaries = page.summaries
+                    if let requestedRideID,
+                       summaries.contains(where: { $0.rideId == requestedRideID }) == false,
+                       let requestedRide = try state.storedHistoryRide(rideID: requestedRideID)
+                    {
+                        summaries.append(requestedRide)
+                    }
+                    return (summaries, page.nextCursor, vehicleOptions)
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryLoading = false
+                self.rideMapHistory = result.0
+                self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
+                    existing: result.2.map(\.platformIdentifier),
+                    incoming: result.0.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                )
+                self.rideMapHistoryVehicleNames = Self.rideMapHistoryVehicleNames(
+                    result.2,
+                    summaries: result.0
+                )
+                self.rideMapHistoryCursor = result.1
+                self.rideMapHistoryCanLoadMore = result.1 != nil
+                self.rideMapHistoryError = nil
+                let selectionError = Self.historySelectionError(
+                    requestedID: requestedRideID,
+                    summaryIDs: result.0.map(\.rideId)
+                )
+                let selectedID = Self.preferredHistorySelection(
+                    requestedID: requestedRideID,
+                    currentID: existingSelectedID,
+                    summaries: result.0
+                )
+                guard let selectedID else {
+                    self.selectedRideMapHistoryID = nil
+                    self.clearRideMapHistoryRouteProjection()
+                    self.rideMapHistoryRouteLoading = false
+                    self.rideMapHistoryRouteError = selectionError
+                    self.rideMapHistoryDetailRouteError = selectionError
+                    self.rideMapHistoryDetailRouteLoading = false
+                    return
+                }
+                self.selectRideMapHistory(selectedID)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryLoading = false
+                // Preserve the last good page so a transient storage failure does not
+                // turn an otherwise usable history screen into an empty state.
+                self.rideMapHistoryError = Self.mapRideMapError(error)
+                self.rideMapHistoryRouteLoading = false
+                self.rideMapHistoryDetailRouteLoading = false
+                self.rideMapHistorySegmentsOmittedByBudget = false
+                self.rideMapHistoryDetailSegmentsOmittedByBudget = false
+            }
+        }
+    }
+
+    @MainActor
+    static func preferredHistorySelection(
+        requestedID: String?,
+        currentID: String?,
+        summaries: [MobileRideMapHistorySummaryDto]
+    ) -> String? {
+        preferredHistorySelection(
+            requestedID: requestedID,
+            currentID: currentID,
+            summaryIDs: summaries.map(\.rideId)
+        )
+    }
+
+    @MainActor
+    static func preferredHistorySelection(
+        requestedID: String?,
+        currentID: String?,
+        summaryIDs: [String]
+    ) -> String? {
+        if let requestedID {
+            return summaryIDs.first(where: { $0 == requestedID })
+        }
+        return summaryIDs.first(where: { $0 == currentID }) ?? summaryIDs.first
+    }
+
+    @MainActor
+    static func historySelectionError(
+        requestedID: String?,
+        summaryIDs: [String]
+    ) -> MobileRideMapError? {
+        guard let requestedID, summaryIDs.contains(requestedID) == false else { return nil }
+        return .RideNotFound
+    }
+
+    @MainActor
+    static func appendingUniqueHistory<T>(
+        existing: [T],
+        incoming: [T],
+        id: (T) -> String
+    ) -> [T] {
+        var seen = Set(existing.map(id))
+        return existing + incoming.filter { seen.insert(id($0)).inserted }
+    }
+
+    @MainActor
+    static func mergeRideMapHistoryVehicleIdentities(
+        existing: [String],
+        incoming: [String]
+    ) -> [String] {
+        Array(Set(existing + incoming)).sorted()
+    }
+
+    @MainActor
+    static func rideMapHistoryVehicleNames(
+        _ options: [MobileRideMapHistoryVehicleOptionDto],
+        summaries: [MobileRideMapHistorySummaryDto]
+    ) -> [String: String] {
+        var names = Dictionary(
+            uniqueKeysWithValues: options.compactMap { option in
+                option.displayName.map { (option.platformIdentifier, $0) }
+            }
+        )
+        for summary in summaries {
+            if let identity = summary.associatedVehicle,
+               let name = summary.associatedVehicleName
+            {
+                names[identity] = name
+            }
+            if let identity = summary.candidateVehicle,
+               let name = summary.candidateVehicleName
+            {
+                names[identity] = name
+            }
+        }
+        return names
+    }
+
+    @MainActor
+    static func mergeRideMapHistoryVehicleNames(
+        existing: [String: String],
+        incoming: [MobileRideMapHistorySummaryDto]
+    ) -> [String: String] {
+        var names = existing
+        for summary in incoming {
+            if let identity = summary.associatedVehicle,
+               let name = summary.associatedVehicleName
+            {
+                names[identity] = name
+            }
+            if let identity = summary.candidateVehicle,
+               let name = summary.candidateVehicleName
+            {
+                names[identity] = name
+            }
+        }
+        return names
+    }
+
+    func loadMoreRideMapHistory() {
+        guard rideMapHistoryCanLoadMore else { return }
+        rideMapHistoryPageTask?.cancel()
+        let state = core.rideMapStateHandle
+        let cursor = rideMapHistoryCursor
+        let filter = rideMapHistoryFilter
+        rideMapHistoryPageTask = Task { [weak self] in
+            do {
+                let page = try await Task.detached(priority: .userInitiated) {
+                    try state.storedHistoryPage(cursor: cursor, limit: 50, filter: filter)
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistory = Self.appendingUniqueHistory(
+                    existing: self.rideMapHistory,
+                    incoming: page.summaries,
+                    id: \.rideId
+                )
+                self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
+                    existing: self.rideMapHistoryVehicleIdentities,
+                    incoming: page.summaries.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                )
+                self.rideMapHistoryVehicleNames = Self.mergeRideMapHistoryVehicleNames(
+                    existing: self.rideMapHistoryVehicleNames,
+                    incoming: page.summaries
+                )
+                self.rideMapHistoryCursor = page.nextCursor
+                self.rideMapHistoryCanLoadMore = page.nextCursor != nil
+                self.rideMapHistoryError = nil
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryError = Self.mapRideMapError(error)
+            }
+        }
+    }
+
+    var filteredRideMapHistory: [MobileRideMapHistorySummaryDto] {
+        rideMapHistory
+    }
+
+    func setRideMapHistoryDateFilter(_ filter: RideMapHistoryDateFilter) {
+        guard rideMapHistoryDateFilter != filter else { return }
+        rideMapHistoryDateFilter = filter
+        loadRideMapHistory()
+    }
+
+    func setRideMapHistoryVehicleFilter(_ identity: String?) {
+        guard rideMapHistoryVehicleFilter != identity else { return }
+        rideMapHistoryVehicleFilter = identity
+        loadRideMapHistory()
+    }
+
+    func clearRideMapHistoryFilters() {
+        rideMapHistorySearchText = ""
+        rideMapHistoryDateFilter = .last30Days
+        rideMapHistoryVehicleFilter = nil
+        loadRideMapHistory()
+    }
+
+    private var historyDateAfterMilliseconds: UInt64? {
+        guard rideMapHistoryDateFilter == .last30Days else { return nil }
+        let milliseconds = Date().addingTimeInterval(-30 * 24 * 60 * 60).timeIntervalSince1970 * 1_000
+        return milliseconds.isFinite && milliseconds > 0 ? UInt64(milliseconds) : 0
+    }
+
+    private var rideMapHistoryFilter: MobileRideHistoryFilterDto {
+        MobileRideHistoryFilterDto(
+            createdAfterMilliseconds: rideMapHistoryQueryDateAfterMilliseconds ?? historyDateAfterMilliseconds,
+            vehicleIdentity: rideMapHistoryVehicleFilter,
+            searchText: RideMapHistoryContentView.normalizedSearchText(rideMapHistorySearchText)
+        )
+    }
+
+    func selectRideMapHistory(_ rideID: String) {
+        selectRideMapHistory(rideID, requestedPointLimit: Self.rideMapPreviewPointLimit)
+    }
+
+    static func detailPointsAreTruncated(
+        sourcePointsOmittedByBudget: Bool,
+        viewportPointsOmittedByBudget: Bool
+    ) -> Bool {
+        sourcePointsOmittedByBudget || viewportPointsOmittedByBudget
+    }
+
+    static func detailSegmentsAreOmitted(
+        sourceSegmentsOmittedByBudget: Bool,
+        viewportSegmentsOmittedByBudget: Bool
+    ) -> Bool {
+        sourceSegmentsOmittedByBudget || viewportSegmentsOmittedByBudget
+    }
+
+    func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
+        guard let viewport,
+              let selectedRideMapHistoryID,
+              rideMapHistory.contains(where: { $0.rideId == selectedRideMapHistoryID })
+        else {
+            return
+        }
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
+        rideMapHistoryDetailRouteError = nil
+        rideMapHistoryDetailRouteLoading = true
+        let cancellation = MobileRideMapProjectionCancellation()
+        rideMapHistoryViewportCancellation = cancellation
+        let state = core.rideMapStateHandle
+        let budget = Self.rideMapHistoryPreviewPointLimit
+        rideMapHistoryViewportTask = Task { [weak self] in
+            do {
+                let result = try await withTaskCancellationHandler(operation: {
+                    try await Task.detached(priority: .userInitiated) {
+                        try state.projectStoredPoints(
+                            rideID: selectedRideMapHistoryID,
+                            budget: budget,
+                            viewport: viewport,
+                            cancellation: cancellation
+                        )
+                    }.value
+                }, onCancel: {
+                    cancellation.cancel()
+                })
+                guard !Task.isCancelled, let self else { return }
+                self.replaceRideMapHistoryDetailDisplayPoints(
+                    result.points,
+                    endpointMetadata: result.endpointMetadata,
+                    segments: result.segments,
+                    backgroundGapCount: result.backgroundGapCount,
+                    truncated: Self.detailPointsAreTruncated(
+                        sourcePointsOmittedByBudget: self.rideMapHistoryDetailSourcePointsOmittedByBudget,
+                        viewportPointsOmittedByBudget: result.pointsOmittedByBudget
+                    ),
+                    segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
+                        sourceSegmentsOmittedByBudget: self.rideMapHistoryDetailSourceSegmentsOmittedByBudget,
+                        viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
+                    )
+                )
+                self.rideMapHistoryDetailRouteError = nil
+                self.rideMapHistoryDetailRouteLoading = false
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                let mappedError = Self.mapRideMapError(error)
+                if mappedError == .cancelled {
+                    return
+                }
+                self.rideMapHistoryDetailRouteError = mappedError
+                self.rideMapHistoryDetailRouteLoading = false
+                self.rideMapHistoryDetailEndpointMetadata = .empty
+                self.rideMapHistoryDetailSegments = []
+                self.rideMapHistoryDetailBackgroundGapCount = 0
+            }
+        }
+    }
+
+    /// Loads the largest Rust-bounded route preview, never an unbounded route.
+    func loadRoutePreviewMapHistory() {
+        guard let selectedRideMapHistoryID else { return }
+        selectRideMapHistory(selectedRideMapHistoryID, requestedPointLimit: nil)
+    }
+
+    private func selectRideMapHistory(_ rideID: String, requestedPointLimit: Int?) {
+        guard rideMapHistory.contains(where: { $0.rideId == rideID }) else {
+            rideMapHistoryRouteLoading = false
+            rideMapHistoryRouteError = nil
+            rideMapHistoryDetailRouteLoading = false
+            rideMapHistoryDetailRouteError = nil
+            return
+        }
+        rideMapHistorySelectionTask?.cancel()
+        rideMapHistorySelectionCancellation?.cancel()
+        rideMapHistoryViewportCancellation?.cancel()
+        rideMapHistoryViewportTask?.cancel()
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextTask = nil
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+        let selectingDifferentRide = selectedRideMapHistoryID != rideID
+        if selectingDifferentRide {
+            clearRideMapHistoryRouteProjection()
+        }
+        selectedRideMapHistoryID = rideID
+        rideMapHistoryRouteError = nil
+        rideMapHistoryDetailRouteError = nil
+        rideMapHistoryRouteLoading = true
+        rideMapHistoryDetailRouteLoading = true
+        let state = core.rideMapStateHandle
+        let cancellation = MobileRideMapProjectionCancellation()
+        rideMapHistorySelectionCancellation = cancellation
+        let budget = UInt32(
+            min(
+                requestedPointLimit ?? Int(Self.rideMapHistoryPreviewPointLimit),
+                Int(Self.rideMapHistoryPreviewPointLimit)
+            )
+        )
+        rideMapHistorySelectionTask = Task { [weak self] in
+            do {
+                let result = try await withTaskCancellationHandler(operation: {
+                    try await Task.detached(priority: .userInitiated) {
+                        try state.projectStoredPoints(
+                            rideID: rideID,
+                            budget: budget,
+                            cancellation: cancellation
+                        )
+                    }.value
+                }, onCancel: {
+                    cancellation.cancel()
+                })
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryRouteError = nil
+                self.rideMapHistoryDetailRouteError = nil
+                self.replaceRideMapHistoryDisplayPoints(
+                    result.points,
+                    endpointMetadata: result.endpointMetadata,
+                    segments: result.segments,
+                    backgroundGapCount: result.backgroundGapCount,
+                    truncated: result.pointsOmittedByBudget,
+                    segmentsOmittedByBudget: result.segmentsOmittedByBudget
+                )
+                self.rideMapHistoryDetailSourcePointsOmittedByBudget = result.pointsOmittedByBudget
+                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = result.segmentsOmittedByBudget
+                self.replaceRideMapHistoryDetailDisplayPoints(
+                    result.points,
+                    endpointMetadata: result.endpointMetadata,
+                    segments: result.segments,
+                    backgroundGapCount: result.backgroundGapCount,
+                    truncated: result.pointsOmittedByBudget,
+                    segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
+                        sourceSegmentsOmittedByBudget: self.rideMapHistoryDetailSourceSegmentsOmittedByBudget,
+                        viewportSegmentsOmittedByBudget: result.segmentsOmittedByBudget
+                    )
+                )
+                self.rideMapHistoryRouteLoading = false
+                self.rideMapHistoryDetailRouteLoading = false
+                self.projectRideMapHistoryContext(for: rideID)
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.rideMapHistoryRouteError = Self.mapRideMapError(error)
+                self.rideMapHistoryRouteLoading = false
+                self.rideMapHistoryDetailRouteError = self.rideMapHistoryRouteError
+                self.rideMapHistoryDetailRouteLoading = false
+                self.replaceRideMapHistoryDisplayPoints(
+                    self.rideMapHistoryDisplayPoints,
+                    endpointMetadata: .empty,
+                    segments: [],
+                    backgroundGapCount: 0,
+                    truncated: false,
+                    segmentsOmittedByBudget: false
+                )
+                self.rideMapHistoryDetailSegmentsOmittedByBudget = false
+                self.rideMapHistoryDetailSourcePointsOmittedByBudget = false
+                self.rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
+                self.rideMapHistoryEndpointMetadata = .empty
+                self.rideMapHistoryDetailEndpointMetadata = .empty
+                self.rideMapHistorySegments = []
+                self.rideMapHistoryDetailSegments = []
+                self.rideMapHistoryBackgroundGapCount = 0
+                self.rideMapHistoryDetailBackgroundGapCount = 0
+            }
+        }
+    }
+
+    private static func mapRideMapError(_ error: Error) -> MobileRideMapError {
+        if let error = error as? MobileRideMapError {
+            return error
+        }
+        return .Storage(String(describing: error))
+    }
+
+    private func replaceRideMapHistoryDisplayPoints(
+        _ points: [MobileRideMapRouteDisplayPoint],
+        endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
+        segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        backgroundGapCount: UInt64 = 0,
+        truncated: Bool,
+        segmentsOmittedByBudget: Bool = false
+    ) {
+        rideMapHistoryDisplayPoints = points
+        rideMapHistoryEndpointMetadata = endpointMetadata
+        rideMapHistorySegments = segments
+        rideMapHistoryBackgroundGapCount = backgroundGapCount
+        rideMapHistoryPointsTruncated = truncated
+        rideMapHistorySegmentsOmittedByBudget = segmentsOmittedByBudget
+        rideMapHistoryProjectionVersion &+= 1
+    }
+
+    private func replaceRideMapHistoryDetailDisplayPoints(
+        _ points: [MobileRideMapRouteDisplayPoint],
+        endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
+        segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        backgroundGapCount: UInt64 = 0,
+        truncated: Bool,
+        segmentsOmittedByBudget: Bool = false
+    ) {
+        rideMapHistoryDetailDisplayPoints = points
+        rideMapHistoryDetailEndpointMetadata = endpointMetadata
+        rideMapHistoryDetailSegments = segments
+        rideMapHistoryDetailBackgroundGapCount = backgroundGapCount
+        rideMapHistoryDetailPointsTruncated = truncated
+        rideMapHistoryDetailSegmentsOmittedByBudget = segmentsOmittedByBudget
+        rideMapHistoryDetailProjectionVersion &+= 1
+    }
+
+    private func clearRideMapHistoryRouteProjection() {
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextTask = nil
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+        replaceRideMapHistoryDisplayPoints([], truncated: false)
+        rideMapHistoryDetailSourcePointsOmittedByBudget = false
+        rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
+        replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+    }
+
+    /// Loads the bounded surrounding-route context for the selected history ride. Rust performs
+    /// history filtering, route projection, privacy, and all point budgeting; Swift stores only
+    /// the already-bounded display projections needed by the map canvas.
+    private func projectRideMapHistoryContext(for rideID: String) {
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+        let state = core.rideMapStateHandle
+        let filter = rideMapHistoryFilter
+        let budget = MobileRideMapHistoryContextBudget.overview
+        rideMapHistoryContextTask = Task { [weak self] in
+            do {
+                let projection = try await Task.detached(priority: .userInitiated) {
+                    try state.projectStoredHistoryContext(
+                        filter: filter,
+                        selectedRideID: rideID,
+                        budget: budget
+                    )
+                }.value
+                guard !Task.isCancelled, let self,
+                      self.selectedRideMapHistoryID == rideID
+                else { return }
+                self.rideMapHistoryContextProjection = projection
+                self.rideMapHistoryContextRoutes = projection.routes
+            } catch {
+                guard !Task.isCancelled, let self,
+                      self.selectedRideMapHistoryID == rideID
+                else { return }
+                // Context is supplementary. Keep the selected route usable if this bounded
+                // secondary projection fails, while ensuring stale context cannot remain visible.
+                self.rideMapHistoryContextProjection = nil
+                self.rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+            }
+        }
+    }
+
+    private nonisolated static func collectRideMapActiveTail(
+        state: MobileRideMapState,
+        previewLimit: Int
+    ) throws -> ([MobileRideMapPointDto], MobileRideMapRouteProjection)? {
+        guard let tail = try state.latestRoutePoints() else {
+            return nil
+        }
+        let projection = try state.projectPoints(budget: UInt32(previewLimit))
+        return (tail.points, projection)
+    }
+
+    /// Keeps the Swift route-truth input bounded to the Rust live-route preview tail.
+    static func appendBoundedRideMapPoint(
+        _ point: MobileRideMapPointDto,
+        to points: inout [MobileRideMapPointDto],
+        limit: Int
+    ) {
+        points.append(point)
+        if points.count > limit {
+            points.removeFirst(points.count - limit)
+        }
+    }
+
+    static func shouldApplyLiveProjection(
+        generation: UInt64,
+        currentGeneration: UInt64,
+        enabled: Bool
+    ) -> Bool {
+        enabled && generation == currentGeneration
+    }
+
+    static func shouldApplyRestoredLiveProjection(
+        restorationGeneration: UInt64,
+        currentGeneration: UInt64,
+        liveProjectionEnabled: Bool
+    ) -> Bool {
+        !liveProjectionEnabled && restorationGeneration == currentGeneration
+    }
+
+    private func applyRideMapDecision(
+        snapshot: MobileRideMapSnapshotDto,
+        decision: MobileRideMapDecisionDto
+    ) {
+        rideMapLiveError = nil
+        rideMapSnapshot = snapshot
+        rideMapLastDecision = decision
+        if case let .accepted(point, _) = decision {
+            Self.appendBoundedRideMapPoint(
+                point,
+                to: &rideMapPoints,
+                limit: Self.rideMapPreviewPointLimit
+            )
+            requestLiveProjection()
+        }
+    }
+
+    /// Serializes live projections while allowing a burst of accepted points to coalesce.
+    ///
+    /// The Rust projection snapshots the recorder before doing its work, and the detached
+    /// operation receives a live-only cancellation token. A generation change cancels the
+    /// in-flight operation; the task remains alive until that operation returns so projections
+    /// never overlap on the same map core.
+    private func requestLiveProjection() {
+        rideMapLiveProjectionGeneration &+= 1
+        rideMapLiveProjectionEnabled = true
+        rideMapLiveProjectionCancellation?.cancel()
+        guard rideMapLiveProjectionTask == nil else { return }
+
+        let state = core.rideMapStateHandle
+        let budget = UInt32(Self.rideMapPreviewPointLimit)
+        rideMapLiveProjectionTask = Task { [weak self] in
+            while let self {
+                let generation = self.rideMapLiveProjectionGeneration
+                let cancellation = MobileLiveRideMapProjectionCancellation()
+                self.rideMapLiveProjectionCancellation = cancellation
+                do {
+                    let projection = try await Task.detached(priority: .userInitiated) {
+                        try state.projectPoints(budget: budget, cancellation: cancellation)
+                    }.value
+                    guard self.rideMapLiveProjectionEnabled else {
+                        self.rideMapLiveProjectionTask = nil
+                        self.rideMapLiveProjectionCancellation = nil
+                        return
+                    }
+                    guard Self.shouldApplyLiveProjection(
+                        generation: generation,
+                        currentGeneration: self.rideMapLiveProjectionGeneration,
+                        enabled: self.rideMapLiveProjectionEnabled
+                    ) else {
+                        continue
+                    }
+                    self.applyLiveProjection(projection)
+                } catch {
+                    guard self.rideMapLiveProjectionEnabled else {
+                        self.rideMapLiveProjectionTask = nil
+                        self.rideMapLiveProjectionCancellation = nil
+                        return
+                    }
+                    guard Self.shouldApplyLiveProjection(
+                        generation: generation,
+                        currentGeneration: self.rideMapLiveProjectionGeneration,
+                        enabled: self.rideMapLiveProjectionEnabled
+                    ) else {
+                        continue
+                    }
+                    self.rideMapLiveError = Self.mapRideMapError(error)
+                    self.clearLiveProjectionState()
+                }
+                self.rideMapLiveProjectionTask = nil
+                self.rideMapLiveProjectionCancellation = nil
+                return
+            }
+        }
+    }
+
+    private func applyLiveProjection(_ projection: MobileRideMapRouteProjection) {
+        rideMapLiveDisplayPoints = projection.points
+        rideMapLiveEndpointMetadata = projection.endpointMetadata
+        rideMapLiveSegments = projection.segments
+        rideMapLiveBackgroundGapCount = projection.backgroundGapCount
+        rideMapLivePointsTruncated = projection.pointsOmittedByBudget
+        rideMapLiveSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
+    }
+
+    private func clearLiveProjectionState() {
+        rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
+        rideMapLiveEndpointMetadata = .empty
+        rideMapLiveSegments.removeAll(keepingCapacity: true)
+        rideMapLiveBackgroundGapCount = 0
+        rideMapLivePointsTruncated = false
+        rideMapLiveSegmentsOmittedByBudget = false
+    }
+
+    private func invalidateLiveProjection(clearPoints: Bool) {
+        rideMapLiveProjectionGeneration &+= 1
+        rideMapLiveProjectionEnabled = false
+        rideMapLiveProjectionCancellation?.cancel()
+        if clearPoints {
+            rideMapPoints.removeAll(keepingCapacity: true)
+            clearLiveProjectionState()
+            rideMapLastDecision = nil
+        }
+    }
+
+    private func applyRideMapCommand(
+        resetPoints: Bool = false,
+        _ command: () throws -> MobileRideMapSnapshotDto
+    ) -> Bool {
+        do {
+            rideMapSnapshot = try command()
+            rideMapLiveError = nil
+            if resetPoints {
+                invalidateLiveProjection(clearPoints: true)
+            }
+            return true
+        } catch {
+            rideMapLiveError = Self.mapRideMapError(error)
+            return false
+        }
     }
 
     func pair(platformIdentifier: String) -> Bool {
@@ -215,7 +1167,10 @@ final class CutoutAppModel {
             isRecordOnlyCapture = false
             captureLabel = nil
             recordOnlyDeviceKind = nil
-            selectedDeviceStore.save(platformIdentifier: platformIdentifier, displayName: selectedRow.title)
+            selectedDeviceStore.save(
+                platformIdentifier: platformIdentifier,
+                displayName: selectedRow.title
+            )
             hasSavedDevice = true
             liveActivityIdentity = liveActivityIdentity(for: selectedRow)
             liveActivityGlyph = liveActivityGlyph(for: selectedRow)
@@ -452,6 +1407,18 @@ final class CutoutAppModel {
             liveActivityGlyph = .electricUnicycle
             syncLiveActivity()
             return
+        }
+        if let candidate,
+           let displayName = Self.meaningfulDeviceName(
+               candidate.displayName,
+               identity: candidate.platformIdentifier
+           ) {
+            // Persist every resolved identity, not only the currently selected one. History can
+            // contain rides from an older CoreBluetooth identifier and must still be relabelable.
+            selectedDeviceStore.save(
+                platformIdentifier: candidate.platformIdentifier,
+                displayName: displayName
+            )
         }
         if let model = candidate?.support.electricUnicycleModel {
             liveActivityIdentity = .model(model)
