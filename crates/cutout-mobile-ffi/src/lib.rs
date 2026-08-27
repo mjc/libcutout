@@ -4116,7 +4116,9 @@ fn mobile_segment_display_metadata_dto(
         segment_id: segment.segment_id().value(),
         start_reason: mobile_segment_start_reason_dto(segment.start_reason()),
         visible_point_count: segment.visible_point_count(),
-        canonical_point_count: segment.canonical_point_count(),
+        canonical_point_count: segment
+            .canonical_point_count()
+            .map(ride_maps::RidePointCount::as_u64),
         first_visible_sequence: segment
             .first_visible_sequence()
             .map(ride_maps::RidePointSequence::as_u64),

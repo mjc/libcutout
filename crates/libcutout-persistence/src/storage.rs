@@ -2,8 +2,8 @@ use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader
 use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
     LocationSource, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent,
-    RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
-    RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint,
+    RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount,
+    RidePointSequence, RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint,
     RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator,
     RouteSegmentDisplayMetadata, RouteTelemetryState, RouteViewport, TransitionError,
     WallClockUnixMilliseconds, count_segment_runs, route_segment_display_metadata,
@@ -6746,7 +6746,7 @@ fn project_route_candidates(
                 point.telemetry_state(),
                 point.start_reason(),
             ),
-            Some(canonical_point_count),
+            Some(RidePointCount::new(canonical_point_count)),
         );
         if accumulator.is_complete() {
             break;

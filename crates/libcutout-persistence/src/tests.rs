@@ -2599,7 +2599,11 @@ fn durable_route_projection_reports_segments_omitted_by_display_budget() {
         projection
             .segments()
             .iter()
-            .map(|segment| segment.canonical_point_count())
+            .map(|segment| {
+                segment
+                    .canonical_point_count()
+                    .map(cutout_ride_maps::RidePointCount::as_u64)
+            })
             .collect::<Vec<_>>(),
         vec![Some(3), Some(3)]
     );

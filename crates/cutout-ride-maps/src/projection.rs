@@ -1,6 +1,6 @@
 use crate::{
-    Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointSequence,
-    RideSegmentStartReason,
+    Coordinate, LatitudeE7, LongitudeE7, RideMapPoint, RideMapSegmentId, RidePointCount,
+    RidePointSequence, RideSegmentStartReason,
 };
 
 /// Failure returned when a route projection is cancelled before completion.
@@ -187,7 +187,7 @@ pub struct RouteDisplayPoint {
     sequence: RidePointSequence,
     segment_id: RideMapSegmentId,
     segment_start_reason: RideSegmentStartReason,
-    canonical_point_count: Option<u64>,
+    canonical_point_count: Option<RidePointCount>,
     coordinate: Coordinate,
     privacy_class: RoutePrivacyClass,
 }
@@ -204,7 +204,7 @@ pub struct RouteSegmentDisplayMetadata {
     segment_id: RideMapSegmentId,
     start_reason: RideSegmentStartReason,
     visible_point_count: u64,
-    canonical_point_count: Option<u64>,
+    canonical_point_count: Option<RidePointCount>,
     first_visible_sequence: Option<RidePointSequence>,
     last_visible_sequence: Option<RidePointSequence>,
 }
@@ -232,7 +232,7 @@ impl RouteSegmentDisplayMetadata {
 
     /// Returns the number of points in the canonical source segment, when known.
     #[must_use]
-    pub const fn canonical_point_count(self) -> Option<u64> {
+    pub const fn canonical_point_count(self) -> Option<RidePointCount> {
         self.canonical_point_count
     }
 
@@ -445,7 +445,7 @@ impl RouteProjectionAccumulator {
         candidate_ordinal: usize,
         sequence: u64,
         point: RideMapPoint,
-        canonical_point_count: Option<u64>,
+        canonical_point_count: Option<RidePointCount>,
     ) {
         if self.output_ordinal == self.output_count || candidate_ordinal != self.next_target {
             return;
@@ -500,7 +500,7 @@ impl RouteDisplayPoint {
 
     /// Returns the canonical source-segment cardinality, when known.
     #[must_use]
-    pub const fn canonical_point_count(self) -> Option<u64> {
+    pub const fn canonical_point_count(self) -> Option<RidePointCount> {
         self.canonical_point_count
     }
 
