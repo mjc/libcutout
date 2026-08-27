@@ -270,6 +270,7 @@ private struct RideMapHistoryDetailMap: View {
                 showsCurrentMarker: false,
                 endpointMetadata: endpointMetadata,
                 segments: segments,
+                contextRoutes: [],
                 fitsRouteOnChange: true,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,

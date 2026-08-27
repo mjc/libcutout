@@ -69,6 +69,8 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDetailSourcePointsOmittedByBudget = false
     private(set) var rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailSegmentsOmittedByBudget = false
+    private(set) var rideMapHistoryContextRoutes = [MobileRideMapHistoryContextRoute]()
+    private(set) var rideMapHistoryContextProjection: MobileRideMapHistoryContextProjection?
     private(set) var rideMapHistoryProjectionVersion: UInt64 = 0
     private(set) var rideMapHistoryDetailProjectionVersion: UInt64 = 0
     private(set) var rideMapHistoryRouteLoading = false
@@ -208,6 +210,7 @@ final class CutoutAppModel {
     private var rideMapHistorySelectionCancellation: MobileRideMapProjectionCancellation?
     private var rideMapHistoryViewportTask: Task<Void, Never>?
     private var rideMapHistoryViewportCancellation: MobileRideMapProjectionCancellation?
+    private var rideMapHistoryContextTask: Task<Void, Never>?
     private var rideMapRestoreTask: Task<Void, Never>?
     private var rideMapLiveProjectionTask: Task<Void, Never>?
     private var rideMapLiveProjectionCancellation: MobileLiveRideMapProjectionCancellation?
@@ -446,6 +449,10 @@ final class CutoutAppModel {
         rideMapHistorySelectionCancellation?.cancel()
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextTask = nil
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         rideMapHistoryError = nil
         rideMapHistoryRouteError = nil
         rideMapHistoryDetailRouteError = nil
@@ -789,6 +796,10 @@ final class CutoutAppModel {
         rideMapHistorySelectionCancellation?.cancel()
         rideMapHistoryViewportCancellation?.cancel()
         rideMapHistoryViewportTask?.cancel()
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextTask = nil
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         let selectingDifferentRide = selectedRideMapHistoryID != rideID
         if selectingDifferentRide {
             clearRideMapHistoryRouteProjection()
@@ -846,6 +857,7 @@ final class CutoutAppModel {
                 )
                 self.rideMapHistoryRouteLoading = false
                 self.rideMapHistoryDetailRouteLoading = false
+                self.projectRideMapHistoryContext(for: rideID)
             } catch {
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryRouteError = Self.mapRideMapError(error)
@@ -915,10 +927,50 @@ final class CutoutAppModel {
     }
 
     private func clearRideMapHistoryRouteProjection() {
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextTask = nil
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
         replaceRideMapHistoryDisplayPoints([], truncated: false)
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
         rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
+    }
+
+    /// Loads the bounded surrounding-route context for the selected history ride. Rust performs
+    /// history filtering, route projection, privacy, and all point budgeting; Swift stores only
+    /// the already-bounded display projections needed by the map canvas.
+    private func projectRideMapHistoryContext(for rideID: String) {
+        rideMapHistoryContextTask?.cancel()
+        rideMapHistoryContextProjection = nil
+        rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+        let state = core.rideMapStateHandle
+        let filter = rideMapHistoryFilter
+        let budget = MobileRideMapHistoryContextBudget.overview
+        rideMapHistoryContextTask = Task { [weak self] in
+            do {
+                let projection = try await Task.detached(priority: .userInitiated) {
+                    try state.projectStoredHistoryContext(
+                        filter: filter,
+                        selectedRideID: rideID,
+                        budget: budget
+                    )
+                }.value
+                guard !Task.isCancelled, let self,
+                      self.selectedRideMapHistoryID == rideID
+                else { return }
+                self.rideMapHistoryContextProjection = projection
+                self.rideMapHistoryContextRoutes = projection.routes
+            } catch {
+                guard !Task.isCancelled, let self,
+                      self.selectedRideMapHistoryID == rideID
+                else { return }
+                // Context is supplementary. Keep the selected route usable if this bounded
+                // secondary projection fails, while ensuring stale context cannot remain visible.
+                self.rideMapHistoryContextProjection = nil
+                self.rideMapHistoryContextRoutes.removeAll(keepingCapacity: true)
+            }
+        }
     }
 
     private nonisolated static func collectRideMapActiveTail(

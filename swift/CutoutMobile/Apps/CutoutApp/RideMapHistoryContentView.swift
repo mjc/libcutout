@@ -13,6 +13,7 @@ struct RideMapHistoryContentView: View {
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
+    let contextRoutes: [MobileRideMapHistoryContextRoute]
     let projectionVersion: UInt64
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
@@ -172,6 +173,7 @@ struct RideMapHistoryContentView: View {
                             showsCurrentMarker: false,
                             endpointMetadata: endpointMetadata,
                             segments: segments,
+                            contextRoutes: contextRoutes,
                             fitsRouteOnChange: true,
                             mapPosition: $mapPosition,
                             isApplyingCamera: $isApplyingCamera,

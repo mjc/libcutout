@@ -3,6 +3,102 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testHistoryContextOverviewBudgetIsBounded() {
+        XCTAssertEqual(
+            MobileRideMapHistoryContextBudget.overview,
+            MobileRideMapHistoryContextBudget(
+                historyPageLimit: 50,
+                maxRoutes: 8,
+                perRouteBudget: 512,
+                totalPointBudget: 4_096
+            )
+        )
+        XCTAssertLessThanOrEqual(
+            MobileRideMapHistoryContextBudget.overview.perRouteBudget
+                * MobileRideMapHistoryContextBudget.overview.maxRoutes,
+            MobileRideMapHistoryContextBudget.overview.totalPointBudget
+        )
+    }
+
+    func testHistoryContextProjectionStoresOnlyBoundedRouteProjections() {
+        let route = MobileRideMapHistoryContextRoute(
+            rideID: "ride-1",
+            projection: MobileRideMapRouteProjection(
+                points: [],
+                segments: [],
+                sourcePointCount: 2_000,
+                sourceSegmentCount: 2,
+                candidatePointCount: 512,
+                candidateSegmentCount: 1,
+                displayedSegmentCount: 1,
+                backgroundGapCount: 0,
+                canonicalStartSequence: 0,
+                canonicalEndSequence: 1_999,
+                canonicalStartVisible: false,
+                canonicalEndVisible: false
+            )
+        )
+        let context = MobileRideMapHistoryContextProjection(
+            routes: [route],
+            sourceHistoryRouteCount: 8,
+            contextRouteCount: 1,
+            totalDisplayPointCount: 512,
+            routesOmittedByBudget: true,
+            historyPageHasMore: true
+        )
+
+        XCTAssertEqual(context.routes.map(\.rideID), ["ride-1"])
+        XCTAssertEqual(context.totalDisplayPointCount, 512)
+        XCTAssertTrue(context.routesOmittedByBudget)
+        XCTAssertTrue(context.historyPageHasMore)
+    }
+
+    func testHistoryContextProjectionExcludesSelectedRideAndUsesRustBudget() async throws {
+        let state = MobileRideMapState()
+        let fixtureStartMs: UInt64 = 4_000_000_000_000
+        _ = try state.startGpsOnly(atMs: fixtureStartMs, lastConnectedVehicle: nil)
+        _ = await settle(state, try state.ingestLocation(
+            monotonicMs: fixtureStartMs + 1,
+            wallClockUnixMs: 1_700_000_000_101,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            horizontalAccuracyMeters: 4
+        ))
+        _ = try state.stop(atMs: fixtureStartMs + 100)
+        _ = try state.save()
+
+        _ = try state.startGpsOnly(atMs: fixtureStartMs + 200, lastConnectedVehicle: nil)
+        _ = await settle(state, try state.ingestLocation(
+            monotonicMs: fixtureStartMs + 201,
+            wallClockUnixMs: 1_700_000_000_301,
+            latitudeDegrees: 39.7393,
+            longitudeDegrees: -104.9902,
+            horizontalAccuracyMeters: 4
+        ))
+        let selectedRideID = try state.stop(atMs: fixtureStartMs + 300).rideId
+        _ = try state.save()
+
+        let projection = try state.projectStoredHistoryContext(
+            filter: MobileRideHistoryFilterDto(
+                createdAfterMilliseconds: nil,
+                vehicleIdentity: nil,
+                searchText: nil
+            ),
+            selectedRideID: selectedRideID,
+            budget: MobileRideMapHistoryContextBudget(
+                historyPageLimit: 50,
+                maxRoutes: 1,
+                perRouteBudget: 1,
+                totalPointBudget: 1
+            )
+        )
+
+        XCTAssertLessThanOrEqual(projection.routes.count, 1)
+        XCTAssertFalse(projection.routes.contains { $0.rideID == selectedRideID })
+        XCTAssertGreaterThanOrEqual(projection.contextRouteCount, UInt64(projection.routes.count))
+        XCTAssertLessThanOrEqual(projection.totalDisplayPointCount, 1)
+    }
+
     func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
         let database = try XCTUnwrap(RustPersistenceStore.shared)
         let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"

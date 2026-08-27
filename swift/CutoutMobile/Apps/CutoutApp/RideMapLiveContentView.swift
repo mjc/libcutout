@@ -44,6 +44,7 @@ struct RideMapLiveContentView: View {
                 showsCurrentMarker: true,
                 endpointMetadata: endpointMetadata,
                 segments: segments,
+                contextRoutes: [],
                 fitsRouteOnChange: false,
                 mapPosition: $mapPosition,
                 isApplyingCamera: $isApplyingCamera,

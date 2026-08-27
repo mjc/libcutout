@@ -289,6 +289,50 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapPathKeyTracksRustBoundedContextRoutes() {
+        let contextRoute = MobileRideMapHistoryContextRoute(
+            rideID: "context-1",
+            projection: MobileRideMapRouteProjection(
+                points: [
+                    MobileRideMapRouteDisplayPoint(
+                        sequence: 4,
+                        segmentId: 0,
+                        latitudeDegrees: 39.7,
+                        longitudeDegrees: -104.9,
+                        privacyClass: .precise
+                    ),
+                ],
+                segments: [],
+                sourcePointCount: 1,
+                sourceSegmentCount: 1,
+                candidatePointCount: 1,
+                candidateSegmentCount: 1,
+                displayedSegmentCount: 1,
+                backgroundGapCount: 0,
+                canonicalStartSequence: 4,
+                canonicalEndSequence: 4,
+                canonicalStartVisible: true,
+                canonicalEndVisible: true
+            )
+        )
+        let withoutContext = RideMapCanvasView.pathKey(
+            routeID: "selected",
+            projectionVersion: 1,
+            points: []
+        )
+        let withContext = RideMapCanvasView.pathKey(
+            routeID: "selected",
+            projectionVersion: 1,
+            points: [],
+            contextRoutes: [contextRoute]
+        )
+
+        XCTAssertNotEqual(withoutContext, withContext)
+        XCTAssertEqual(withContext.contextRouteMetadata.count, 1)
+        XCTAssertEqual(withContext.contextRouteMetadata.first?.routeID, "context-1")
+    }
+
+    @MainActor
     func testRideMapRoutePresenceUsesRecordedCountWhenViewportIsEmpty() {
         XCTAssertTrue(
             RideMapRouteTruthView.routeExists(

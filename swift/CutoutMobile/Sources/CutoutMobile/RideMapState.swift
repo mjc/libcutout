@@ -316,6 +316,34 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var canonicalStartVisible: Bool
     public var canonicalEndVisible: Bool
 
+    public init(
+        points: [MobileRideMapRouteDisplayPoint],
+        segments: [MobileRideMapSegmentDisplayMetadata],
+        sourcePointCount: UInt64,
+        sourceSegmentCount: UInt64,
+        candidatePointCount: UInt64,
+        candidateSegmentCount: UInt64,
+        displayedSegmentCount: UInt64,
+        backgroundGapCount: UInt64,
+        canonicalStartSequence: UInt64? = nil,
+        canonicalEndSequence: UInt64? = nil,
+        canonicalStartVisible: Bool = false,
+        canonicalEndVisible: Bool = false
+    ) {
+        self.points = points
+        self.segments = segments
+        self.sourcePointCount = sourcePointCount
+        self.sourceSegmentCount = sourceSegmentCount
+        self.candidatePointCount = candidatePointCount
+        self.candidateSegmentCount = candidateSegmentCount
+        self.displayedSegmentCount = displayedSegmentCount
+        self.backgroundGapCount = backgroundGapCount
+        self.canonicalStartSequence = canonicalStartSequence
+        self.canonicalEndSequence = canonicalEndSequence
+        self.canonicalStartVisible = canonicalStartVisible
+        self.canonicalEndVisible = canonicalEndVisible
+    }
+
     public var endpointMetadata: MobileRideMapRouteEndpointMetadata {
         MobileRideMapRouteEndpointMetadata(
             canonicalStartSequence: canonicalStartSequence,
@@ -439,6 +467,77 @@ public struct MobileRideMapHistoryVehicleOptionDto: Equatable, Hashable, Sendabl
 public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
     public var summaries: [MobileRideMapHistorySummaryDto]
     public var nextCursor: MobileRideCursorDto?
+}
+
+/// Rust-enforced bounds for the history overview's contextual route projection.
+///
+/// The application passes this value across the FFI boundary; it never pages raw route points
+/// into Swift. Keeping the limits in one value makes the memory contract visible at the call site
+/// and prevents a new history surface from accidentally requesting an unbounded projection.
+public struct MobileRideMapHistoryContextBudget: Equatable, Hashable, Sendable {
+    public var historyPageLimit: UInt32
+    public var maxRoutes: UInt32
+    public var perRouteBudget: UInt32
+    public var totalPointBudget: UInt32
+
+    public init(
+        historyPageLimit: UInt32,
+        maxRoutes: UInt32,
+        perRouteBudget: UInt32,
+        totalPointBudget: UInt32
+    ) {
+        self.historyPageLimit = historyPageLimit
+        self.maxRoutes = maxRoutes
+        self.perRouteBudget = perRouteBudget
+        self.totalPointBudget = totalPointBudget
+    }
+
+    /// The bounded overview contract: at most eight surrounding rides and 4,096 display points.
+    public static let overview = Self(
+        historyPageLimit: 50,
+        maxRoutes: 8,
+        perRouteBudget: 512,
+        totalPointBudget: 4_096
+    )
+}
+
+/// One bounded contextual route returned by Rust for a history overview.
+public struct MobileRideMapHistoryContextRoute: Equatable, Hashable, Sendable, Identifiable {
+    public var rideID: String
+    public var projection: MobileRideMapRouteProjection
+
+    public init(rideID: String, projection: MobileRideMapRouteProjection) {
+        self.rideID = rideID
+        self.projection = projection
+    }
+
+    public var id: String { rideID }
+}
+
+/// Bounded surrounding-route context for a selected history route.
+public struct MobileRideMapHistoryContextProjection: Equatable, Hashable, Sendable {
+    public var routes: [MobileRideMapHistoryContextRoute]
+    public var sourceHistoryRouteCount: UInt64
+    public var contextRouteCount: UInt64
+    public var totalDisplayPointCount: UInt64
+    public var routesOmittedByBudget: Bool
+    public var historyPageHasMore: Bool
+
+    public init(
+        routes: [MobileRideMapHistoryContextRoute],
+        sourceHistoryRouteCount: UInt64,
+        contextRouteCount: UInt64,
+        totalDisplayPointCount: UInt64,
+        routesOmittedByBudget: Bool,
+        historyPageHasMore: Bool
+    ) {
+        self.routes = routes
+        self.sourceHistoryRouteCount = sourceHistoryRouteCount
+        self.contextRouteCount = contextRouteCount
+        self.totalDisplayPointCount = totalDisplayPointCount
+        self.routesOmittedByBudget = routesOmittedByBudget
+        self.historyPageHasMore = historyPageHasMore
+    }
 }
 
 public enum MobileRideMapAssociationDto: Equatable, Hashable, Sendable {
@@ -771,6 +870,45 @@ public final class MobileRideMapState: @unchecked Sendable {
         }
     }
 
+    /// Projects bounded surrounding history routes through Rust-owned filtering, LOD, and
+    /// privacy policy. No raw historical points are accumulated by Swift.
+    public func projectStoredHistoryContext(
+        filter: MobileRideHistoryFilterDto,
+        selectedRideID: String?,
+        budget: MobileRideMapHistoryContextBudget = .overview,
+        viewport: MobileGeoBoundsDto? = nil,
+        privacy: MobileRideMapRoutePrivacyPolicy = .precise
+    ) throws -> MobileRideMapHistoryContextProjection {
+        guard let database else {
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+        }
+        let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
+        switch privacy {
+        case .precise:
+            mappedPrivacy = .precise
+        case let .grid(e7):
+            mappedPrivacy = .grid(gridE7: e7)
+        }
+        do {
+            let ffiBudget = MobileRideHistoryContextBudgetDto(
+                historyPageLimit: budget.historyPageLimit,
+                maxRoutes: budget.maxRoutes,
+                perRouteBudget: budget.perRouteBudget,
+                totalPointBudget: budget.totalPointBudget
+            )
+            let options = MobileRideHistoryContextOptionsDto(
+                filter: filter,
+                selectedRideId: selectedRideID.map(MobileRideIdDto.init(value:)),
+                budget: ffiBudget,
+                viewport: viewport,
+                privacy: mappedPrivacy
+            )
+            return map(try database.projectHistoryContext(options: options))
+        } catch {
+            throw map(error)
+        }
+    }
+
     private func mapHistorySummary(_ ride: MobileRideRecordDto) -> MobileRideMapHistorySummaryDto {
         MobileRideMapHistorySummaryDto(
             rideId: ride.id.value,
@@ -871,6 +1009,24 @@ public final class MobileRideMapState: @unchecked Sendable {
             canonicalEndSequence: projection.canonicalEndSequence,
             canonicalStartVisible: projection.canonicalStartVisible,
             canonicalEndVisible: projection.canonicalEndVisible
+        )
+    }
+
+    private func map(
+        _ projection: MobileRideHistoryContextProjectionDto
+    ) -> MobileRideMapHistoryContextProjection {
+        MobileRideMapHistoryContextProjection(
+            routes: projection.routes.map {
+                MobileRideMapHistoryContextRoute(
+                    rideID: $0.rideId.value,
+                    projection: map($0.projection)
+                )
+            },
+            sourceHistoryRouteCount: projection.sourceHistoryRouteCount,
+            contextRouteCount: projection.contextRouteCount,
+            totalDisplayPointCount: projection.totalDisplayPointCount,
+            routesOmittedByBudget: projection.routesOmittedByBudget,
+            historyPageHasMore: projection.historyPageHasMore
         )
     }
 

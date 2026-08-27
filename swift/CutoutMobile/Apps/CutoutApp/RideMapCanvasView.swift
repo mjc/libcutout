@@ -16,6 +16,16 @@ struct RideMapCanvasView: View {
         }
     }
 
+    private struct ContextSegmentPath: Identifiable {
+        let id: String
+        let startReason: MobileRideMapSegmentStartReason
+        var coordinates: [CLLocationCoordinate2D]
+
+        var isGap: Bool {
+            startReason.isBackgroundGap
+        }
+    }
+
     struct PathKey: Equatable {
         struct SegmentMetadata: Equatable {
             let id: UInt64
@@ -24,12 +34,20 @@ struct RideMapCanvasView: View {
             let canonicalPointCount: UInt64?
         }
 
+        struct ContextRouteMetadata: Equatable {
+            let routeID: String
+            let pointCount: Int
+            let firstSequence: UInt64?
+            let lastSequence: UInt64?
+        }
+
         let routeID: String
         let projectionVersion: UInt64
         let firstSequence: UInt64?
         let lastSequence: UInt64?
         let pointCount: Int
         let segmentMetadata: [SegmentMetadata]
+        let contextRouteMetadata: [ContextRouteMetadata]
     }
 
     let points: [MobileRideMapRouteDisplayPoint]
@@ -40,12 +58,16 @@ struct RideMapCanvasView: View {
     let showsCurrentMarker: Bool
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
+    /// Rust-bounded surrounding routes. These are rendered as subdued context and never fit the
+    /// camera or participate in the selected route's endpoint annotations.
+    let contextRoutes: [MobileRideMapHistoryContextRoute]
     let fitsRouteOnChange: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     let cameraDidChange: (MKCoordinateRegion) -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var segmentPaths = [SegmentPath]()
+    @State private var contextSegmentPaths = [ContextSegmentPath]()
     @State private var renderedKey: PathKey?
     @State private var fittedRouteID: String?
 
@@ -99,7 +121,8 @@ struct RideMapCanvasView: View {
         routeID: String,
         projectionVersion: UInt64,
         points: [MobileRideMapRouteDisplayPoint],
-        segments: [MobileRideMapSegmentDisplayMetadata] = []
+        segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        contextRoutes: [MobileRideMapHistoryContextRoute] = []
     ) -> PathKey {
         return PathKey(
             routeID: routeID,
@@ -113,6 +136,14 @@ struct RideMapCanvasView: View {
                     startReason: $0.startReason,
                     visiblePointCount: $0.visiblePointCount,
                     canonicalPointCount: $0.canonicalPointCount
+                )
+            },
+            contextRouteMetadata: contextRoutes.map {
+                PathKey.ContextRouteMetadata(
+                    routeID: $0.rideID,
+                    pointCount: $0.projection.points.count,
+                    firstSequence: $0.projection.points.first?.sequence,
+                    lastSequence: $0.projection.points.last?.sequence
                 )
             }
         )
@@ -195,6 +226,17 @@ struct RideMapCanvasView: View {
         }
 
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
+            ForEach(contextSegmentPaths) { segment in
+                MapPolyline(coordinates: segment.coordinates)
+                    .stroke(
+                        PevColors.muted.opacity(0.72),
+                        style: StrokeStyle(
+                            lineWidth: 3,
+                            lineCap: .round,
+                            dash: segment.isGap ? [7, 6] : []
+                        )
+                    )
+            }
             ForEach(segmentPaths) { segment in
                 MapPolyline(coordinates: segment.coordinates)
                     .stroke(
@@ -275,6 +317,7 @@ struct RideMapCanvasView: View {
         .task(id: pathKey) {
             let key = pathKey
             updatePaths(for: key)
+            rebuildContextPaths()
             if fitsRouteOnChange, fittedRouteID != key.routeID, points.isEmpty == false {
                 fitMap(to: points)
                 fittedRouteID = key.routeID
@@ -289,7 +332,8 @@ struct RideMapCanvasView: View {
             routeID: routeID,
             projectionVersion: projectionVersion,
             points: points,
-            segments: segments
+            segments: segments,
+            contextRoutes: contextRoutes
         )
     }
 
@@ -365,6 +409,30 @@ struct RideMapCanvasView: View {
         }
         segmentPaths = rebuilt
         renderedKey = key
+    }
+
+    private func rebuildContextPaths() {
+        var rebuilt = [ContextSegmentPath]()
+        for route in contextRoutes {
+            let reasonsBySegmentID = Dictionary(
+                uniqueKeysWithValues: route.projection.segments.map { ($0.segmentId, $0.startReason) }
+            )
+            for point in route.projection.points {
+                let pathID = "\(route.rideID):\(point.segmentId)"
+                if rebuilt.last?.id == pathID {
+                    rebuilt[rebuilt.index(before: rebuilt.endIndex)].coordinates.append(coordinate(for: point))
+                } else {
+                    rebuilt.append(
+                        ContextSegmentPath(
+                            id: pathID,
+                            startReason: reasonsBySegmentID[point.segmentId] ?? .unknown,
+                            coordinates: [coordinate(for: point)]
+                        )
+                    )
+                }
+            }
+        }
+        contextSegmentPaths = rebuilt
     }
 
     private func append(_ point: MobileRideMapRouteDisplayPoint) {
