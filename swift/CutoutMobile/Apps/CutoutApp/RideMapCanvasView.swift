@@ -7,6 +7,7 @@ import SwiftUI
 struct RideMapCanvasView: View {
     private struct SegmentPath: Identifiable {
         let id: UInt64
+        let isGap: Bool
         var coordinates: [CLLocationCoordinate2D]
     }
 
@@ -60,6 +61,11 @@ struct RideMapCanvasView: View {
 
     static func shouldShowRecordedEndpointMarkers(pointsTruncated: Bool) -> Bool {
         !pointsTruncated
+    }
+
+    static func isGapSegment(previousSegmentID: UInt64?, currentSegmentID: UInt64) -> Bool {
+        guard let previousSegmentID else { return false }
+        return previousSegmentID != currentSegmentID
     }
 
     static func pathKey(
@@ -141,7 +147,14 @@ struct RideMapCanvasView: View {
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
                 MapPolyline(coordinates: segment.coordinates)
-                    .stroke(PevColors.yellow, style: StrokeStyle(lineWidth: 4))
+                    .stroke(
+                        PevColors.yellow,
+                        style: StrokeStyle(
+                            lineWidth: 4,
+                            lineCap: .round,
+                            dash: segment.isGap ? [8, 6] : []
+                        )
+                    )
             }
             if showsStartMarker, let first = points.first {
                 Annotation(
@@ -252,7 +265,16 @@ struct RideMapCanvasView: View {
             if rebuilt.last?.id == point.segmentId {
                 rebuilt[rebuilt.index(before: rebuilt.endIndex)].coordinates.append(coordinate)
             } else {
-                rebuilt.append(SegmentPath(id: point.segmentId, coordinates: [coordinate]))
+                rebuilt.append(
+                    SegmentPath(
+                        id: point.segmentId,
+                        isGap: Self.isGapSegment(
+                            previousSegmentID: rebuilt.last?.id,
+                            currentSegmentID: point.segmentId
+                        ),
+                        coordinates: [coordinate]
+                    )
+                )
             }
         }
         segmentPaths = rebuilt
@@ -264,7 +286,16 @@ struct RideMapCanvasView: View {
         if segmentPaths.last?.id == point.segmentId {
             segmentPaths[segmentPaths.index(before: segmentPaths.endIndex)].coordinates.append(coordinate)
         } else {
-            segmentPaths.append(SegmentPath(id: point.segmentId, coordinates: [coordinate]))
+            segmentPaths.append(
+                SegmentPath(
+                    id: point.segmentId,
+                    isGap: Self.isGapSegment(
+                        previousSegmentID: segmentPaths.last?.id,
+                        currentSegmentID: point.segmentId
+                    ),
+                    coordinates: [coordinate]
+                )
+            )
         }
     }
 

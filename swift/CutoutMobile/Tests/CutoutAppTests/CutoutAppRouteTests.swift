@@ -330,6 +330,13 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapUsesASeparateStyleForEachSegmentAfterTheFirst() {
+        XCTAssertFalse(RideMapCanvasView.isGapSegment(previousSegmentID: nil, currentSegmentID: 0))
+        XCTAssertFalse(RideMapCanvasView.isGapSegment(previousSegmentID: 0, currentSegmentID: 0))
+        XCTAssertTrue(RideMapCanvasView.isGapSegment(previousSegmentID: 0, currentSegmentID: 1))
+    }
+
+    @MainActor
     func testRideMapPersistenceWarningComesOnlyFromStorageAvailability() {
         XCTAssertTrue(
             RideMapLiveContentView.showsPersistenceWarning(for: .storageUnavailable)
