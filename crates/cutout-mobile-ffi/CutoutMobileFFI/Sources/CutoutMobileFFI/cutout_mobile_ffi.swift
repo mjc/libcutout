@@ -2452,6 +2452,11 @@ public func FfiConverterTypeMobilePevcapCaptureBuilder_lower(_ value: MobilePevc
  */
 public protocol MobilePhoneLocationStateProtocol: AnyObject, Sendable {
 
+    /**
+     * Clears the latest sample so a new capture cannot inherit an older location context.
+     */
+    func clear()
+
     func currentSnapshot()  -> MobilePhoneLocationSnapshotDto
 
     func ingest(sample: MobilePhoneLocationSampleDto)  -> MobilePhoneLocationSnapshotDto
@@ -2519,6 +2524,16 @@ public convenience init() {
 
 
 
+
+    /**
+     * Clears the latest sample so a new capture cannot inherit an older location context.
+     */
+open func clear()  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilephonelocationstate_clear(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
 
 open func currentSnapshot() -> MobilePhoneLocationSnapshotDto  {
     return try!  FfiConverterTypeMobilePhoneLocationSnapshotDto_lift(try! rustCall() {
@@ -25030,6 +25045,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_writer_status() != 20982) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_clear() != 58288) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_current_snapshot() != 33189) {

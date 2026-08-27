@@ -6349,6 +6349,14 @@ impl MobilePhoneLocationState {
         Arc::new(Self::default())
     }
 
+    /// Clears the latest sample so a new capture cannot inherit an older location context.
+    pub fn clear(&self) {
+        *self
+            .latest_sample
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+    }
+
     pub fn ingest(&self, sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto {
         let Some(sample) = sample.canonical() else {
             return self.current_snapshot();
@@ -13502,6 +13510,17 @@ mod tests {
         let mut sample = capture_phone_location_fixture();
         sample.wall_clock_unix_ms = 0;
         assert_eq!(sample.canonical(), None);
+    }
+
+    #[test]
+    fn phone_location_state_clear_drops_the_previous_capture_context() {
+        let state = MobilePhoneLocationState::default();
+        state.ingest(capture_phone_location_fixture());
+        assert!(state.current_snapshot().latest_sample.is_some());
+
+        state.clear();
+
+        assert_eq!(state.current_snapshot().latest_sample, None);
     }
 
     #[allow(

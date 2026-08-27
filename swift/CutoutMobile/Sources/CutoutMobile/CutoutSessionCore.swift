@@ -392,6 +392,7 @@ struct LocationTimestampAdmission {
         switch decision {
         case .accepted, .pending:
             guard timestamp.timeIntervalSinceReferenceDate.isFinite else { return }
+            guard lastAcceptedTimestamp.map({ timestamp > $0 }) ?? true else { return }
             lastAcceptedTimestamp = timestamp
         case .rejected, .ignored, .storageError:
             break
@@ -546,6 +547,7 @@ public final class CutoutSessionCore: NSObject {
         rideMapPollGeneration &+= 1
         rideMapPollScheduled = false
         pendingPhoneLocationLock.unlock()
+        admittedPhoneLocationState.clear()
     }
 
     /// Starts a GPS-only ride through the Core-owned lifecycle barrier.
@@ -1848,6 +1850,7 @@ public final class CutoutSessionCore: NSObject {
         annotations extraAnnotations: [String] = [],
         evidence: String = "hardware_tested"
     ) {
+        admittedPhoneLocationState.clear()
         captureStartedAt = clock.now()
         captureNotificationCount = 0
 
@@ -1910,6 +1913,7 @@ public final class CutoutSessionCore: NSObject {
         captureBuilder = nil
         captureFileURL = nil
         captureStartedAt = nil
+        admittedPhoneLocationState.clear()
         let finish = DispatchWorkItem { [weak self] in
             let writerSucceeded = builder.finishWriter()
             let succeeded = priorWriteSucceeded && writerSucceeded

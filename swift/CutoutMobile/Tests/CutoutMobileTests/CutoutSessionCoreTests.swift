@@ -90,6 +90,31 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(admission.lastAcceptedTimestamp)
     }
 
+    func testLocationTimestampAdmissionDoesNotRegressForDuplicateOrOutOfOrderAcceptedDecisions() {
+        let point = MobileRideMapPointDto(
+            sequence: 0,
+            segmentId: 0,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            wallClockUnixMs: 1_700_000_000_000,
+            monotonicMs: 1_000,
+            horizontalAccuracyMeters: 4,
+            telemetryState: .gpsOnly
+        )
+        let first = Date(timeIntervalSince1970: 1_700_000_000)
+        let second = Date(timeIntervalSince1970: 1_700_000_001)
+        var admission = LocationTimestampAdmission()
+
+        admission.record(first, decision: .accepted(point: point, segmentStarted: true))
+        admission.record(first, decision: .accepted(point: point, segmentStarted: false))
+        admission.record(first.addingTimeInterval(-1), decision: .accepted(point: point, segmentStarted: false))
+
+        XCTAssertEqual(admission.lastAcceptedTimestamp, first)
+
+        admission.record(second, decision: .accepted(point: point, segmentStarted: false))
+        XCTAssertEqual(admission.lastAcceptedTimestamp, second)
+    }
+
     func testCoreLocationTimestampConversionRejectsInvalidAndOutOfRangeDates() {
         XCTAssertEqual(
             wallClockUnixMilliseconds(for: Date(timeIntervalSince1970: 1_700_000_000.125)),
@@ -263,6 +288,9 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(sample?.speedAccuracyMetersPerSecond)
         XCTAssertEqual(sample?.courseDegrees, 0)
         XCTAssertNil(sample?.courseAccuracyDegrees)
+        XCTAssertEqual(sample?.latitudeDegrees, 39.7392)
+        XCTAssertEqual(sample?.longitudeDegrees, -104.9903)
+        XCTAssertEqual(sample?.altitudeMeters, 1_600)
 
         let invalidCourseLocation = CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
@@ -277,6 +305,30 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
         core.locationManager(CLLocationManager(), didUpdateLocations: [invalidCourseLocation])
         XCTAssertNil(core.phoneLocationSnapshot.latestSample?.courseDegrees)
+
+        let nonFiniteLocation = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903),
+            altitude: 1_600,
+            horizontalAccuracy: .nan,
+            verticalAccuracy: .infinity,
+            course: .nan,
+            courseAccuracy: .nan,
+            speed: .nan,
+            speedAccuracy: .infinity,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_002)
+        )
+        core.locationManager(CLLocationManager(), didUpdateLocations: [nonFiniteLocation])
+
+        let nonFiniteSample = core.phoneLocationSnapshot.latestSample
+        XCTAssertNotNil(nonFiniteSample)
+        XCTAssertNil(nonFiniteSample?.horizontalAccuracyMeters)
+        XCTAssertNil(nonFiniteSample?.verticalAccuracyMeters)
+        XCTAssertNil(nonFiniteSample?.speedMetersPerSecond)
+        XCTAssertNil(nonFiniteSample?.speedAccuracyMetersPerSecond)
+        XCTAssertNil(nonFiniteSample?.courseDegrees)
+        XCTAssertNil(nonFiniteSample?.courseAccuracyDegrees)
+        XCTAssertEqual(nonFiniteSample?.latitudeDegrees, 39.7392)
+        XCTAssertEqual(nonFiniteSample?.longitudeDegrees, -104.9903)
     }
 
     func testConnectionAutoStartResetsLocationTimestampAdmissionForANewRide() throws {
@@ -448,6 +500,29 @@ final class CutoutSessionCoreTests: XCTestCase {
                 decision: .storageError(message: "queue full")
             )
         )
+    }
+
+    func testPhoneLocationStateClearPreventsCrossCaptureContext() {
+        let state = MobilePhoneLocationState()
+        let sample = MobilePhoneLocationSampleDto(
+            wallClockUnixMs: 1_700_000_000_000,
+            latitudeDegrees: 39.7392,
+            longitudeDegrees: -104.9903,
+            altitudeMeters: 1_600,
+            horizontalAccuracyMeters: 4,
+            verticalAccuracyMeters: 6,
+            speedMetersPerSecond: 2,
+            speedAccuracyMetersPerSecond: 0.2,
+            courseDegrees: 90,
+            courseAccuracyDegrees: 3
+        )
+
+        _ = state.ingest(sample: sample)
+        XCTAssertEqual(state.currentSnapshot().latestSample, sample)
+
+        state.clear()
+
+        XCTAssertNil(state.currentSnapshot().latestSample)
     }
 
     func testDatabaseBackedRideMapReportsPendingThenDurablyAccepted() async throws {
