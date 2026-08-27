@@ -3110,7 +3110,10 @@ fn canonical_backup_path(path: &Path) -> Result<PathBuf, StorageError> {
     Ok(destination)
 }
 
-fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot, StorageError> {
+fn configure_connection(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<BootstrapSnapshot, StorageError> {
     connection.pragma_update(None, "foreign_keys", "ON")?;
     let foreign_keys: i64 =
         connection.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
@@ -3128,7 +3131,7 @@ fn configure_connection(connection: &mut Connection) -> Result<BootstrapSnapshot
     migrate(connection)?;
     repair_legacy_ride_creation_times(connection)?;
     verify_current_schema(connection)?;
-    recover_abandoned_pevcap_imports(connection)?;
+    recover_abandoned_pevcap_imports(connection, database_path)?;
     let recovered_rides = recover_interrupted_rides(connection)?;
     Ok(BootstrapSnapshot {
         recovered_rides: recovered_rides.into(),
@@ -3180,7 +3183,10 @@ pub(crate) fn repair_legacy_ride_creation_times(
     Ok(())
 }
 
-fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), StorageError> {
+fn recover_abandoned_pevcap_imports(
+    connection: &mut Connection,
+    database_path: &Path,
+) -> Result<(), StorageError> {
     let paths = {
         let mut statement = connection
             .prepare("SELECT artifact_path FROM pevcap_import_work ORDER BY artifact_digest")?;
@@ -3194,7 +3200,14 @@ fn recover_abandoned_pevcap_imports(connection: &mut Connection) -> Result<(), S
     )?;
     transaction.execute("DELETE FROM pevcap_import_work", [])?;
     transaction.commit()?;
+    let mut managed_directory_name = database_path.as_os_str().to_owned();
+    managed_directory_name.push(".pevcap-imports");
+    let managed_directory = PathBuf::from(managed_directory_name);
     for path in paths {
+        let path = Path::new(&path);
+        if path.parent() != Some(managed_directory.as_path()) {
+            continue;
+        }
         if let Err(error) = fs::remove_file(path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
