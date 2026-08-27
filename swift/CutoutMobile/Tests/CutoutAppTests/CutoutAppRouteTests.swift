@@ -314,22 +314,6 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapDoesNotClaimRecordedEndpointsForTruncatedRoutes() {
-        XCTAssertTrue(
-            RideMapLiveContentView.showsRecordedBounds(for: .saved, pointsTruncated: false)
-        )
-        XCTAssertFalse(
-            RideMapLiveContentView.showsRecordedBounds(for: .saved, pointsTruncated: true)
-        )
-        XCTAssertTrue(
-            RideMapCanvasView.shouldShowRecordedEndpointMarkers(pointsTruncated: false)
-        )
-        XCTAssertFalse(
-            RideMapCanvasView.shouldShowRecordedEndpointMarkers(pointsTruncated: true)
-        )
-    }
-
-    @MainActor
     func testRideMapOnlyAnnotatesDisplayedCanonicalEndpoints() {
         let points = [
             MobileRideMapRouteDisplayPoint(

@@ -218,20 +218,13 @@ struct RideMapLiveContentView: View {
         }
     }
 
-    static func showsRecordedBounds(
-        for state: MobileRideMapStateDto?,
-        pointsTruncated: Bool
-    ) -> Bool {
-        showsRecordedBounds(for: state) && !pointsTruncated
-    }
-
     @MainActor
     static func showsPersistenceWarning(for availability: MobileRideMapAvailability) -> Bool {
         availability == .storageUnavailable
     }
 
     private var showsRecordedBounds: Bool {
-        Self.showsRecordedBounds(for: snapshot?.state, pointsTruncated: pointsTruncated)
+        Self.showsRecordedBounds(for: snapshot?.state)
     }
 
     private func recenterOnLatestPoint() {

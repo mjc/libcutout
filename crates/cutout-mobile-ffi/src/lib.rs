@@ -3373,6 +3373,14 @@ pub struct MobileRideMapRouteProjectionDto {
     pub candidate_segment_count: u64,
     /// Number of segments represented by the bounded display points.
     pub displayed_segment_count: u64,
+    /// Canonical first-point sequence, when the route has points.
+    pub canonical_start_sequence: Option<u64>,
+    /// Canonical last-point sequence, when the route has points.
+    pub canonical_end_sequence: Option<u64>,
+    /// Whether the canonical first point lies in the requested viewport.
+    pub canonical_start_visible: bool,
+    /// Whether the canonical last point lies in the requested viewport.
+    pub canonical_end_visible: bool,
 }
 
 /// Summary projected for an active map recording.
@@ -4049,6 +4057,16 @@ fn mobile_route_projection_dto(
         candidate_point_count: projection.candidate_point_count(),
         candidate_segment_count: projection.candidate_segment_count(),
         displayed_segment_count: projection.displayed_segment_count(),
+        canonical_start_sequence: projection
+            .endpoint_metadata()
+            .start_sequence()
+            .map(|sequence| sequence.as_u64()),
+        canonical_end_sequence: projection
+            .endpoint_metadata()
+            .end_sequence()
+            .map(|sequence| sequence.as_u64()),
+        canonical_start_visible: projection.endpoint_metadata().start_visible(),
+        canonical_end_visible: projection.endpoint_metadata().end_visible(),
     }
 }
 
@@ -6435,6 +6453,16 @@ fn project_live_route_points(
     if is_cancelled() {
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
+    let endpoint_metadata = ride_maps::route_endpoint_metadata(
+        points.iter().copied().enumerate().map(|(offset, point)| {
+            (
+                first_sequence.saturating_add(u64::try_from(offset).unwrap_or(u64::MAX)),
+                point,
+            )
+        }),
+        source_point_count,
+        viewport,
+    );
     let candidate_segment_count = mobile_segment_count(&points, viewport, &mut is_cancelled)?;
     let candidate_point_count = mobile_point_count(&points, viewport, &mut is_cancelled)?;
     let projected_points = ride_maps::project_route_points_cancellable(
@@ -6455,6 +6483,14 @@ fn project_live_route_points(
         candidate_point_count,
         candidate_segment_count,
         displayed_segment_count,
+        canonical_start_sequence: endpoint_metadata
+            .start_sequence()
+            .map(|sequence| sequence.as_u64()),
+        canonical_end_sequence: endpoint_metadata
+            .end_sequence()
+            .map(|sequence| sequence.as_u64()),
+        canonical_start_visible: endpoint_metadata.start_visible(),
+        canonical_end_visible: endpoint_metadata.end_visible(),
     })
 }
 
@@ -15358,6 +15394,10 @@ mod tests {
         assert_eq!(projection.points.len(), 2);
         assert_eq!(projection.points[0].sequence, 0);
         assert_eq!(projection.points[1].sequence, 2);
+        assert_eq!(projection.canonical_start_sequence, Some(0));
+        assert_eq!(projection.canonical_end_sequence, Some(3));
+        assert!(projection.canonical_start_visible);
+        assert!(!projection.canonical_end_visible);
         assert_eq!(
             projection.points[0].privacy_class,
             MobileRideMapRoutePrivacyClassDto::GridRedacted

@@ -3,9 +3,9 @@ use cutout_ride_maps::{
     AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
     LocationSource, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent,
     RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
-    RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyPolicy,
-    RouteProjectionAccumulator, RouteTelemetryState, RouteViewport, TransitionError,
-    WallClockUnixMilliseconds, count_segment_runs,
+    RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint,
+    RouteEndpointMetadata, RoutePrivacyPolicy, RouteProjectionAccumulator, RouteTelemetryState,
+    RouteViewport, TransitionError, WallClockUnixMilliseconds, count_segment_runs,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -502,6 +502,7 @@ pub struct RoutePointProjection {
     candidate_point_count: u64,
     candidate_segment_count: u64,
     displayed_segment_count: u64,
+    endpoint_metadata: RouteEndpointMetadata,
 }
 
 impl RoutePointProjection {
@@ -539,6 +540,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn displayed_segment_count(&self) -> u64 {
         self.displayed_segment_count
+    }
+
+    /// Returns canonical endpoint sequences and viewport visibility.
+    #[must_use]
+    pub const fn endpoint_metadata(&self) -> RouteEndpointMetadata {
+        self.endpoint_metadata
     }
 }
 
@@ -6565,9 +6572,29 @@ fn project_route_points(
         candidate_point_count,
         candidate_segment_count,
         viewport_predicate,
+        source_start_sequence,
+        source_end_sequence,
     } = counts;
     projection_checkpoint(cancellation)?;
     let candidate_count = usize::try_from(candidate_point_count).unwrap_or(usize::MAX);
+    let endpoint_metadata = RouteEndpointMetadata::new(
+        source_start_sequence.map(RidePointSequence::new),
+        source_end_sequence.map(RidePointSequence::new),
+        endpoint_is_visible(
+            connection,
+            &ride_id,
+            source_start_sequence,
+            viewport,
+            cancellation,
+        )?,
+        endpoint_is_visible(
+            connection,
+            &ride_id,
+            source_end_sequence,
+            viewport,
+            cancellation,
+        )?,
+    );
     if candidate_count == 0 {
         return Ok(RoutePointProjection {
             points: Vec::new(),
@@ -6576,6 +6603,7 @@ fn project_route_points(
             candidate_point_count,
             candidate_segment_count,
             displayed_segment_count: 0,
+            endpoint_metadata,
         });
     }
 
@@ -6634,6 +6662,7 @@ fn project_route_points(
         candidate_point_count,
         candidate_segment_count,
         displayed_segment_count,
+        endpoint_metadata,
     })
 }
 
@@ -6643,6 +6672,8 @@ struct RouteProjectionCounts {
     candidate_point_count: u64,
     candidate_segment_count: u64,
     viewport_predicate: String,
+    source_start_sequence: Option<u64>,
+    source_end_sequence: Option<u64>,
 }
 
 fn route_projection_counts(
@@ -6665,6 +6696,15 @@ fn route_projection_counts(
             "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
             [ride_id],
             |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
+    )?;
+    projection_checkpoint(cancellation)?;
+    let (source_start_sequence, source_end_sequence) = projection_sqlite(
+        connection.query_row(
+            "SELECT MIN(sequence), MAX(sequence) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ),
         cancellation,
     )?;
@@ -6714,7 +6754,64 @@ fn route_projection_counts(
         candidate_point_count,
         candidate_segment_count,
         viewport_predicate,
+        source_start_sequence,
+        source_end_sequence,
     })
+}
+
+fn endpoint_is_visible(
+    connection: &Connection,
+    ride_id: &str,
+    sequence: Option<u64>,
+    viewport: Option<RouteViewport>,
+    cancellation: Option<&RouteProjectionCancellation>,
+) -> Result<bool, StorageError> {
+    let Some(sequence) = sequence else {
+        return Ok(false);
+    };
+    let sequence = i64::try_from(sequence).unwrap_or(i64::MAX);
+    let Some(viewport) = viewport else {
+        return Ok(true);
+    };
+    let visible = if viewport.crosses_antimeridian() {
+        connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM ride_points
+                WHERE ride_id = ?1 AND sequence = ?2
+                  AND latitude_e7 BETWEEN ?3 AND ?4
+                  AND (longitude_e7 >= ?5 OR longitude_e7 <= ?6)
+            )",
+            params![
+                ride_id,
+                sequence,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get(0),
+        )?
+    } else {
+        connection.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM ride_points
+                WHERE ride_id = ?1 AND sequence = ?2
+                  AND latitude_e7 BETWEEN ?3 AND ?4
+                  AND longitude_e7 BETWEEN ?5 AND ?6
+            )",
+            params![
+                ride_id,
+                sequence,
+                viewport.minimum_latitude().as_i32(),
+                viewport.maximum_latitude().as_i32(),
+                viewport.minimum_longitude().as_i32(),
+                viewport.maximum_longitude().as_i32(),
+            ],
+            |row| row.get(0),
+        )?
+    };
+    projection_checkpoint(cancellation)?;
+    Ok(visible)
 }
 
 fn route_point_viewport_predicate(viewport: Option<RouteViewport>) -> String {

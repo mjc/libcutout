@@ -11675,6 +11675,22 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
      * Number of segments represented by the bounded display points.
      */
     public var displayedSegmentCount: UInt64
+    /**
+     * Canonical first-point sequence, when the route has points.
+     */
+    public var canonicalStartSequence: UInt64?
+    /**
+     * Canonical last-point sequence, when the route has points.
+     */
+    public var canonicalEndSequence: UInt64?
+    /**
+     * Whether the canonical first point lies in the requested viewport.
+     */
+    public var canonicalStartVisible: Bool
+    /**
+     * Whether the canonical last point lies in the requested viewport.
+     */
+    public var canonicalEndVisible: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -11696,13 +11712,29 @@ public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
          */candidateSegmentCount: UInt64,
         /**
          * Number of segments represented by the bounded display points.
-         */displayedSegmentCount: UInt64) {
+         */displayedSegmentCount: UInt64,
+        /**
+         * Canonical first-point sequence, when the route has points.
+         */canonicalStartSequence: UInt64?,
+        /**
+         * Canonical last-point sequence, when the route has points.
+         */canonicalEndSequence: UInt64?,
+        /**
+         * Whether the canonical first point lies in the requested viewport.
+         */canonicalStartVisible: Bool,
+        /**
+         * Whether the canonical last point lies in the requested viewport.
+         */canonicalEndVisible: Bool) {
         self.points = points
         self.sourcePointCount = sourcePointCount
         self.sourceSegmentCount = sourceSegmentCount
         self.candidatePointCount = candidatePointCount
         self.candidateSegmentCount = candidateSegmentCount
         self.displayedSegmentCount = displayedSegmentCount
+        self.canonicalStartSequence = canonicalStartSequence
+        self.canonicalEndSequence = canonicalEndSequence
+        self.canonicalStartVisible = canonicalStartVisible
+        self.canonicalEndVisible = canonicalEndVisible
     }
 
 
@@ -11726,7 +11758,11 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
                 sourceSegmentCount: FfiConverterUInt64.read(from: &buf),
                 candidatePointCount: FfiConverterUInt64.read(from: &buf),
                 candidateSegmentCount: FfiConverterUInt64.read(from: &buf),
-                displayedSegmentCount: FfiConverterUInt64.read(from: &buf)
+                displayedSegmentCount: FfiConverterUInt64.read(from: &buf),
+                canonicalStartSequence: FfiConverterOptionUInt64.read(from: &buf),
+                canonicalEndSequence: FfiConverterOptionUInt64.read(from: &buf),
+                canonicalStartVisible: FfiConverterBool.read(from: &buf),
+                canonicalEndVisible: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -11737,6 +11773,10 @@ public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustB
         FfiConverterUInt64.write(value.candidatePointCount, into: &buf)
         FfiConverterUInt64.write(value.candidateSegmentCount, into: &buf)
         FfiConverterUInt64.write(value.displayedSegmentCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.canonicalStartSequence, into: &buf)
+        FfiConverterOptionUInt64.write(value.canonicalEndSequence, into: &buf)
+        FfiConverterBool.write(value.canonicalStartVisible, into: &buf)
+        FfiConverterBool.write(value.canonicalEndVisible, into: &buf)
     }
 }
 

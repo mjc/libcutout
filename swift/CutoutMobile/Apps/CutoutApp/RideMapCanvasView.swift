@@ -60,10 +60,6 @@ struct RideMapCanvasView: View {
         dynamicTypeSize.isAccessibilitySize ? 2 : 1
     }
 
-    static func shouldShowRecordedEndpointMarkers(pointsTruncated: Bool) -> Bool {
-        !pointsTruncated
-    }
-
     static func canonicalEndpointPoint(
         in points: [MobileRideMapRouteDisplayPoint],
         sequence: UInt64?,
