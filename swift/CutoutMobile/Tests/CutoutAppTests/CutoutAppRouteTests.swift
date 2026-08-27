@@ -90,6 +90,10 @@ final class CutoutAppRouteTests: XCTestCase {
             localizedAppText("ride_map.segments_omitted_by_budget"),
             "Some route segments are omitted from this map preview."
         )
+        XCTAssertEqual(
+            localizedAppText("ride_map.show_route_preview"),
+            "Show route preview"
+        )
         XCTAssertEqual(localizedAppText("bms.diagnostics.title"), "BMS diagnostics")
         XCTAssertEqual(localizedAppText("bms.diagnostics.detail"), "Raw readback, available when we need to debug")
         XCTAssertEqual(localizedAppText("bms.display_modes"), "Display modes")

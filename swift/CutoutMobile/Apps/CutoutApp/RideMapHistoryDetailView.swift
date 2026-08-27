@@ -20,7 +20,7 @@ struct RideMapHistoryDetailView: View {
     let select: (String) -> Void
     let load: () -> Void
     let retry: () -> Void
-    let loadFullRide: () -> Void
+    let loadRoutePreview: () -> Void
     let vehicleName: (String?) -> String?
     let cameraDidChange: (MKCoordinateRegion) -> Void
     @Binding var mapPosition: MapCameraPosition
@@ -129,7 +129,7 @@ struct RideMapHistoryDetailView: View {
                                 canonicalBackgroundGapCount: canonicalBackgroundGapCount,
                                 error: routeError,
                                 isLoading: isRouteLoading,
-                                loadFullRide: loadFullRide,
+                                loadRoutePreview: loadRoutePreview,
                                 shareText: shareText(for: ride),
                                 mapPosition: $mapPosition
                             )
@@ -320,7 +320,7 @@ private struct RideMapHistoryDetailSummary: View {
     let canonicalBackgroundGapCount: UInt64
     let error: MobileRideMapError?
     let isLoading: Bool
-    let loadFullRide: () -> Void
+    let loadRoutePreview: () -> Void
     let shareText: String
     @Binding var mapPosition: MapCameraPosition
 
@@ -391,8 +391,8 @@ private struct RideMapHistoryDetailSummary: View {
 
                 HStack(spacing: 10) {
                     if pointsTruncated {
-                        Button(localizedAppText("ride_map.show_full_ride")) {
-                            loadFullRide()
+                        Button(localizedAppText("ride_map.show_route_preview")) {
+                            loadRoutePreview()
                             mapPosition = .automatic
                         }
                         .buttonStyle(.bordered)

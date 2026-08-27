@@ -359,6 +359,43 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryRoutePreviewActionLoadsTheLargestBoundedPreview() async throws {
+        let driver = SessionDriverSpy(rows: [])
+        let state = driver.rideMapStateHandle
+        _ = try state.startGpsOnly(atMs: 100, lastConnectedVehicle: nil)
+        for index in 0 ... 4_096 {
+            _ = await Self.settle(state, try state.ingestLocation(
+                monotonicMs: 100 + UInt64(index) * 1_000,
+                wallClockUnixMs: 1_700_000_000_100 + UInt64(index) * 1_000,
+                latitudeDegrees: 39.7000 + Double(index) * 0.00001,
+                longitudeDegrees: -104.9000,
+                horizontalAccuracyMeters: 5
+            ))
+        }
+        _ = try state.stop(atMs: 4_096_100)
+        let rideID = try state.save().rideId
+
+        let model = CutoutAppModel(core: driver)
+        model.setRideMapHistoryDateFilter(.allTime)
+        model.loadRideMapHistory(selecting: rideID)
+        await Self.waitUntil("bounded history route preview") {
+            model.selectedRideMapHistoryID == rideID
+                && model.rideMapHistoryDisplayPoints.count == 4_096
+                && !model.rideMapHistoryRouteLoading
+        }
+
+        XCTAssertTrue(model.rideMapHistoryPointsTruncated)
+        model.loadRoutePreviewMapHistory()
+        await Self.waitUntil("largest bounded history route preview") {
+            model.rideMapHistoryDisplayPoints.count == 4_097
+                && !model.rideMapHistoryRouteLoading
+        }
+
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints.count, 4_097)
+        XCTAssertFalse(model.rideMapHistoryPointsTruncated)
+    }
+
+    @MainActor
     func testDetailViewportProjectionDoesNotReplaceHistoryProjection() async throws {
         let driver = SessionDriverSpy(rows: [])
         let state = driver.rideMapStateHandle

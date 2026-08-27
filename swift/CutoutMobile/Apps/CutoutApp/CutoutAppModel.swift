@@ -24,7 +24,7 @@ final class CutoutAppModel {
     }
 
     private static let rideMapPreviewPointLimit = 4_096
-    private static let rideMapHistoryDisplayPointLimit: UInt32 = 16_384
+    private static let rideMapHistoryPreviewPointLimit: UInt32 = 16_384
 
     private(set) var displayState = RideDisplayState()
     private(set) var phase = SessionConnectionPhase.starting
@@ -724,7 +724,7 @@ final class CutoutAppModel {
         let cancellation = MobileRideMapProjectionCancellation()
         rideMapHistoryViewportCancellation = cancellation
         let state = core.rideMapStateHandle
-        let budget = Self.rideMapHistoryDisplayPointLimit
+        let budget = Self.rideMapHistoryPreviewPointLimit
         rideMapHistoryViewportTask = Task { [weak self] in
             do {
                 let result = try await withTaskCancellationHandler(operation: {
@@ -771,7 +771,7 @@ final class CutoutAppModel {
         }
     }
 
-    func loadFullRideMapHistory() {
+    func loadRoutePreviewMapHistory() {
         guard let selectedRideMapHistoryID else { return }
         selectRideMapHistory(selectedRideMapHistoryID, previewLimit: nil)
     }
@@ -802,8 +802,8 @@ final class CutoutAppModel {
         rideMapHistorySelectionCancellation = cancellation
         let budget = UInt32(
             min(
-                previewLimit ?? Int(Self.rideMapHistoryDisplayPointLimit),
-                Int(Self.rideMapHistoryDisplayPointLimit)
+                previewLimit ?? Int(Self.rideMapHistoryPreviewPointLimit),
+                Int(Self.rideMapHistoryPreviewPointLimit)
             )
         )
         rideMapHistorySelectionTask = Task { [weak self] in

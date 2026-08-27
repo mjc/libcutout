@@ -889,7 +889,7 @@
       "comment" : "Persistent history-mode status while the ride is paused in the background.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Recording paused" } } }
     },
-    "ride_map.show_full_ride" : {
+    "ride_map.show_route_preview" : {
       "comment" : "Historical ride detail action that loads the largest bounded route preview.",
       "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Show route preview" } } }
     },
