@@ -370,8 +370,12 @@ mod tests {
         )
         .unwrap();
         let endpoints = route_endpoint_metadata(
-            recorder.points(),
-            recorder.first_point_sequence(),
+            recorder
+                .points()
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(offset, point)| (RidePointSequence::new(offset as u64), point)),
             recorder.point_count(),
             Some(viewport),
         );
@@ -407,8 +411,12 @@ mod tests {
         }
 
         let endpoints = route_endpoint_metadata(
-            recorder.points(),
-            recorder.first_point_sequence(),
+            recorder
+                .points()
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(offset, point)| (RidePointSequence::new(offset as u64), point)),
             recorder.point_count(),
             None,
         );
@@ -437,6 +445,43 @@ mod tests {
         );
         assert!(endpoints.start_visible());
         assert!(endpoints.end_visible());
+    }
+
+    #[test]
+    fn route_endpoint_metadata_uses_supplied_sequences_for_noncontiguous_points() {
+        let sample = |latitude| {
+            LocationSample::new(
+                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000),
+                WallClockUnixMilliseconds::new(1_700_000_000_000),
+                None,
+                LocationSource::Live,
+            )
+        };
+        let points = [
+            (
+                RidePointSequence::new(4),
+                RideMapPoint::new(
+                    sample(40.0),
+                    RideMapSegmentId::new(0),
+                    RouteTelemetryState::GpsOnly,
+                ),
+            ),
+            (
+                RidePointSequence::new(9),
+                RideMapPoint::new(
+                    sample(40.0001),
+                    RideMapSegmentId::new(0),
+                    RouteTelemetryState::GpsOnly,
+                ),
+            ),
+        ];
+        let endpoints = route_endpoint_metadata(points, 10, None);
+
+        assert!(!endpoints.start_visible());
+        assert!(endpoints.end_visible());
+        assert_eq!(endpoints.start_sequence(), Some(RidePointSequence::new(0)));
+        assert_eq!(endpoints.end_sequence(), Some(RidePointSequence::new(9)));
     }
 
     #[test]

@@ -245,15 +245,14 @@ impl RouteEndpointMetadata {
     }
 }
 
-/// Computes endpoint metadata for a route slice with an explicit canonical point count.
+/// Computes endpoint metadata from explicitly sequenced canonical points.
 ///
-/// `points` may be a bounded tail rather than the complete route. The explicit `source_point_count`
-/// therefore determines the canonical endpoint sequence values; a retained point is marked
-/// visible only when its sequence and coordinate match that canonical endpoint.
+/// `points` may be a bounded tail or another non-contiguous canonical subset. The explicit
+/// `source_point_count` determines the canonical endpoint sequence values; a retained point is
+/// marked visible only when its supplied sequence and coordinate match that canonical endpoint.
 #[must_use]
 pub fn route_endpoint_metadata(
-    points: &[RideMapPoint],
-    first_sequence: RidePointSequence,
+    points: impl IntoIterator<Item = (RidePointSequence, RideMapPoint)>,
     source_point_count: u64,
     viewport: Option<RouteViewport>,
 ) -> RouteEndpointMetadata {
@@ -262,21 +261,23 @@ pub fn route_endpoint_metadata(
     };
     let start_sequence = RidePointSequence::new(0);
     let end_sequence = RidePointSequence::new(end_offset);
-    let visible = |sequence: RidePointSequence| {
-        points
-            .iter()
-            .enumerate()
-            .find_map(|(offset, point)| {
-                let point_sequence = first_sequence.saturating_add(as_u64(offset));
-                (point_sequence == sequence).then_some(point.sample().coordinate())
-            })
-            .is_some_and(|coordinate| viewport.is_none_or(|viewport| viewport.contains(coordinate)))
-    };
+    let mut start_visible = false;
+    let mut end_visible = false;
+    for (sequence, point) in points {
+        let visible =
+            viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate()));
+        if sequence == start_sequence {
+            start_visible = visible;
+        }
+        if sequence == end_sequence {
+            end_visible = visible;
+        }
+    }
     RouteEndpointMetadata::new(
         Some(start_sequence),
         Some(end_sequence),
-        visible(start_sequence),
-        visible(end_sequence),
+        start_visible,
+        end_visible,
     )
 }
 
