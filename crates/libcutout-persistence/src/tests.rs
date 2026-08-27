@@ -1050,6 +1050,85 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
     let _ = std::fs::remove_file(artifact_path);
 }
 
+#[test]
+fn pevcap_begin_failure_removes_new_managed_artifact() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-begin-failure-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-begin-failure-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let capture = PevcapCapture::new(
+        header,
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1), None).with_phone_location(
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_000,
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: Some(4.0),
+                    speed_meters_per_second: Some(0.0),
+                    speed_accuracy_meters_per_second: Some(1.0),
+                    course_degrees: Some(0.0),
+                    course_accuracy_degrees: Some(1.0),
+                },
+            ),
+        ],
+    );
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    database.shutdown().unwrap();
+
+    let managed_directory = std::path::PathBuf::from(format!(
+        "{}.pevcap-imports",
+        database_path.canonicalize().unwrap().display()
+    ));
+    let managed_path = managed_directory.join(format!("{}.jsonl", preview.artifact_digest()));
+    let database = RideDatabase::open(&database_path).unwrap();
+    let connection = Connection::open(&database_path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO pevcap_import_work (artifact_digest, artifact_path, ride_id)
+             VALUES (?1, ?2, NULL)",
+            rusqlite::params![preview.artifact_digest(), managed_path.to_string_lossy()],
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(matches!(
+        database.confirm_pevcap_import(&preview, 1_700_000_000_000),
+        Err(StorageError::PevcapImportInProgress)
+    ));
+    assert!(!managed_path.exists());
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+    let _ = std::fs::remove_dir(managed_directory);
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "integration test covers the complete canonical import contract"

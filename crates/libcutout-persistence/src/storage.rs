@@ -2123,13 +2123,21 @@ impl RideDatabase {
         }
 
         let managed = prepare_managed_pevcap(self.path.as_ref(), preview)?;
-        let begin = self.request(|reply| Command::BeginPevcapImport {
+        let begin = match self.request(|reply| Command::BeginPevcapImport {
             digest: preview.artifact_digest.clone(),
             managed_path: managed.path.clone(),
             outcome: preview.outcome,
             created_at_ms,
             reply,
-        })?;
+        }) {
+            Ok(begin) => begin,
+            Err(error) => {
+                if managed.created {
+                    let _ = fs::remove_file(&managed.path);
+                }
+                return Err(error);
+            }
+        };
         let PevcapBegin::Started { ride_id } = begin else {
             return match begin {
                 PevcapBegin::Duplicate(receipt) => Ok(receipt),
