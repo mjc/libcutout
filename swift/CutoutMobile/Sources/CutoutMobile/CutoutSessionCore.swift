@@ -508,7 +508,9 @@ public final class CutoutSessionCore: NSObject {
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.distanceFilter = 5
         manager.activityType = .fitness
+#if os(iOS)
         manager.allowsBackgroundLocationUpdates = true
+#endif
         return manager
     }()
 
