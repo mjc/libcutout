@@ -3405,6 +3405,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub candidate_segment_count: u64,
     /// Number of segments represented by the bounded display points.
     pub displayed_segment_count: u64,
+    /// Total canonical segments started by a background location gap.
+    pub background_gap_count: u64,
     /// Canonical first-point sequence, when the route has points.
     pub canonical_start_sequence: Option<u64>,
     /// Canonical last-point sequence, when the route has points.
@@ -4142,6 +4144,7 @@ fn mobile_route_projection_dto(
         candidate_point_count: projection.candidate_point_count(),
         candidate_segment_count: projection.candidate_segment_count(),
         displayed_segment_count: projection.displayed_segment_count(),
+        background_gap_count: projection.background_gap_count(),
         canonical_start_sequence: projection
             .endpoint_metadata()
             .start_sequence()
@@ -5375,6 +5378,20 @@ impl RideDatabaseHandle {
             })
             .map_err(map_ride_database_error)
     }
+
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "called from the Rust-owned live map restore path"
+    )]
+    fn background_gap_count(
+        &self,
+        ride_id: MobileRideIdDto,
+    ) -> Result<u64, MobileRideDatabaseError> {
+        let ride_id = parse_mobile_ride_id(&ride_id)?;
+        self.inner
+            .background_gap_count(ride_id)
+            .map_err(map_ride_database_error)
+    }
 }
 
 /// Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
@@ -5441,6 +5458,9 @@ impl MobileRideMapCoreInner {
         let monotonic_created_at_milliseconds = database
             .monotonic_created_at_milliseconds(&ride.id)
             .map_err(map_core_error)?;
+        let background_gap_count = database
+            .background_gap_count(ride.id.clone())
+            .map_err(map_core_error)?;
         let samples = database
             .latest_route_map_points(ride.id.clone())
             .map_err(map_core_error)?;
@@ -5470,6 +5490,7 @@ impl MobileRideMapCoreInner {
                 last_telemetry_at_milliseconds: ride
                     .last_telemetry_at_milliseconds
                     .map(ride_maps::MonotonicMilliseconds::new),
+                background_gap_count,
             },
             ride_maps::RideLifecycleTiming {
                 duration_milliseconds: ride_maps::RideDurationMilliseconds::new(
@@ -6546,13 +6567,14 @@ fn project_live_route_points(
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
     let (viewport, budget, privacy) = mobile_route_projection_options(options)?;
-    let (points, first_sequence, source_point_count, source_segment_count) = {
+    let (points, first_sequence, source_point_count, source_segment_count, background_gap_count) = {
         let state = core.inner.lock().unwrap_or_else(PoisonError::into_inner);
         (
             state.recorder.points().to_vec(),
             state.recorder.first_point_sequence(),
             state.recorder.point_count(),
             state.recorder.segment_count().as_u64(),
+            state.recorder.background_gap_count(),
         )
     };
     if is_cancelled() {
@@ -6593,6 +6615,7 @@ fn project_live_route_points(
         candidate_point_count,
         candidate_segment_count,
         displayed_segment_count,
+        background_gap_count,
         canonical_start_sequence: endpoint_metadata
             .start_sequence()
             .map(ride_maps::RidePointSequence::as_u64),
@@ -14881,6 +14904,55 @@ mod tests {
                 ))
                 .collect::<Vec<_>>(),
             vec![(Some(0), Some(0)), (Some(1), Some(1)), (Some(2), Some(2))]
+        );
+    }
+
+    #[test]
+    fn mobile_live_projection_counts_background_gaps_after_tail_eviction() {
+        let state = MobileRideMapCore::new_for_testing();
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("initial location is accepted");
+        state
+            .ingest_location(40_000, 1_700_000_039_000, 40.001, -105.0, 3.0)
+            .expect("background gap location is accepted");
+
+        for index in 0..ride_maps::MAX_LIVE_ROUTE_POINTS {
+            let index = u64::try_from(index).expect("live route bound fits");
+            let latitude_offset =
+                f64::from(u32::try_from(index).expect("live route bound fits in a u32"));
+            state
+                .ingest_location(
+                    41_000 + index * 1_000,
+                    1_700_000_040_000 + index * 1_000,
+                    40.001 + (latitude_offset * 0.000_001),
+                    -105.0,
+                    3.0,
+                )
+                .expect("tail location is accepted");
+        }
+
+        let projection = state
+            .project_points(MobileRideMapRouteProjectionOptionsDto {
+                viewport: None,
+                budget: 8,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+            })
+            .expect("route projection is valid");
+
+        assert_eq!(
+            projection.source_point_count,
+            1 + 1 + ride_maps::MAX_LIVE_ROUTE_POINTS as u64
+        );
+        assert_eq!(projection.source_segment_count, 2);
+        assert_eq!(projection.background_gap_count, 1);
+        assert_eq!(projection.segments.len(), 1);
+        assert_eq!(
+            projection.segments[0].start_reason,
+            MobileRideSegmentStartReasonDto::BackgroundGap
         );
     }
 

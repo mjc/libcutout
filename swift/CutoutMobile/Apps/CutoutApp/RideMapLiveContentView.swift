@@ -18,6 +18,7 @@ struct RideMapLiveContentView: View {
     let lastDecision: MobileRideMapDecisionDto?
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
+    let canonicalBackgroundGapCount: UInt64
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
     @Binding var followsLatestPoint: Bool
@@ -99,7 +100,8 @@ struct RideMapLiveContentView: View {
                     decision: lastDecision,
                     showsRecordedBounds: showsRecordedBounds,
                     segmentsOmittedByBudget: segmentsOmittedByBudget,
-                    segments: segments
+                    segments: segments,
+                    canonicalBackgroundGapCount: canonicalBackgroundGapCount
                 )
                 if pointsTruncated {
                     Text(localizedAppText("ride_map.live_route_truncated_count", points.count))

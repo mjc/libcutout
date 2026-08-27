@@ -47,6 +47,7 @@ final class CutoutAppModel {
     private(set) var rideMapLiveDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapLiveEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapLiveSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapLiveBackgroundGapCount: UInt64 = 0
     private(set) var rideMapLivePointsTruncated = false
     private(set) var rideMapLiveSegmentsOmittedByBudget = false
     private(set) var rideMapHistory = [MobileRideMapHistorySummaryDto]()
@@ -57,11 +58,13 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistorySegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapHistoryBackgroundGapCount: UInt64 = 0
     private(set) var rideMapHistoryPointsTruncated = false
     private(set) var rideMapHistorySegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistoryDetailSegments = [MobileRideMapSegmentDisplayMetadata]()
+    private(set) var rideMapHistoryDetailBackgroundGapCount: UInt64 = 0
     private(set) var rideMapHistoryDetailPointsTruncated = false
     private(set) var rideMapHistoryDetailSourcePointsOmittedByBudget = false
     private(set) var rideMapHistoryDetailSourceSegmentsOmittedByBudget = false
@@ -726,6 +729,7 @@ final class CutoutAppModel {
                     result.points,
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
+                    backgroundGapCount: result.backgroundGapCount,
                     truncated: Self.detailPointsAreTruncated(
                         sourcePointsOmittedByBudget: self.rideMapHistoryDetailSourcePointsOmittedByBudget,
                         viewportPointsOmittedByBudget: result.pointsOmittedByBudget
@@ -747,6 +751,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailRouteLoading = false
                 self.rideMapHistoryDetailEndpointMetadata = .empty
                 self.rideMapHistoryDetailSegments = []
+                self.rideMapHistoryDetailBackgroundGapCount = 0
             }
         }
     }
@@ -805,6 +810,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDisplayPoints = result.points
                 self.rideMapHistoryEndpointMetadata = result.endpointMetadata
                 self.rideMapHistorySegments = result.segments
+                self.rideMapHistoryBackgroundGapCount = result.backgroundGapCount
                 self.rideMapHistoryPointsTruncated = result.pointsOmittedByBudget
                 self.rideMapHistorySegmentsOmittedByBudget = result.segmentsOmittedByBudget
                 self.rideMapHistoryDetailSourcePointsOmittedByBudget = result.pointsOmittedByBudget
@@ -813,6 +819,7 @@ final class CutoutAppModel {
                     result.points,
                     endpointMetadata: result.endpointMetadata,
                     segments: result.segments,
+                    backgroundGapCount: result.backgroundGapCount,
                     truncated: result.pointsOmittedByBudget,
                     segmentsOmittedByBudget: Self.detailSegmentsAreOmitted(
                         sourceSegmentsOmittedByBudget: self.rideMapHistoryDetailSourceSegmentsOmittedByBudget,
@@ -835,6 +842,8 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailEndpointMetadata = .empty
                 self.rideMapHistorySegments = []
                 self.rideMapHistoryDetailSegments = []
+                self.rideMapHistoryBackgroundGapCount = 0
+                self.rideMapHistoryDetailBackgroundGapCount = 0
             }
         }
     }
@@ -850,12 +859,14 @@ final class CutoutAppModel {
         _ points: [MobileRideMapRouteDisplayPoint],
         endpointMetadata: MobileRideMapRouteEndpointMetadata = .empty,
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        backgroundGapCount: UInt64 = 0,
         truncated: Bool,
         segmentsOmittedByBudget: Bool = false
     ) {
         rideMapHistoryDetailDisplayPoints = points
         rideMapHistoryDetailEndpointMetadata = endpointMetadata
         rideMapHistoryDetailSegments = segments
+        rideMapHistoryDetailBackgroundGapCount = backgroundGapCount
         rideMapHistoryDetailPointsTruncated = truncated
         rideMapHistoryDetailSegmentsOmittedByBudget = segmentsOmittedByBudget
         rideMapHistoryDetailProjectionVersion &+= 1
@@ -865,6 +876,7 @@ final class CutoutAppModel {
         rideMapHistoryDisplayPoints = []
         rideMapHistoryEndpointMetadata = .empty
         rideMapHistorySegments = []
+        rideMapHistoryBackgroundGapCount = 0
         rideMapHistoryPointsTruncated = false
         rideMapHistorySegmentsOmittedByBudget = false
         rideMapHistoryDetailSourcePointsOmittedByBudget = false
@@ -991,6 +1003,7 @@ final class CutoutAppModel {
         rideMapLiveDisplayPoints = projection.points
         rideMapLiveEndpointMetadata = projection.endpointMetadata
         rideMapLiveSegments = projection.segments
+        rideMapLiveBackgroundGapCount = projection.backgroundGapCount
         rideMapLivePointsTruncated = projection.pointsOmittedByBudget
         rideMapLiveSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
     }
@@ -999,6 +1012,7 @@ final class CutoutAppModel {
         rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
         rideMapLiveEndpointMetadata = .empty
         rideMapLiveSegments.removeAll(keepingCapacity: true)
+        rideMapLiveBackgroundGapCount = 0
         rideMapLivePointsTruncated = false
         rideMapLiveSegmentsOmittedByBudget = false
     }

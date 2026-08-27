@@ -510,6 +510,7 @@ pub struct RoutePointProjection {
     candidate_point_count: u64,
     candidate_segment_count: u64,
     displayed_segment_count: u64,
+    background_gap_count: u64,
     endpoint_metadata: RouteEndpointMetadata,
     segments: Vec<RouteSegmentDisplayMetadata>,
 }
@@ -549,6 +550,12 @@ impl RoutePointProjection {
     #[must_use]
     pub const fn displayed_segment_count(&self) -> u64 {
         self.displayed_segment_count
+    }
+
+    /// Returns the complete durable count of segments started by a background location gap.
+    #[must_use]
+    pub const fn background_gap_count(&self) -> u64 {
+        self.background_gap_count
     }
 
     /// Returns canonical endpoint sequences and viewport visibility.
@@ -2565,6 +2572,17 @@ impl RideDatabase {
         })
     }
 
+    /// Returns the complete durable count of segments started by a background location gap.
+    ///
+    /// This scalar query avoids loading the route or the segment rows into the live projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist.
+    pub fn background_gap_count(&self, ride_id: RideId) -> Result<u64, StorageError> {
+        self.request(move |reply| Command::BackgroundGapCount { ride_id, reply })
+    }
+
     /// Projects a durable route through the shared Rust viewport, LOD, and privacy policy.
     ///
     /// The worker counts the complete route and streams only viewport candidates into the
@@ -3107,6 +3125,10 @@ enum Command {
         limit: QueryLimit,
         reply: Reply<Vec<RideSegment>>,
     },
+    BackgroundGapCount {
+        ride_id: RideId,
+        reply: Reply<u64>,
+    },
     ProjectRoutePoints {
         ride_id: RideId,
         viewport: Option<RouteViewport>,
@@ -3536,6 +3558,9 @@ fn worker_loop(
                 reply,
             } => {
                 let _ = reply.send(ride_segments(&connection, ride_id, limit));
+            }
+            Command::BackgroundGapCount { ride_id, reply } => {
+                let _ = reply.send(background_gap_count(&connection, ride_id));
             }
             Command::ProjectRoutePoints {
                 ride_id,
@@ -6559,6 +6584,26 @@ fn ride_segments(
         .map_err(StorageError::from)
 }
 
+fn background_gap_count(connection: &Connection, ride_id: RideId) -> Result<u64, StorageError> {
+    let ride_id = ride_id.uuid().to_string();
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM rides WHERE id = ?1)",
+        [&ride_id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Err(StorageError::NotFound);
+    }
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM ride_segments
+             WHERE ride_id = ?1 AND start_reason = 'background_gap'",
+            [&ride_id],
+            |row| row.get(0),
+        )
+        .map_err(StorageError::from)
+}
+
 fn project_route_points(
     connection: &Connection,
     ride_id: RideId,
@@ -6602,6 +6647,7 @@ fn project_route_points(
             candidate_point_count: counts.candidate_point_count,
             candidate_segment_count: counts.candidate_segment_count,
             displayed_segment_count: 0,
+            background_gap_count: counts.background_gap_count,
             endpoint_metadata,
             segments: Vec::new(),
         });
@@ -6623,6 +6669,7 @@ fn project_route_points(
         candidate_point_count: counts.candidate_point_count,
         candidate_segment_count: counts.candidate_segment_count,
         displayed_segment_count,
+        background_gap_count: counts.background_gap_count,
         endpoint_metadata,
         segments,
     })
@@ -6737,6 +6784,7 @@ fn route_endpoint_metadata_from_storage(
 struct RouteProjectionCounts {
     source_point_count: u64,
     source_segment_count: u64,
+    background_gap_count: u64,
     candidate_point_count: u64,
     candidate_segment_count: u64,
     viewport_predicate: String,
@@ -6762,6 +6810,16 @@ fn route_projection_counts(
     let source_segment_count = projection_sqlite(
         connection.query_row(
             "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
+    )?;
+    projection_checkpoint(cancellation)?;
+    let background_gap_count = projection_sqlite(
+        connection.query_row(
+            "SELECT COUNT(*) FROM ride_segments
+             WHERE ride_id = ?1 AND start_reason = 'background_gap'",
             [ride_id],
             |row| row.get::<_, u64>(0),
         ),
@@ -6819,6 +6877,7 @@ fn route_projection_counts(
     Ok(RouteProjectionCounts {
         source_point_count,
         source_segment_count,
+        background_gap_count,
         candidate_point_count,
         candidate_segment_count,
         viewport_predicate,

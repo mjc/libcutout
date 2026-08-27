@@ -12,6 +12,7 @@ struct RideMapHistoryDetailView: View {
     let projectionVersion: UInt64
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
+    let canonicalBackgroundGapCount: UInt64
     let historyError: MobileRideMapError?
     let routeError: MobileRideMapError?
     let isLoading: Bool
@@ -125,6 +126,7 @@ struct RideMapHistoryDetailView: View {
                                 segmentCount: ride.segmentCount,
                                 segments: segments,
                                 segmentsOmittedByBudget: segmentsOmittedByBudget,
+                                canonicalBackgroundGapCount: canonicalBackgroundGapCount,
                                 error: routeError,
                                 isLoading: isRouteLoading,
                                 loadFullRide: loadFullRide,
@@ -313,6 +315,7 @@ private struct RideMapHistoryDetailSummary: View {
     let segmentCount: UInt64
     let segments: [MobileRideMapSegmentDisplayMetadata]
     let segmentsOmittedByBudget: Bool
+    let canonicalBackgroundGapCount: UInt64
     let error: MobileRideMapError?
     let isLoading: Bool
     let loadFullRide: () -> Void
@@ -370,6 +373,7 @@ private struct RideMapHistoryDetailSummary: View {
                     showsRecordedBounds: !pointsTruncated,
                     segmentsOmittedByBudget: segmentsOmittedByBudget,
                     segments: segments,
+                    canonicalBackgroundGapCount: canonicalBackgroundGapCount,
                     hasRoute: displayPointCount > 0,
                     telemetryState: telemetryState
                 )

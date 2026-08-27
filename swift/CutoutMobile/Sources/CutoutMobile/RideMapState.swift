@@ -284,6 +284,8 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var candidatePointCount: UInt64
     public var candidateSegmentCount: UInt64
     public var displayedSegmentCount: UInt64
+    /// Number of canonical BackgroundGap segments in the complete route.
+    public var backgroundGapCount: UInt64
     public var canonicalStartSequence: UInt64?
     public var canonicalEndSequence: UInt64?
     public var canonicalStartVisible: Bool
@@ -308,10 +310,6 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
         displayedSegmentCount < candidateSegmentCount
     }
 
-    /// Number of displayed segments that represent an actual background location gap.
-    public var backgroundGapCount: UInt64 {
-        MobileRideMapSegmentDisplayMetadata.backgroundGapCount(for: segments)
-    }
 }
 
 /// Canonical endpoint identity and viewport visibility for a bounded route projection.
@@ -842,6 +840,7 @@ public final class MobileRideMapState: @unchecked Sendable {
             candidatePointCount: projection.candidatePointCount,
             candidateSegmentCount: projection.candidateSegmentCount,
             displayedSegmentCount: projection.displayedSegmentCount,
+            backgroundGapCount: projection.backgroundGapCount,
             canonicalStartSequence: projection.canonicalStartSequence,
             canonicalEndSequence: projection.canonicalEndSequence,
             canonicalStartVisible: projection.canonicalStartVisible,

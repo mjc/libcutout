@@ -10,6 +10,7 @@ struct RideMapRouteTruthView: View {
     let showsRecordedBounds: Bool
     let segmentsOmittedByBudget: Bool
     let segments: [MobileRideMapSegmentDisplayMetadata]
+    let canonicalBackgroundGapCount: UInt64
     let hasRoute: Bool?
     let telemetryState: MobileRideMapTelemetryStateDto?
 
@@ -21,6 +22,7 @@ struct RideMapRouteTruthView: View {
         showsRecordedBounds: Bool,
         segmentsOmittedByBudget: Bool = false,
         segments: [MobileRideMapSegmentDisplayMetadata] = [],
+        canonicalBackgroundGapCount: UInt64 = 0,
         hasRoute: Bool? = nil,
         telemetryState: MobileRideMapTelemetryStateDto? = nil
     ) {
@@ -31,6 +33,7 @@ struct RideMapRouteTruthView: View {
         self.showsRecordedBounds = showsRecordedBounds
         self.segmentsOmittedByBudget = segmentsOmittedByBudget
         self.segments = segments
+        self.canonicalBackgroundGapCount = canonicalBackgroundGapCount
         self.hasRoute = hasRoute
         self.telemetryState = telemetryState
     }
@@ -73,7 +76,7 @@ struct RideMapRouteTruthView: View {
     private var segmentCount: UInt64 { rustSegmentCount }
 
     private var backgroundGapCount: UInt64 {
-        MobileRideMapSegmentDisplayMetadata.backgroundGapCount(for: segments)
+        canonicalBackgroundGapCount
     }
 
     private var routeIsPresent: Bool { hasRoute ?? !points.isEmpty }

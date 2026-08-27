@@ -2591,6 +2591,7 @@ fn durable_route_projection_reports_segments_omitted_by_display_budget() {
 
     assert_eq!(projection.source_point_count(), 7);
     assert_eq!(projection.source_segment_count(), 3);
+    assert_eq!(projection.background_gap_count(), 2);
     assert_eq!(projection.candidate_point_count(), 7);
     assert_eq!(projection.candidate_segment_count(), 3);
     assert_eq!(projection.displayed_segment_count(), 2);
@@ -2655,7 +2656,11 @@ fn durable_route_projection_exposes_typed_bounded_segment_metadata() {
         segments[2].start_reason(),
         RideSegmentStartReason::BackgroundGap
     );
-    assert!(segments.iter().all(|segment| segment.is_retained_singleton()));
+    assert!(
+        segments
+            .iter()
+            .all(|segment| segment.is_retained_singleton())
+    );
     assert_eq!(
         segments
             .iter()

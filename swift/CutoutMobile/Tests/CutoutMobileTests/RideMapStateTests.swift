@@ -259,10 +259,34 @@ final class RideMapStateTests: XCTestCase {
         XCTAssertEqual(projection.points.map(\.sequence), [0, 2])
         XCTAssertEqual(projection.points.map(\.privacyClass), [.gridRedacted, .gridRedacted])
         XCTAssertEqual(projection.points.map(\.latitudeDegrees), [40.0, 40.0002])
+        XCTAssertEqual(projection.backgroundGapCount, 0)
 
         XCTAssertThrowsError(try state.projectPoints(budget: 0)) { error in
             XCTAssertEqual(error as? MobileRideMapError, .InvalidRouteProjection)
         }
+    }
+
+    func testMapStateProjectsCanonicalBackgroundGapCount() async throws {
+        let state = MobileRideMapState()
+        _ = try state.startGpsOnly(atMs: 1_000, lastConnectedVehicle: nil)
+
+        for (monotonicMs, latitudeDegrees) in [
+            (1_001, 40.0),
+            (40_001, 40.0001),
+        ] {
+            _ = await settle(state, try state.ingestLocation(
+                monotonicMs: UInt64(monotonicMs),
+                wallClockUnixMs: 1_700_000_000_000 + UInt64(monotonicMs),
+                latitudeDegrees: latitudeDegrees,
+                longitudeDegrees: -105.0,
+                horizontalAccuracyMeters: 3
+            ))
+        }
+
+        let projection = try state.projectPoints(budget: 8)
+        XCTAssertEqual(projection.backgroundGapCount, 1)
+        XCTAssertEqual(projection.sourceSegmentCount, 2)
+        XCTAssertEqual(projection.segments.map(\.startReason), [.initial, .backgroundGap])
     }
 
     func testLiveProjectionCancellationIsTypedAndLeavesCompatibilityPathUsable() async throws {
