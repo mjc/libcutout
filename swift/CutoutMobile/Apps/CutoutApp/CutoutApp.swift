@@ -10,6 +10,7 @@ struct CutoutApp: App {
     @NSApplicationDelegateAdaptor(CutoutAppDelegate.self) private var appDelegate
     #endif
     @State private var model = CutoutAppModel()
+    @State private var rideMapPresentation = RideMapPresentationState()
     @State private var navigationPath = CutoutAppRoute.navigationPath(for: .initialRoute())
     @Environment(\.scenePhase) private var scenePhase
 
@@ -52,10 +53,18 @@ struct CutoutApp: App {
     @ViewBuilder
     private var rootView: some View {
         #if os(macOS)
-        ContentView(model: model, navigationPath: $navigationPath)
+            ContentView(
+                model: model,
+                rideMapPresentation: rideMapPresentation,
+                navigationPath: $navigationPath
+            )
             .frame(minWidth: 360, minHeight: 280)
         #else
-        ContentView(model: model, navigationPath: $navigationPath)
+        ContentView(
+            model: model,
+            rideMapPresentation: rideMapPresentation,
+            navigationPath: $navigationPath
+        )
         #endif
     }
 
@@ -64,7 +73,7 @@ struct CutoutApp: App {
     }
 
     private var navigationTabs: [PevScreenTab] {
-        currentRoute.availableNavigationTabs
+        currentRoute.availableNavigationTabs(for: model.selectedConnectionRoute)
     }
 }
 
