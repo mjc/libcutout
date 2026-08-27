@@ -2252,14 +2252,42 @@ impl RideDatabase {
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_failure_for_test(
         &self,
-        _ride_id: RideId,
-        _sample: LocationSample,
-        _segment_id: u64,
-        _telemetry_state: RouteTelemetryState,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
     ) -> Result<PendingLocationWrite, StorageError> {
+        self.enqueue_location_worker_failure_for_test(
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+            entered,
+            WorkerFailurePoint::BeforeWrite,
+        )
+    }
+
+    #[cfg(test)]
+    fn enqueue_location_worker_failure_for_test(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+        entered: SyncSender<()>,
+        failure_point: WorkerFailurePoint,
+    ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocationWithWorkerFailure { entered, reply })?;
+        self.enqueue(Command::AppendLocationWithWorkerFailure {
+            ride_id,
+            sample,
+            segment_id: RideMapSegmentId::new(segment_id),
+            telemetry_state,
+            entered,
+            failure_point,
+            reply,
+        })?;
         Ok(PendingLocationWrite { response })
     }
 
@@ -2275,16 +2303,14 @@ impl RideDatabase {
         telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
     ) -> Result<PendingLocationWrite, StorageError> {
-        let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocationWithWorkerFailureAfterWrite {
+        self.enqueue_location_worker_failure_for_test(
             ride_id,
             sample,
-            segment_id: RideMapSegmentId::new(segment_id),
+            segment_id,
             telemetry_state,
             entered,
-            reply,
-        })?;
-        Ok(PendingLocationWrite { response })
+            WorkerFailurePoint::AfterWrite,
+        )
     }
 
     /// Loads the durable summary projection for one ride.
@@ -2646,6 +2672,13 @@ struct ManagedArtifact {
     created: bool,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy)]
+enum WorkerFailurePoint {
+    BeforeWrite,
+    AfterWrite,
+}
+
 enum Command {
     Capabilities {
         reply: Reply<SqliteCapabilities>,
@@ -2814,16 +2847,12 @@ enum Command {
     },
     #[cfg(test)]
     AppendLocationWithWorkerFailure {
-        entered: SyncSender<()>,
-        reply: Reply<LocationAdmission>,
-    },
-    #[cfg(test)]
-    AppendLocationWithWorkerFailureAfterWrite {
         ride_id: RideId,
         sample: LocationSample,
         segment_id: RideMapSegmentId,
         telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
+        failure_point: WorkerFailurePoint,
         reply: Reply<LocationAdmission>,
     },
     Summary {
@@ -3182,29 +3211,25 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 ));
             }
             #[cfg(test)]
-            Command::AppendLocationWithWorkerFailure { entered, reply } => {
-                let _ = entered.send(());
-                drop(reply);
-                break;
-            }
-            #[cfg(test)]
-            Command::AppendLocationWithWorkerFailureAfterWrite {
+            Command::AppendLocationWithWorkerFailure {
                 ride_id,
                 sample,
                 segment_id,
                 telemetry_state,
                 entered,
+                failure_point,
                 reply,
             } => {
-                let result = append_location(
-                    &mut connection,
-                    ride_id,
-                    sample,
-                    segment_id,
-                    telemetry_state,
-                );
+                if matches!(failure_point, WorkerFailurePoint::AfterWrite) {
+                    let _ = append_location(
+                        &mut connection,
+                        ride_id,
+                        sample,
+                        segment_id,
+                        telemetry_state,
+                    );
+                }
                 let _ = entered.send(());
-                let _ = result;
                 drop(reply);
                 break;
             }
