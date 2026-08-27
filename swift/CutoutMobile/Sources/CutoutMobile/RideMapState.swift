@@ -234,6 +234,9 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
     /// Number of points retained for this segment in the bounded display projection.
     /// This is not the cardinality of the canonical source segment.
     public var visiblePointCount: UInt64
+    /// Number of points in the canonical source segment, when the projection has durable data.
+    /// Live-tail projections may leave this unknown after older points are evicted.
+    public var canonicalPointCount: UInt64?
     public var firstVisibleSequence: UInt64?
     public var lastVisibleSequence: UInt64?
 
@@ -248,6 +251,11 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
     /// A retained singleton does not imply that the canonical source segment contains one point.
     public var isRetainedSingleton: Bool {
         visiblePointCount == 1
+    }
+
+    /// Whether the canonical source segment contains exactly one point.
+    public var isCanonicalSingleton: Bool {
+        canonicalPointCount == 1
     }
 
     /// Counts displayed segments that represent a background location gap.
@@ -265,12 +273,14 @@ public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable
         segmentId: UInt64,
         startReason: MobileRideMapSegmentStartReason,
         visiblePointCount: UInt64,
+        canonicalPointCount: UInt64? = nil,
         firstVisibleSequence: UInt64?,
         lastVisibleSequence: UInt64?
     ) {
         self.segmentId = segmentId
         self.startReason = startReason
         self.visiblePointCount = visiblePointCount
+        self.canonicalPointCount = canonicalPointCount
         self.firstVisibleSequence = firstVisibleSequence
         self.lastVisibleSequence = lastVisibleSequence
     }
@@ -831,6 +841,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                     segmentId: segment.segmentId,
                     startReason: map(segment.startReason),
                     visiblePointCount: segment.visiblePointCount,
+                    canonicalPointCount: segment.canonicalPointCount,
                     firstVisibleSequence: segment.firstVisibleSequence,
                     lastVisibleSequence: segment.lastVisibleSequence
                 )

@@ -2597,6 +2597,14 @@ fn durable_route_projection_reports_segments_omitted_by_display_budget() {
     assert_eq!(projection.displayed_segment_count(), 2);
     assert_eq!(
         projection
+            .segments()
+            .iter()
+            .map(|segment| segment.canonical_point_count())
+            .collect::<Vec<_>>(),
+        vec![Some(3), Some(3)]
+    );
+    assert_eq!(
+        projection
             .points()
             .iter()
             .map(|point| point.segment_id().value())

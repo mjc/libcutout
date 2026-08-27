@@ -3382,6 +3382,8 @@ pub struct MobileRideMapSegmentDisplayMetadataDto {
     pub start_reason: MobileRideSegmentStartReasonDto,
     /// Number of projected points retained for this segment.
     pub visible_point_count: u64,
+    /// Number of points in the canonical source segment, when known.
+    pub canonical_point_count: Option<u64>,
     /// First retained projected point sequence.
     pub first_visible_sequence: Option<u64>,
     /// Last retained projected point sequence.
@@ -4114,6 +4116,7 @@ fn mobile_segment_display_metadata_dto(
         segment_id: segment.segment_id().value(),
         start_reason: mobile_segment_start_reason_dto(segment.start_reason()),
         visible_point_count: segment.visible_point_count(),
+        canonical_point_count: segment.canonical_point_count(),
         first_visible_sequence: segment
             .first_visible_sequence()
             .map(ride_maps::RidePointSequence::as_u64),
@@ -14894,6 +14897,12 @@ mod tests {
                 .iter()
                 .all(|segment| segment.visible_point_count == 1)
         );
+        assert!(
+            projection
+                .segments
+                .iter()
+                .all(|segment| segment.canonical_point_count.is_none())
+        );
         assert_eq!(
             projection
                 .segments
@@ -15809,6 +15818,71 @@ mod tests {
             .expect_err("zero timeout must be rejected before the worker runs");
 
         assert_eq!(error, MobileRideDatabaseError::DeadlineExceeded);
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_database_route_projection_exports_canonical_segment_cardinality() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-route-segment-cardinality-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let ride = database
+            .create_ride(MobileRideSourceDto::Live, 1_700_000_000_000)
+            .expect("ride creates");
+        database
+            .transition(ride.clone(), MobileRideEventDto::Start)
+            .expect("ride starts");
+        for (offset, segment_id) in [0_u64, 0, 0, 1, 2, 2, 2].into_iter().enumerate() {
+            let offset = u32::try_from(offset).expect("fixture offset fits");
+            let admission = database
+                .append_location_with_segment(
+                    ride.clone(),
+                    MobileRideLocationDto {
+                        latitude_degrees: 40.0 + f64::from(offset) / 10_000.0,
+                        longitude_degrees: -105.0,
+                        monotonic_milliseconds: u64::from(offset) + 1,
+                        wall_clock_unix_milliseconds: 1_700_000_000_000 + u64::from(offset),
+                        horizontal_accuracy_millimetres: Some(3_000),
+                        source: MobileRideSourceDto::Live,
+                    },
+                    segment_id,
+                )
+                .expect("location appends");
+            assert_eq!(admission, MobileRideLocationAdmissionDto::Accepted);
+        }
+
+        let projection = database
+            .project_route_points(
+                ride,
+                MobileRideMapRouteProjectionOptionsDto {
+                    viewport: None,
+                    budget: 3,
+                    privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+                },
+            )
+            .expect("route projection succeeds");
+        assert_eq!(
+            projection
+                .segments
+                .iter()
+                .map(|segment| (
+                    segment.segment_id,
+                    segment.visible_point_count,
+                    segment.canonical_point_count
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, 1, Some(3)), (1, 1, Some(1)), (2, 1, Some(3))]
+        );
+
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }

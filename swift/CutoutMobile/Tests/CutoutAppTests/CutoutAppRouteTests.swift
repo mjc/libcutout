@@ -485,6 +485,7 @@ final class CutoutAppRouteTests: XCTestCase {
         )
         XCTAssertEqual(MobileRideMapSegmentDisplayMetadata.visibleBackgroundGapCount(for: segments), 1)
         XCTAssertTrue(segments[2].isRetainedSingleton)
+        XCTAssertFalse(segments[2].isCanonicalSingleton)
         XCTAssertTrue(segments[2].isBackgroundGap)
         XCTAssertFalse(segments[1].isRetainedSingleton)
         XCTAssertFalse(segments[1].isBackgroundGap)
@@ -492,6 +493,17 @@ final class CutoutAppRouteTests: XCTestCase {
             segments[2].startReason.retainedSingletonAccessibilityLabel,
             "Displayed route point; background location gap segment has one retained display point"
         )
+
+        let canonicalSingleton = MobileRideMapSegmentDisplayMetadata(
+            segmentId: 3,
+            startReason: .importBoundary,
+            visiblePointCount: 1,
+            canonicalPointCount: 1,
+            firstVisibleSequence: 4,
+            lastVisibleSequence: 4
+        )
+        XCTAssertTrue(canonicalSingleton.isRetainedSingleton)
+        XCTAssertTrue(canonicalSingleton.isCanonicalSingleton)
     }
 
     @MainActor

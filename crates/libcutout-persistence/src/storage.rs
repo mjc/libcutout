@@ -6694,10 +6694,18 @@ fn project_route_candidates(
     let select = format!(
         "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
                 points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
-                points.horizontal_accuracy_mm, points.source, segments.start_reason
+                points.horizontal_accuracy_mm, points.source, segments.start_reason,
+                source_segment_counts.point_count
          FROM ride_points AS points
          JOIN ride_segments AS segments
            ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+         JOIN (
+             SELECT segment_id, COUNT(*) AS point_count
+             FROM ride_points
+             WHERE ride_id = ?1
+             GROUP BY segment_id
+         ) AS source_segment_counts
+           ON source_segment_counts.segment_id = points.segment_id
          WHERE points.ride_id = ?1{}
          ORDER BY points.sequence ASC",
         counts.viewport_predicate
@@ -6714,13 +6722,13 @@ fn project_route_candidates(
                     viewport.minimum_longitude().as_i32(),
                     viewport.maximum_longitude().as_i32(),
                 ],
-                route_point_from_row,
+                projected_route_point_from_row,
             ),
             cancellation,
         )?
     } else {
         projection_sqlite(
-            statement.query_map([ride_id], route_point_from_row),
+            statement.query_map([ride_id], projected_route_point_from_row),
             cancellation,
         )?
     };
@@ -6728,8 +6736,8 @@ fn project_route_candidates(
     let mut accumulator = RouteProjectionAccumulator::new(candidate_count, budget, privacy);
     for (candidate_ordinal, row) in rows.enumerate() {
         projection_checkpoint(cancellation)?;
-        let point = projection_sqlite(row, cancellation)?;
-        accumulator.push(
+        let (point, canonical_point_count) = projection_sqlite(row, cancellation)?;
+        accumulator.push_with_canonical_point_count(
             candidate_ordinal,
             point.sequence().as_u64(),
             RideMapPoint::new_with_start_reason(
@@ -6738,6 +6746,7 @@ fn project_route_candidates(
                 point.telemetry_state(),
                 point.start_reason(),
             ),
+            Some(canonical_point_count),
         );
         if accumulator.is_complete() {
             break;
@@ -7025,6 +7034,10 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
             source,
         ),
     })
+}
+
+fn projected_route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64)> {
+    Ok((route_point_from_row(row)?, row.get(10)?))
 }
 
 fn ride_source_from_db(value: &str) -> Result<RideSource, StorageError> {

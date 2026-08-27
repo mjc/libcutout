@@ -11922,6 +11922,10 @@ public struct MobileRideMapSegmentDisplayMetadataDto: Equatable, Hashable {
      */
     public var visiblePointCount: UInt64
     /**
+     * Number of points in the canonical source segment, when known.
+     */
+    public var canonicalPointCount: UInt64?
+    /**
      * First retained projected point sequence.
      */
     public var firstVisibleSequence: UInt64?
@@ -11943,6 +11947,9 @@ public struct MobileRideMapSegmentDisplayMetadataDto: Equatable, Hashable {
          * Number of projected points retained for this segment.
          */visiblePointCount: UInt64,
         /**
+         * Number of points in the canonical source segment, when known.
+         */canonicalPointCount: UInt64?,
+        /**
          * First retained projected point sequence.
          */firstVisibleSequence: UInt64?,
         /**
@@ -11951,6 +11958,7 @@ public struct MobileRideMapSegmentDisplayMetadataDto: Equatable, Hashable {
         self.segmentId = segmentId
         self.startReason = startReason
         self.visiblePointCount = visiblePointCount
+        self.canonicalPointCount = canonicalPointCount
         self.firstVisibleSequence = firstVisibleSequence
         self.lastVisibleSequence = lastVisibleSequence
     }
@@ -11974,6 +11982,7 @@ public struct FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto: FfiConvert
                 segmentId: FfiConverterUInt64.read(from: &buf),
                 startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
                 visiblePointCount: FfiConverterUInt64.read(from: &buf),
+                canonicalPointCount: FfiConverterOptionUInt64.read(from: &buf),
                 firstVisibleSequence: FfiConverterOptionUInt64.read(from: &buf),
                 lastVisibleSequence: FfiConverterOptionUInt64.read(from: &buf)
         )
@@ -11983,6 +11992,7 @@ public struct FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto: FfiConvert
         FfiConverterUInt64.write(value.segmentId, into: &buf)
         FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
         FfiConverterUInt64.write(value.visiblePointCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.canonicalPointCount, into: &buf)
         FfiConverterOptionUInt64.write(value.firstVisibleSequence, into: &buf)
         FfiConverterOptionUInt64.write(value.lastVisibleSequence, into: &buf)
     }

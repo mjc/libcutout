@@ -187,20 +187,24 @@ pub struct RouteDisplayPoint {
     sequence: RidePointSequence,
     segment_id: RideMapSegmentId,
     segment_start_reason: RideSegmentStartReason,
+    canonical_point_count: Option<u64>,
     coordinate: Coordinate,
     privacy_class: RoutePrivacyClass,
 }
 
 /// Bounded metadata needed to render one visible route segment.
 ///
-/// The count and sequence range describe points retained in the bounded display projection, not
-/// the complete canonical segment. A segment with one retained point can be represented by an
-/// annotation or accessibility item even though a line renderer cannot draw it.
+/// The visible count and sequence range describe points retained in the bounded display
+/// projection, not the complete canonical segment. The optional canonical count is populated
+/// when the source projection has complete segment cardinality. A segment with one retained point
+/// can be represented by an annotation or accessibility item even though a line renderer cannot
+/// draw it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RouteSegmentDisplayMetadata {
     segment_id: RideMapSegmentId,
     start_reason: RideSegmentStartReason,
     visible_point_count: u64,
+    canonical_point_count: Option<u64>,
     first_visible_sequence: Option<RidePointSequence>,
     last_visible_sequence: Option<RidePointSequence>,
 }
@@ -224,6 +228,12 @@ impl RouteSegmentDisplayMetadata {
     #[must_use]
     pub const fn visible_point_count(self) -> u64 {
         self.visible_point_count
+    }
+
+    /// Returns the number of points in the canonical source segment, when known.
+    #[must_use]
+    pub const fn canonical_point_count(self) -> Option<u64> {
+        self.canonical_point_count
     }
 
     /// Returns the first retained projected point sequence.
@@ -263,6 +273,9 @@ pub fn route_segment_display_metadata(
             && segment.segment_id == point.segment_id
         {
             segment.visible_point_count = segment.visible_point_count.saturating_add(1);
+            if segment.canonical_point_count.is_none() {
+                segment.canonical_point_count = point.canonical_point_count;
+            }
             segment.last_visible_sequence = Some(point.sequence);
             continue;
         }
@@ -270,6 +283,7 @@ pub fn route_segment_display_metadata(
             segment_id: point.segment_id,
             start_reason: point.segment_start_reason,
             visible_point_count: 1,
+            canonical_point_count: point.canonical_point_count,
             first_visible_sequence: Some(point.sequence),
             last_visible_sequence: Some(point.sequence),
         });
@@ -422,6 +436,17 @@ impl RouteProjectionAccumulator {
 
     /// Adds one candidate in ascending route order.
     pub fn push(&mut self, candidate_ordinal: usize, sequence: u64, point: RideMapPoint) {
+        self.push_with_canonical_point_count(candidate_ordinal, sequence, point, None);
+    }
+
+    /// Adds one candidate with an optional complete source-segment cardinality.
+    pub fn push_with_canonical_point_count(
+        &mut self,
+        candidate_ordinal: usize,
+        sequence: u64,
+        point: RideMapPoint,
+        canonical_point_count: Option<u64>,
+    ) {
         if self.output_ordinal == self.output_count || candidate_ordinal != self.next_target {
             return;
         }
@@ -430,6 +455,7 @@ impl RouteProjectionAccumulator {
             sequence: RidePointSequence::new(sequence),
             segment_id: point.segment_id(),
             segment_start_reason: point.segment_start_reason(),
+            canonical_point_count,
             coordinate,
             privacy_class,
         });
@@ -470,6 +496,12 @@ impl RouteDisplayPoint {
     #[must_use]
     pub const fn segment_start_reason(self) -> RideSegmentStartReason {
         self.segment_start_reason
+    }
+
+    /// Returns the canonical source-segment cardinality, when known.
+    #[must_use]
+    pub const fn canonical_point_count(self) -> Option<u64> {
+        self.canonical_point_count
     }
 
     /// Returns the privacy-projected coordinate.
