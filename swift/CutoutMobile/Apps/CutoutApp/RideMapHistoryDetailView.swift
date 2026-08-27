@@ -71,6 +71,10 @@ struct RideMapHistoryDetailView: View {
         return selectedHistoryID != initialHistoryID
     }
 
+    static func routeID(for historyID: String?) -> String {
+        historyID ?? "history-detail"
+    }
+
     private var selectedRide: MobileRideMapHistorySummaryDto? {
         guard let initialHistoryID else { return nil }
         return rides.first(where: { $0.rideId == initialHistoryID })
@@ -91,7 +95,7 @@ struct RideMapHistoryDetailView: View {
                     VStack(spacing: 0) {
                         RideMapHistoryDetailMap(
                             points: displayPoints,
-                            routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
+                            routeID: Self.routeID(for: initialHistoryID),
                             projectionVersion: projectionVersion,
                             endpointMetadata: endpointMetadata,
                             isLoading: isRouteLoading,

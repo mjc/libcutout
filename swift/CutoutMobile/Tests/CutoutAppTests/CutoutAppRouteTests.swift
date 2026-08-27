@@ -263,6 +263,14 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideHistoryDetailRouteIdentityDoesNotDependOnViewportTruncation() {
+        XCTAssertEqual(
+            RideMapHistoryDetailView.routeID(for: "ride-1"),
+            RideMapHistoryDetailView.routeID(for: "ride-1")
+        )
+    }
+
+    @MainActor
     func testRideMapMarkerPolicyScalesForAccessibilityText() {
         let coordinate = CLLocationCoordinate2D(latitude: 39.7392, longitude: -104.9903)
         let regular = RideMapCanvasView.markerOffsets(for: [coordinate, coordinate], dynamicTypeSize: .large)

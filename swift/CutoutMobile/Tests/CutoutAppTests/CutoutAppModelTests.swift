@@ -509,6 +509,28 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(projection.points.last?.sequence, 9)
     }
 
+    @MainActor
+    func testDetailViewportPreservesSourceBudgetOmission() {
+        XCTAssertTrue(
+            CutoutAppModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: true,
+                viewportPointsOmittedByBudget: false
+            )
+        )
+        XCTAssertTrue(
+            CutoutAppModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: false,
+                viewportPointsOmittedByBudget: true
+            )
+        )
+        XCTAssertFalse(
+            CutoutAppModel.detailPointsAreTruncated(
+                sourcePointsOmittedByBudget: false,
+                viewportPointsOmittedByBudget: false
+            )
+        )
+    }
+
     func testRouteDisplayPointConversionPreservesCanonicalGeometry() {
         let point = MobileRideMapPointDto(
             sequence: 4,

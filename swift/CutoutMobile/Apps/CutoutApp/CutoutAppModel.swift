@@ -60,6 +60,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryDetailDisplayPoints = [MobileRideMapRouteDisplayPoint]()
     private(set) var rideMapHistoryDetailEndpointMetadata = MobileRideMapRouteEndpointMetadata.empty
     private(set) var rideMapHistoryDetailPointsTruncated = false
+    private(set) var rideMapHistoryDetailSourcePointsOmittedByBudget = false
     private(set) var rideMapHistoryDetailSegmentsOmittedByBudget = false
     private(set) var rideMapHistoryDetailProjectionVersion: UInt64 = 0
     private(set) var rideMapHistoryRouteLoading = false
@@ -674,6 +675,13 @@ final class CutoutAppModel {
         selectRideMapHistory(rideID, previewLimit: Self.rideMapPreviewPointLimit)
     }
 
+    static func detailPointsAreTruncated(
+        sourcePointsOmittedByBudget: Bool,
+        viewportPointsOmittedByBudget: Bool
+    ) -> Bool {
+        sourcePointsOmittedByBudget || viewportPointsOmittedByBudget
+    }
+
     func projectRideMapHistoryDetailViewport(_ viewport: MobileGeoBoundsDto?) {
         guard let viewport,
               let selectedRideMapHistoryID,
@@ -707,7 +715,10 @@ final class CutoutAppModel {
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
                     endpointMetadata: result.endpointMetadata,
-                    truncated: result.pointsOmittedByBudget,
+                    truncated: Self.detailPointsAreTruncated(
+                        sourcePointsOmittedByBudget: self.rideMapHistoryDetailSourcePointsOmittedByBudget,
+                        viewportPointsOmittedByBudget: result.pointsOmittedByBudget
+                    ),
                     segmentsOmittedByBudget: result.segmentsOmittedByBudget
                 )
                 self.rideMapHistoryDetailRouteError = nil
@@ -780,6 +791,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryEndpointMetadata = result.endpointMetadata
                 self.rideMapHistoryPointsTruncated = result.pointsOmittedByBudget
                 self.rideMapHistorySegmentsOmittedByBudget = result.segmentsOmittedByBudget
+                self.rideMapHistoryDetailSourcePointsOmittedByBudget = result.pointsOmittedByBudget
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
                     endpointMetadata: result.endpointMetadata,
@@ -796,6 +808,7 @@ final class CutoutAppModel {
                 self.rideMapHistoryDetailRouteLoading = false
                 self.rideMapHistorySegmentsOmittedByBudget = false
                 self.rideMapHistoryDetailSegmentsOmittedByBudget = false
+                self.rideMapHistoryDetailSourcePointsOmittedByBudget = false
                 self.rideMapHistoryEndpointMetadata = .empty
                 self.rideMapHistoryDetailEndpointMetadata = .empty
             }
@@ -827,6 +840,7 @@ final class CutoutAppModel {
         rideMapHistoryEndpointMetadata = .empty
         rideMapHistoryPointsTruncated = false
         rideMapHistorySegmentsOmittedByBudget = false
+        rideMapHistoryDetailSourcePointsOmittedByBudget = false
         replaceRideMapHistoryDetailDisplayPoints([], truncated: false)
     }
 
