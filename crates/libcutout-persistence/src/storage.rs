@@ -6855,7 +6855,7 @@ fn route_projection_counts(
 ) -> Result<RouteProjectionCounts, StorageError> {
     let source_point_count = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
+            "SELECT point_count FROM rides WHERE id = ?1",
             [ride_id],
             |row| row.get::<_, u64>(0),
         ),
@@ -6864,7 +6864,7 @@ fn route_projection_counts(
     projection_checkpoint(cancellation)?;
     let source_segment_count = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+            "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
             [ride_id],
             |row| row.get::<_, u64>(0),
         ),
