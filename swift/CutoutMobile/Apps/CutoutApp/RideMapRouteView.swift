@@ -134,6 +134,7 @@ struct RideMapRouteView: View {
             displayPoints: model.rideMapHistoryDisplayPoints,
             endpointMetadata: model.rideMapHistoryEndpointMetadata,
             segments: model.rideMapHistorySegments,
+            projectionVersion: model.rideMapHistoryProjectionVersion,
             pointsTruncated: model.rideMapHistoryPointsTruncated,
             segmentsOmittedByBudget: model.rideMapHistorySegmentsOmittedByBudget,
             isLoading: model.rideMapHistoryLoading,

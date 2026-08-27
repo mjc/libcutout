@@ -374,7 +374,10 @@ private struct RideMapHistoryDetailSummary: View {
                     segmentsOmittedByBudget: segmentsOmittedByBudget,
                     segments: segments,
                     canonicalBackgroundGapCount: canonicalBackgroundGapCount,
-                    hasRoute: displayPointCount > 0,
+                    hasRoute: RideMapRouteTruthView.routeExists(
+                        recordedPointCount: recordedPointCount,
+                        displayedPointCount: displayPointCount
+                    ),
                     telemetryState: telemetryState
                 )
                 if pointsTruncated {

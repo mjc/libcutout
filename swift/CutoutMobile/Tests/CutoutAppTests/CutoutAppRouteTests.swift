@@ -285,6 +285,34 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
+    func testRideMapRoutePresenceUsesRecordedCountWhenViewportIsEmpty() {
+        XCTAssertTrue(
+            RideMapRouteTruthView.routeExists(
+                recordedPointCount: 7,
+                displayedPointCount: 0
+            )
+        )
+        XCTAssertFalse(
+            RideMapRouteTruthView.routeExists(
+                recordedPointCount: 0,
+                displayedPointCount: 7
+            )
+        )
+        XCTAssertTrue(
+            RideMapRouteTruthView.routeExists(
+                recordedPointCount: nil,
+                displayedPointCount: 1
+            )
+        )
+        XCTAssertFalse(
+            RideMapRouteTruthView.routeExists(
+                recordedPointCount: nil,
+                displayedPointCount: 0
+            )
+        )
+    }
+
+    @MainActor
     func testRideHistoryDetailRouteIdentityDoesNotDependOnViewportTruncation() {
         XCTAssertEqual(
             RideMapHistoryDetailView.routeID(for: "ride-1"),

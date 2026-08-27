@@ -85,11 +85,23 @@ struct RideMapRouteTruthView: View {
         routeIsPresent && canonicalBackgroundGapCount > 0
     }
 
+    static func routeExists(
+        recordedPointCount: UInt64?,
+        displayedPointCount: Int
+    ) -> Bool {
+        recordedPointCount.map { $0 > 0 } ?? (displayedPointCount > 0)
+    }
+
     private var backgroundGapCount: UInt64 {
         canonicalBackgroundGapCount
     }
 
-    private var routeIsPresent: Bool { hasRoute ?? !points.isEmpty }
+    private var routeIsPresent: Bool {
+        hasRoute ?? Self.routeExists(
+            recordedPointCount: recordedPointCount,
+            displayedPointCount: points.count
+        )
+    }
 
     private var telemetryText: String {
         guard let state = telemetryState ?? points.last?.telemetryState else {

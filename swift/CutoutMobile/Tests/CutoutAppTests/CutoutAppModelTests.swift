@@ -369,6 +369,7 @@ final class CutoutAppModelTests: XCTestCase {
 
         let model = CutoutAppModel(core: driver)
         model.setRideMapHistoryDateFilter(.allTime)
+        let initialHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
         let initialDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
         model.loadRideMapHistory(selecting: rideID)
         await Self.waitUntil("history route selection") {
@@ -378,8 +379,16 @@ final class CutoutAppModelTests: XCTestCase {
         XCTAssertEqual(model.selectedRideMapHistoryID, rideID)
         let historyPoints = model.rideMapHistoryDisplayPoints
         XCTAssertEqual(historyPoints.count, 2)
+        let selectedHistoryProjectionVersion = model.rideMapHistoryProjectionVersion
+        XCTAssertGreaterThan(selectedHistoryProjectionVersion, initialHistoryProjectionVersion)
         let selectedDetailProjectionVersion = model.rideMapHistoryDetailProjectionVersion
         XCTAssertGreaterThan(selectedDetailProjectionVersion, initialDetailProjectionVersion)
+
+        model.selectRideMapHistory(rideID)
+        await Self.waitUntil("same-shape history route reprojection") {
+            model.rideMapHistoryProjectionVersion > selectedHistoryProjectionVersion
+        }
+        XCTAssertEqual(model.rideMapHistoryDisplayPoints, historyPoints)
 
         model.projectRideMapHistoryDetailViewport(MobileGeoBoundsDto(
             minimumLatitudeDegrees: 39.70009,

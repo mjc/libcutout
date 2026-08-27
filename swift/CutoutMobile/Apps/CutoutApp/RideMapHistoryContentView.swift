@@ -13,6 +13,7 @@ struct RideMapHistoryContentView: View {
     let displayPoints: [MobileRideMapRouteDisplayPoint]
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
     let segments: [MobileRideMapSegmentDisplayMetadata]
+    let projectionVersion: UInt64
     let pointsTruncated: Bool
     let segmentsOmittedByBudget: Bool
     let isLoading: Bool
@@ -165,7 +166,7 @@ struct RideMapHistoryContentView: View {
                         RideMapCanvasView(
                             points: displayPoints,
                             routeID: selectedRideID ?? "history",
-                            projectionVersion: 0,
+                            projectionVersion: projectionVersion,
                             showsStartMarker: true,
                             showsEndMarker: true,
                             showsCurrentMarker: false,
