@@ -180,6 +180,9 @@ struct RideMapCanvasView: View {
             isVisible: endpointMetadata.canonicalEndVisible
         )
         let retainedSingletonSegmentIDs = Self.retainedSingletonSegmentIDs(in: points, segments: segments)
+        let retainedSingletonPaths = segmentPaths.filter {
+            retainedSingletonSegmentIDs.contains($0.id) && $0.coordinates.count == 1
+        }
 
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
@@ -193,14 +196,12 @@ struct RideMapCanvasView: View {
                         )
                     )
             }
-            ForEach(segmentPaths.filter { retainedSingletonSegmentIDs.contains($0.id) }) { segment in
-                if let coordinate = segment.coordinates.first {
-                    Annotation(
-                        segment.startReason.retainedSingletonAccessibilityLabel,
-                        coordinate: coordinate
-                    ) {
-                        RideMapRetainedSingletonSegmentMarker(startReason: segment.startReason)
-                    }
+            ForEach(retainedSingletonPaths) { segment in
+                Annotation(
+                    segment.startReason.retainedSingletonAccessibilityLabel,
+                    coordinate: segment.coordinates[0]
+                ) {
+                    RideMapRetainedSingletonSegmentMarker(startReason: segment.startReason)
                 }
             }
             if showsStartMarker, let startPoint {
