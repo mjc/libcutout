@@ -27,6 +27,28 @@ pub(super) struct RideWriteState {
 
 impl RideWriteState {
     #[cfg(test)]
+    pub(super) const fn with_duration(
+        source: RideSource,
+        lifecycle: RideLifecycleState,
+        updated_at_ms: u64,
+        monotonic_created_at_ms: Option<u64>,
+        duration_ms: u64,
+        paused_at_ms: Option<u64>,
+        paused_duration_ms: u64,
+    ) -> Self {
+        Self {
+            source,
+            lifecycle,
+            monotonic_created_at_ms,
+            monotonic_last_event_ms: None,
+            paused_at_ms,
+            paused_duration_ms,
+            completed_duration_ms: duration_ms,
+            updated_at_ms,
+        }
+    }
+
+    #[cfg(test)]
     pub(super) const fn new(
         source: RideSource,
         lifecycle: RideLifecycleState,
@@ -129,6 +151,16 @@ impl RideWriteState {
                 }
                 _ => {}
             }
+        } else if matches!(
+            (self.lifecycle, lifecycle),
+            (
+                RideLifecycleState::Paused,
+                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+            )
+        ) {
+            // Without a monotonic timestamp, preserve the known timing and close the terminal
+            // state rather than retaining a pause that can never be resumed.
+            paused_at_ms = None;
         }
         Ok(RideTransition {
             lifecycle,
@@ -196,6 +228,11 @@ pub(super) struct RideTransition {
 }
 
 impl RideTransition {
+    #[cfg(test)]
+    pub(super) const fn duration_milliseconds(&self) -> u64 {
+        self.completed_duration_ms
+    }
+
     pub(super) const fn lifecycle(&self) -> RideLifecycleState {
         self.lifecycle
     }
@@ -294,5 +331,45 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn terminal_transition_from_pause_freezes_duration_and_closes_pause() {
+        for event in [RideEvent::Stop, RideEvent::Interrupt] {
+            let state = RideWriteState::with_duration(
+                RideSource::Live,
+                RideLifecycleState::Paused,
+                20,
+                Some(1_000),
+                4_000,
+                Some(5_000),
+                0,
+            );
+
+            let transition = state.transition_at(event, 10_000, Some(10_000)).unwrap();
+
+            assert_eq!(transition.duration_milliseconds(), 4_000);
+            assert_eq!(transition.paused_at_milliseconds(), None);
+            assert_eq!(transition.paused_duration_milliseconds(), 0);
+        }
+    }
+
+    #[test]
+    fn terminal_transition_without_monotonic_time_clears_pause_marker() {
+        let state = RideWriteState::with_duration(
+            RideSource::Live,
+            RideLifecycleState::Paused,
+            20,
+            Some(1_000),
+            4_000,
+            Some(5_000),
+            2_000,
+        );
+
+        let transition = state.transition_at(RideEvent::Stop, 10_000, None).unwrap();
+
+        assert_eq!(transition.duration_milliseconds(), 2_000);
+        assert_eq!(transition.paused_at_milliseconds(), None);
+        assert_eq!(transition.paused_duration_milliseconds(), 2_000);
     }
 }

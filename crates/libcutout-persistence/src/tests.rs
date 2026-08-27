@@ -15,7 +15,7 @@ use cutout_ride_maps::RideLifecycleState;
 
 use super::{
     GeoBounds, PevcapImportOutcome, QueryLimit, RideDatabase, RideHistoryQuery, RideId, RideRecord,
-    RideSource, StorageError, VoltageSagModelRecord,
+    RideSource, RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -333,6 +333,193 @@ fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
     assert_eq!(result.admission(), LocationAdmission::Accepted);
     assert_eq!(result.sequence(), Some(0));
     assert!(pending.try_result().is_none());
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn async_location_write_can_bound_wait_for_a_delayed_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-deadline-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    database
+        .install_route_projection_test_gate(entered_sender, release_receiver)
+        .unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now()),
+        Ok(None)
+    ));
+    release_sender.send(()).unwrap();
+    assert!(matches!(
+        pending.wait_result(),
+        Ok(Ok(result)) if result.admission() == LocationAdmission::Accepted
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn async_location_write_can_bound_wait_for_a_worker_gate() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-worker-gate-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_with_worker_gate_for_test(
+            ride,
+            sample,
+            0,
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+            release_receiver,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the worker gate before SQLite");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now()),
+        Ok(None)
+    ));
+    release_sender.send(()).unwrap();
+    assert!(matches!(
+        pending.wait_result(),
+        Ok(Ok(result)) if result.admission() == LocationAdmission::Accepted
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn consumed_location_write_reports_worker_failure_and_recovers() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-failure-location-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_with_worker_failure_for_test(
+            ride,
+            sample,
+            0,
+            RouteTelemetryState::GpsOnly,
+            entered_sender,
+        )
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("worker consumed the location before failing");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now() + Duration::from_secs(1)),
+        Err(StorageError::ResponseDropped)
+    ));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut recovery = Err(StorageError::WorkerStopped);
+    while Instant::now() < deadline {
+        recovery = database
+            .reopen()
+            .and_then(|database| database.capabilities());
+        if recovery.is_ok() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        recovery.is_ok(),
+        "worker should recover in place: {recovery:?}"
+    );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn database_reopens_after_an_unexpected_worker_exit() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let stale_handle = database.clone();
+
+    database.stop_worker_for_test().unwrap();
+    // Commands on a stale handle transparently reacquire the process-wide service.
+    assert!(stale_handle.capabilities().is_ok());
+
+    let recovered = stale_handle.reopen().unwrap();
+    assert_eq!(recovered.service_id(), stale_handle.service_id());
+    assert!(recovered.capabilities().is_ok());
+
+    recovered.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn database_commands_restart_the_worker_after_an_unexpected_exit() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-auto-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let service_id = database.service_id();
+
+    database.stop_worker_for_test().unwrap();
+    assert!(database.capabilities().is_ok());
+    assert_eq!(database.service_id(), service_id);
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
@@ -701,12 +888,12 @@ fn database_preflights_confirms_and_deduplicates_managed_pevcap_artifacts() {
                     latitude_degrees: 40.0,
                     longitude_degrees: -105.0,
                     altitude_meters: 1_600.0,
-                    horizontal_accuracy_meters: 3.0,
-                    vertical_accuracy_meters: 4.0,
-                    speed_meters_per_second: 0.0,
-                    speed_accuracy_meters_per_second: 1.0,
-                    course_degrees: 0.0,
-                    course_accuracy_degrees: 1.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: Some(4.0),
+                    speed_meters_per_second: Some(0.0),
+                    speed_accuracy_meters_per_second: Some(1.0),
+                    course_degrees: Some(0.0),
+                    course_accuracy_degrees: Some(1.0),
                 },
             ),
         ],
@@ -1100,8 +1287,8 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         if version >= 2 {
             let selected: String = connection
                 .query_row(
-                    "SELECT platform_identifier FROM selected_device WHERE id = 1",
-                    [],
+                    "SELECT platform_identifier FROM selected_device WHERE singleton_key = ?1",
+                    [crate::storage::SelectedDeviceKey::VALUE.blob()],
                     |row| row.get(0),
                 )
                 .unwrap();
@@ -1264,6 +1451,299 @@ fn database_rejects_an_unrelated_current_version_schema() {
 }
 
 #[test]
+fn current_schema_uses_uuid_singleton_keys_and_keeps_device_names_non_unique() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+
+    for table in ["selected_device", "ride_session_marker"] {
+        let columns: Vec<(String, String)> = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap()
+            .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(columns[0].0, "singleton_key");
+        assert_eq!(columns[0].1, "BLOB");
+        assert!(!columns.iter().any(|(name, _)| name == "id"));
+    }
+
+    let device_columns: Vec<(String, String)> = connection
+        .prepare("PRAGMA table_info(devices)")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        device_columns[0],
+        ("platform_identifier".to_owned(), "TEXT".to_owned())
+    );
+    assert_eq!(
+        device_columns[1],
+        ("display_name".to_owned(), "TEXT".to_owned())
+    );
+
+    connection
+        .execute(
+            "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+             VALUES ('corebluetooth-a', 'NF2557', 1), ('corebluetooth-b', 'NF2557', 2)",
+            [],
+        )
+        .unwrap();
+    let count: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM devices WHERE display_name = 'NF2557'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2);
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+             VALUES ('corebluetooth-a', 'Renamed NF2557', 3)",
+                [],
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn spatial_domain_ids_are_uuid_backed_and_rtree_keys_are_internal() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+
+    let map_point_columns: Vec<(String, String, i64, i64)> = connection
+        .prepare("PRAGMA table_info(map_points)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(1)?, row.get(2)?, row.get(3)?, row.get(5)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(map_point_columns[0], ("id".into(), "BLOB".into(), 1, 1));
+    assert_eq!(map_point_columns[1].0, "name");
+
+    let trail_segment_columns: Vec<(String, String, i64, i64)> = connection
+        .prepare("PRAGMA table_info(trail_segments)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(1)?, row.get(2)?, row.get(3)?, row.get(5)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        !trail_segment_columns
+            .iter()
+            .any(|(name, _, _, _)| name == "id")
+    );
+    assert_eq!(
+        trail_segment_columns
+            .iter()
+            .find(|(name, _, _, _)| name == "trail_id")
+            .map(|(_, _, _, pk)| *pk),
+        Some(1)
+    );
+    assert_eq!(
+        trail_segment_columns
+            .iter()
+            .find(|(name, _, _, _)| name == "sequence")
+            .map(|(_, _, _, pk)| *pk),
+        Some(2)
+    );
+
+    for table in ["map_point_spatial_keys", "trail_segment_spatial_keys"] {
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists, "missing {table}");
+    }
+    let map_key_sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name = 'map_point_spatial_keys'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(map_key_sql.contains("rtree_id"));
+    assert!(!map_key_sql.contains(" id INTEGER PRIMARY KEY"));
+}
+
+#[test]
+fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-spatial-identity-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP TABLE map_points_rtree;
+             DROP TABLE map_point_spatial_keys;
+             DROP TABLE map_points;
+             DROP TABLE trail_segments_rtree;
+             DROP TABLE trail_segment_spatial_keys;
+             DROP TABLE trail_segments;
+             CREATE TABLE trail_segments (
+                 id INTEGER PRIMARY KEY,
+                 trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+                 sequence INTEGER NOT NULL,
+                 start_lat_e7 INTEGER NOT NULL,
+                 start_lon_e7 INTEGER NOT NULL,
+                 end_lat_e7 INTEGER NOT NULL,
+                 end_lon_e7 INTEGER NOT NULL,
+                 UNIQUE (trail_id, sequence)
+             );
+             CREATE VIRTUAL TABLE trail_segments_rtree
+                 USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+             CREATE TABLE map_points (
+                 id INTEGER PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 latitude_e7 INTEGER NOT NULL,
+                 longitude_e7 INTEGER NOT NULL
+             );
+             CREATE VIRTUAL TABLE map_points_rtree
+                 USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+             INSERT INTO trails (id, name)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Legacy trail');
+             INSERT INTO trail_segments
+                 (id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
+             VALUES (7, '00000000-0000-0000-0000-000000000001', 0,
+                     400000000, -1050000000, 400010000, -1050010000);
+             INSERT INTO map_points (id, name, latitude_e7, longitude_e7)
+             VALUES (11, 'Legacy point', 400000000, -1050000000);
+             INSERT INTO trail_segments_rtree
+                 VALUES (7, 400000000, 400010000, -1050010000, -1050000000);
+             INSERT INTO map_points_rtree
+                 VALUES (11, 400000000, 400000000, -1050000000, -1050000000);
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 13;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    let bounds = GeoBounds::new(39.9, 40.1, -105.1, -104.9).unwrap();
+    assert_eq!(
+        database
+            .trail_segments_in_bounds(bounds, None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .segments()
+            .len(),
+        1
+    );
+    let points = database
+        .map_points_in_bounds(bounds, None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(points.points().len(), 1);
+    assert_eq!(points.points()[0].name, "Legacy point");
+    assert_ne!(points.points()[0].id.uuid(), uuid::Uuid::nil());
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 14);
+    let rtree_id: i64 = connection
+        .query_row(
+            "SELECT rtree_id FROM trail_segment_spatial_keys",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rtree_id, 7);
+    let point_id_type: String = connection
+        .query_row(
+            "SELECT type FROM pragma_table_info('map_points') WHERE name = 'id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(point_id_type, "BLOB");
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-singleton-key-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE selected_device;
+             DROP TABLE ride_session_marker;
+             CREATE TABLE selected_device (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 platform_identifier TEXT NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE ride_session_marker (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 marker BLOB NOT NULL
+             );
+             INSERT INTO selected_device (id, platform_identifier, updated_at_ms)
+             VALUES (1, 'corebluetooth-a', 42);
+             INSERT INTO ride_session_marker (id, marker) VALUES (1, X'010203');
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 12;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.selected_device().unwrap().as_deref(),
+        Some("corebluetooth-a")
+    );
+    assert_eq!(database.ride_session_marker().unwrap(), Some(vec![1, 2, 3]));
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 14);
+    let selected_key_length: u64 = connection
+        .query_row(
+            "SELECT length(singleton_key) FROM selected_device",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(selected_key_length, 16);
+    assert!(
+        !connection
+            .prepare("PRAGMA table_info(selected_device)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .contains(&"id".to_owned())
+    );
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn reopen_recovers_recording_rides_and_reports_them_in_bootstrap() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -1348,6 +1828,114 @@ fn ride_history_and_route_queries_are_stably_bounded() {
         .unwrap();
     assert_eq!(second.points().len(), 1);
     assert_eq!(second.points()[0].sequence(), 2);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn expired_durable_route_projection_returns_a_typed_deadline() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-deadline-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    let cancellation = RouteProjectionCancellation::with_deadline(
+        Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap(),
+    );
+
+    let error = database
+        .project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            cancellation,
+        )
+        .expect_err("an expired projection must not enter the worker");
+
+    assert!(matches!(error, StorageError::DeadlineExceeded));
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn cancelled_in_flight_route_projection_leaves_worker_usable() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-route-projection-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for sequence in 0_u64..4 {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(
+                40.0 + f64::from(u32::try_from(sequence).unwrap()) / 10_000.0,
+                -105.0,
+            )
+            .unwrap(),
+            sequence + 1,
+            1_700_000_000_000 + sequence,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    database
+        .install_route_projection_test_gate(entered_sender, release_receiver)
+        .unwrap();
+
+    let cancellation = RouteProjectionCancellation::new();
+    let projection_database = database.clone();
+    let projection_cancellation = cancellation.clone();
+    let projection = std::thread::spawn(move || {
+        projection_database.project_route_points_cancellable(
+            ride,
+            None,
+            RouteDisplayBudget::new(2).unwrap(),
+            RoutePrivacyPolicy::Precise,
+            projection_cancellation,
+        )
+    });
+
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("projection reached a deliberately slow SQLite callback");
+    cancellation.cancel();
+    release_sender
+        .send(())
+        .expect("projection callback is released after cancellation");
+
+    let error = projection
+        .join()
+        .expect("projection thread does not panic")
+        .expect_err("an active projection reports typed cancellation");
+    assert!(matches!(error, StorageError::Cancelled));
+
+    assert!(database.find_ride(ride).unwrap().is_some());
+    let next_sample = LocationSample::new(
+        Coordinate::from_degrees(40.001, -105.0).unwrap(),
+        5,
+        1_700_000_000_005,
+        None,
+        LocationSource::Live,
+    );
+    assert_eq!(
+        database.append_location(ride, next_sample).unwrap(),
+        LocationAdmission::Accepted
+    );
+
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -1700,7 +2288,7 @@ fn route_projection_is_bounded_viewport_aware_and_cancellable() {
         .unwrap();
     assert!(antimeridian_projection.points().is_empty());
 
-    let cancellation = super::RouteProjectionCancellation::new();
+    let cancellation = RouteProjectionCancellation::new();
     cancellation.cancel();
     assert!(matches!(
         database.project_route_points_cancellable(
