@@ -837,6 +837,12 @@ impl MapPointId {
     }
 }
 
+impl Default for MapPointId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Validated fixed-point WGS84 query bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GeoBounds {
