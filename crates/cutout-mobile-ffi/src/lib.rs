@@ -2889,19 +2889,67 @@ pub struct MobileFootpadTelemetryDto {
     pub adc2_milliunits: Option<i32>,
 }
 
-/// Raw phone location sample forwarded by the mobile platform.
+macro_rules! mobile_location_value {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
+        pub struct $name {
+            /// Value in the unit named by the type.
+            pub value: f64,
+        }
+    };
+}
+
+mobile_location_value!(
+    MobileLatitudeDegrees,
+    "WGS84 latitude in degrees. Rust validates the range before use."
+);
+mobile_location_value!(
+    MobileLongitudeDegrees,
+    "WGS84 longitude in degrees. Rust validates the range before use."
+);
+mobile_location_value!(
+    MobileAltitudeMeters,
+    "Altitude above mean sea level in metres."
+);
+mobile_location_value!(
+    MobileHorizontalAccuracyMeters,
+    "Horizontal location accuracy in metres when available."
+);
+mobile_location_value!(
+    MobileVerticalAccuracyMeters,
+    "Vertical location accuracy in metres when available."
+);
+mobile_location_value!(
+    MobileSpeedMetersPerSecond,
+    "Ground speed in metres per second when available."
+);
+mobile_location_value!(
+    MobileSpeedAccuracyMetersPerSecond,
+    "Ground-speed accuracy in metres per second when available."
+);
+mobile_location_value!(
+    MobileCourseDegrees,
+    "Direction of travel in degrees clockwise from true north when available."
+);
+mobile_location_value!(
+    MobileCourseAccuracyDegrees,
+    "Course accuracy in degrees when available."
+);
+
+/// Unit-typed phone location sample forwarded by the mobile platform.
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobilePhoneLocationSampleDto {
     pub wall_clock_unix_ms: u64,
-    pub latitude_degrees: f64,
-    pub longitude_degrees: f64,
-    pub altitude_meters: f64,
-    pub horizontal_accuracy_meters: Option<f64>,
-    pub vertical_accuracy_meters: Option<f64>,
-    pub speed_meters_per_second: Option<f64>,
-    pub speed_accuracy_meters_per_second: Option<f64>,
-    pub course_degrees: Option<f64>,
-    pub course_accuracy_degrees: Option<f64>,
+    pub latitude_degrees: MobileLatitudeDegrees,
+    pub longitude_degrees: MobileLongitudeDegrees,
+    pub altitude_meters: MobileAltitudeMeters,
+    pub horizontal_accuracy_meters: Option<MobileHorizontalAccuracyMeters>,
+    pub vertical_accuracy_meters: Option<MobileVerticalAccuracyMeters>,
+    pub speed_meters_per_second: Option<MobileSpeedMetersPerSecond>,
+    pub speed_accuracy_meters_per_second: Option<MobileSpeedAccuracyMetersPerSecond>,
+    pub course_degrees: Option<MobileCourseDegrees>,
+    pub course_accuracy_degrees: Option<MobileCourseAccuracyDegrees>,
 }
 
 impl MobilePhoneLocationSampleDto {
@@ -2912,28 +2960,48 @@ impl MobilePhoneLocationSampleDto {
     fn canonical(self) -> Option<Self> {
         let location = PevcapPhoneLocation {
             wall_clock_unix_ms: self.wall_clock_unix_ms,
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
-            altitude_meters: self.altitude_meters,
-            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
-            vertical_accuracy_meters: self.vertical_accuracy_meters,
-            speed_meters_per_second: self.speed_meters_per_second,
-            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
-            course_degrees: self.course_degrees,
-            course_accuracy_degrees: self.course_accuracy_degrees,
+            latitude_degrees: self.latitude_degrees.value,
+            longitude_degrees: self.longitude_degrees.value,
+            altitude_meters: self.altitude_meters.value,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters.map(|value| value.value),
+            vertical_accuracy_meters: self.vertical_accuracy_meters.map(|value| value.value),
+            speed_meters_per_second: self.speed_meters_per_second.map(|value| value.value),
+            speed_accuracy_meters_per_second: self
+                .speed_accuracy_meters_per_second
+                .map(|value| value.value),
+            course_degrees: self.course_degrees.map(|value| value.value),
+            course_accuracy_degrees: self.course_accuracy_degrees.map(|value| value.value),
         };
         let location = location.canonical().ok()?;
         Some(Self {
             wall_clock_unix_ms: location.wall_clock_unix_ms,
-            latitude_degrees: location.latitude_degrees,
-            longitude_degrees: location.longitude_degrees,
-            altitude_meters: location.altitude_meters,
-            horizontal_accuracy_meters: location.horizontal_accuracy_meters,
-            vertical_accuracy_meters: location.vertical_accuracy_meters,
-            speed_meters_per_second: location.speed_meters_per_second,
-            speed_accuracy_meters_per_second: location.speed_accuracy_meters_per_second,
-            course_degrees: location.course_degrees,
-            course_accuracy_degrees: location.course_accuracy_degrees,
+            latitude_degrees: MobileLatitudeDegrees {
+                value: location.latitude_degrees,
+            },
+            longitude_degrees: MobileLongitudeDegrees {
+                value: location.longitude_degrees,
+            },
+            altitude_meters: MobileAltitudeMeters {
+                value: location.altitude_meters,
+            },
+            horizontal_accuracy_meters: location
+                .horizontal_accuracy_meters
+                .map(|value| MobileHorizontalAccuracyMeters { value }),
+            vertical_accuracy_meters: location
+                .vertical_accuracy_meters
+                .map(|value| MobileVerticalAccuracyMeters { value }),
+            speed_meters_per_second: location
+                .speed_meters_per_second
+                .map(|value| MobileSpeedMetersPerSecond { value }),
+            speed_accuracy_meters_per_second: location
+                .speed_accuracy_meters_per_second
+                .map(|value| MobileSpeedAccuracyMetersPerSecond { value }),
+            course_degrees: location
+                .course_degrees
+                .map(|value| MobileCourseDegrees { value }),
+            course_accuracy_degrees: location
+                .course_accuracy_degrees
+                .map(|value| MobileCourseAccuracyDegrees { value }),
         })
     }
 
@@ -2945,12 +3013,12 @@ impl MobilePhoneLocationSampleDto {
             .horizontal_accuracy_meters
             .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?;
         Ok(MobileRideLocationDto {
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
+            latitude_degrees: self.latitude_degrees.value,
+            longitude_degrees: self.longitude_degrees.value,
             monotonic_milliseconds: monotonic_ms,
             wall_clock_unix_milliseconds: self.wall_clock_unix_ms,
             horizontal_accuracy_millimetres: Some(horizontal_accuracy_millimetres(
-                horizontal_accuracy_meters,
+                horizontal_accuracy_meters.value,
             )?),
             source: MobileRideSourceDto::Live,
         })
@@ -2959,15 +3027,17 @@ impl MobilePhoneLocationSampleDto {
     fn pevcap_location(self) -> PevcapPhoneLocation {
         PevcapPhoneLocation {
             wall_clock_unix_ms: self.wall_clock_unix_ms,
-            latitude_degrees: self.latitude_degrees,
-            longitude_degrees: self.longitude_degrees,
-            altitude_meters: self.altitude_meters,
-            horizontal_accuracy_meters: self.horizontal_accuracy_meters,
-            vertical_accuracy_meters: self.vertical_accuracy_meters,
-            speed_meters_per_second: self.speed_meters_per_second,
-            speed_accuracy_meters_per_second: self.speed_accuracy_meters_per_second,
-            course_degrees: self.course_degrees,
-            course_accuracy_degrees: self.course_accuracy_degrees,
+            latitude_degrees: self.latitude_degrees.value,
+            longitude_degrees: self.longitude_degrees.value,
+            altitude_meters: self.altitude_meters.value,
+            horizontal_accuracy_meters: self.horizontal_accuracy_meters.map(|value| value.value),
+            vertical_accuracy_meters: self.vertical_accuracy_meters.map(|value| value.value),
+            speed_meters_per_second: self.speed_meters_per_second.map(|value| value.value),
+            speed_accuracy_meters_per_second: self
+                .speed_accuracy_meters_per_second
+                .map(|value| value.value),
+            course_degrees: self.course_degrees.map(|value| value.value),
+            course_accuracy_degrees: self.course_accuracy_degrees.map(|value| value.value),
         }
     }
 }
@@ -3297,6 +3367,8 @@ pub struct MobileRideMapRouteProjectionDto {
     pub source_point_count: u64,
     /// Total canonical segment count before viewport filtering or display LOD.
     pub source_segment_count: u64,
+    /// Number of canonical points inside the requested viewport before display LOD.
+    pub candidate_point_count: u64,
     /// Number of canonical segments with points inside the requested viewport.
     pub candidate_segment_count: u64,
     /// Number of segments represented by the bounded display points.
@@ -3405,6 +3477,11 @@ pub enum MobileRideMapCoreDecisionDto {
     StorageError {
         /// Stable storage failure text for the mobile diagnostic surface.
         message: String,
+        /// Whether the caller may explicitly re-admit the sample after resolving the failure.
+        ///
+        /// This is true only when reconciliation proved that a response-lost write was not
+        /// committed. The map core never retries that sample automatically.
+        retryable: bool,
     },
 }
 
@@ -3415,6 +3492,8 @@ pub struct MobileRideSummaryDto {
     pub point_count: u64,
     /// Accumulated path distance in millimetres.
     pub distance_millimetres: u64,
+    /// Rust-derived average speed in millimetres per second, when meaningful.
+    pub average_speed_millimetres_per_second: Option<u64>,
 }
 
 /// Stable cursor for a subsequent ride-history page.
@@ -3447,8 +3526,21 @@ pub struct MobileRideRecordDto {
     pub segment_count: u64,
     pub candidate_vehicle: Option<String>,
     pub associated_vehicle: Option<String>,
+    /// Persisted display name for the candidate vehicle, when available.
+    pub candidate_vehicle_name: Option<String>,
+    /// Persisted display name for the associated vehicle, when available.
+    pub associated_vehicle_name: Option<String>,
     pub associated_at_milliseconds: Option<u64>,
     pub last_telemetry_at_milliseconds: Option<u64>,
+}
+
+/// One vehicle identity available to the history filter.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryVehicleOptionDto {
+    /// Stable platform-local identity used as the filter value.
+    pub platform_identifier: String,
+    /// Display name persisted in the Rust device table, when available.
+    pub display_name: Option<String>,
 }
 
 /// One bounded page of ride-history projections.
@@ -3780,7 +3872,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
         | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
-        persistence::StorageError::Sqlite(_)
+        persistence::StorageError::LocationWriteNotCommitted
+        | persistence::StorageError::Sqlite(_)
         | persistence::StorageError::Io(_)
         | persistence::StorageError::InvalidStoredValue { .. }
         | persistence::StorageError::InvalidSqliteVersion(_)
@@ -3809,10 +3902,13 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
         summary: MobileRideSummaryDto {
             point_count: summary.point_count().as_u64(),
             distance_millimetres: summary.distance_millimetres(),
+            average_speed_millimetres_per_second: ride.average_speed_millimetres_per_second(),
         },
         segment_count: ride.segment_count(),
         candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
         associated_vehicle: ride.associated_vehicle().map(str::to_owned),
+        candidate_vehicle_name: ride.candidate_vehicle_name().map(str::to_owned),
+        associated_vehicle_name: ride.associated_vehicle_name().map(str::to_owned),
         associated_at_milliseconds: ride.associated_at_milliseconds(),
         last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds(),
     }
@@ -3950,6 +4046,7 @@ fn mobile_route_projection_dto(
             .collect(),
         source_point_count: projection.source_point_count(),
         source_segment_count: projection.source_segment_count(),
+        candidate_point_count: projection.candidate_point_count(),
         candidate_segment_count: projection.candidate_segment_count(),
         displayed_segment_count: projection.displayed_segment_count(),
     }
@@ -3973,6 +4070,23 @@ fn mobile_segment_count(
         if previous_segment != Some(segment_id) {
             count += 1;
             previous_segment = Some(segment_id);
+        }
+    }
+    Ok(u64::try_from(count).unwrap_or(u64::MAX))
+}
+
+fn mobile_point_count(
+    points: &[ride_maps::RideMapPoint],
+    viewport: Option<ride_maps::RouteViewport>,
+    mut is_cancelled: impl FnMut() -> bool,
+) -> Result<u64, MobileRideMapCoreErrorDto> {
+    let mut count = 0usize;
+    for point in points.iter().copied() {
+        if is_cancelled() {
+            return Err(MobileRideMapCoreErrorDto::Cancelled);
+        }
+        if viewport.is_none_or(|viewport| viewport.contains(point.sample().coordinate())) {
+            count += 1;
         }
     }
     Ok(u64::try_from(count).unwrap_or(u64::MAX))
@@ -4252,6 +4366,32 @@ impl RideDatabaseHandle {
                         value: cursor.ride_id().uuid().to_string(),
                     },
                 }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Lists every vehicle identity referenced by visible ride history.
+    ///
+    /// This is a separate Rust-owned lookup rather than a projection of the first history page,
+    /// so the filter remains complete when history contains more than one page or the current
+    /// device is disconnected.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot query the device identities.
+    pub fn list_ride_history_vehicle_options(
+        &self,
+    ) -> Result<Vec<MobileRideHistoryVehicleOptionDto>, MobileRideDatabaseError> {
+        self.inner
+            .list_ride_history_vehicle_options()
+            .map(|options| {
+                options
+                    .into_iter()
+                    .map(|option| MobileRideHistoryVehicleOptionDto {
+                        platform_identifier: option.platform_identifier().to_owned(),
+                        display_name: option.display_name().map(str::to_owned),
+                    })
+                    .collect()
             })
             .map_err(map_ride_database_error)
     }
@@ -5042,10 +5182,13 @@ impl RideDatabaseHandle {
     ) -> Result<MobileRideSummaryDto, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(&id)?;
         self.inner
-            .summary(id)
-            .map(|summary| MobileRideSummaryDto {
+            .summary_with_duration(id)
+            .map(|(summary, duration_milliseconds)| MobileRideSummaryDto {
                 point_count: summary.point_count().as_u64(),
                 distance_millimetres: summary.distance_millimetres(),
+                average_speed_millimetres_per_second: summary
+                    .average_speed_millimetres_per_second(duration_milliseconds)
+                    .map(ride_maps::AverageSpeedMillimetresPerSecond::as_u64),
             })
             .map_err(map_ride_database_error)
     }
@@ -5068,6 +5211,17 @@ impl RideDatabaseHandle {
 }
 
 impl RideDatabaseHandle {
+    fn reconcile_location_write(
+        &self,
+        id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+    ) -> Result<persistence::LocationWriteReconciliation, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(id)?;
+        self.inner
+            .reconcile_location_write(id, sample)
+            .map_err(map_ride_database_error)
+    }
+
     #[allow(
         clippy::needless_pass_by_value,
         reason = "called from the UniFFI boundary"
@@ -5433,11 +5587,64 @@ impl MobileRideMapCoreInner {
             }
             Err(error) => {
                 self.reset_admission_projection();
+                let retryable =
+                    matches!(error, persistence::StorageError::LocationWriteNotCommitted);
                 MobileRideMapCoreDecisionDto::StorageError {
                     message: error.to_string(),
+                    retryable,
                 }
             }
         }
+    }
+
+    fn reconcile_lost_location_write(
+        &self,
+        ride_id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+    ) -> Result<persistence::LocationWriteReconciliation, MobileRideDatabaseError> {
+        let Some(database) = self.database.as_ref() else {
+            return Err(MobileRideDatabaseError::WorkerStopped);
+        };
+        database.reconcile_location_write(ride_id, sample)
+    }
+
+    fn settle_pending_location(
+        &mut self,
+        ride_id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+        telemetry_state: ride_maps::RouteTelemetryState,
+        point: MobileRideMapCorePointDto,
+        segment_started: bool,
+        result: Result<ride_maps::LocationAdmission, persistence::StorageError>,
+    ) -> MobileRideMapCoreDecisionDto {
+        let result = match result {
+            Err(persistence::StorageError::ResponseDropped) => {
+                match self.reconcile_lost_location_write(ride_id, sample) {
+                    Ok(persistence::LocationWriteReconciliation::Committed) => {
+                        Ok(ride_maps::LocationAdmission::Accepted)
+                    }
+                    Ok(persistence::LocationWriteReconciliation::NotCommitted) => {
+                        Err(persistence::StorageError::LocationWriteNotCommitted)
+                    }
+                    Err(error) => {
+                        self.reset_admission_projection();
+                        return MobileRideMapCoreDecisionDto::StorageError {
+                            message: error.to_string(),
+                            retryable: false,
+                        };
+                    }
+                }
+            }
+            result => result,
+        };
+        self.settle_location(
+            ride_id,
+            sample,
+            telemetry_state,
+            point,
+            segment_started,
+            result,
+        )
     }
 
     /// Settles every queued location before a lifecycle transition.
@@ -5479,7 +5686,7 @@ impl MobileRideMapCoreInner {
                 }
                 Err(error) => Err(error),
             };
-            let decision = self.settle_location(
+            let decision = self.settle_pending_location(
                 &ride_id,
                 sample,
                 telemetry_state,
@@ -5513,7 +5720,7 @@ impl MobileRideMapCoreInner {
                         .pending_locations
                         .pop_front()
                         .expect("front pending location remains present");
-                    decisions.push(self.settle_location(
+                    decisions.push(self.settle_pending_location(
                         &pending.ride_id,
                         pending.sample,
                         pending.telemetry_state,
@@ -5528,7 +5735,7 @@ impl MobileRideMapCoreInner {
                 .pending_locations
                 .pop_front()
                 .expect("front pending location remains present");
-            decisions.push(self.settle_location(
+            decisions.push(self.settle_pending_location(
                 &pending.ride_id,
                 pending.sample,
                 pending.telemetry_state,
@@ -5953,6 +6160,7 @@ impl MobileRideMapCore {
             if state.pending_locations.len() >= MAX_PENDING_LOCATION_WRITES {
                 return Ok(MobileRideMapCoreDecisionDto::StorageError {
                     message: "ride location write queue is full".to_owned(),
+                    retryable: false,
                 });
             }
             let write = database.enqueue_location_async(
@@ -5966,6 +6174,7 @@ impl MobileRideMapCore {
                 Err(error) => {
                     return Ok(MobileRideMapCoreDecisionDto::StorageError {
                         message: error.to_string(),
+                        retryable: false,
                     });
                 }
             };
@@ -6034,7 +6243,8 @@ impl MobileRideMapCore {
             location.longitude_degrees,
             sample
                 .horizontal_accuracy_meters
-                .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?,
+                .ok_or(MobileRideMapCoreErrorDto::InvalidLocation)?
+                .value,
         )
     }
 
@@ -6226,6 +6436,7 @@ fn project_live_route_points(
         return Err(MobileRideMapCoreErrorDto::Cancelled);
     }
     let candidate_segment_count = mobile_segment_count(&points, viewport, &mut is_cancelled)?;
+    let candidate_point_count = mobile_point_count(&points, viewport, &mut is_cancelled)?;
     let projected_points = ride_maps::project_route_points_cancellable(
         &points,
         first_sequence,
@@ -6241,6 +6452,7 @@ fn project_live_route_points(
         points,
         source_point_count,
         source_segment_count,
+        candidate_point_count,
         candidate_segment_count,
         displayed_segment_count,
     })
@@ -6347,6 +6559,14 @@ impl MobilePhoneLocationState {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Clears the latest sample so a new capture cannot inherit an older location context.
+    pub fn clear(&self) {
+        *self
+            .latest_sample
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     pub fn ingest(&self, sample: MobilePhoneLocationSampleDto) -> MobilePhoneLocationSnapshotDto {
@@ -8684,7 +8904,7 @@ fn phone_location_speed(sample: MobilePhoneLocationSampleDto) -> Option<SpeedRea
     let speed_meters_per_second = sample.speed_meters_per_second?;
     Some(SpeedReading {
         value: Speed {
-            value: round_f64_to_i32(speed_meters_per_second * 1_000.0),
+            value: round_f64_to_i32(speed_meters_per_second.value * 1_000.0),
         },
         source: MobileValueSourceDto::Reported,
         quality: MobileValueQualityDto::Known,
@@ -13456,27 +13676,37 @@ mod tests {
     fn capture_phone_location_fixture() -> MobilePhoneLocationSampleDto {
         MobilePhoneLocationSampleDto {
             wall_clock_unix_ms: 1_700_000_000_008,
-            latitude_degrees: 39.739_235_8,
-            longitude_degrees: -104.990_251,
-            altitude_meters: 1_609.344,
-            horizontal_accuracy_meters: Some(0.8),
-            vertical_accuracy_meters: Some(1.2),
-            speed_meters_per_second: Some(4.470_400_25),
-            speed_accuracy_meters_per_second: Some(0.25),
-            course_degrees: Some(271.5),
-            course_accuracy_degrees: Some(3.0),
+            latitude_degrees: MobileLatitudeDegrees {
+                value: 39.739_235_8,
+            },
+            longitude_degrees: MobileLongitudeDegrees {
+                value: -104.990_251,
+            },
+            altitude_meters: MobileAltitudeMeters { value: 1_609.344 },
+            horizontal_accuracy_meters: Some(MobileHorizontalAccuracyMeters { value: 0.8 }),
+            vertical_accuracy_meters: Some(MobileVerticalAccuracyMeters { value: 1.2 }),
+            speed_meters_per_second: Some(MobileSpeedMetersPerSecond {
+                value: 4.470_400_25,
+            }),
+            speed_accuracy_meters_per_second: Some(MobileSpeedAccuracyMetersPerSecond {
+                value: 0.25,
+            }),
+            course_degrees: Some(MobileCourseDegrees { value: 271.5 }),
+            course_accuracy_degrees: Some(MobileCourseAccuracyDegrees { value: 3.0 }),
         }
     }
 
     #[test]
     fn phone_location_boundary_normalizes_core_location_sentinels_without_losing_fix() {
         let sample = MobilePhoneLocationSampleDto {
-            horizontal_accuracy_meters: Some(-1.0),
-            vertical_accuracy_meters: Some(f64::NAN),
-            speed_meters_per_second: Some(-1.0),
-            speed_accuracy_meters_per_second: Some(-1.0),
-            course_degrees: Some(-1.0),
-            course_accuracy_degrees: Some(-1.0),
+            horizontal_accuracy_meters: Some(MobileHorizontalAccuracyMeters { value: -1.0 }),
+            vertical_accuracy_meters: Some(MobileVerticalAccuracyMeters { value: f64::NAN }),
+            speed_meters_per_second: Some(MobileSpeedMetersPerSecond { value: -1.0 }),
+            speed_accuracy_meters_per_second: Some(MobileSpeedAccuracyMetersPerSecond {
+                value: -1.0,
+            }),
+            course_degrees: Some(MobileCourseDegrees { value: -1.0 }),
+            course_accuracy_degrees: Some(MobileCourseAccuracyDegrees { value: -1.0 }),
             ..capture_phone_location_fixture()
         };
 
@@ -13494,14 +13724,47 @@ mod tests {
     }
 
     #[test]
+    fn phone_location_boundary_has_unit_typed_metrics() {
+        let sample = capture_phone_location_fixture();
+
+        assert!((sample.latitude_degrees.value - 39.739_235_8).abs() < f64::EPSILON);
+        assert!((sample.longitude_degrees.value - -104.990_251).abs() < f64::EPSILON);
+        assert!((sample.altitude_meters.value - 1_609.344).abs() < f64::EPSILON);
+        assert!(
+            (sample
+                .horizontal_accuracy_meters
+                .expect("fixture accuracy")
+                .value
+                - 0.8)
+                .abs()
+                < f64::EPSILON
+        );
+        assert!(
+            (sample.speed_meters_per_second.expect("fixture speed").value - 4.470_400_25).abs()
+                < f64::EPSILON
+        );
+    }
+
+    #[test]
     fn phone_location_boundary_rejects_invalid_required_fields() {
         let mut sample = capture_phone_location_fixture();
-        sample.latitude_degrees = f64::NAN;
+        sample.latitude_degrees = MobileLatitudeDegrees { value: f64::NAN };
         assert_eq!(sample.canonical(), None);
 
         let mut sample = capture_phone_location_fixture();
         sample.wall_clock_unix_ms = 0;
         assert_eq!(sample.canonical(), None);
+    }
+
+    #[test]
+    fn phone_location_state_clear_drops_the_previous_capture_context() {
+        let state = MobilePhoneLocationState::default();
+        state.ingest(capture_phone_location_fixture());
+        assert!(state.current_snapshot().latest_sample.is_some());
+
+        state.clear();
+
+        assert_eq!(state.current_snapshot().latest_sample, None);
     }
 
     #[allow(
@@ -13553,7 +13816,7 @@ mod tests {
             Some(true)
         ));
         let mut invalid_location = capture_phone_location_fixture();
-        invalid_location.latitude_degrees = f64::NAN;
+        invalid_location.latitude_degrees = MobileLatitudeDegrees { value: f64::NAN };
         assert!(!builder.record_location_sample(ms(7), invalid_location, None, None));
         assert!(builder.record_notification_with_context(
             ms(8),
@@ -14741,6 +15004,111 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    fn settle_response_loss(
+        state: &MobileRideMapCore,
+        ride_id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+        point: MobileRideMapCorePointDto,
+    ) -> MobileRideMapCoreDecisionDto {
+        let mut inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.settle_pending_location(
+            ride_id,
+            sample,
+            ride_maps::RouteTelemetryState::GpsOnly,
+            point,
+            true,
+            Err(persistence::StorageError::ResponseDropped),
+        )
+    }
+
+    #[test]
+    fn mobile_ride_map_core_reconciles_lost_write_without_blind_retry() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-reconcile-location-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        let ride_id = state
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .active_ride_id
+            .clone()
+            .expect("recording has an id");
+        let location = MobileRideLocationDto {
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            monotonic_milliseconds: 1_001,
+            wall_clock_unix_milliseconds: 1_700_000_000_001,
+            horizontal_accuracy_millimetres: Some(3_000),
+            source: MobileRideSourceDto::Live,
+        };
+        let sample = mobile_ride_location(location).expect("fixture location is valid");
+        let point = MobileRideMapCoreInner::point_from_location(
+            location,
+            0,
+            ride_maps::RideMapSegmentId::new(0),
+            ride_maps::RouteTelemetryState::GpsOnly,
+        );
+
+        let not_committed = settle_response_loss(&state, &ride_id, sample, point);
+        assert!(matches!(
+            not_committed,
+            MobileRideMapCoreDecisionDto::StorageError {
+                retryable: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            database
+                .find_ride(ride_id.clone())
+                .expect("ride lookup succeeds")
+                .expect("ride exists")
+                .summary
+                .point_count,
+            0
+        );
+
+        database
+            .inner
+            .append_location_with_segment_id_and_telemetry(
+                parse_mobile_ride_id(&ride_id).expect("ride id is valid"),
+                sample,
+                ride_maps::RideMapSegmentId::new(0),
+                ride_maps::RouteTelemetryState::GpsOnly,
+            )
+            .expect("fixture write commits");
+        let committed = settle_response_loss(&state, &ride_id, sample, point);
+        assert!(matches!(
+            committed,
+            MobileRideMapCoreDecisionDto::Accepted {
+                segment_started: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            state
+                .current_snapshot()
+                .expect("snapshot exists")
+                .summary
+                .point_count,
+            1
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn mobile_ride_map_core_associates_a_vehicle_found_during_a_gps_only_ride() {
         let state = MobileRideMapCore::new_for_testing();
@@ -14986,6 +15354,7 @@ mod tests {
             .expect("route projection is valid");
 
         assert_eq!(projection.source_point_count, 4);
+        assert_eq!(projection.candidate_point_count, 3);
         assert_eq!(projection.points.len(), 2);
         assert_eq!(projection.points[0].sequence, 0);
         assert_eq!(projection.points[1].sequence, 2);
@@ -15150,6 +15519,7 @@ mod tests {
             vec![0, 0, 2, 2]
         );
         assert_eq!(projection.source_segment_count, 3);
+        assert_eq!(projection.candidate_point_count, 7);
         assert_eq!(projection.candidate_segment_count, 3);
         assert_eq!(projection.displayed_segment_count, 2);
     }
@@ -15265,6 +15635,51 @@ mod tests {
     }
 
     #[test]
+    fn mobile_history_summary_exposes_rust_derived_average_speed() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-average-speed-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        await_location_decision(
+            &state,
+            state
+                .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
+                .expect("first location queues"),
+        );
+        await_location_decision(
+            &state,
+            state
+                .ingest_location(2_000, 1_700_000_001_000, 40.0, -104.99999, 3.0)
+                .expect("second location queues"),
+        );
+        state.stop().expect("map recording stops");
+        state.save().expect("map recording saves");
+
+        let rides = database.list_rides(None, 1).expect("saved ride lists");
+        assert_eq!(rides.rides.len(), 1);
+        assert!(
+            rides.rides[0]
+                .summary
+                .average_speed_millimetres_per_second
+                .is_some()
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_persists_gap_segment_without_distance() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -15325,6 +15740,7 @@ mod tests {
             })
             .expect("durable summary loads");
         assert_eq!(durable_summary.distance_millimetres, 0);
+        assert_eq!(durable_summary.average_speed_millimetres_per_second, None);
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);

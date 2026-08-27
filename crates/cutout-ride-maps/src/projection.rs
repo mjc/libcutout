@@ -82,12 +82,19 @@ impl RoutePrivacyPolicy {
         match self {
             Self::Precise => (coordinate, RoutePrivacyClass::Precise),
             Self::Grid(grid) => {
-                let latitude = snap_to_grid(coordinate.latitude().as_i32(), grid);
-                let longitude = snap_to_grid(coordinate.longitude().as_i32(), grid);
-                let coordinate = match Coordinate::from_fixed_parts(latitude, longitude) {
-                    Ok(coordinate) => coordinate,
-                    Err(_) => coordinate,
-                };
+                let latitude = snap_to_grid(
+                    coordinate.latitude().as_i32(),
+                    grid,
+                    -900_000_000,
+                    900_000_000,
+                );
+                let longitude = snap_to_grid(
+                    coordinate.longitude().as_i32(),
+                    grid,
+                    -1_800_000_000,
+                    1_800_000_000,
+                );
+                let coordinate = Coordinate::from_bounded_fixed_parts(latitude, longitude);
                 (coordinate, RoutePrivacyClass::GridRedacted)
             }
         }
@@ -402,9 +409,17 @@ fn evenly_spaced_ordinal(
     }
 }
 
-fn snap_to_grid(value: i32, grid: RoutePrivacyGridE7) -> i32 {
+fn snap_to_grid(value: i32, grid: RoutePrivacyGridE7, minimum: i32, maximum: i32) -> i32 {
     let grid = i64::from(grid.as_u32());
     let snapped = i64::from(value).div_euclid(grid) * grid;
+    // Euclidean flooring can cross the negative world boundary when the boundary is not
+    // divisible by the grid. Move that bucket inward before clamping the representable domain.
+    let snapped = if snapped < i64::from(minimum) {
+        snapped + grid
+    } else {
+        snapped
+    };
+    let snapped = snapped.clamp(i64::from(minimum), i64::from(maximum));
     #[allow(clippy::cast_possible_truncation)]
     {
         snapped as i32

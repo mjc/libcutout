@@ -19,8 +19,8 @@ pub use location::{
 };
 mod summary;
 pub use summary::{
-    DistanceMillimetres, RidePointCount, RideSummary, distance_between,
-    distance_between_millimetres,
+    AverageSpeedMillimetresPerSecond, DistanceMillimetres, RidePointCount, RideSummary,
+    distance_between, distance_between_millimetres,
 };
 mod recording;
 pub use recording::{
@@ -43,12 +43,13 @@ mod tests {
     use std::cell::Cell;
 
     use super::{
-        Coordinate, DistanceMillimetres, LatitudeE7, LocationAdmission, LocationSample,
-        LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
-        RideLifecycleState, RideMapRecorder, RidePointCount, RideSummary, RouteDisplayBudget,
-        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError,
-        RouteViewport, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
-        project_route_points, project_route_points_cancellable, project_route_points_from_iter,
+        AverageSpeedMillimetresPerSecond, Coordinate, DistanceMillimetres, LatitudeE7,
+        LocationAdmission, LocationSample, LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS,
+        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapRecorder, RidePointCount,
+        RideSummary, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
+        RouteProjectionError, RouteViewport, TransitionError, VehicleIdentity,
+        WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
+        project_route_points_from_iter,
     };
 
     #[test]
@@ -136,6 +137,24 @@ mod tests {
     }
 
     #[test]
+    fn ride_summary_derives_average_speed_from_persisted_distance_and_duration() {
+        let summary = RideSummary::from_stored(RidePointCount::new(2), 10_000);
+
+        assert_eq!(
+            summary
+                .average_speed_millimetres_per_second(2_000)
+                .map(AverageSpeedMillimetresPerSecond::as_u64),
+            Some(5_000)
+        );
+        assert_eq!(summary.average_speed_millimetres_per_second(0), None);
+        assert_eq!(
+            RideSummary::from_stored(RidePointCount::new(2), 0)
+                .average_speed_millimetres_per_second(2_000),
+            None
+        );
+    }
+
+    #[test]
     fn vehicle_identity_rejects_blank_values_and_trims_boundaries() {
         assert_eq!(
             VehicleIdentity::new("  NF2557 "),
@@ -218,6 +237,40 @@ mod tests {
             .crosses_antimeridian()
         );
         assert!(RoutePrivacyGridE7::new(0).is_none());
+    }
+
+    #[test]
+    fn privacy_grid_does_not_leak_exact_coordinates_at_world_boundaries() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        let coordinate = Coordinate::from_fixed_parts(-900_000_000, -1_800_000_000).unwrap();
+        let sample = LocationSample::new(
+            coordinate,
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+        recorder.record_sample(sample);
+
+        let projection = project_route_points(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            None,
+            RouteDisplayBudget::new(1).unwrap(),
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(7).unwrap()),
+        );
+
+        assert_eq!(
+            projection[0].privacy_class(),
+            RoutePrivacyClass::GridRedacted
+        );
+        assert_ne!(projection[0].coordinate(), coordinate);
+        assert!(projection[0].coordinate().latitude().as_i32() > -900_000_000);
+        assert!(projection[0].coordinate().longitude().as_i32() > -1_800_000_000);
     }
 
     #[test]

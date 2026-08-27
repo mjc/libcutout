@@ -2,6 +2,24 @@ use crate::LocationSample;
 
 const EARTH_RADIUS_METRES: f64 = 6_371_000.0;
 
+/// Derived average speed represented in millimetres per second.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct AverageSpeedMillimetresPerSecond(u64);
+
+impl AverageSpeedMillimetresPerSecond {
+    /// Creates an average speed from millimetres per second.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Returns the speed in millimetres per second.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
+
 /// Number of canonical route points represented by a ride summary.
 ///
 /// This is distinct from segment identities, timestamps, and distances so
@@ -118,6 +136,27 @@ impl RideSummary {
     #[must_use]
     pub const fn distance_millimetres(self) -> u64 {
         self.distance().as_u64()
+    }
+
+    /// Derives average speed from this summary's distance and elapsed duration.
+    ///
+    /// A zero distance or duration has no meaningful average-speed readout. The calculation is
+    /// integer-based so every consumer gets the same Rust-owned result instead of independently
+    /// rounding the persisted distance and duration.
+    #[must_use]
+    pub fn average_speed_millimetres_per_second(
+        self,
+        duration_milliseconds: u64,
+    ) -> Option<AverageSpeedMillimetresPerSecond> {
+        if self.distance_millimetres() == 0 || duration_milliseconds == 0 {
+            return None;
+        }
+        let millimetres_per_second = u128::from(self.distance_millimetres())
+            .checked_mul(1_000)?
+            .checked_div(u128::from(duration_milliseconds))?;
+        u64::try_from(millimetres_per_second)
+            .ok()
+            .map(AverageSpeedMillimetresPerSecond::new)
     }
 
     /// Reconstructs a summary persisted by the storage layer.
