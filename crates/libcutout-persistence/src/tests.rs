@@ -454,10 +454,8 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
         pending.wait_result_until(Instant::now() + Duration::from_secs(1)),
         Err(StorageError::ResponseDropped)
     ));
-    assert!(
-        database.capabilities().is_ok(),
-        "worker should recover in place"
-    );
+    let recovery = database.capabilities();
+    assert!(recovery.is_ok(), "worker should recover in place: {recovery:?}");
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
@@ -1121,6 +1119,60 @@ fn pevcap_imports_independent_location_samples_into_the_route() {
 }
 
 #[test]
+fn pevcap_import_skips_invalid_location_with_decoder_reason() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-rejected-location-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-rejected-location-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let valid_location = PevcapLocationSample::new(
+        MonotonicTimestamp::new(1_000),
+        pevcap_location(1_000, 40.0, 3.0),
+        None,
+        None,
+    )
+    .unwrap();
+    let invalid_location = valid_location
+        .to_jsonl_line()
+        .unwrap()
+        .replace("40.0", "91.0");
+    let input = format!(
+        "{}\n{}\n",
+        header.to_jsonl_line().unwrap(),
+        invalid_location
+    );
+    std::fs::write(&artifact_path, input).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.location_count(), 0);
+    assert_eq!(preview.outcome(), PevcapImportOutcome::CaptureOnly);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
 fn pevcap_import_preserves_interleaved_location_and_record_order() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -1555,7 +1607,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 13);
+        assert_eq!(current_version, 14);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1682,7 +1734,7 @@ fn schema_ten_and_eleven_migrations_create_segment_rows_and_foreign_keys() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 13);
+        assert_eq!(current_version, 14);
         let segment_count: u64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
@@ -1918,6 +1970,173 @@ fn current_schema_uses_uuid_singleton_keys_and_keeps_device_names_non_unique() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn spatial_domain_ids_are_uuid_backed_and_rtree_keys_are_internal() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+
+    let map_point_columns: Vec<(String, String, i64, i64)> = connection
+        .prepare("PRAGMA table_info(map_points)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(1)?, row.get(2)?, row.get(3)?, row.get(5)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(map_point_columns[0], ("id".into(), "BLOB".into(), 1, 1));
+    assert_eq!(map_point_columns[1].0, "name");
+
+    let trail_segment_columns: Vec<(String, String, i64, i64)> = connection
+        .prepare("PRAGMA table_info(trail_segments)")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(1)?, row.get(2)?, row.get(3)?, row.get(5)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(
+        !trail_segment_columns
+            .iter()
+            .any(|(name, _, _, _)| name == "id")
+    );
+    assert_eq!(
+        trail_segment_columns
+            .iter()
+            .find(|(name, _, _, _)| name == "trail_id")
+            .map(|(_, _, _, pk)| *pk),
+        Some(1)
+    );
+    assert_eq!(
+        trail_segment_columns
+            .iter()
+            .find(|(name, _, _, _)| name == "sequence")
+            .map(|(_, _, _, pk)| *pk),
+        Some(2)
+    );
+
+    for table in ["map_point_spatial_keys", "trail_segment_spatial_keys"] {
+        let exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?1)",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exists, "missing {table}");
+    }
+    let map_key_sql: String = connection
+        .query_row(
+            "SELECT sql FROM sqlite_schema WHERE name = 'map_point_spatial_keys'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(map_key_sql.contains("rtree_id"));
+    assert!(!map_key_sql.contains(" id INTEGER PRIMARY KEY"));
+}
+
+#[test]
+fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-spatial-identity-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA foreign_keys = OFF;
+             DROP TABLE map_points_rtree;
+             DROP TABLE map_point_spatial_keys;
+             DROP TABLE map_points;
+             DROP TABLE trail_segments_rtree;
+             DROP TABLE trail_segment_spatial_keys;
+             DROP TABLE trail_segments;
+             CREATE TABLE trail_segments (
+                 id INTEGER PRIMARY KEY,
+                 trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+                 sequence INTEGER NOT NULL,
+                 start_lat_e7 INTEGER NOT NULL,
+                 start_lon_e7 INTEGER NOT NULL,
+                 end_lat_e7 INTEGER NOT NULL,
+                 end_lon_e7 INTEGER NOT NULL,
+                 UNIQUE (trail_id, sequence)
+             );
+             CREATE VIRTUAL TABLE trail_segments_rtree
+                 USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+             CREATE TABLE map_points (
+                 id INTEGER PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 latitude_e7 INTEGER NOT NULL,
+                 longitude_e7 INTEGER NOT NULL
+             );
+             CREATE VIRTUAL TABLE map_points_rtree
+                 USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+             INSERT INTO trails (id, name)
+             VALUES ('00000000-0000-0000-0000-000000000001', 'Legacy trail');
+             INSERT INTO trail_segments
+                 (id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
+             VALUES (7, '00000000-0000-0000-0000-000000000001', 0,
+                     400000000, -1050000000, 400010000, -1050010000);
+             INSERT INTO map_points (id, name, latitude_e7, longitude_e7)
+             VALUES (11, 'Legacy point', 400000000, -1050000000);
+             INSERT INTO trail_segments_rtree
+                 VALUES (7, 400000000, 400010000, -1050010000, -1050000000);
+             INSERT INTO map_points_rtree
+                 VALUES (11, 400000000, 400000000, -1050000000, -1050000000);
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 13;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    let bounds = GeoBounds::new(39.9, 40.1, -105.1, -104.9).unwrap();
+    assert_eq!(
+        database
+            .trail_segments_in_bounds(bounds, None, QueryLimit::new(10).unwrap())
+            .unwrap()
+            .segments()
+            .len(),
+        1
+    );
+    let points = database
+        .map_points_in_bounds(bounds, None, QueryLimit::new(10).unwrap())
+        .unwrap();
+    assert_eq!(points.points().len(), 1);
+    assert_eq!(points.points()[0].name, "Legacy point");
+    assert_ne!(points.points()[0].id.uuid(), uuid::Uuid::nil());
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 14);
+    let rtree_id: i64 = connection
+        .query_row(
+            "SELECT rtree_id FROM trail_segment_spatial_keys",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rtree_id, 7);
+    let point_id_type: String = connection
+        .query_row(
+            "SELECT type FROM pragma_table_info('map_points') WHERE name = 'id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(point_id_type, "BLOB");
+    drop(connection);
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]

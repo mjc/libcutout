@@ -273,7 +273,7 @@ pub struct DiscoveryCandidate {
 }
 
 /// Mobile advertised manufacturer data summary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct DiscoveryManufacturerDataSummary {
     /// Bluetooth company identifier.
     pub company_identifier: u16,
@@ -3643,7 +3643,7 @@ pub struct MobileTrailSegmentPageDto {
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct MobileMapPointDto {
     /// Stable point identifier.
-    pub id: u64,
+    pub id: String,
     /// User-visible point name.
     pub name: String,
     /// Point coordinate.
@@ -3651,9 +3651,9 @@ pub struct MobileMapPointDto {
 }
 
 /// Stable cursor for a subsequent map-point page.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Record)]
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
 pub struct MobileMapPointCursorDto {
-    pub id: u64,
+    pub id: String,
 }
 
 /// One bounded page of indexed map points.
@@ -4526,11 +4526,11 @@ impl RideDatabaseHandle {
         &self,
         name: String,
         coordinate: MobileMapCoordinateDto,
-    ) -> Result<u64, MobileRideDatabaseError> {
+    ) -> Result<String, MobileRideDatabaseError> {
         let coordinate = mobile_map_coordinate(coordinate)?;
         self.inner
             .create_map_point(&name, coordinate)
-            .map(persistence::MapPointId::get)
+            .map(|id| id.uuid().to_string())
             .map_err(map_ride_database_error)
     }
 
@@ -4546,9 +4546,14 @@ impl RideDatabaseHandle {
         limit: u32,
     ) -> Result<MobileMapPointPageDto, MobileRideDatabaseError> {
         let bounds = mobile_geo_bounds(bounds)?;
-        let cursor = cursor.map(|cursor| {
-            persistence::MapPointCursor::new(persistence::MapPointId::from_u64(cursor.id))
-        });
+        let cursor = cursor
+            .map(|cursor| {
+                Uuid::parse_str(&cursor.id)
+                    .map(persistence::MapPointId::from_uuid)
+                    .map(persistence::MapPointCursor::new)
+                    .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+            })
+            .transpose()?;
         let limit = mobile_query_limit(limit)?;
         self.inner
             .map_points_in_bounds(bounds, cursor, limit)
@@ -4557,13 +4562,13 @@ impl RideDatabaseHandle {
                     .points()
                     .iter()
                     .map(|point| MobileMapPointDto {
-                        id: point.id.get(),
+                        id: point.id.uuid().to_string(),
                         name: point.name.clone(),
                         coordinate: mobile_map_coordinate_dto(point.coordinate),
                     })
                     .collect(),
                 next_cursor: page.next_cursor().map(|cursor| MobileMapPointCursorDto {
-                    id: cursor.id().get(),
+                    id: cursor.id().uuid().to_string(),
                 }),
             })
             .map_err(map_ride_database_error)

@@ -3549,7 +3549,7 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      *
      * Returns a typed database error when the point or spatial index rejects the value.
      */
-    func createMapPoint(name: String, coordinate: MobileMapCoordinateDto) throws  -> UInt64
+    func createMapPoint(name: String, coordinate: MobileMapCoordinateDto) throws  -> String
 
     /**
      * Creates a draft ride and returns its Rust-created identifier.
@@ -4039,8 +4039,8 @@ open func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMi
      *
      * Returns a typed database error when the point or spatial index rejects the value.
      */
-open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_create_map_point(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(name),
@@ -8572,11 +8572,11 @@ public func FfiConverterTypeMobileMapCoordinateDto_lower(_ value: MobileMapCoord
  * Stable cursor for a subsequent map-point page.
  */
 public struct MobileMapPointCursorDto: Equatable, Hashable {
-    public var id: UInt64
+    public var id: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: UInt64) {
+    public init(id: String) {
         self.id = id
     }
 
@@ -8596,12 +8596,12 @@ public struct FfiConverterTypeMobileMapPointCursorDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMapPointCursorDto {
         return
             try MobileMapPointCursorDto(
-                id: FfiConverterUInt64.read(from: &buf)
+                id: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMapPointCursorDto, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
     }
 }
 
@@ -8628,7 +8628,7 @@ public struct MobileMapPointDto: Equatable, Hashable {
     /**
      * Stable point identifier.
      */
-    public var id: UInt64
+    public var id: String
     /**
      * User-visible point name.
      */
@@ -8643,7 +8643,7 @@ public struct MobileMapPointDto: Equatable, Hashable {
     public init(
         /**
          * Stable point identifier.
-         */id: UInt64,
+         */id: String,
         /**
          * User-visible point name.
          */name: String,
@@ -8671,14 +8671,14 @@ public struct FfiConverterTypeMobileMapPointDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMapPointDto {
         return
             try MobileMapPointDto(
-                id: FfiConverterUInt64.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
                 name: FfiConverterString.read(from: &buf),
                 coordinate: FfiConverterTypeMobileMapCoordinateDto.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMapPointDto, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterTypeMobileMapCoordinateDto.write(value.coordinate, into: &buf)
     }
@@ -25137,7 +25137,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_confirm_pevcap_import() != 44346) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 21532) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 3018) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride() != 30433) {

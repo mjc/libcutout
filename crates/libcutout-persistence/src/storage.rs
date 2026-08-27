@@ -34,7 +34,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -816,20 +816,26 @@ pub struct MapPoint {
     pub coordinate: Coordinate,
 }
 
-/// Stable identifier for a stored map point.
+/// Stable UUID for a stored map point.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct MapPointId(u64);
+pub struct MapPointId(Uuid);
 
 impl MapPointId {
+    /// Creates an identifier for a newly stored point.
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+
     /// Restores an identifier returned by a previous query page.
     #[must_use]
-    pub const fn from_u64(value: u64) -> Self {
+    pub const fn from_uuid(value: Uuid) -> Self {
         Self(value)
     }
 
-    /// Returns the integer representation used at the mobile boundary.
+    /// Returns the UUID used at the mobile boundary.
     #[must_use]
-    pub const fn get(self) -> u64 {
+    pub const fn uuid(self) -> Uuid {
         self.0
     }
 }
@@ -3409,7 +3415,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 13;
+                PRAGMA user_version = 14;
                  COMMIT;",
             )?;
         }
@@ -3470,6 +3476,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         10 => migrate_v10_to_current(connection)?,
         11 => migrate_v11_to_current(connection)?,
         12 => migrate_v12_to_current(connection)?,
+        13 => migrate_v13_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -3575,22 +3582,34 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512)
         );
         CREATE TABLE trail_segments (
-            id INTEGER PRIMARY KEY,
             trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             start_lat_e7 INTEGER NOT NULL CHECK (start_lat_e7 BETWEEN -900000000 AND 900000000),
             start_lon_e7 INTEGER NOT NULL CHECK (start_lon_e7 BETWEEN -1800000000 AND 1800000000),
             end_lat_e7 INTEGER NOT NULL CHECK (end_lat_e7 BETWEEN -900000000 AND 900000000),
             end_lon_e7 INTEGER NOT NULL CHECK (end_lon_e7 BETWEEN -1800000000 AND 1800000000),
+            PRIMARY KEY (trail_id, sequence)
+        );
+        CREATE TABLE trail_segment_spatial_keys (
+            rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+            trail_id TEXT NOT NULL,
+            sequence INTEGER NOT NULL CHECK (sequence >= 0),
+            FOREIGN KEY (trail_id, sequence)
+                REFERENCES trail_segments(trail_id, sequence) ON DELETE CASCADE,
             UNIQUE (trail_id, sequence)
         );
         CREATE VIRTUAL TABLE trail_segments_rtree
             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
         CREATE TABLE map_points (
-            id INTEGER PRIMARY KEY,
+            id BLOB PRIMARY KEY NOT NULL CHECK (length(id) = 16),
             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
             latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
             longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000)
+        );
+        CREATE TABLE map_point_spatial_keys (
+            rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+            point_id BLOB NOT NULL UNIQUE CHECK (length(point_id) = 16),
+            FOREIGN KEY (point_id) REFERENCES map_points(id) ON DELETE CASCADE
         );
         CREATE VIRTUAL TABLE map_points_rtree
             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
@@ -3623,6 +3642,104 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, StorageErr
         .map_err(StorageError::from)
 }
 
+fn copy_legacy_spatial_rows(transaction: &rusqlite::Transaction<'_>) -> Result<(), StorageError> {
+    let segments = {
+        let mut statement = transaction.prepare(
+            "SELECT id, trail_id, sequence, start_lat_e7, start_lon_e7,
+                    end_lat_e7, end_lon_e7
+             FROM trail_segments_legacy
+             ORDER BY id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (rtree_id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7) in
+        segments
+    {
+        let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
+        transaction.execute(
+            "INSERT INTO trail_segments
+                (trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                trail_id,
+                sequence,
+                start_lat_e7,
+                start_lon_e7,
+                end_lat_e7,
+                end_lon_e7,
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO trail_segment_spatial_keys (rtree_id, trail_id, sequence)
+             VALUES (?1, ?2, ?3)",
+            params![rtree_id.get(), trail_id, sequence],
+        )?;
+        transaction.execute(
+            "INSERT INTO trail_segments_rtree
+                (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
+             VALUES (?1, min(?2, ?3), max(?2, ?3), min(?4, ?5), max(?4, ?5))",
+            params![
+                rtree_id.get(),
+                start_lat_e7,
+                end_lat_e7,
+                start_lon_e7,
+                end_lon_e7,
+            ],
+        )?;
+    }
+
+    let points = {
+        let mut statement = transaction.prepare(
+            "SELECT id, name, latitude_e7, longitude_e7
+             FROM map_points_legacy
+             ORDER BY id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (rtree_id, name, latitude_e7, longitude_e7) in points {
+        let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
+        let point_id = MapPointId::new();
+        transaction.execute(
+            "INSERT INTO map_points (id, name, latitude_e7, longitude_e7)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![point_id.uuid().as_bytes(), name, latitude_e7, longitude_e7],
+        )?;
+        transaction.execute(
+            "INSERT INTO map_point_spatial_keys (rtree_id, point_id)
+             VALUES (?1, ?2)",
+            params![rtree_id.get(), point_id.uuid().as_bytes()],
+        )?;
+        transaction.execute(
+            "INSERT INTO map_points_rtree
+                (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
+             VALUES (?1, ?2, ?2, ?3, ?3)",
+            params![rtree_id.get(), latitude_e7, longitude_e7],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError> {
     verify_legacy_schema(connection)?;
     let has_spatial = table_exists(connection, "trails")?
@@ -3652,25 +3769,12 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
     )?;
     create_current_schema(&transaction)?;
     if has_spatial {
+        transaction.execute_batch("INSERT INTO trails SELECT * FROM trails_legacy;")?;
+        copy_legacy_spatial_rows(&transaction)?;
         transaction.execute_batch(
-            "
-            INSERT INTO trails SELECT * FROM trails_legacy;
-            INSERT INTO trail_segments
-                (id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
-            SELECT id, trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7
-            FROM trail_segments_legacy;
-            INSERT INTO map_points SELECT * FROM map_points_legacy;
-            INSERT INTO trail_segments_rtree
-            SELECT id,
-                   min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
-                   min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
-            FROM trail_segments;
-            INSERT INTO map_points_rtree
-            SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
-            DROP TABLE trail_segments_legacy;
-            DROP TABLE trails_legacy;
-            DROP TABLE map_points_legacy;
-            ",
+            "DROP TABLE trail_segments_legacy;
+             DROP TABLE trails_legacy;
+             DROP TABLE map_points_legacy;",
         )?;
     }
     transaction.execute_batch(
@@ -3714,7 +3818,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 13;
+                PRAGMA user_version = 14;
         ",
     )?;
     transaction.commit()?;
@@ -3768,18 +3872,22 @@ fn migrate_v4_to_current(connection: &mut Connection) -> Result<(), StorageError
             ",
         )?;
     }
-    transaction.execute_batch(
-        "
-        INSERT INTO trail_segments_rtree
-        SELECT id,
-               min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
-               min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
-        FROM trail_segments;
-        INSERT INTO map_points_rtree
-        SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
-        PRAGMA user_version = 5;
-        ",
-    )?;
+    if has_spatial {
+        transaction.execute_batch(
+            "
+            INSERT INTO trail_segments_rtree
+            SELECT id,
+                   min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
+                   min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
+            FROM trail_segments;
+            INSERT INTO map_points_rtree
+            SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+            PRAGMA user_version = 5;
+            ",
+        )?;
+    } else {
+        transaction.execute_batch("PRAGMA user_version = 5;")?;
+    }
     transaction.commit()?;
     migrate_v5_to_current(connection)
 }
@@ -3961,7 +4069,7 @@ fn migrate_v12_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "PRAGMA application_id = 1129665615;
              PRAGMA user_version = 13;",
         )?;
-        return Ok(());
+        return migrate_v13_to_current(connection);
     }
 
     let transaction = connection.transaction()?;
@@ -3999,6 +4107,76 @@ fn migrate_v12_to_current(connection: &mut Connection) -> Result<(), StorageErro
          PRAGMA user_version = 13;",
     )?;
     transaction.commit()?;
+    migrate_v13_to_current(connection)
+}
+
+fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let map_points_are_uuid_backed: bool = connection.query_row(
+        "SELECT COALESCE(
+             (SELECT type = 'BLOB' FROM pragma_table_info('map_points') WHERE name = 'id'),
+             0
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    let trail_segments_are_composite = !table_has_column(connection, "trail_segments", "id")?
+        && table_exists(connection, "trail_segment_spatial_keys")?
+        && table_exists(connection, "map_point_spatial_keys")?;
+    if map_points_are_uuid_backed && trail_segments_are_composite {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 14;",
+        )?;
+        return Ok(());
+    }
+
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "DROP TABLE IF EXISTS trail_segments_rtree;
+         DROP TABLE IF EXISTS map_points_rtree;
+         ALTER TABLE trail_segments RENAME TO trail_segments_legacy;
+         ALTER TABLE map_points RENAME TO map_points_legacy;
+         CREATE TABLE trail_segments (
+             trail_id TEXT NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             start_lat_e7 INTEGER NOT NULL CHECK (start_lat_e7 BETWEEN -900000000 AND 900000000),
+             start_lon_e7 INTEGER NOT NULL CHECK (start_lon_e7 BETWEEN -1800000000 AND 1800000000),
+             end_lat_e7 INTEGER NOT NULL CHECK (end_lat_e7 BETWEEN -900000000 AND 900000000),
+             end_lon_e7 INTEGER NOT NULL CHECK (end_lon_e7 BETWEEN -1800000000 AND 1800000000),
+             PRIMARY KEY (trail_id, sequence)
+         );
+         CREATE TABLE trail_segment_spatial_keys (
+             rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+             trail_id TEXT NOT NULL,
+             sequence INTEGER NOT NULL CHECK (sequence >= 0),
+             FOREIGN KEY (trail_id, sequence)
+                 REFERENCES trail_segments(trail_id, sequence) ON DELETE CASCADE,
+             UNIQUE (trail_id, sequence)
+         );
+         CREATE VIRTUAL TABLE trail_segments_rtree
+             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);
+         CREATE TABLE map_points (
+             id BLOB PRIMARY KEY NOT NULL CHECK (length(id) = 16),
+             name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
+             latitude_e7 INTEGER NOT NULL CHECK (latitude_e7 BETWEEN -900000000 AND 900000000),
+             longitude_e7 INTEGER NOT NULL CHECK (longitude_e7 BETWEEN -1800000000 AND 1800000000)
+         );
+         CREATE TABLE map_point_spatial_keys (
+             rtree_id INTEGER PRIMARY KEY CHECK (rtree_id BETWEEN 1 AND 2147483647),
+             point_id BLOB NOT NULL UNIQUE CHECK (length(point_id) = 16),
+             FOREIGN KEY (point_id) REFERENCES map_points(id) ON DELETE CASCADE
+         );
+         CREATE VIRTUAL TABLE map_points_rtree
+             USING rtree_i32(id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7);",
+    )?;
+    copy_legacy_spatial_rows(&transaction)?;
+    transaction.execute_batch(
+        "DROP TABLE trail_segments_legacy;
+         DROP TABLE map_points_legacy;
+         PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 14;",
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -4033,8 +4211,10 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
         "pevcap_import_work",
         "trails",
         "trail_segments",
+        "trail_segment_spatial_keys",
         "trail_segments_rtree",
         "map_points",
+        "map_point_spatial_keys",
         "map_points_rtree",
     ] {
         let exists: bool = connection.query_row(
@@ -4049,6 +4229,32 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
     verify_device_schema(connection)?;
+    verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_spatial_identity_schema(connection: &Connection) -> Result<(), StorageError> {
+    let map_point_id_type: Option<String> = connection
+        .query_row(
+            "SELECT type FROM pragma_table_info('map_points') WHERE name = 'id'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if map_point_id_type.as_deref() != Some("BLOB")
+        || table_has_column(connection, "trail_segments", "id")?
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    for table in ["map_point_spatial_keys", "trail_segment_spatial_keys"] {
+        let columns: Vec<String> = connection
+            .prepare(&format!("PRAGMA table_info({table})"))?
+            .query_map([], |row| row.get(1))?
+            .collect::<Result<_, _>>()?;
+        if !columns.iter().any(|column| column == "rtree_id") {
+            return Err(StorageError::InvalidDatabaseIdentity);
+        }
+    }
     Ok(())
 }
 
@@ -4293,8 +4499,10 @@ fn ensure_spatial_schema(
     for table in [
         "trails",
         "trail_segments",
+        "trail_segment_spatial_keys",
         "trail_segments_rtree",
         "map_points",
+        "map_point_spatial_keys",
         "map_points_rtree",
     ] {
         if !table_exists(connection, table)? {
@@ -4346,24 +4554,27 @@ fn append_trail_segment(
     if !exists {
         return Err(StorageError::NotFound);
     }
-    let segment_id = transaction
-        .query_row(
-            "INSERT INTO trail_segments
+    transaction.execute(
+        "INSERT INTO trail_segments
             (trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         RETURNING id",
-            params![
-                trail,
-                sequence,
-                start.latitude().as_i32(),
-                start.longitude().as_i32(),
-                end.latitude().as_i32(),
-                end.longitude().as_i32(),
-            ],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(StorageError::from)?;
-    let segment_id = SpatialRowId::from_sqlite(segment_id)?;
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            trail,
+            sequence,
+            start.latitude().as_i32(),
+            start.longitude().as_i32(),
+            end.latitude().as_i32(),
+            end.longitude().as_i32(),
+        ],
+    )?;
+    let rtree_id = transaction.query_row(
+        "INSERT INTO trail_segment_spatial_keys (trail_id, sequence)
+         VALUES (?1, ?2)
+         RETURNING rtree_id",
+        params![trail, sequence],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
     let min_lat = start.latitude().as_i32().min(end.latitude().as_i32());
     let max_lat = start.latitude().as_i32().max(end.latitude().as_i32());
     let min_lon = start.longitude().as_i32().min(end.longitude().as_i32());
@@ -4372,7 +4583,7 @@ fn append_trail_segment(
         "INSERT INTO trail_segments_rtree
             (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![segment_id.get(), min_lat, max_lat, min_lon, max_lon],
+        params![rtree_id.get(), min_lat, max_lat, min_lon, max_lon],
     )?;
     transaction.commit()?;
     Ok(())
@@ -4390,7 +4601,8 @@ fn trail_segments_in_bounds(
         "SELECT s.trail_id, s.sequence, s.start_lat_e7, s.start_lon_e7,
                 s.end_lat_e7, s.end_lon_e7
          FROM trail_segments_rtree r
-         JOIN trail_segments s ON s.id = r.id
+         JOIN trail_segment_spatial_keys k ON k.rtree_id = r.id
+         JOIN trail_segments s ON s.trail_id = k.trail_id AND s.sequence = k.sequence
          WHERE r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
            AND ((?5 = 0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4)
              OR (?5 = 1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
@@ -4470,36 +4682,37 @@ fn create_map_point(
     }
     ensure_spatial_schema(connection, state)?;
     let transaction = connection.transaction()?;
-    let id = transaction
-        .query_row(
-            "INSERT INTO map_points (name, latitude_e7, longitude_e7) VALUES (?1, ?2, ?3)
-             RETURNING id",
-            params![
-                name,
-                coordinate.latitude().as_i32(),
-                coordinate.longitude().as_i32()
-            ],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(StorageError::from)?;
-    let id = SpatialRowId::from_sqlite(id)?;
+    let point_id = MapPointId::new();
+    transaction.execute(
+        "INSERT INTO map_points (id, name, latitude_e7, longitude_e7)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            point_id.uuid().as_bytes(),
+            name,
+            coordinate.latitude().as_i32(),
+            coordinate.longitude().as_i32()
+        ],
+    )?;
+    let rtree_id = transaction.query_row(
+        "INSERT INTO map_point_spatial_keys (point_id)
+         VALUES (?1)
+         RETURNING rtree_id",
+        params![point_id.uuid().as_bytes()],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let rtree_id = SpatialRowId::from_sqlite(rtree_id)?;
     transaction.execute(
         "INSERT INTO map_points_rtree
             (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?2, ?3, ?3)",
         params![
-            id.get(),
+            rtree_id.get(),
             coordinate.latitude().as_i32(),
             coordinate.longitude().as_i32()
         ],
     )?;
     transaction.commit()?;
-    u64::try_from(id.get())
-        .map(MapPointId)
-        .map_err(|_| StorageError::InvalidStoredValue {
-            field: "map point identifier",
-            value: id.get().to_string(),
-        })
+    Ok(point_id)
 }
 
 fn map_points_in_bounds(
@@ -4512,22 +4725,17 @@ fn map_points_in_bounds(
     ensure_spatial_schema(connection, state)?;
     let mut statement = connection.prepare(
         "SELECT p.id, p.name, p.latitude_e7, p.longitude_e7
-         FROM map_points_rtree r JOIN map_points p ON p.id = r.id
+         FROM map_points_rtree r
+         JOIN map_point_spatial_keys k ON k.rtree_id = r.id
+         JOIN map_points p ON p.id = k.point_id
          WHERE r.max_lat_e7 >= ?1 AND r.min_lat_e7 <= ?2
            AND ((?5 = 0 AND r.max_lon_e7 >= ?3 AND r.min_lon_e7 <= ?4)
              OR (?5 = 1 AND (r.max_lon_e7 >= ?3 OR r.min_lon_e7 <= ?4)))
-           AND p.id > ?6
-         ORDER BY p.id
+           AND (?6 IS NULL OR p.id > ?6)
+           ORDER BY p.id
          LIMIT ?7",
     )?;
-    let after = cursor
-        .map(|cursor| i64::try_from(cursor.0.get()))
-        .transpose()
-        .map_err(|_| StorageError::InvalidStoredValue {
-            field: "map point cursor",
-            value: "out of range".to_owned(),
-        })?
-        .unwrap_or(0);
+    let after = cursor.map(|cursor| cursor.0.uuid().as_bytes().to_vec());
     let rows = statement.query_map(
         params![
             bounds.minimum_latitude,
@@ -4539,10 +4747,21 @@ fn map_points_in_bounds(
             i64::from(limit.get()) + 1,
         ],
         |row| {
+            let id_bytes: Vec<u8> = row.get(0)?;
+            let id = Uuid::from_slice(&id_bytes).map_err(|_| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Blob,
+                    Box::new(StorageError::InvalidStoredValue {
+                        field: "map point identifier",
+                        value: hex_encode(id_bytes),
+                    }),
+                )
+            })?;
             let coordinate = Coordinate::from_fixed_parts(row.get(2)?, row.get(3)?)
                 .map_err(|_| rusqlite::Error::InvalidQuery)?;
             Ok(MapPoint {
-                id: MapPointId(row.get(0)?),
+                id: MapPointId::from_uuid(id),
                 name: row.get(1)?,
                 coordinate,
             })
@@ -4572,14 +4791,24 @@ fn rebuild_spatial_indexes(
     transaction.execute_batch(
         "
         DELETE FROM trail_segments_rtree;
+        DELETE FROM trail_segment_spatial_keys;
+        INSERT INTO trail_segment_spatial_keys (trail_id, sequence)
+        SELECT trail_id, sequence FROM trail_segments ORDER BY trail_id, sequence;
         INSERT INTO trail_segments_rtree
-        SELECT id,
+        SELECT k.rtree_id,
                min(start_lat_e7, end_lat_e7), max(start_lat_e7, end_lat_e7),
                min(start_lon_e7, end_lon_e7), max(start_lon_e7, end_lon_e7)
-        FROM trail_segments;
+        FROM trail_segments s
+        JOIN trail_segment_spatial_keys k
+          ON k.trail_id = s.trail_id AND k.sequence = s.sequence;
         DELETE FROM map_points_rtree;
+        DELETE FROM map_point_spatial_keys;
+        INSERT INTO map_point_spatial_keys (point_id)
+        SELECT id FROM map_points ORDER BY id;
         INSERT INTO map_points_rtree
-        SELECT id, latitude_e7, latitude_e7, longitude_e7, longitude_e7 FROM map_points;
+        SELECT k.rtree_id, p.latitude_e7, p.latitude_e7, p.longitude_e7, p.longitude_e7
+        FROM map_points p
+        JOIN map_point_spatial_keys k ON k.point_id = p.id;
         ",
     )?;
     transaction.commit()?;
