@@ -1824,6 +1824,51 @@ final class CutoutAppModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryVehicleNamesUseRustDeviceOptionsAndSummaryNamesWhenDisconnected() {
+        let summary = MobileRideMapHistorySummaryDto(
+            rideId: "ride-1",
+            state: .saved,
+            summary: MobileRideMapSummaryDto(
+                pointCount: 1,
+                distanceMeters: 1,
+                durationMilliseconds: 1_000
+            ),
+            segmentCount: 1,
+            createdAtMilliseconds: 1,
+            candidateVehicle: nil,
+            associatedVehicle: "corebluetooth-old",
+            associatedVehicleName: "NF2557",
+            telemetryState: .associatedNoTelemetry
+        )
+        let options = [
+            MobileRideMapHistoryVehicleOptionDto(
+                platformIdentifier: "corebluetooth-old",
+                displayName: "NF2557"
+            ),
+            MobileRideMapHistoryVehicleOptionDto(
+                platformIdentifier: "corebluetooth-new",
+                displayName: "NF2557"
+            ),
+        ]
+
+        let names = CutoutAppModel.rideMapHistoryVehicleNames(
+            options,
+            summaries: [summary]
+        )
+
+        XCTAssertEqual(names["corebluetooth-old"], "NF2557")
+        XCTAssertEqual(names["corebluetooth-new"], "NF2557")
+        XCTAssertEqual(summary.vehicleDisplayName, "NF2557")
+        XCTAssertEqual(
+            CutoutAppModel.mergeRideMapHistoryVehicleIdentities(
+                existing: options.map(\.platformIdentifier),
+                incoming: []
+            ),
+            ["corebluetooth-new", "corebluetooth-old"]
+        )
+    }
+
+    @MainActor
     func testLiveActivityStartFailureIsObservableAndRetryable() async {
         let row = DevicePickerRow(
             id: "vesc-1234",

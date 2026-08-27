@@ -2855,6 +2855,22 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
             .collect::<Vec<_>>(),
         vec![first]
     );
+    assert_eq!(
+        vehicle_filtered.rides()[0].associated_vehicle_name(),
+        Some("NF2557")
+    );
+    assert_eq!(
+        database
+            .list_ride_history_vehicle_options()
+            .unwrap()
+            .into_iter()
+            .map(|option| (
+                option.platform_identifier().to_owned(),
+                option.display_name().map(str::to_owned)
+            ))
+            .collect::<Vec<_>>(),
+        vec![("device-a".to_owned(), Some("NF2557".to_owned()))]
+    );
 
     let name_searched = database
         .list_rides_filtered(
@@ -2871,6 +2887,54 @@ fn filtered_ride_history_queries_stay_rust_owned_and_bounded() {
             .collect::<Vec<_>>(),
         vec![first]
     );
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn history_vehicle_options_include_identities_past_the_first_history_page() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-vehicle-options-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database
+        .save_device_name("device-old", "Old NF2557", 1)
+        .unwrap();
+    database
+        .save_device_name("device-first", "Current NF2557", 1)
+        .unwrap();
+    for index in 0..51_u64 {
+        let ride = database.create_ride(RideSource::Live, index + 10).unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        database
+            .update_ride_map_metadata(
+                ride,
+                Some(if index == 0 {
+                    "device-old"
+                } else {
+                    "device-first"
+                }),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+        database.transition(ride, RideEvent::Stop).unwrap();
+        database.transition(ride, RideEvent::Save).unwrap();
+    }
+
+    let options = database.list_ride_history_vehicle_options().unwrap();
+    assert_eq!(options.len(), 2);
+    assert!(options.iter().any(|option| {
+        option.platform_identifier() == "device-old" && option.display_name() == Some("Old NF2557")
+    }));
+    assert!(options.iter().any(|option| {
+        option.platform_identifier() == "device-first"
+            && option.display_name() == Some("Current NF2557")
+    }));
+
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }

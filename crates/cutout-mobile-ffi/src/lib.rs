@@ -3524,8 +3524,21 @@ pub struct MobileRideRecordDto {
     pub segment_count: u64,
     pub candidate_vehicle: Option<String>,
     pub associated_vehicle: Option<String>,
+    /// Persisted display name for the candidate vehicle, when available.
+    pub candidate_vehicle_name: Option<String>,
+    /// Persisted display name for the associated vehicle, when available.
+    pub associated_vehicle_name: Option<String>,
     pub associated_at_milliseconds: Option<u64>,
     pub last_telemetry_at_milliseconds: Option<u64>,
+}
+
+/// One vehicle identity available to the history filter.
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct MobileRideHistoryVehicleOptionDto {
+    /// Stable platform-local identity used as the filter value.
+    pub platform_identifier: String,
+    /// Display name persisted in the Rust device table, when available.
+    pub display_name: Option<String>,
 }
 
 /// One bounded page of ride-history projections.
@@ -3891,6 +3904,8 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
         segment_count: ride.segment_count(),
         candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
         associated_vehicle: ride.associated_vehicle().map(str::to_owned),
+        candidate_vehicle_name: ride.candidate_vehicle_name().map(str::to_owned),
+        associated_vehicle_name: ride.associated_vehicle_name().map(str::to_owned),
         associated_at_milliseconds: ride.associated_at_milliseconds(),
         last_telemetry_at_milliseconds: ride.last_telemetry_at_milliseconds(),
     }
@@ -4348,6 +4363,32 @@ impl RideDatabaseHandle {
                         value: cursor.ride_id().uuid().to_string(),
                     },
                 }),
+            })
+            .map_err(map_ride_database_error)
+    }
+
+    /// Lists every vehicle identity referenced by visible ride history.
+    ///
+    /// This is a separate Rust-owned lookup rather than a projection of the first history page,
+    /// so the filter remains complete when history contains more than one page or the current
+    /// device is disconnected.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed database error when the worker cannot query the device identities.
+    pub fn list_ride_history_vehicle_options(
+        &self,
+    ) -> Result<Vec<MobileRideHistoryVehicleOptionDto>, MobileRideDatabaseError> {
+        self.inner
+            .list_ride_history_vehicle_options()
+            .map(|options| {
+                options
+                    .into_iter()
+                    .map(|option| MobileRideHistoryVehicleOptionDto {
+                        platform_identifier: option.platform_identifier().to_owned(),
+                        display_name: option.display_name().map(str::to_owned),
+                    })
+                    .collect()
             })
             .map_err(map_ride_database_error)
     }

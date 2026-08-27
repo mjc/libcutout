@@ -3625,6 +3625,19 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func findRide(rideId: MobileRideIdDto) throws  -> MobileRideRecordDto?
 
     /**
+     * Lists every vehicle identity referenced by visible ride history.
+     *
+     * This is a separate Rust-owned lookup rather than a projection of the first history page,
+     * so the filter remains complete when history contains more than one page or the current
+     * device is disconnected.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot query the device identities.
+     */
+    func listRideHistoryVehicleOptions() throws  -> [MobileRideHistoryVehicleOptionDto]
+
+    /**
      * Lists one bounded page of ride history in stable newest-first order.
      *
      * # Errors
@@ -4183,6 +4196,25 @@ open func findRide(rideId: MobileRideIdDto)throws  -> MobileRideRecordDto?  {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_find_ride(
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileRideIdDto_lower(rideId),$0
+    )
+})
+}
+
+    /**
+     * Lists every vehicle identity referenced by visible ride history.
+     *
+     * This is a separate Rust-owned lookup rather than a projection of the first history page,
+     * so the filter remains complete when history contains more than one page or the current
+     * device is disconnected.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot query the device identities.
+     */
+open func listRideHistoryVehicleOptions()throws  -> [MobileRideHistoryVehicleOptionDto]  {
+    return try  FfiConverterSequenceTypeMobileRideHistoryVehicleOptionDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_list_ride_history_vehicle_options(
+            self.uniffiCloneHandle(),$0
     )
 })
 }
@@ -10894,6 +10926,75 @@ public func FfiConverterTypeMobileRideHistoryFilterDto_lower(_ value: MobileRide
 
 
 /**
+ * One vehicle identity available to the history filter.
+ */
+public struct MobileRideHistoryVehicleOptionDto: Equatable, Hashable {
+    /**
+     * Stable platform-local identity used as the filter value.
+     */
+    public var platformIdentifier: String
+    /**
+     * Display name persisted in the Rust device table, when available.
+     */
+    public var displayName: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable platform-local identity used as the filter value.
+         */platformIdentifier: String,
+        /**
+         * Display name persisted in the Rust device table, when available.
+         */displayName: String?) {
+        self.platformIdentifier = platformIdentifier
+        self.displayName = displayName
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryVehicleOptionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryVehicleOptionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryVehicleOptionDto {
+        return
+            try MobileRideHistoryVehicleOptionDto(
+                platformIdentifier: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryVehicleOptionDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.platformIdentifier, into: &buf)
+        FfiConverterOptionString.write(value.displayName, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryVehicleOptionDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryVehicleOptionDto {
+    return try FfiConverterTypeMobileRideHistoryVehicleOptionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryVehicleOptionDto_lower(_ value: MobileRideHistoryVehicleOptionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryVehicleOptionDto.lower(value)
+}
+
+
+/**
  * Stable ride identifier returned by Rust.
  */
 public struct MobileRideIdDto: Equatable, Hashable {
@@ -11807,12 +11908,26 @@ public struct MobileRideRecordDto: Equatable, Hashable {
     public var segmentCount: UInt64
     public var candidateVehicle: String?
     public var associatedVehicle: String?
+    /**
+     * Persisted display name for the candidate vehicle, when available.
+     */
+    public var candidateVehicleName: String?
+    /**
+     * Persisted display name for the associated vehicle, when available.
+     */
+    public var associatedVehicleName: String?
     public var associatedAtMilliseconds: UInt64?
     public var lastTelemetryAtMilliseconds: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, durationMilliseconds: UInt64, pausedAtMilliseconds: UInt64?, pausedDurationMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, durationMilliseconds: UInt64, pausedAtMilliseconds: UInt64?, pausedDurationMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?,
+        /**
+         * Persisted display name for the candidate vehicle, when available.
+         */candidateVehicleName: String?,
+        /**
+         * Persisted display name for the associated vehicle, when available.
+         */associatedVehicleName: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
         self.id = id
         self.source = source
         self.state = state
@@ -11825,6 +11940,8 @@ public struct MobileRideRecordDto: Equatable, Hashable {
         self.segmentCount = segmentCount
         self.candidateVehicle = candidateVehicle
         self.associatedVehicle = associatedVehicle
+        self.candidateVehicleName = candidateVehicleName
+        self.associatedVehicleName = associatedVehicleName
         self.associatedAtMilliseconds = associatedAtMilliseconds
         self.lastTelemetryAtMilliseconds = lastTelemetryAtMilliseconds
     }
@@ -11857,6 +11974,8 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
                 segmentCount: FfiConverterUInt64.read(from: &buf),
                 candidateVehicle: FfiConverterOptionString.read(from: &buf),
                 associatedVehicle: FfiConverterOptionString.read(from: &buf),
+                candidateVehicleName: FfiConverterOptionString.read(from: &buf),
+                associatedVehicleName: FfiConverterOptionString.read(from: &buf),
                 associatedAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
                 lastTelemetryAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf)
         )
@@ -11875,6 +11994,8 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.segmentCount, into: &buf)
         FfiConverterOptionString.write(value.candidateVehicle, into: &buf)
         FfiConverterOptionString.write(value.associatedVehicle, into: &buf)
+        FfiConverterOptionString.write(value.candidateVehicleName, into: &buf)
+        FfiConverterOptionString.write(value.associatedVehicleName, into: &buf)
         FfiConverterOptionUInt64.write(value.associatedAtMilliseconds, into: &buf)
         FfiConverterOptionUInt64.write(value.lastTelemetryAtMilliseconds, into: &buf)
     }
@@ -25075,6 +25196,31 @@ fileprivate struct FfiConverterSequenceTypeMobileRawFloatFieldValueDto: FfiConve
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileRideHistoryVehicleOptionDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideHistoryVehicleOptionDto]
+
+    public static func write(_ value: [MobileRideHistoryVehicleOptionDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideHistoryVehicleOptionDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideHistoryVehicleOptionDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideHistoryVehicleOptionDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideHistoryVehicleOptionDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileRideIdDto: FfiConverterRustBuffer {
     typealias SwiftType = [MobileRideIdDto]
 
@@ -25872,6 +26018,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_find_ride() != 46554) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_ride_history_vehicle_options() != 8522) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 9190) {

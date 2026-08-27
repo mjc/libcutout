@@ -3,6 +3,46 @@ import CutoutMobileFFI
 @testable import CutoutMobile
 
 final class RideMapStateTests: XCTestCase {
+    func testHistoricalVehicleDisplayNameAndFilterOptionsComeFromRustDeviceTable() throws {
+        let database = try XCTUnwrap(RustPersistenceStore.shared)
+        let platformIdentifier = "corebluetooth-history-\(UUID().uuidString)"
+
+        let rideID = try database.createRide(source: .live, createdAtMilliseconds: 1_000)
+        _ = try database.transition(id: rideID, event: .start)
+        try database.saveDeviceName(
+            platformIdentifier: platformIdentifier,
+            displayName: "NF2557",
+            updatedAtMilliseconds: 1_001
+        )
+        try database.updateRideMapMetadata(
+            id: rideID,
+            candidateVehicle: nil,
+            associatedVehicle: platformIdentifier,
+            associatedAtMilliseconds: nil,
+            lastTelemetryAtMilliseconds: nil
+        )
+        _ = try database.transition(id: rideID, event: .stop)
+        _ = try database.transition(id: rideID, event: .save)
+
+        let page = try database.listRidesFiltered(
+            cursor: nil,
+            filter: MobileRideHistoryFilterDto(
+                createdAfterMilliseconds: nil,
+                vehicleIdentity: platformIdentifier,
+                searchText: nil
+            ),
+            limit: 50
+        )
+        XCTAssertEqual(page.rides.first?.associatedVehicleName, "NF2557")
+        let options = try database.listRideHistoryVehicleOptions()
+        XCTAssertTrue(options.contains(
+            MobileRideHistoryVehicleOptionDto(
+                platformIdentifier: platformIdentifier,
+                displayName: "NF2557"
+            )
+        ))
+    }
+
     private func settle(
         _ state: MobileRideMapState,
         _ decision: MobileRideMapDecisionDto

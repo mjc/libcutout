@@ -216,7 +216,12 @@ struct RideMapHistoryDetailView: View {
     }
 
     private func vehicleLabel(for ride: MobileRideMapHistorySummaryDto) -> String {
-        Self.resolvedVehicleLabel(
+        if let displayName = ride.vehicleDisplayName,
+           !displayName.isEmpty
+        {
+            return displayName
+        }
+        return Self.resolvedVehicleLabel(
             associatedVehicle: ride.associatedVehicle,
             candidateVehicle: ride.candidateVehicle,
             resolve: { vehicleName($0) },

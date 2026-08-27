@@ -155,6 +155,27 @@ pub struct RideHistoryQuery {
     search_text: Option<String>,
 }
 
+/// A vehicle identity used by at least one visible ride, with its persisted display name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RideHistoryVehicleOption {
+    platform_identifier: String,
+    display_name: Option<String>,
+}
+
+impl RideHistoryVehicleOption {
+    /// Returns the stable platform-local identity.
+    #[must_use]
+    pub fn platform_identifier(&self) -> &str {
+        &self.platform_identifier
+    }
+
+    /// Returns the persisted display name, when one has been saved for this identity.
+    #[must_use]
+    pub fn display_name(&self) -> Option<&str> {
+        self.display_name.as_deref()
+    }
+}
+
 impl RideHistoryQuery {
     /// Creates a query from optional date, vehicle-identity, and user search filters.
     #[must_use]
@@ -211,6 +232,8 @@ pub struct RideRecord {
     segment_count: u64,
     candidate_vehicle: Option<String>,
     associated_vehicle: Option<String>,
+    candidate_vehicle_name: Option<String>,
+    associated_vehicle_name: Option<String>,
     associated_at_ms: Option<u64>,
     last_telemetry_at_ms: Option<u64>,
 }
@@ -292,6 +315,18 @@ impl RideRecord {
     #[must_use]
     pub fn associated_vehicle(&self) -> Option<&str> {
         self.associated_vehicle.as_deref()
+    }
+
+    /// Returns the persisted display name for the candidate vehicle, when available.
+    #[must_use]
+    pub fn candidate_vehicle_name(&self) -> Option<&str> {
+        self.candidate_vehicle_name.as_deref()
+    }
+
+    /// Returns the persisted display name for the associated vehicle, when available.
+    #[must_use]
+    pub fn associated_vehicle_name(&self) -> Option<&str> {
+        self.associated_vehicle_name.as_deref()
     }
 
     /// Returns the monotonic association timestamp.
@@ -2435,6 +2470,20 @@ impl RideDatabase {
         })
     }
 
+    /// Lists every vehicle identity referenced by a visible ride.
+    ///
+    /// The result is not derived from a history page, so older vehicles remain available to the
+    /// history filter even when the first page is full. Display names come from the device table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the worker cannot query or decode the options.
+    pub fn list_ride_history_vehicle_options(
+        &self,
+    ) -> Result<Vec<RideHistoryVehicleOption>, StorageError> {
+        self.request(|reply| Command::ListRideHistoryVehicleOptions { reply })
+    }
+
     /// Loads one bounded page of canonical route points in ascending sequence order.
     ///
     /// # Errors
@@ -2997,6 +3046,9 @@ enum Command {
         query: RideHistoryQuery,
         reply: Reply<RidePage>,
     },
+    ListRideHistoryVehicleOptions {
+        reply: Reply<Vec<RideHistoryVehicleOption>>,
+    },
     RoutePoints {
         ride_id: RideId,
         cursor: Option<RoutePointCursor>,
@@ -3416,6 +3468,9 @@ fn worker_loop(
                 reply,
             } => {
                 let _ = reply.send(list_rides(&connection, cursor, limit, &query));
+            }
+            Command::ListRideHistoryVehicleOptions { reply } => {
+                let _ = reply.send(list_ride_history_vehicle_options(&connection));
             }
             Command::RoutePoints {
                 ride_id,
@@ -6122,9 +6177,11 @@ const RIDE_RECORD_PROJECTION: &str =
        rides.monotonic_created_at_ms, rides.updated_at_ms,
        rides.duration_ms,
        rides.paused_at_ms, rides.paused_duration_ms,
-       rides.point_count, rides.distance_mm,
+        rides.point_count, rides.distance_mm,
        COALESCE(ride_point_aggregates.segment_count, 0),
        rides.candidate_vehicle, rides.associated_vehicle, rides.associated_at_ms,
+       (SELECT display_name FROM devices WHERE platform_identifier = rides.candidate_vehicle),
+       (SELECT display_name FROM devices WHERE platform_identifier = rides.associated_vehicle),
        rides.last_telemetry_at_ms";
 
 pub(crate) fn ride_records_sql(suffix: &str) -> String {
@@ -6239,6 +6296,34 @@ fn list_rides(
     Ok(RidePage { rides, next_cursor })
 }
 
+fn list_ride_history_vehicle_options(
+    connection: &Connection,
+) -> Result<Vec<RideHistoryVehicleOption>, StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT identities.platform_identifier, devices.display_name
+         FROM (
+             SELECT associated_vehicle AS platform_identifier
+             FROM rides
+             WHERE state NOT IN ('draft', 'discarded') AND associated_vehicle IS NOT NULL
+             UNION
+             SELECT candidate_vehicle AS platform_identifier
+             FROM rides
+             WHERE state NOT IN ('draft', 'discarded') AND candidate_vehicle IS NOT NULL
+         ) AS identities
+         LEFT JOIN devices ON devices.platform_identifier = identities.platform_identifier
+         ORDER BY lower(COALESCE(devices.display_name, identities.platform_identifier)),
+                  identities.platform_identifier",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok(RideHistoryVehicleOption {
+            platform_identifier: row.get(0)?,
+            display_name: row.get(1)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
+}
+
 fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord> {
     let id_value: String = row.get(0)?;
     let id = Uuid::parse_str(&id_value)
@@ -6276,7 +6361,9 @@ fn ride_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RideRecord>
         candidate_vehicle: row.get(12)?,
         associated_vehicle: row.get(13)?,
         associated_at_ms: row.get(14)?,
-        last_telemetry_at_ms: row.get(15)?,
+        candidate_vehicle_name: row.get(15)?,
+        associated_vehicle_name: row.get(16)?,
+        last_telemetry_at_ms: row.get(17)?,
     })
 }
 

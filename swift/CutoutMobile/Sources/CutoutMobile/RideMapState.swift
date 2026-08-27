@@ -78,6 +78,16 @@ public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public var pointCount: UInt64
     public var distanceMeters: Double
     public var durationMilliseconds: UInt64
+
+    public init(
+        pointCount: UInt64,
+        distanceMeters: Double,
+        durationMilliseconds: UInt64
+    ) {
+        self.pointCount = pointCount
+        self.distanceMeters = distanceMeters
+        self.durationMilliseconds = durationMilliseconds
+    }
 }
 
 public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
@@ -194,6 +204,8 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
     public var createdAtMilliseconds: UInt64
     public var candidateVehicle: String?
     public var associatedVehicle: String?
+    public var candidateVehicleName: String?
+    public var associatedVehicleName: String?
     /// Rust-derived telemetry provenance for the latest durable route evidence.
     public var telemetryState: MobileRideMapTelemetryStateDto
 
@@ -205,6 +217,8 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
         createdAtMilliseconds: UInt64,
         candidateVehicle: String?,
         associatedVehicle: String?,
+        candidateVehicleName: String? = nil,
+        associatedVehicleName: String? = nil,
         telemetryState: MobileRideMapTelemetryStateDto
     ) {
         self.rideId = rideId
@@ -214,7 +228,15 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
         self.createdAtMilliseconds = createdAtMilliseconds
         self.candidateVehicle = candidateVehicle
         self.associatedVehicle = associatedVehicle
+        self.candidateVehicleName = candidateVehicleName
+        self.associatedVehicleName = associatedVehicleName
         self.telemetryState = telemetryState
+    }
+
+    /// Returns the persisted display name for the confirmed vehicle, falling back to the ride's
+    /// candidate vehicle name when association was not completed.
+    public var vehicleDisplayName: String? {
+        associatedVehicleName ?? candidateVehicleName
     }
 
     /// Derives the historical telemetry label from Rust's persisted association metadata.
@@ -226,6 +248,18 @@ public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
         guard associatedVehicle != nil else { return .gpsOnly }
         return lastTelemetryAtMilliseconds == nil ? .associatedNoTelemetry : .associatedFresh
     }
+}
+
+public struct MobileRideMapHistoryVehicleOptionDto: Equatable, Hashable, Sendable, Identifiable {
+    public var platformIdentifier: String
+    public var displayName: String?
+
+    public init(platformIdentifier: String, displayName: String?) {
+        self.platformIdentifier = platformIdentifier
+        self.displayName = displayName
+    }
+
+    public var id: String { platformIdentifier }
 }
 
 public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
@@ -510,6 +544,22 @@ public final class MobileRideMapState: @unchecked Sendable {
         try storedHistoryPage(cursor: nil, limit: limit).summaries
     }
 
+    public func storedHistoryVehicleOptions() throws -> [MobileRideMapHistoryVehicleOptionDto] {
+        guard let database else {
+            throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
+        }
+        do {
+            return try database.listRideHistoryVehicleOptions().map {
+                MobileRideMapHistoryVehicleOptionDto(
+                    platformIdentifier: $0.platformIdentifier,
+                    displayName: $0.displayName
+                )
+            }
+        } catch {
+            throw map(error)
+        }
+    }
+
     public func storedHistoryRide(rideID: String) throws -> MobileRideMapHistorySummaryDto? {
         guard let database else {
             throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
@@ -560,6 +610,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             createdAtMilliseconds: ride.createdAtMilliseconds,
             candidateVehicle: ride.candidateVehicle,
             associatedVehicle: ride.associatedVehicle,
+            candidateVehicleName: ride.candidateVehicleName,
+            associatedVehicleName: ride.associatedVehicleName,
             telemetryState: MobileRideMapHistorySummaryDto.telemetryState(
                 associatedVehicle: ride.associatedVehicle,
                 lastTelemetryAtMilliseconds: ride.lastTelemetryAtMilliseconds

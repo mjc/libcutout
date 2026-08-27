@@ -62,6 +62,7 @@ final class CutoutAppModel {
     private(set) var rideMapHistoryRouteLoading = false
     private(set) var rideMapHistoryDetailRouteLoading = false
     private(set) var rideMapHistoryVehicleIdentities = [String]()
+    private(set) var rideMapHistoryVehicleNames = [String: String]()
     private(set) var selectedRideMapHistoryID: String?
     private(set) var rideMapLastDecision: MobileRideMapDecisionDto?
     var rideMapMode = RideMapMode.live
@@ -113,7 +114,8 @@ final class CutoutAppModel {
 
     func rideMapVehicleName(for identity: String?) -> String? {
         guard let identity else { return nil }
-        return selectedDeviceStore.displayName(for: identity)
+        return rideMapHistoryVehicleNames[identity]
+            ?? selectedDeviceStore.displayName(for: identity)
             ?? (identity == rideMapVehicleIdentity ? rideMapVehicleName : nil)
     }
 
@@ -452,6 +454,7 @@ final class CutoutAppModel {
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     let page = try state.storedHistoryPage(cursor: nil, limit: 50, filter: filter)
+                    let vehicleOptions = try state.storedHistoryVehicleOptions()
                     var summaries = page.summaries
                     if let requestedRideID,
                        summaries.contains(where: { $0.rideId == requestedRideID }) == false,
@@ -459,14 +462,18 @@ final class CutoutAppModel {
                     {
                         summaries.append(requestedRide)
                     }
-                    return (summaries, page.nextCursor)
+                    return (summaries, page.nextCursor, vehicleOptions)
                 }.value
                 guard !Task.isCancelled, let self else { return }
                 self.rideMapHistoryLoading = false
                 self.rideMapHistory = result.0
                 self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
-                    existing: self.rideMapHistoryVehicleIdentities,
+                    existing: result.2.map(\.platformIdentifier),
                     incoming: result.0.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                )
+                self.rideMapHistoryVehicleNames = Self.rideMapHistoryVehicleNames(
+                    result.2,
+                    summaries: result.0
                 )
                 self.rideMapHistoryCursor = result.1
                 self.rideMapHistoryCanLoadMore = result.1 != nil
@@ -542,6 +549,52 @@ final class CutoutAppModel {
         Array(Set(existing + incoming)).sorted()
     }
 
+    @MainActor
+    static func rideMapHistoryVehicleNames(
+        _ options: [MobileRideMapHistoryVehicleOptionDto],
+        summaries: [MobileRideMapHistorySummaryDto]
+    ) -> [String: String] {
+        var names = Dictionary(
+            uniqueKeysWithValues: options.compactMap { option in
+                option.displayName.map { (option.platformIdentifier, $0) }
+            }
+        )
+        for summary in summaries {
+            if let identity = summary.associatedVehicle,
+               let name = summary.associatedVehicleName
+            {
+                names[identity] = name
+            }
+            if let identity = summary.candidateVehicle,
+               let name = summary.candidateVehicleName
+            {
+                names[identity] = name
+            }
+        }
+        return names
+    }
+
+    @MainActor
+    static func mergeRideMapHistoryVehicleNames(
+        existing: [String: String],
+        incoming: [MobileRideMapHistorySummaryDto]
+    ) -> [String: String] {
+        var names = existing
+        for summary in incoming {
+            if let identity = summary.associatedVehicle,
+               let name = summary.associatedVehicleName
+            {
+                names[identity] = name
+            }
+            if let identity = summary.candidateVehicle,
+               let name = summary.candidateVehicleName
+            {
+                names[identity] = name
+            }
+        }
+        return names
+    }
+
     func loadMoreRideMapHistory() {
         guard rideMapHistoryCanLoadMore else { return }
         rideMapHistoryPageTask?.cancel()
@@ -562,6 +615,10 @@ final class CutoutAppModel {
                 self.rideMapHistoryVehicleIdentities = Self.mergeRideMapHistoryVehicleIdentities(
                     existing: self.rideMapHistoryVehicleIdentities,
                     incoming: page.summaries.flatMap { [$0.associatedVehicle, $0.candidateVehicle].compactMap { $0 } }
+                )
+                self.rideMapHistoryVehicleNames = Self.mergeRideMapHistoryVehicleNames(
+                    existing: self.rideMapHistoryVehicleNames,
+                    incoming: page.summaries
                 )
                 self.rideMapHistoryCursor = page.nextCursor
                 self.rideMapHistoryCanLoadMore = page.nextCursor != nil
