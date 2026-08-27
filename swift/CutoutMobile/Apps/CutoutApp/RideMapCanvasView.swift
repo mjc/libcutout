@@ -7,8 +7,12 @@ import SwiftUI
 struct RideMapCanvasView: View {
     private struct SegmentPath: Identifiable {
         let id: UInt64
-        let isGap: Bool
+        let startReason: MobileRideMapSegmentStartReason
         var coordinates: [CLLocationCoordinate2D]
+
+        var isGap: Bool {
+            startReason.isBackgroundGap
+        }
     }
 
     struct PathKey: Equatable {
@@ -17,6 +21,7 @@ struct RideMapCanvasView: View {
         let firstSequence: UInt64?
         let lastSequence: UInt64?
         let pointCount: Int
+        let segmentReasons: [MobileRideMapSegmentStartReason?]
     }
 
     let points: [MobileRideMapRouteDisplayPoint]
@@ -26,6 +31,7 @@ struct RideMapCanvasView: View {
     let showsEndMarker: Bool
     let showsCurrentMarker: Bool
     let endpointMetadata: MobileRideMapRouteEndpointMetadata
+    let segments: [MobileRideMapSegmentDisplayMetadata]
     let fitsRouteOnChange: Bool
     @Binding var mapPosition: MapCameraPosition
     @Binding var isApplyingCamera: Bool
@@ -69,22 +75,45 @@ struct RideMapCanvasView: View {
         return points.first { $0.sequence == sequence }
     }
 
-    static func isGapSegment(previousSegmentID: UInt64?, currentSegmentID: UInt64) -> Bool {
-        guard let previousSegmentID else { return false }
+    static func isGapSegment(
+        previousSegmentID: UInt64?,
+        currentSegmentID: UInt64,
+        startReason: MobileRideMapSegmentStartReason?
+    ) -> Bool {
+        guard startReason?.isBackgroundGap == true else { return false }
         return previousSegmentID != currentSegmentID
+    }
+
+    static func singletonSegmentIDs(
+        in points: [MobileRideMapRouteDisplayPoint],
+        segments: [MobileRideMapSegmentDisplayMetadata]
+    ) -> Set<UInt64> {
+        let displayedSegmentIDs = Set(points.map(\.segmentId))
+        return Set(
+            segments.lazy
+                .filter { $0.isSingleton && displayedSegmentIDs.contains($0.segmentId) }
+                .map(\.segmentId)
+        )
     }
 
     static func pathKey(
         routeID: String,
         projectionVersion: UInt64,
-        points: [MobileRideMapRouteDisplayPoint]
+        points: [MobileRideMapRouteDisplayPoint],
+        segments: [MobileRideMapSegmentDisplayMetadata] = []
     ) -> PathKey {
+        let startReasonsBySegmentID = Dictionary(
+            uniqueKeysWithValues: segments.map { ($0.segmentId, $0.startReason) }
+        )
         PathKey(
             routeID: routeID,
             projectionVersion: projectionVersion,
             firstSequence: points.first?.sequence,
             lastSequence: points.last?.sequence,
-            pointCount: points.count
+            pointCount: points.count,
+            segmentReasons: points.map { point in
+                startReasonsBySegmentID[point.segmentId]
+            }
         )
     }
 
@@ -159,6 +188,7 @@ struct RideMapCanvasView: View {
             sequence: endpointMetadata.canonicalEndSequence,
             isVisible: endpointMetadata.canonicalEndVisible
         )
+        let singletonSegmentIDs = Self.singletonSegmentIDs(in: points, segments: segments)
 
         Map(position: $mapPosition, interactionModes: [.pan, .zoom]) {
             ForEach(segmentPaths) { segment in
@@ -171,6 +201,16 @@ struct RideMapCanvasView: View {
                             dash: segment.isGap ? [8, 6] : []
                         )
                     )
+            }
+            ForEach(segmentPaths.filter { singletonSegmentIDs.contains($0.id) }) { segment in
+                if let coordinate = segment.coordinates.first {
+                    Annotation(
+                        segment.startReason.accessibilityLabel,
+                        coordinate: coordinate
+                    ) {
+                        RideMapSingletonSegmentMarker(startReason: segment.startReason)
+                    }
+                }
             }
             if showsStartMarker, let startPoint {
                 Annotation(
@@ -241,8 +281,13 @@ struct RideMapCanvasView: View {
         Self.pathKey(
             routeID: routeID,
             projectionVersion: projectionVersion,
-            points: points
+            points: points,
+            segments: segments
         )
+    }
+
+    private var startReasonsBySegmentID: [UInt64: MobileRideMapSegmentStartReason] {
+        Dictionary(uniqueKeysWithValues: segments.map { ($0.segmentId, $0.startReason) })
     }
 
     private func updatePaths(for key: PathKey) {
@@ -294,10 +339,7 @@ struct RideMapCanvasView: View {
                 rebuilt.append(
                     SegmentPath(
                         id: point.segmentId,
-                        isGap: Self.isGapSegment(
-                            previousSegmentID: rebuilt.last?.id,
-                            currentSegmentID: point.segmentId
-                        ),
+                        startReason: startReasonsBySegmentID[point.segmentId] ?? .unknown,
                         coordinates: [coordinate]
                     )
                 )
@@ -315,10 +357,7 @@ struct RideMapCanvasView: View {
             segmentPaths.append(
                 SegmentPath(
                     id: point.segmentId,
-                    isGap: Self.isGapSegment(
-                        previousSegmentID: segmentPaths.last?.id,
-                        currentSegmentID: point.segmentId
-                    ),
+                    startReason: startReasonsBySegmentID[point.segmentId] ?? .unknown,
                     coordinates: [coordinate]
                 )
             )
@@ -380,6 +419,22 @@ struct RideMapCanvasView: View {
         if normalized > 180 { return normalized - 360 }
         if normalized < -180 { return normalized + 360 }
         return normalized
+    }
+}
+
+private struct RideMapSingletonSegmentMarker: View {
+    let startReason: MobileRideMapSegmentStartReason
+
+    var body: some View {
+        Circle()
+            .fill(startReason.isBackgroundGap ? PevColors.orange : PevColors.cyan)
+            .frame(width: 14, height: 14)
+            .overlay {
+                Circle()
+                    .stroke(.black, lineWidth: 2)
+            }
+            .accessibilityElement()
+            .accessibilityLabel(startReason.accessibilityLabel)
     }
 }
 

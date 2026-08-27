@@ -9,6 +9,7 @@ struct RideMapRouteTruthView: View {
     let decision: MobileRideMapDecisionDto?
     let showsRecordedBounds: Bool
     let segmentsOmittedByBudget: Bool
+    let segments: [MobileRideMapSegmentDisplayMetadata]
     let hasRoute: Bool?
     let telemetryState: MobileRideMapTelemetryStateDto?
 
@@ -19,6 +20,7 @@ struct RideMapRouteTruthView: View {
         decision: MobileRideMapDecisionDto?,
         showsRecordedBounds: Bool,
         segmentsOmittedByBudget: Bool = false,
+        segments: [MobileRideMapSegmentDisplayMetadata] = [],
         hasRoute: Bool? = nil,
         telemetryState: MobileRideMapTelemetryStateDto? = nil
     ) {
@@ -28,8 +30,15 @@ struct RideMapRouteTruthView: View {
         self.decision = decision
         self.showsRecordedBounds = showsRecordedBounds
         self.segmentsOmittedByBudget = segmentsOmittedByBudget
+        self.segments = segments
         self.hasRoute = hasRoute
         self.telemetryState = telemetryState
+    }
+
+    static func backgroundGapCount(
+        for segments: [MobileRideMapSegmentDisplayMetadata]
+    ) -> UInt64 {
+        UInt64(segments.lazy.filter(\.isBackgroundGap).count)
     }
 
     var body: some View {
@@ -42,8 +51,8 @@ struct RideMapRouteTruthView: View {
                 Text(localizedAppText("ride_map.route_start_end", recordedPointCount ?? UInt64(points.count)))
                     .font(.caption)
                     .foregroundStyle(PevColors.muted)
-                if segmentCount > 1 {
-                    Text(localizedAppText("ride_map.route_gaps", segmentCount - 1))
+                if backgroundGapCount > 0 {
+                    Text(localizedAppText("ride_map.route_gaps", backgroundGapCount))
                         .font(.caption)
                         .foregroundStyle(PevColors.muted)
                 }
@@ -68,6 +77,10 @@ struct RideMapRouteTruthView: View {
     }
 
     private var segmentCount: UInt64 { rustSegmentCount }
+
+    private var backgroundGapCount: UInt64 {
+        Self.backgroundGapCount(for: segments)
+    }
 
     private var routeIsPresent: Bool { hasRoute ?? !points.isEmpty }
 

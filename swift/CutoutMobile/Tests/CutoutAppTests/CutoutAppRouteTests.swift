@@ -365,10 +365,116 @@ final class CutoutAppRouteTests: XCTestCase {
     }
 
     @MainActor
-    func testRideMapUsesASeparateStyleForEachSegmentAfterTheFirst() {
-        XCTAssertFalse(RideMapCanvasView.isGapSegment(previousSegmentID: nil, currentSegmentID: 0))
-        XCTAssertFalse(RideMapCanvasView.isGapSegment(previousSegmentID: 0, currentSegmentID: 0))
-        XCTAssertTrue(RideMapCanvasView.isGapSegment(previousSegmentID: 0, currentSegmentID: 1))
+    func testRideMapStylesOnlyBackgroundGapSegmentsAsGaps() {
+        XCTAssertFalse(
+            RideMapCanvasView.isGapSegment(
+                previousSegmentID: nil,
+                currentSegmentID: 0,
+                startReason: .initial
+            )
+        )
+        XCTAssertTrue(
+            RideMapCanvasView.isGapSegment(
+                previousSegmentID: nil,
+                currentSegmentID: 1,
+                startReason: .backgroundGap
+            )
+        )
+        XCTAssertFalse(
+            RideMapCanvasView.isGapSegment(
+                previousSegmentID: 0,
+                currentSegmentID: 0,
+                startReason: .backgroundGap
+            )
+        )
+        XCTAssertFalse(
+            RideMapCanvasView.isGapSegment(
+                previousSegmentID: 0,
+                currentSegmentID: 1,
+                startReason: .resume
+            )
+        )
+        XCTAssertFalse(
+            RideMapCanvasView.isGapSegment(
+                previousSegmentID: 0,
+                currentSegmentID: 1,
+                startReason: .importBoundary
+            )
+        )
+        XCTAssertTrue(
+            RideMapCanvasView.isGapSegment(
+                previousSegmentID: 0,
+                currentSegmentID: 1,
+                startReason: .backgroundGap
+            )
+        )
+    }
+
+    @MainActor
+    func testRideMapExposesSingletonSegmentsForMapAndAccessibility() {
+        let points = [
+            MobileRideMapRouteDisplayPoint(
+                sequence: 0,
+                segmentId: 0,
+                latitudeDegrees: 40,
+                longitudeDegrees: -105,
+                privacyClass: .precise
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 1,
+                segmentId: 1,
+                latitudeDegrees: 40.001,
+                longitudeDegrees: -105.001,
+                privacyClass: .precise
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 2,
+                segmentId: 1,
+                latitudeDegrees: 40.002,
+                longitudeDegrees: -105.002,
+                privacyClass: .precise
+            ),
+            MobileRideMapRouteDisplayPoint(
+                sequence: 3,
+                segmentId: 2,
+                latitudeDegrees: 40.003,
+                longitudeDegrees: -105.003,
+                privacyClass: .precise
+            )
+        ]
+        let segments = [
+            MobileRideMapSegmentDisplayMetadata(
+                segmentId: 0,
+                startReason: .initial,
+                visiblePointCount: 1,
+                firstVisibleSequence: 0,
+                lastVisibleSequence: 0
+            ),
+            MobileRideMapSegmentDisplayMetadata(
+                segmentId: 1,
+                startReason: .resume,
+                visiblePointCount: 2,
+                firstVisibleSequence: 1,
+                lastVisibleSequence: 2
+            ),
+            MobileRideMapSegmentDisplayMetadata(
+                segmentId: 2,
+                startReason: .backgroundGap,
+                visiblePointCount: 1,
+                firstVisibleSequence: 3,
+                lastVisibleSequence: 3
+            )
+        ]
+
+        XCTAssertEqual(
+            RideMapCanvasView.singletonSegmentIDs(in: points, segments: segments),
+            Set([UInt64(0), UInt64(2)])
+        )
+        XCTAssertEqual(RideMapRouteTruthView.backgroundGapCount(for: segments), 1)
+        XCTAssertTrue(segments[2].isSingleton)
+        XCTAssertTrue(segments[2].isBackgroundGap)
+        XCTAssertFalse(segments[1].isSingleton)
+        XCTAssertFalse(segments[1].isBackgroundGap)
     }
 
     @MainActor

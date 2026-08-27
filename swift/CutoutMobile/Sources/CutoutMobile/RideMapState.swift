@@ -140,6 +140,39 @@ public enum MobileRideMapRoutePrivacyClass: Equatable, Hashable, Sendable {
     case gridRedacted
 }
 
+/// Rust's reason for starting a route segment.
+///
+/// Segment identity alone is not enough to decide whether a route should be drawn as a gap:
+/// resuming a paused ride and crossing an import boundary are different from a background
+/// location gap. The map presentation uses `isBackgroundGap` rather than inferring semantics from
+/// adjacent segment IDs.
+public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
+    case initial
+    case resume
+    case backgroundGap
+    case importBoundary
+    case unknown
+
+    public var isBackgroundGap: Bool {
+        self == .backgroundGap
+    }
+
+    public var accessibilityLabel: String {
+        switch self {
+        case .initial:
+            return "Route start point"
+        case .resume:
+            return "Route resumed"
+        case .backgroundGap:
+            return "Background location gap"
+        case .importBoundary:
+            return "Imported route segment"
+        case .unknown:
+            return "Route point"
+        }
+    }
+}
+
 public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
     public var sequence: UInt64
     public var segmentId: UInt64
@@ -172,8 +205,42 @@ public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
     }
 }
 
+/// Bounded metadata for one segment represented by a route projection.
+public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable, Identifiable {
+    public var segmentId: UInt64
+    public var startReason: MobileRideMapSegmentStartReason
+    public var visiblePointCount: UInt64
+    public var firstVisibleSequence: UInt64?
+    public var lastVisibleSequence: UInt64?
+
+    public var id: UInt64 { segmentId }
+
+    public var isBackgroundGap: Bool {
+        startReason.isBackgroundGap
+    }
+
+    public var isSingleton: Bool {
+        visiblePointCount == 1
+    }
+
+    public init(
+        segmentId: UInt64,
+        startReason: MobileRideMapSegmentStartReason,
+        visiblePointCount: UInt64,
+        firstVisibleSequence: UInt64?,
+        lastVisibleSequence: UInt64?
+    ) {
+        self.segmentId = segmentId
+        self.startReason = startReason
+        self.visiblePointCount = visiblePointCount
+        self.firstVisibleSequence = firstVisibleSequence
+        self.lastVisibleSequence = lastVisibleSequence
+    }
+}
+
 public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     public var points: [MobileRideMapRouteDisplayPoint]
+    public var segments: [MobileRideMapSegmentDisplayMetadata]
     public var sourcePointCount: UInt64
     public var sourceSegmentCount: UInt64
     public var candidatePointCount: UInt64
@@ -201,6 +268,11 @@ public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
     /// Whether route segments were omitted by the bounded display projection.
     public var segmentsOmittedByBudget: Bool {
         displayedSegmentCount < candidateSegmentCount
+    }
+
+    /// Number of displayed segments that represent an actual background location gap.
+    public var backgroundGapCount: UInt64 {
+        UInt64(segments.lazy.filter(\.isBackgroundGap).count)
     }
 }
 
@@ -718,6 +790,15 @@ public final class MobileRideMapState: @unchecked Sendable {
                     privacyClass: map(point.privacyClass)
                 )
             },
+            segments: projection.segments.map { segment in
+                MobileRideMapSegmentDisplayMetadata(
+                    segmentId: segment.segmentId,
+                    startReason: map(segment.startReason),
+                    visiblePointCount: segment.visiblePointCount,
+                    firstVisibleSequence: segment.firstVisibleSequence,
+                    lastVisibleSequence: segment.lastVisibleSequence
+                )
+            },
             sourcePointCount: projection.sourcePointCount,
             sourceSegmentCount: projection.sourceSegmentCount,
             candidatePointCount: projection.candidatePointCount,
@@ -734,6 +815,17 @@ public final class MobileRideMapState: @unchecked Sendable {
         switch privacyClass {
         case .precise: return .precise
         case .gridRedacted: return .gridRedacted
+        }
+    }
+
+    private func map(
+        _ reason: MobileRideSegmentStartReasonDto
+    ) -> MobileRideMapSegmentStartReason {
+        switch reason {
+        case .initial: return .initial
+        case .resume: return .resume
+        case .backgroundGap: return .backgroundGap
+        case .importBoundary: return .importBoundary
         }
     }
 
