@@ -752,17 +752,10 @@ public final class MobileRideMapState: @unchecked Sendable {
         cancellation: MobileLiveRideMapProjectionCancellation? = nil
     ) throws -> MobileRideMapRouteProjection {
         try withCore {
-            let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
-            switch privacy {
-            case .precise:
-                mappedPrivacy = .precise
-            case let .grid(e7):
-                mappedPrivacy = .grid(gridE7: e7)
-            }
             let options = MobileRideMapRouteProjectionOptionsDto(
                 viewport: viewport,
                 budget: budget,
-                privacy: mappedPrivacy
+                privacy: Self.ffiPrivacyPolicy(privacy)
             )
             if let cancellation {
                 return map(try $0.projectPointsCancellable(
@@ -788,18 +781,11 @@ public final class MobileRideMapState: @unchecked Sendable {
         guard let database else {
             throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
         }
-        let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
-        switch privacy {
-        case .precise:
-            mappedPrivacy = .precise
-        case let .grid(e7):
-            mappedPrivacy = .grid(gridE7: e7)
-        }
         do {
             let options = MobileRideMapRouteProjectionOptionsDto(
                 viewport: viewport,
                 budget: budget,
-                privacy: mappedPrivacy
+                privacy: Self.ffiPrivacyPolicy(privacy)
             )
             let projectionCancellation = cancellation ?? MobileRideMapProjectionCancellation()
             let projection = try database.projectRoutePointsCancellable(
@@ -882,13 +868,6 @@ public final class MobileRideMapState: @unchecked Sendable {
         guard let database else {
             throw storageUnavailableError ?? .Storage("Rust ride database is unavailable")
         }
-        let mappedPrivacy: MobileRideMapRoutePrivacyPolicyDto
-        switch privacy {
-        case .precise:
-            mappedPrivacy = .precise
-        case let .grid(e7):
-            mappedPrivacy = .grid(gridE7: e7)
-        }
         do {
             let ffiBudget = MobileRideHistoryContextBudgetDto(
                 historyPageLimit: budget.historyPageLimit,
@@ -901,7 +880,7 @@ public final class MobileRideMapState: @unchecked Sendable {
                 selectedRideId: selectedRideID.map(MobileRideIdDto.init(value:)),
                 budget: ffiBudget,
                 viewport: viewport,
-                privacy: mappedPrivacy
+                privacy: Self.ffiPrivacyPolicy(privacy)
             )
             return map(try database.projectHistoryContext(options: options))
         } catch {
@@ -1010,6 +989,17 @@ public final class MobileRideMapState: @unchecked Sendable {
             canonicalStartVisible: projection.canonicalStartVisible,
             canonicalEndVisible: projection.canonicalEndVisible
         )
+    }
+
+    private static func ffiPrivacyPolicy(
+        _ privacy: MobileRideMapRoutePrivacyPolicy
+    ) -> MobileRideMapRoutePrivacyPolicyDto {
+        switch privacy {
+        case .precise:
+            return .precise
+        case let .grid(e7):
+            return .grid(gridE7: e7)
+        }
     }
 
     private func map(
