@@ -79,6 +79,7 @@ use uuid::Uuid;
 uniffi::setup_scaffolding!();
 
 const MAX_PENDING_LOCATION_WRITES: usize = 64;
+const PENDING_LOCATION_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Mobile discovery candidate support state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
@@ -5125,6 +5126,7 @@ struct MobileRideMapCoreInner {
     recorder: ride_maps::RideMapRecorder,
     admission_recorder: ride_maps::RideMapRecorder,
     pending_locations: VecDeque<PendingLocation>,
+    terminal_location_decisions: VecDeque<MobileRideMapCoreDecisionDto>,
     initialization_error: Option<MobileRideMapCoreErrorDto>,
 }
 
@@ -5146,6 +5148,7 @@ impl MobileRideMapCoreInner {
             recorder: ride_maps::RideMapRecorder::new(),
             admission_recorder: ride_maps::RideMapRecorder::new(),
             pending_locations: VecDeque::new(),
+            terminal_location_decisions: VecDeque::new(),
             initialization_error: None,
         };
         if let Err(error) = state.restore_active_ride() {
@@ -5381,35 +5384,103 @@ impl MobileRideMapCoreInner {
         }
     }
 
+    fn settle_location(
+        &mut self,
+        ride_id: MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+        telemetry_state: ride_maps::RouteTelemetryState,
+        point: MobileRideMapCorePointDto,
+        segment_started: bool,
+        result: Result<ride_maps::LocationAdmission, persistence::StorageError>,
+    ) -> MobileRideMapCoreDecisionDto {
+        match result {
+            Ok(ride_maps::LocationAdmission::Accepted) => {
+                let can_update_projection = self.active_ride_id.as_ref() == Some(&ride_id)
+                    && matches!(
+                        self.recorder.state(),
+                        Some(
+                            ride_maps::RideLifecycleState::Active
+                                | ride_maps::RideLifecycleState::Paused
+                        )
+                    );
+                if can_update_projection {
+                    self.recorder
+                        .record_sample_with_telemetry_state(sample, telemetry_state);
+                    MobileRideMapCoreDecisionDto::Accepted {
+                        point,
+                        segment_started,
+                    }
+                } else {
+                    self.reset_admission_projection();
+                    MobileRideMapCoreDecisionDto::Ignored {
+                        reason: MobileRideMapDecisionReasonDto::RideNotRecording,
+                    }
+                }
+            }
+            Ok(admission) => {
+                self.reset_admission_projection();
+                location_admission_decision(admission)
+            }
+            Err(error) => {
+                self.reset_admission_projection();
+                MobileRideMapCoreDecisionDto::StorageError {
+                    message: error.to_string(),
+                }
+            }
+        }
+    }
+
     /// Settles every queued location before a lifecycle transition.
     ///
     /// A terminal action must not leave a write ticket behind: otherwise the durable point can
     /// arrive after the ride has left the live projection and its result can never be reflected in
-    /// the terminal snapshot. Accepted writes are folded into the recorder; rejected and failed
-    /// writes are intentionally omitted because the transition owns their terminal outcome.
-    fn drain_pending_locations(&mut self) {
-        let pending_locations = std::mem::take(&mut self.pending_locations);
-        for pending in pending_locations {
-            if !matches!(
-                pending.write.wait_result(),
-                Ok(Ok(ride_maps::LocationAdmission::Accepted))
-            ) {
-                continue;
-            }
-            if self.active_ride_id.as_ref() == Some(&pending.ride_id)
-                && matches!(
-                    self.recorder.state(),
-                    Some(
-                        ride_maps::RideLifecycleState::Active
-                            | ride_maps::RideLifecycleState::Paused
-                    )
-                )
-            {
-                self.recorder
-                    .record_sample_with_telemetry_state(pending.sample, pending.telemetry_state);
-            }
+    /// the terminal snapshot. The terminal decision remains pollable so callers can reconcile the
+    /// provisional `Pending` result with its durable outcome.
+    fn drain_pending_locations(&mut self) -> Result<(), MobileRideMapCoreErrorDto> {
+        let deadline = Instant::now()
+            .checked_add(PENDING_LOCATION_DRAIN_TIMEOUT)
+            .unwrap_or_else(Instant::now);
+        let mut pending_locations = std::mem::take(&mut self.pending_locations);
+        while let Some(pending) = pending_locations.pop_front() {
+            let PendingLocation {
+                ride_id,
+                sample,
+                telemetry_state,
+                point,
+                segment_started,
+                write,
+            } = pending;
+            let result = match write.wait_result_until(deadline) {
+                Ok(Some(result)) => result,
+                Ok(None) => {
+                    self.pending_locations.push_back(PendingLocation {
+                        ride_id,
+                        sample,
+                        telemetry_state,
+                        point,
+                        segment_started,
+                        write,
+                    });
+                    self.pending_locations.extend(pending_locations);
+                    self.reset_admission_projection();
+                    return Err(MobileRideMapCoreErrorDto::Storage(
+                        "location writes did not settle before the lifecycle deadline".to_owned(),
+                    ));
+                }
+                Err(error) => Err(error),
+            };
+            let decision = self.settle_location(
+                ride_id,
+                sample,
+                telemetry_state,
+                point,
+                segment_started,
+                result,
+            );
+            self.terminal_location_decisions.push_back(decision);
         }
         self.reset_admission_projection();
+        Ok(())
     }
 
     #[allow(
@@ -5418,6 +5489,7 @@ impl MobileRideMapCoreInner {
     )]
     fn poll_location_writes(&mut self) -> Vec<MobileRideMapCoreDecisionDto> {
         let mut decisions = Vec::new();
+        decisions.extend(self.terminal_location_decisions.drain(..));
         loop {
             let result = match self.pending_locations.front() {
                 Some(pending) => pending.write.try_result(),
@@ -5427,11 +5499,18 @@ impl MobileRideMapCoreInner {
                 Ok(Some(result)) => result,
                 Ok(None) => break,
                 Err(error) => {
-                    let _ = self.pending_locations.pop_front();
-                    decisions.push(MobileRideMapCoreDecisionDto::StorageError {
-                        message: error.to_string(),
-                    });
-                    self.reset_admission_projection();
+                    let pending = self
+                        .pending_locations
+                        .pop_front()
+                        .expect("front pending location remains present");
+                    decisions.push(self.settle_location(
+                        pending.ride_id,
+                        pending.sample,
+                        pending.telemetry_state,
+                        pending.point,
+                        pending.segment_started,
+                        Err(error),
+                    ));
                     continue;
                 }
             };
@@ -5439,43 +5518,14 @@ impl MobileRideMapCoreInner {
                 .pending_locations
                 .pop_front()
                 .expect("front pending location remains present");
-            match result {
-                Ok(ride_maps::LocationAdmission::Accepted) => {
-                    let can_update_projection = self.active_ride_id.as_ref()
-                        == Some(&pending.ride_id)
-                        && matches!(
-                            self.recorder.state(),
-                            Some(
-                                ride_maps::RideLifecycleState::Active
-                                    | ride_maps::RideLifecycleState::Paused
-                            )
-                        );
-                    if can_update_projection {
-                        self.recorder.record_sample_with_telemetry_state(
-                            pending.sample,
-                            pending.telemetry_state,
-                        );
-                        decisions.push(MobileRideMapCoreDecisionDto::Accepted {
-                            point: pending.point,
-                            segment_started: pending.segment_started,
-                        });
-                    } else {
-                        decisions.push(MobileRideMapCoreDecisionDto::Ignored {
-                            reason: MobileRideMapDecisionReasonDto::RideNotRecording,
-                        });
-                    }
-                }
-                Ok(admission) => {
-                    decisions.push(location_admission_decision(admission));
-                    self.reset_admission_projection();
-                }
-                Err(error) => {
-                    decisions.push(MobileRideMapCoreDecisionDto::StorageError {
-                        message: error.to_string(),
-                    });
-                    self.reset_admission_projection();
-                }
-            }
+            decisions.push(self.settle_location(
+                pending.ride_id,
+                pending.sample,
+                pending.telemetry_state,
+                pending.point,
+                pending.segment_started,
+                result,
+            ));
         }
         decisions
     }
@@ -5980,8 +6030,9 @@ impl MobileRideMapCore {
 
     /// Returns durable outcomes for queued location writes without waiting for `SQLite`.
     ///
-    /// The returned decisions are ordered by the bounded write queue. An empty result means that
-    /// the oldest queued write is still pending.
+    /// The returned decisions are ordered by the bounded write queue. Outcomes settled by a
+    /// lifecycle barrier are returned before writes that are still queued or in progress. An
+    /// empty result means that the oldest queued write is still pending.
     pub fn poll_location_writes(&self) -> Vec<MobileRideMapCoreDecisionDto> {
         let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         state.poll_location_writes()
@@ -14323,7 +14374,10 @@ mod tests {
 
         let stopped = state.stop().expect("recording stops");
         assert_eq!(stopped.summary.point_count, 1);
-        assert!(state.poll_location_writes().is_empty());
+        assert!(matches!(
+            state.poll_location_writes().as_slice(),
+            [MobileRideMapCoreDecisionDto::Accepted { .. }]
+        ));
 
         let inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         assert_eq!(inner.recorder.summary().point_count().as_u64(), 1);
@@ -14358,7 +14412,10 @@ mod tests {
         ));
         let stopped = state.stop().expect("first recording stops");
         assert_eq!(stopped.summary.point_count, 1);
-        assert!(state.poll_location_writes().is_empty());
+        assert!(matches!(
+            state.poll_location_writes().as_slice(),
+            [MobileRideMapCoreDecisionDto::Accepted { .. }]
+        ));
 
         let second = state
             .start_gps_only(2_000, None)

@@ -2405,9 +2405,16 @@ impl RideDatabase {
     }
 
     fn enqueue_blocking(&self, command: Command) -> Result<(), StorageError> {
-        self.sender
-            .send(command)
-            .map_err(|_| StorageError::WorkerStopped)
+        match self.sender.send(command) {
+            Ok(()) => Ok(()),
+            Err(mpsc::SendError(command)) => {
+                let recovered = self.reopen()?;
+                recovered
+                    .sender
+                    .send(command)
+                    .map_err(|_| StorageError::WorkerStopped)
+            }
+        }
     }
 }
 
