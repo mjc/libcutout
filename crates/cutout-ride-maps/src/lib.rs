@@ -19,8 +19,8 @@ pub use location::{
 };
 mod summary;
 pub use summary::{
-    DistanceMillimetres, RidePointCount, RideSummary, distance_between,
-    distance_between_millimetres,
+    AverageSpeedMillimetresPerSecond, DistanceMillimetres, RidePointCount, RideSummary,
+    distance_between, distance_between_millimetres,
 };
 mod recording;
 pub use recording::{
@@ -43,12 +43,13 @@ mod tests {
     use std::cell::Cell;
 
     use super::{
-        Coordinate, DistanceMillimetres, LatitudeE7, LocationAdmission, LocationSample,
-        LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent,
-        RideLifecycleState, RideMapRecorder, RidePointCount, RideSummary, RouteDisplayBudget,
-        RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError,
-        RouteViewport, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
-        project_route_points, project_route_points_cancellable, project_route_points_from_iter,
+        AverageSpeedMillimetresPerSecond, Coordinate, DistanceMillimetres, LatitudeE7,
+        LocationAdmission, LocationSample, LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS,
+        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapRecorder, RidePointCount,
+        RideSummary, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
+        RouteProjectionError, RouteViewport, TransitionError, VehicleIdentity,
+        WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
+        project_route_points_from_iter,
     };
 
     #[test]
@@ -132,6 +133,24 @@ mod tests {
                 .saturating_add(DistanceMillimetres::new(2))
                 .as_u64(),
             u64::MAX
+        );
+    }
+
+    #[test]
+    fn ride_summary_derives_average_speed_from_persisted_distance_and_duration() {
+        let summary = RideSummary::from_stored(RidePointCount::new(2), 10_000);
+
+        assert_eq!(
+            summary
+                .average_speed_millimetres_per_second(2_000)
+                .map(AverageSpeedMillimetresPerSecond::as_u64),
+            Some(5_000)
+        );
+        assert_eq!(summary.average_speed_millimetres_per_second(0), None);
+        assert_eq!(
+            RideSummary::from_stored(RidePointCount::new(2), 0)
+                .average_speed_millimetres_per_second(2_000),
+            None
         );
     }
 
