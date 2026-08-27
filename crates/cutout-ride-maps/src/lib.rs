@@ -46,8 +46,9 @@ mod tests {
         AverageSpeedMillimetresPerSecond, Coordinate, DistanceMillimetres, LatitudeE7,
         LocationAdmission, LocationSample, LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS,
         MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapRecorder, RidePointCount,
-        RideSummary, RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
-        RouteProjectionError, RouteViewport, TransitionError, VehicleIdentity,
+        RideMapPoint, RideMapSegmentId, RideSummary, RouteDisplayBudget, RoutePrivacyClass,
+        RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError, RouteTelemetryState,
+        RouteViewport, TransitionError, VehicleIdentity,
         WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
         project_route_points_from_iter,
     };
@@ -240,6 +241,36 @@ mod tests {
     }
 
     #[test]
+    fn route_projection_keeps_routes_over_the_cap_bounded() {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
+            None,
+            LocationSource::Live,
+        );
+        let point = RideMapPoint::new(
+            sample,
+            RideMapSegmentId::new(0),
+            RouteTelemetryState::GpsOnly,
+        );
+        let candidate_count = MAX_ROUTE_DISPLAY_POINTS + 1;
+        let projection = project_route_points_from_iter(
+            (0..candidate_count).map(|sequence| (sequence as u64, point)),
+            candidate_count,
+            RouteDisplayBudget::new(MAX_ROUTE_DISPLAY_POINTS).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        );
+
+        assert_eq!(projection.len(), MAX_ROUTE_DISPLAY_POINTS);
+        assert_eq!(projection.first().unwrap().sequence().as_u64(), 0);
+        assert_eq!(
+            projection.last().unwrap().sequence().as_u64(),
+            MAX_ROUTE_DISPLAY_POINTS as u64
+        );
+    }
+
+    #[test]
     fn privacy_grid_does_not_leak_exact_coordinates_at_world_boundaries() {
         let mut recorder = RideMapRecorder::new();
         recorder
@@ -311,6 +342,95 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 3]
         );
+    }
+
+    #[test]
+    fn route_endpoint_metadata_does_not_promote_viewport_interior_points() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        for (offset, latitude) in [(0, 40.0), (1_000, 40.001), (2_000, 40.002)] {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000 + offset),
+                WallClockUnixMilliseconds::new(1_700_000_000_000 + offset),
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+            recorder.record_sample(sample);
+        }
+
+        let viewport = RouteViewport::new(
+            LatitudeE7::new(400_010_000),
+            LatitudeE7::new(400_010_000),
+            LongitudeE7::new(-1_050_000_000),
+            LongitudeE7::new(-1_049_999_000),
+        )
+        .unwrap();
+        let endpoints = route_endpoint_metadata(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            recorder.point_count(),
+            Some(viewport),
+        );
+
+        assert_eq!(
+            endpoints.start_sequence().map(RidePointSequence::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            endpoints.end_sequence().map(RidePointSequence::as_u64),
+            Some(2)
+        );
+        assert!(!endpoints.start_visible());
+        assert!(!endpoints.end_visible());
+    }
+
+    #[test]
+    fn route_endpoint_metadata_keeps_canonical_sequence_for_a_budgeted_route() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        for (offset, latitude) in [(0, 40.0), (1_000, 40.001), (2_000, 40.002)] {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(latitude, -105.0).unwrap(),
+                MonotonicMilliseconds::new(1_000 + offset),
+                WallClockUnixMilliseconds::new(1_700_000_000_000 + offset),
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+            recorder.record_sample(sample);
+        }
+
+        let endpoints = route_endpoint_metadata(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            recorder.point_count(),
+            None,
+        );
+        let projection = project_route_points(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            None,
+            RouteDisplayBudget::new(1).unwrap(),
+            RoutePrivacyPolicy::Precise,
+        );
+
+        assert_eq!(projection.iter().map(|point| point.sequence().as_u64()).collect::<Vec<_>>(), [0]);
+        assert_eq!(
+            endpoints.start_sequence().map(RidePointSequence::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            endpoints.end_sequence().map(RidePointSequence::as_u64),
+            Some(2)
+        );
+        assert!(endpoints.start_visible());
+        assert!(endpoints.end_visible());
     }
 
     #[test]
