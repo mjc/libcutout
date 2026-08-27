@@ -77,7 +77,7 @@ final class CutoutSessionCoreTests: XCTestCase {
 
         admission.record(first, decision: .rejected(reason: .accuracyTooLow))
         admission.record(first, decision: .ignored(reason: .rideNotRecording))
-        admission.record(first, decision: .storageError(message: "queue full"))
+        admission.record(first, decision: .storageError(message: "queue full", retryable: false))
         XCTAssertNil(admission.lastAcceptedTimestamp)
 
         admission.record(first, decision: .pending(point: point, segmentStarted: true))
@@ -497,7 +497,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertNil(
             capturePhoneLocationSample(
                 sample: sample,
-                decision: .storageError(message: "queue full")
+                decision: .storageError(message: "queue full", retryable: false)
             )
         )
     }
@@ -709,7 +709,7 @@ final class CutoutSessionCoreTests: XCTestCase {
         let oldRideTerminalDecisions: [MobileRideMapDecisionDto] = [
             .ignored(reason: .rideNotRecording),
             .rejected(reason: .timestampOutOfOrder),
-            .storageError(message: "old ride write failed"),
+            .storageError(message: "old ride write failed", retryable: false),
         ]
         for terminalDecision in oldRideTerminalDecisions {
             var queue = PendingPhoneLocationQueue()

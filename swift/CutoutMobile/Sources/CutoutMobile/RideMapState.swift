@@ -257,7 +257,11 @@ public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
     case rejected(reason: MobileRideMapDecisionReason)
     case ignored(reason: MobileRideMapDecisionReason)
     /// The point could not be queued or persisted. It is not part of the ride.
-    case storageError(message: String)
+    ///
+    /// `retryable` is true only after Rust reconciles a dropped response and proves that the
+    /// write was not committed. The caller may explicitly re-admit that sample; this adapter
+    /// never retries it automatically.
+    case storageError(message: String, retryable: Bool)
 }
 
 /// Swift keeps only presentation DTOs and the canonical history handle. Rust owns all active
@@ -645,8 +649,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             return .rejected(reason: map(reason))
         case let .ignored(reason):
             return .ignored(reason: map(reason))
-        case let .storageError(message):
-            return .storageError(message: message)
+        case let .storageError(message, retryable):
+            return .storageError(message: message, retryable: retryable)
         }
     }
 

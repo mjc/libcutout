@@ -107,7 +107,7 @@ struct RideMapRouteTruthView: View {
             case .unrealisticJump:
                 return localizedAppText("ride_map.decision.jump")
             }
-        case let .storageError(message):
+        case let .storageError(message, _):
             return localizedAppText("ride_map.decision.storage_error", message)
         }
     }
