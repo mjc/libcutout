@@ -19,9 +19,9 @@ use rusqlite::Connection;
 use cutout_ride_maps::RideLifecycleState;
 
 use super::{
-    GeoBounds, LocationWriteReconciliation, PevcapImportOutcome, QueryLimit, RideDatabase,
-    RideHistoryQuery, RideId, RideRecord, RideSource, RouteProjectionCancellation, StorageError,
-    VoltageSagModelRecord,
+    GeoBounds, HistoryContextBudget, LocationWriteReconciliation, PevcapImportOutcome, QueryLimit,
+    RideDatabase, RideHistoryQuery, RideId, RideRecord, RideSource,
+    RouteProjectionCancellation, StorageError, VoltageSagModelRecord,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -2538,6 +2538,115 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
     assert!(projection.points().iter().all(|point| {
         point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted
     }));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_history_context_projection_excludes_selected_and_bounds_each_route() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-context-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let mut rides = Vec::new();
+    for ride_index in 0..3_u64 {
+        let ride = database
+            .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
+            .unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        for point_index in 0..4_u64 {
+            let sample = LocationSample::new(
+                Coordinate::from_degrees(
+                    40.0 + ride_index as f64 / 100.0 + point_index as f64 / 10_000.0,
+                    -105.0,
+                )
+                .unwrap(),
+                point_index + 1,
+                1_700_000_000_000 + ride_index * 10_000 + point_index,
+                None,
+                LocationSource::Live,
+            );
+            assert_eq!(
+                database.append_location(ride, sample).unwrap(),
+                LocationAdmission::Accepted
+            );
+        }
+        rides.push(ride);
+    }
+
+    let projection = database
+        .project_history_context(
+            RideHistoryQuery::default(),
+            Some(rides[1]),
+            HistoryContextBudget::new(10, 2, 3, 4).unwrap(),
+            None,
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(1_000).unwrap()),
+        )
+        .unwrap();
+
+    assert_eq!(projection.source_history_route_count(), 3);
+    assert_eq!(projection.context_route_count(), 2);
+    assert_eq!(projection.routes().len(), 2);
+    assert!(!projection.routes_omitted_by_budget());
+    assert!(!projection.history_page_has_more());
+    assert_eq!(projection.total_display_point_count(), 4);
+    assert!(projection.routes().iter().all(|route| {
+        route.ride_id() != rides[1]
+            && route.projection().points().len() <= 3
+            && route
+                .projection()
+                .points()
+                .iter()
+                .all(|point| point.privacy_class() == cutout_ride_maps::RoutePrivacyClass::GridRedacted)
+    }));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn durable_history_context_projection_reports_aggregate_budget_omissions() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-history-context-budget-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    for ride_index in 0..3_u64 {
+        let ride = database
+            .create_ride(RideSource::Live, 1_700_000_000_000 + ride_index * 10_000)
+            .unwrap();
+        database.transition(ride, RideEvent::Start).unwrap();
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0 + ride_index as f64 / 100.0, -105.0).unwrap(),
+            1,
+            1_700_000_000_000 + ride_index * 10_000,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database.append_location(ride, sample).unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+
+    let projection = database
+        .project_history_context(
+            RideHistoryQuery::default(),
+            None,
+            HistoryContextBudget::new(10, 3, 3, 2).unwrap(),
+            None,
+            RoutePrivacyPolicy::Precise,
+        )
+        .unwrap();
+
+    assert_eq!(projection.context_route_count(), 3);
+    assert_eq!(projection.routes().len(), 1);
+    assert_eq!(projection.total_display_point_count(), 2);
+    assert!(projection.routes_omitted_by_budget());
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
