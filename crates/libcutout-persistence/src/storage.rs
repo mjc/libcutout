@@ -1,11 +1,11 @@
 use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_ride_maps::{
-    Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
-    MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint,
-    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideSegmentStartReason, RideSummary,
-    RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyPolicy, RouteProjectionAccumulator,
-    RouteTelemetryState, RouteViewport, TransitionError, WallClockUnixMilliseconds,
-    count_segment_runs,
+    AverageSpeedMillimetresPerSecond, Coordinate, LocationAdmission, LocationSample,
+    LocationSource, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent,
+    RideLifecycleState, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
+    RideSegmentStartReason, RideSummary, RouteDisplayBudget, RouteDisplayPoint, RoutePrivacyPolicy,
+    RouteProjectionAccumulator, RouteTelemetryState, RouteViewport, TransitionError,
+    WallClockUnixMilliseconds, count_segment_runs,
 };
 use hex::encode as hex_encode;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, params};
@@ -297,6 +297,14 @@ impl RideRecord {
     #[must_use]
     pub const fn summary(&self) -> RideSummary {
         self.summary
+    }
+
+    /// Returns the Rust-derived average speed when the ride has distance and elapsed time.
+    #[must_use]
+    pub fn average_speed_millimetres_per_second(&self) -> Option<u64> {
+        self.summary
+            .average_speed_millimetres_per_second(self.duration_ms)
+            .map(AverageSpeedMillimetresPerSecond::as_u64)
     }
 
     /// Returns the number of persisted route segments.
@@ -2429,6 +2437,19 @@ impl RideDatabase {
         self.request(move |reply| Command::Summary { ride_id, reply })
     }
 
+    /// Loads a ride summary and its persisted elapsed duration without applying history filters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::NotFound`] when the ride does not exist or another worker error
+    /// prevents the query.
+    pub fn summary_with_duration(
+        &self,
+        ride_id: RideId,
+    ) -> Result<(RideSummary, u64), StorageError> {
+        self.request(move |reply| Command::SummaryWithDuration { ride_id, reply })
+    }
+
     /// Loads one visible ride record by its stable identifier without paging through history.
     ///
     /// # Errors
@@ -3036,6 +3057,10 @@ enum Command {
         ride_id: RideId,
         reply: Reply<RideSummary>,
     },
+    SummaryWithDuration {
+        ride_id: RideId,
+        reply: Reply<(RideSummary, u64)>,
+    },
     FindRide {
         ride_id: RideId,
         reply: Reply<Option<RideRecord>>,
@@ -3457,6 +3482,9 @@ fn worker_loop(
             }
             Command::Summary { ride_id, reply } => {
                 let _ = reply.send(load_summary(&connection, ride_id));
+            }
+            Command::SummaryWithDuration { ride_id, reply } => {
+                let _ = reply.send(load_summary_with_duration(&connection, ride_id));
             }
             Command::FindRide { ride_id, reply } => {
                 let _ = reply.send(find_ride(&connection, ride_id));
@@ -6156,6 +6184,25 @@ fn load_summary(connection: &Connection, ride_id: RideId) -> Result<RideSummary,
                 Ok(RideSummary::from_stored(
                     row.get::<_, u64>(0)?.into(),
                     row.get::<_, u64>(1)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(StorageError::NotFound)
+}
+
+fn load_summary_with_duration(
+    connection: &Connection,
+    ride_id: RideId,
+) -> Result<(RideSummary, u64), StorageError> {
+    connection
+        .query_row(
+            "SELECT point_count, distance_mm, duration_ms FROM rides WHERE id = ?1",
+            params![ride_id.uuid().to_string()],
+            |row| {
+                Ok((
+                    RideSummary::from_stored(row.get::<_, u64>(0)?.into(), row.get::<_, u64>(1)?),
+                    row.get(2)?,
                 ))
             },
         )

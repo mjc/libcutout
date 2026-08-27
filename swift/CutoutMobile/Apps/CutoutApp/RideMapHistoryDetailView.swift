@@ -35,17 +35,11 @@ struct RideMapHistoryDetailView: View {
             ?? (identity == nil ? fallback : localizedAppText("ride_map.vehicle_name_unavailable"))
     }
 
-    static func averageSpeedText(
-        distanceMeters: Double,
-        durationMilliseconds: UInt64
-    ) -> String {
-        guard distanceMeters.isFinite,
-              distanceMeters > 0,
-              durationMilliseconds > 0
-        else {
+    static func averageSpeedText(millimetresPerSecond: UInt64?) -> String {
+        guard let millimetresPerSecond else {
             return localizedAppText("ride_map.speed_unavailable")
         }
-        let metersPerSecond = distanceMeters / (Double(durationMilliseconds) / 1_000)
+        let metersPerSecond = Double(millimetresPerSecond) / 1_000
         guard metersPerSecond.isFinite, metersPerSecond >= 0 else {
             return localizedAppText("ride_map.speed_unavailable")
         }
@@ -136,8 +130,7 @@ struct RideMapHistoryDetailView: View {
                             distance: distanceText(for: ride.summary),
                             duration: durationText(for: ride.summary),
                             averageSpeed: Self.averageSpeedText(
-                                distanceMeters: ride.summary.distanceMeters,
-                                durationMilliseconds: ride.summary.durationMilliseconds
+                                millimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond
                             ),
                             recordedAt: recordedAtText(for: ride.createdAtMilliseconds),
                             vehicle: vehicleLabel(for: ride),

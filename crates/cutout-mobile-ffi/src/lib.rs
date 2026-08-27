@@ -3492,6 +3492,8 @@ pub struct MobileRideSummaryDto {
     pub point_count: u64,
     /// Accumulated path distance in millimetres.
     pub distance_millimetres: u64,
+    /// Rust-derived average speed in millimetres per second, when meaningful.
+    pub average_speed_millimetres_per_second: Option<u64>,
 }
 
 /// Stable cursor for a subsequent ride-history page.
@@ -3900,6 +3902,7 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
         summary: MobileRideSummaryDto {
             point_count: summary.point_count().as_u64(),
             distance_millimetres: summary.distance_millimetres(),
+            average_speed_millimetres_per_second: ride.average_speed_millimetres_per_second(),
         },
         segment_count: ride.segment_count(),
         candidate_vehicle: ride.candidate_vehicle().map(str::to_owned),
@@ -5179,10 +5182,13 @@ impl RideDatabaseHandle {
     ) -> Result<MobileRideSummaryDto, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(&id)?;
         self.inner
-            .summary(id)
-            .map(|summary| MobileRideSummaryDto {
+            .summary_with_duration(id)
+            .map(|(summary, duration_milliseconds)| MobileRideSummaryDto {
                 point_count: summary.point_count().as_u64(),
                 distance_millimetres: summary.distance_millimetres(),
+                average_speed_millimetres_per_second: summary
+                    .average_speed_millimetres_per_second(duration_milliseconds)
+                    .map(ride_maps::AverageSpeedMillimetresPerSecond::as_u64),
             })
             .map_err(map_ride_database_error)
     }
@@ -15629,6 +15635,51 @@ mod tests {
     }
 
     #[test]
+    fn mobile_history_summary_exposes_rust_derived_average_speed() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-average-speed-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        await_location_decision(
+            &state,
+            state
+                .ingest_location(1_000, 1_700_000_000_000, 40.0, -105.0, 3.0)
+                .expect("first location queues"),
+        );
+        await_location_decision(
+            &state,
+            state
+                .ingest_location(2_000, 1_700_000_001_000, 40.0, -104.99999, 3.0)
+                .expect("second location queues"),
+        );
+        state.stop().expect("map recording stops");
+        state.save().expect("map recording saves");
+
+        let rides = database.list_rides(None, 1).expect("saved ride lists");
+        assert_eq!(rides.rides.len(), 1);
+        assert!(
+            rides.rides[0]
+                .summary
+                .average_speed_millimetres_per_second
+                .is_some()
+        );
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_persists_gap_segment_without_distance() {
         let _guard = RIDE_DATABASE_TEST_LOCK
             .lock()
@@ -15689,6 +15740,7 @@ mod tests {
             })
             .expect("durable summary loads");
         assert_eq!(durable_summary.distance_millimetres, 0);
+        assert_eq!(durable_summary.average_speed_millimetres_per_second, None);
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);

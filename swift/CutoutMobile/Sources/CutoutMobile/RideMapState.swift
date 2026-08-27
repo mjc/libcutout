@@ -78,15 +78,18 @@ public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
     public var pointCount: UInt64
     public var distanceMeters: Double
     public var durationMilliseconds: UInt64
+    public var averageSpeedMillimetresPerSecond: UInt64?
 
     public init(
         pointCount: UInt64,
         distanceMeters: Double,
-        durationMilliseconds: UInt64
+        durationMilliseconds: UInt64,
+        averageSpeedMillimetresPerSecond: UInt64? = nil
     ) {
         self.pointCount = pointCount
         self.distanceMeters = distanceMeters
         self.durationMilliseconds = durationMilliseconds
+        self.averageSpeedMillimetresPerSecond = averageSpeedMillimetresPerSecond
     }
 }
 
@@ -604,7 +607,8 @@ public final class MobileRideMapState: @unchecked Sendable {
             summary: MobileRideMapSummaryDto(
                 pointCount: ride.summary.pointCount,
                 distanceMeters: Double(ride.summary.distanceMillimetres) / 1_000,
-                durationMilliseconds: ride.durationMilliseconds
+                durationMilliseconds: ride.durationMilliseconds,
+                averageSpeedMillimetresPerSecond: ride.summary.averageSpeedMillimetresPerSecond
             ),
             segmentCount: ride.segmentCount,
             createdAtMilliseconds: ride.createdAtMilliseconds,

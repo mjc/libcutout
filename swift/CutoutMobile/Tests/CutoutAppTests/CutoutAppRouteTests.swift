@@ -547,13 +547,12 @@ final class CutoutAppRouteTests: XCTestCase {
     func testRideDetailShowsAverageSpeedWhenDistanceAndDurationExist() {
         XCTAssertEqual(
             RideMapHistoryDetailView.averageSpeedText(
-                distanceMeters: 16_093.44,
-                durationMilliseconds: 5_400_000
+                millimetresPerSecond: 2_980
             ),
             "6.7 mph"
         )
         XCTAssertEqual(
-            RideMapHistoryDetailView.averageSpeedText(distanceMeters: 0, durationMilliseconds: 0),
+            RideMapHistoryDetailView.averageSpeedText(millimetresPerSecond: nil),
             "N/A"
         )
     }
