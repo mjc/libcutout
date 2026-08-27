@@ -493,6 +493,7 @@ public final class CutoutSessionCore: NSObject {
     private var rideMapPollScheduled = false
     private let rideMapState: MobileRideMapState
     private var didRequestWhenInUseLocationAuthorization = false
+    private var didRequestAlwaysLocationAuthorization = false
     private var locationUpdatesStarted = false
     private var didResolveBluetoothRestoration = false
 #if DEBUG
@@ -507,6 +508,7 @@ public final class CutoutSessionCore: NSObject {
         manager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
         manager.distanceFilter = 5
         manager.activityType = .fitness
+        manager.allowsBackgroundLocationUpdates = true
         return manager
     }()
 
@@ -2847,20 +2849,27 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             updateRideMapAvailability(manager.authorizationStatus)
             return
         }
-        switch manager.authorizationStatus {
-        case .authorizedAlways:
-            manager.startUpdatingLocation()
-            locationUpdatesStarted = true
-        case .authorizedWhenInUse:
-            manager.startUpdatingLocation()
-            locationUpdatesStarted = true
-        case .notDetermined:
+        switch locationAuthorizationAction(for: manager.authorizationStatus) {
+        case .requestWhenInUse:
             requestWhenInUseLocationAuthorizationIfNeeded()
-        case .denied, .restricted:
+        case .requestAlwaysAndStart:
+            requestAlwaysLocationAuthorizationIfNeeded()
+            manager.startUpdatingLocation()
+            locationUpdatesStarted = true
+        case .start:
+            manager.startUpdatingLocation()
+            locationUpdatesStarted = true
+        case .stop:
             stopLocationUpdates()
-        @unknown default:
+        case .none:
             break
         }
+    }
+
+    private func requestAlwaysLocationAuthorizationIfNeeded() {
+        guard !didRequestAlwaysLocationAuthorization else { return }
+        didRequestAlwaysLocationAuthorization = true
+        locationManager.requestAlwaysAuthorization()
     }
 
     private func requestWhenInUseLocationAuthorizationIfNeeded() {
@@ -2877,16 +2886,7 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
 
     public func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         updateRideMapAvailability(manager.authorizationStatus)
-        switch manager.authorizationStatus {
-        case .notDetermined:
-            requestWhenInUseLocationAuthorizationIfNeeded()
-        case .authorizedAlways, .authorizedWhenInUse:
-            startLocationUpdatesIfAuthorized(manager)
-        case .denied, .restricted:
-            stopLocationUpdates()
-        @unknown default:
-            break
-        }
+        startLocationUpdatesIfAuthorized(manager)
     }
 
     public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -3049,6 +3049,31 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         if shouldPollAgain {
             scheduleRideMapWritePoll()
         }
+    }
+}
+
+enum LocationAuthorizationAction: Equatable {
+    case requestWhenInUse
+    case requestAlwaysAndStart
+    case start
+    case stop
+    case none
+}
+
+func locationAuthorizationAction(
+    for status: CLAuthorizationStatus
+) -> LocationAuthorizationAction {
+    switch status {
+    case .notDetermined:
+        return .requestWhenInUse
+    case .authorizedWhenInUse:
+        return .requestAlwaysAndStart
+    case .authorizedAlways:
+        return .start
+    case .denied, .restricted:
+        return .stop
+    @unknown default:
+        return .none
     }
 }
 

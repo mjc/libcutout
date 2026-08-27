@@ -156,6 +156,30 @@ final class CutoutSessionCoreTests: XCTestCase {
         )
     }
 
+    func testLocationAuthorizationRequestsAlwaysForBackgroundRecording() throws {
+        let authorizedWhenInUse = try XCTUnwrap(CLAuthorizationStatus(rawValue: 4))
+        XCTAssertEqual(
+            locationAuthorizationAction(for: .notDetermined),
+            .requestWhenInUse
+        )
+        XCTAssertEqual(
+            locationAuthorizationAction(for: authorizedWhenInUse),
+            .requestAlwaysAndStart
+        )
+        XCTAssertEqual(
+            locationAuthorizationAction(for: .authorizedAlways),
+            .start
+        )
+        XCTAssertEqual(
+            locationAuthorizationAction(for: .denied),
+            .stop
+        )
+        XCTAssertEqual(
+            locationAuthorizationAction(for: .restricted),
+            .stop
+        )
+    }
+
     func testBatchedLocationsPreserveTheirRecordedTimeSpacing() {
         let timestamps = [
             Date(timeIntervalSince1970: 1_700_000_000),
