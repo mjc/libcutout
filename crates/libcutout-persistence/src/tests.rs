@@ -2182,7 +2182,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -2751,7 +2751,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
