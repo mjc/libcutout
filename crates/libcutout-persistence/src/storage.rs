@@ -1072,6 +1072,12 @@ pub enum StorageError {
     /// the same sample blindly.
     #[error("ride database response was dropped")]
     ResponseDropped,
+    /// Reconciliation confirmed that a response-lost location was not committed.
+    ///
+    /// This is intentionally distinct from [`StorageError::ResponseDropped`]: callers have
+    /// resolved the unknown outcome and must decide whether to re-admit the sample explicitly.
+    #[error("location write was not committed after response loss")]
+    LocationWriteNotCommitted,
     /// A second worker could not be started.
     #[error("could not start ride database worker: {0}")]
     WorkerStart(String),

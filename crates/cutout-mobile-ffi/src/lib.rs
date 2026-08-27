@@ -3477,6 +3477,11 @@ pub enum MobileRideMapCoreDecisionDto {
     StorageError {
         /// Stable storage failure text for the mobile diagnostic surface.
         message: String,
+        /// Whether the caller may explicitly re-admit the sample after resolving the failure.
+        ///
+        /// This is true only when reconciliation proved that a response-lost write was not
+        /// committed. The map core never retries that sample automatically.
+        retryable: bool,
     },
 }
 
@@ -3852,7 +3857,8 @@ fn map_ride_database_error(error: persistence::StorageError) -> MobileRideDataba
         persistence::StorageError::WorkerStopped
         | persistence::StorageError::ResponseDropped
         | persistence::StorageError::WorkerStart(_) => MobileRideDatabaseError::WorkerStopped,
-        persistence::StorageError::Sqlite(_)
+        persistence::StorageError::LocationWriteNotCommitted
+        | persistence::StorageError::Sqlite(_)
         | persistence::StorageError::Io(_)
         | persistence::StorageError::InvalidStoredValue { .. }
         | persistence::StorageError::InvalidSqliteVersion(_)
@@ -5158,6 +5164,17 @@ impl RideDatabaseHandle {
 }
 
 impl RideDatabaseHandle {
+    fn reconcile_location_write(
+        &self,
+        id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+    ) -> Result<persistence::LocationWriteReconciliation, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(id)?;
+        self.inner
+            .reconcile_location_write(id, sample)
+            .map_err(map_ride_database_error)
+    }
+
     #[allow(
         clippy::needless_pass_by_value,
         reason = "called from the UniFFI boundary"
@@ -5523,11 +5540,64 @@ impl MobileRideMapCoreInner {
             }
             Err(error) => {
                 self.reset_admission_projection();
+                let retryable =
+                    matches!(error, persistence::StorageError::LocationWriteNotCommitted);
                 MobileRideMapCoreDecisionDto::StorageError {
                     message: error.to_string(),
+                    retryable,
                 }
             }
         }
+    }
+
+    fn reconcile_lost_location_write(
+        &self,
+        ride_id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+    ) -> Result<persistence::LocationWriteReconciliation, MobileRideDatabaseError> {
+        let Some(database) = self.database.as_ref() else {
+            return Err(MobileRideDatabaseError::WorkerStopped);
+        };
+        database.reconcile_location_write(ride_id, sample)
+    }
+
+    fn settle_pending_location(
+        &mut self,
+        ride_id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+        telemetry_state: ride_maps::RouteTelemetryState,
+        point: MobileRideMapCorePointDto,
+        segment_started: bool,
+        result: Result<ride_maps::LocationAdmission, persistence::StorageError>,
+    ) -> MobileRideMapCoreDecisionDto {
+        let result = match result {
+            Err(persistence::StorageError::ResponseDropped) => {
+                match self.reconcile_lost_location_write(ride_id, sample) {
+                    Ok(persistence::LocationWriteReconciliation::Committed) => {
+                        Ok(ride_maps::LocationAdmission::Accepted)
+                    }
+                    Ok(persistence::LocationWriteReconciliation::NotCommitted) => {
+                        Err(persistence::StorageError::LocationWriteNotCommitted)
+                    }
+                    Err(error) => {
+                        self.reset_admission_projection();
+                        return MobileRideMapCoreDecisionDto::StorageError {
+                            message: error.to_string(),
+                            retryable: false,
+                        };
+                    }
+                }
+            }
+            result => result,
+        };
+        self.settle_location(
+            ride_id,
+            sample,
+            telemetry_state,
+            point,
+            segment_started,
+            result,
+        )
     }
 
     /// Settles every queued location before a lifecycle transition.
@@ -5569,7 +5639,7 @@ impl MobileRideMapCoreInner {
                 }
                 Err(error) => Err(error),
             };
-            let decision = self.settle_location(
+            let decision = self.settle_pending_location(
                 &ride_id,
                 sample,
                 telemetry_state,
@@ -5603,7 +5673,7 @@ impl MobileRideMapCoreInner {
                         .pending_locations
                         .pop_front()
                         .expect("front pending location remains present");
-                    decisions.push(self.settle_location(
+                    decisions.push(self.settle_pending_location(
                         &pending.ride_id,
                         pending.sample,
                         pending.telemetry_state,
@@ -5618,7 +5688,7 @@ impl MobileRideMapCoreInner {
                 .pending_locations
                 .pop_front()
                 .expect("front pending location remains present");
-            decisions.push(self.settle_location(
+            decisions.push(self.settle_pending_location(
                 &pending.ride_id,
                 pending.sample,
                 pending.telemetry_state,
@@ -6043,6 +6113,7 @@ impl MobileRideMapCore {
             if state.pending_locations.len() >= MAX_PENDING_LOCATION_WRITES {
                 return Ok(MobileRideMapCoreDecisionDto::StorageError {
                     message: "ride location write queue is full".to_owned(),
+                    retryable: false,
                 });
             }
             let write = database.enqueue_location_async(
@@ -6056,6 +6127,7 @@ impl MobileRideMapCore {
                 Err(error) => {
                     return Ok(MobileRideMapCoreDecisionDto::StorageError {
                         message: error.to_string(),
+                        retryable: false,
                     });
                 }
             };
@@ -14879,6 +14951,111 @@ mod tests {
             completed += state.poll_location_writes().len();
             thread::yield_now();
         }
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    fn settle_response_loss(
+        state: &MobileRideMapCore,
+        ride_id: &MobileRideIdDto,
+        sample: ride_maps::LocationSample,
+        point: MobileRideMapCorePointDto,
+    ) -> MobileRideMapCoreDecisionDto {
+        let mut inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        inner.settle_pending_location(
+            ride_id,
+            sample,
+            ride_maps::RouteTelemetryState::GpsOnly,
+            point,
+            true,
+            Err(persistence::StorageError::ResponseDropped),
+        )
+    }
+
+    #[test]
+    fn mobile_ride_map_core_reconciles_lost_write_without_blind_retry() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-reconcile-location-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("map recording starts");
+        let ride_id = state
+            .inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .active_ride_id
+            .clone()
+            .expect("recording has an id");
+        let location = MobileRideLocationDto {
+            latitude_degrees: 40.0,
+            longitude_degrees: -105.0,
+            monotonic_milliseconds: 1_001,
+            wall_clock_unix_milliseconds: 1_700_000_000_001,
+            horizontal_accuracy_millimetres: Some(3_000),
+            source: MobileRideSourceDto::Live,
+        };
+        let sample = mobile_ride_location(location).expect("fixture location is valid");
+        let point = MobileRideMapCoreInner::point_from_location(
+            location,
+            0,
+            ride_maps::RideMapSegmentId::new(0),
+            ride_maps::RouteTelemetryState::GpsOnly,
+        );
+
+        let not_committed = settle_response_loss(&state, &ride_id, sample, point);
+        assert!(matches!(
+            not_committed,
+            MobileRideMapCoreDecisionDto::StorageError {
+                retryable: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            database
+                .find_ride(ride_id.clone())
+                .expect("ride lookup succeeds")
+                .expect("ride exists")
+                .summary
+                .point_count,
+            0
+        );
+
+        database
+            .inner
+            .append_location_with_segment_id_and_telemetry(
+                parse_mobile_ride_id(&ride_id).expect("ride id is valid"),
+                sample,
+                ride_maps::RideMapSegmentId::new(0),
+                ride_maps::RouteTelemetryState::GpsOnly,
+            )
+            .expect("fixture write commits");
+        let committed = settle_response_loss(&state, &ride_id, sample, point);
+        assert!(matches!(
+            committed,
+            MobileRideMapCoreDecisionDto::Accepted {
+                segment_started: true,
+                ..
+            }
+        ));
+        assert_eq!(
+            state
+                .current_snapshot()
+                .expect("snapshot exists")
+                .summary
+                .point_count,
+            1
+        );
+
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
     }
