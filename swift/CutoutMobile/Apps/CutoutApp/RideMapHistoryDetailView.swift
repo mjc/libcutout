@@ -88,49 +88,18 @@ struct RideMapHistoryDetailView: View {
             GeometryReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        ZStack {
-                            RideMapCanvasView(
-                                points: displayPoints,
-                                routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
-                                projectionVersion: projectionVersion,
-                                showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
-                                    pointsTruncated: pointsTruncated
-                                ),
-                                showsEndMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
-                                    pointsTruncated: pointsTruncated
-                                ),
-                                showsCurrentMarker: false,
-                                fitsRouteOnChange: true,
-                                mapPosition: $mapPosition,
-                                isApplyingCamera: $isApplyingCamera,
-                                cameraDidChange: cameraDidChange
-                            )
-
-                            if isRouteLoading {
-                                HStack(spacing: 8) {
-                                    ProgressView()
-                                        .tint(PevColors.yellow)
-                                    Text(localizedAppText("ride_map.history_loading"))
-                                        .font(.subheadline.weight(.semibold))
-                                }
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 10)
-                                .modifier(RideMapLoadingSurface())
-                                .accessibilityIdentifier("ride-map.detail-loading")
-                            } else if routeError != nil {
-                                ContentUnavailableView(
-                                    localizedAppText("ride_map.detail_error_title"),
-                                    systemImage: "exclamationmark.triangle"
-                                )
-                                .accessibilityIdentifier("ride-map.detail-map-error")
-                            } else if selectedRide?.summary.pointCount == 0 {
-                                ContentUnavailableView(
-                                    localizedAppText("ride_map.no_points"),
-                                    systemImage: "location.slash"
-                                )
-                                .accessibilityIdentifier("ride-map.detail-no-points")
-                            }
-                        }
+                        RideMapHistoryDetailMap(
+                            points: displayPoints,
+                            routeID: "\(initialHistoryID ?? "history-detail")-\(pointsTruncated ? "preview" : "full")",
+                            projectionVersion: projectionVersion,
+                            pointsTruncated: pointsTruncated,
+                            isLoading: isRouteLoading,
+                            hasNoPoints: selectedRide?.summary.pointCount == 0,
+                            routeError: routeError,
+                            mapPosition: $mapPosition,
+                            isApplyingCamera: $isApplyingCamera,
+                            cameraDidChange: cameraDidChange
+                        )
                         .frame(height: Self.mapHeight(for: proxy.size.height))
 
                         if let ride = selectedRide {
@@ -262,6 +231,65 @@ private struct RideMapHistoryDetailHeader: View {
             .padding(.vertical, 8)
             .background(PevColors.pageBackground)
             .accessibilityIdentifier("ride-map.detail-header")
+    }
+}
+
+private struct RideMapHistoryDetailMap: View {
+    let points: [MobileRideMapRouteDisplayPoint]
+    let routeID: String
+    let projectionVersion: UInt64
+    let pointsTruncated: Bool
+    let isLoading: Bool
+    let hasNoPoints: Bool
+    let routeError: MobileRideMapError?
+    @Binding var mapPosition: MapCameraPosition
+    @Binding var isApplyingCamera: Bool
+    let cameraDidChange: (MKCoordinateRegion) -> Void
+
+    var body: some View {
+        ZStack {
+            RideMapCanvasView(
+                points: points,
+                routeID: routeID,
+                projectionVersion: projectionVersion,
+                showsStartMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
+                    pointsTruncated: pointsTruncated
+                ),
+                showsEndMarker: RideMapCanvasView.shouldShowRecordedEndpointMarkers(
+                    pointsTruncated: pointsTruncated
+                ),
+                showsCurrentMarker: false,
+                fitsRouteOnChange: true,
+                mapPosition: $mapPosition,
+                isApplyingCamera: $isApplyingCamera,
+                cameraDidChange: cameraDidChange
+            )
+
+            if isLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .tint(PevColors.yellow)
+                    Text(localizedAppText("ride_map.history_loading"))
+                        .font(.subheadline.weight(.semibold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .modifier(RideMapLoadingSurface())
+                .accessibilityIdentifier("ride-map.detail-loading")
+            } else if routeError != nil {
+                ContentUnavailableView(
+                    localizedAppText("ride_map.detail_error_title"),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .accessibilityIdentifier("ride-map.detail-map-error")
+            } else if hasNoPoints {
+                ContentUnavailableView(
+                    localizedAppText("ride_map.no_points"),
+                    systemImage: "location.slash"
+                )
+                .accessibilityIdentifier("ride-map.detail-no-points")
+            }
+        }
     }
 }
 
