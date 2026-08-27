@@ -32,7 +32,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 14;
+const CURRENT_SCHEMA_VERSION: i64 = 15;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -3801,7 +3801,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 14;
+                PRAGMA user_version = 15;
                  COMMIT;",
             )?;
         }
@@ -3863,6 +3863,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         11 => migrate_v11_to_current(connection)?,
         12 => migrate_v12_to_current(connection)?,
         13 => migrate_v13_to_current(connection)?,
+        14 => migrate_v14_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -3901,6 +3902,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         CREATE TABLE ride_segments (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+            point_count INTEGER NOT NULL CHECK (point_count >= 0),
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
@@ -4170,9 +4172,9 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         SELECT id, source, state, created_at_ms, updated_at_ms, point_count, distance_mm
         FROM rides_legacy;
         INSERT INTO ride_segments
-            (ride_id, segment_id, sequence, start_reason, source,
+            (ride_id, segment_id, point_count, sequence, start_reason, source,
              started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
-        SELECT ride_id, 0, 0, 'initial', MIN(source), MIN(monotonic_ms), MAX(monotonic_ms),
+        SELECT ride_id, 0, COUNT(*), 0, 'initial', MIN(source), MIN(monotonic_ms), MAX(monotonic_ms),
                MIN(wall_clock_ms), MAX(wall_clock_ms)
         FROM ride_points_legacy
         GROUP BY ride_id;
@@ -4204,7 +4206,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 14;
+                PRAGMA user_version = 15;
         ",
     )?;
     transaction.commit()?;
@@ -4396,6 +4398,7 @@ fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageErro
         CREATE TABLE ride_segments (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+            point_count INTEGER NOT NULL CHECK (point_count >= 0),
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
@@ -4407,9 +4410,9 @@ fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageErro
             UNIQUE (ride_id, sequence)
         );
         INSERT INTO ride_segments
-            (ride_id, segment_id, sequence, start_reason, source,
+            (ride_id, segment_id, point_count, sequence, start_reason, source,
              started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
-        SELECT ride_id, segment_id, segment_id,
+        SELECT ride_id, segment_id, COUNT(*), segment_id,
                CASE WHEN segment_id = 0 THEN 'initial' ELSE 'background_gap' END,
                MIN(source), MIN(monotonic_ms), MAX(monotonic_ms), MIN(wall_clock_ms), MAX(wall_clock_ms)
         FROM ride_points
@@ -4513,7 +4516,7 @@ fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "PRAGMA application_id = 1129665615;
              PRAGMA user_version = 14;",
         )?;
-        return Ok(());
+        return migrate_v14_to_current(connection);
     }
 
     let transaction = connection.transaction()?;
@@ -4561,6 +4564,33 @@ fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageErro
          DROP TABLE map_points_legacy;
          PRAGMA application_id = 1129665615;
          PRAGMA user_version = 14;",
+    )?;
+    transaction.commit()?;
+    migrate_v14_to_current(connection)
+}
+
+fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    if table_has_column(connection, "ride_segments", "point_count")? {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 15;",
+        )?;
+        return Ok(());
+    }
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_segments
+             ADD COLUMN point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0);
+         UPDATE ride_segments
+         SET point_count = (
+             SELECT COUNT(*)
+             FROM ride_points
+             WHERE ride_points.ride_id = ride_segments.ride_id
+               AND ride_points.segment_id = ride_segments.segment_id
+         );
+         PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 15;",
     )?;
     transaction.commit()?;
     Ok(())
@@ -4615,7 +4645,24 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
     verify_device_schema(connection)?;
+    verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_ride_segment_schema(connection: &Connection) -> Result<(), StorageError> {
+    let point_count: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT type, \"notnull\"
+             FROM pragma_table_info('ride_segments')
+             WHERE name = 'point_count'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if point_count != Some(("INTEGER".to_owned(), 1)) {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
     Ok(())
 }
 
@@ -6042,9 +6089,9 @@ fn ensure_ride_segment(
     let start_reason = segment_start_reason(previous, sample, segment_identity);
     connection.execute(
         "INSERT INTO ride_segments
-            (ride_id, segment_id, sequence, start_reason, source,
+            (ride_id, segment_id, point_count, sequence, start_reason, source,
              started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
-         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
+         VALUES (?1, ?2, 0, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
         params![
             ride_id.uuid().to_string(),
             segment_id,
@@ -6218,6 +6265,12 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
             updated_at_ms,
             duration_milliseconds,
         ],
+    )?;
+    connection.execute(
+        "UPDATE ride_segments
+         SET point_count = point_count + 1
+         WHERE ride_id = ?1 AND segment_id = ?2",
+        params![ride_id.uuid().to_string(), segment_id.value()],
     )?;
     Ok(())
 }
@@ -6695,17 +6748,10 @@ fn project_route_candidates(
         "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
                 points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
                 points.horizontal_accuracy_mm, points.source, segments.start_reason,
-                source_segment_counts.point_count
+                segments.point_count
          FROM ride_points AS points
          JOIN ride_segments AS segments
            ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
-         JOIN (
-             SELECT segment_id, COUNT(*) AS point_count
-             FROM ride_points
-             WHERE ride_id = ?1
-             GROUP BY segment_id
-         ) AS source_segment_counts
-           ON source_segment_counts.segment_id = points.segment_id
          WHERE points.ride_id = ?1{}
          ORDER BY points.sequence ASC",
         counts.viewport_predicate

@@ -196,9 +196,9 @@ fn current_database_repairs_monotonic_ride_creation_times() {
     connection
         .execute(
             "INSERT INTO ride_segments
-             (ride_id, segment_id, sequence, start_reason, source,
+             (ride_id, segment_id, point_count, sequence, start_reason, source,
               started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
-             VALUES (?1, 0, 0, 'initial', 'live', 1_000, 1_000,
+             VALUES (?1, 0, 1, 0, 'initial', 'live', 1_000, 1_000,
                      1_700_000_001_000, 1_700_000_001_000)",
             ["00000000-0000-0000-0000-000000000001"],
         )
@@ -1745,7 +1745,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 14);
+        assert_eq!(current_version, 15);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1872,7 +1872,7 @@ fn schema_ten_and_eleven_migrations_create_segment_rows_and_foreign_keys() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 14);
+        assert_eq!(current_version, 15);
         let segment_count: u64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
@@ -2256,7 +2256,7 @@ fn schema_v13_spatial_rows_migrate_without_integer_domain_ids() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let rtree_id: i64 = connection
         .query_row(
             "SELECT rtree_id FROM trail_segment_spatial_keys",
@@ -2320,7 +2320,7 @@ fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     let selected_key_length: u64 = connection
         .query_row(
             "SELECT length(singleton_key) FROM selected_device",
@@ -2539,6 +2539,138 @@ fn durable_route_projection_is_bounded_and_viewport_filtered_in_rust() {
     }));
 
     database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn segment_point_counts_are_maintained_transactionally() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-point-count-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for (monotonic_ms, latitude_degrees, segment_id) in
+        [(1_u64, 40.0001, 0_u64), (2, 40.0002, 0), (3, 40.0003, 1)]
+    {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database
+                .append_location_with_segment_id(ride, sample, RideMapSegmentId::new(segment_id))
+                .unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let counts: Vec<(u64, u64)> = connection
+        .prepare(
+            "SELECT segment_id, point_count
+             FROM ride_segments
+             WHERE ride_id = ?1
+             ORDER BY segment_id",
+        )
+        .unwrap()
+        .query_map([ride.uuid().to_string()], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(counts, vec![(0, 2), (1, 1)]);
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn schema_v14_migration_backfills_segment_point_counts() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-point-count-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 40).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    for (monotonic_ms, latitude_degrees) in [(1_u64, 40.0001), (2, 40.0002)] {
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(latitude_degrees, -105.0).unwrap(),
+            monotonic_ms,
+            1_700_000_000_000 + monotonic_ms,
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(
+            database
+                .append_location_with_segment_id(ride, sample, RideMapSegmentId::new(0))
+                .unwrap(),
+            LocationAdmission::Accepted
+        );
+    }
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE ride_segments DROP COLUMN point_count;
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 14;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    let count: u64 = connection
+        .query_row(
+            "SELECT point_count FROM ride_segments WHERE ride_id = ?1 AND segment_id = 0",
+            [ride.uuid().to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, 15);
+    assert_eq!(count, 2);
+    drop(connection);
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn current_schema_requires_segment_point_counts() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-segment-point-count-schema-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "ALTER TABLE ride_segments DROP COLUMN point_count;
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 15;",
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(matches!(
+        RideDatabase::open(&path),
+        Err(StorageError::InvalidDatabaseIdentity)
+    ));
     let _ = std::fs::remove_file(path);
 }
 
@@ -3108,7 +3240,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);
