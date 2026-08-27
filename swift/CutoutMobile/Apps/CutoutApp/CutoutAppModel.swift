@@ -346,9 +346,7 @@ final class CutoutAppModel {
                 }
                 self.rideMapLiveError = Self.mapRideMapError(error)
                 self.rideMapPoints = []
-                self.rideMapLiveDisplayPoints = []
-                self.rideMapLiveSegments = []
-                self.rideMapLiveSegmentsOmittedByBudget = false
+                self.clearLiveProjectionState()
             }
         }
     }
@@ -963,10 +961,7 @@ final class CutoutAppModel {
                         continue
                     }
                     self.rideMapLiveError = Self.mapRideMapError(error)
-                    self.rideMapLiveDisplayPoints = []
-                    self.rideMapLiveEndpointMetadata = .empty
-                    self.rideMapLiveSegments = []
-                    self.rideMapLiveSegmentsOmittedByBudget = false
+                    self.clearLiveProjectionState()
                 }
                 self.rideMapLiveProjectionTask = nil
                 self.rideMapLiveProjectionCancellation = nil
@@ -983,17 +978,21 @@ final class CutoutAppModel {
         rideMapLiveSegmentsOmittedByBudget = projection.segmentsOmittedByBudget
     }
 
+    private func clearLiveProjectionState() {
+        rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
+        rideMapLiveEndpointMetadata = .empty
+        rideMapLiveSegments.removeAll(keepingCapacity: true)
+        rideMapLivePointsTruncated = false
+        rideMapLiveSegmentsOmittedByBudget = false
+    }
+
     private func invalidateLiveProjection(clearPoints: Bool) {
         rideMapLiveProjectionGeneration &+= 1
         rideMapLiveProjectionEnabled = false
         rideMapLiveProjectionCancellation?.cancel()
         if clearPoints {
             rideMapPoints.removeAll(keepingCapacity: true)
-            rideMapLiveDisplayPoints.removeAll(keepingCapacity: true)
-            rideMapLiveEndpointMetadata = .empty
-            rideMapLiveSegments = []
-            rideMapLivePointsTruncated = false
-            rideMapLiveSegmentsOmittedByBudget = false
+            clearLiveProjectionState()
             rideMapLastDecision = nil
         }
     }
