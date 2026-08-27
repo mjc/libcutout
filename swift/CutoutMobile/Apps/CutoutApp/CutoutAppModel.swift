@@ -646,7 +646,8 @@ final class CutoutAppModel {
                 guard !Task.isCancelled, let self else { return }
                 self.replaceRideMapHistoryDetailDisplayPoints(
                     result.points,
-                    truncated: result.sourcePointCount > UInt64(result.points.count)
+                    truncated: result.sourcePointCount > UInt64(result.points.count),
+                    segmentsOmittedByBudget: result.segmentsOmittedByBudget
                 )
                 self.rideMapHistoryDetailRouteError = nil
                 self.rideMapHistoryDetailRouteLoading = false
