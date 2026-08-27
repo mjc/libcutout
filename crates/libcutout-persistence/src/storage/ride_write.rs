@@ -356,6 +356,27 @@ mod tests {
 
     #[test]
     fn terminal_transition_without_monotonic_time_clears_pause_marker() {
+        for event in [RideEvent::Stop, RideEvent::Interrupt] {
+            let state = RideWriteState::with_duration(
+                RideSource::Live,
+                RideLifecycleState::Paused,
+                20,
+                Some(1_000),
+                4_000,
+                Some(5_000),
+                2_000,
+            );
+
+            let transition = state.transition_at(event, 10_000, None).unwrap();
+
+            assert_eq!(transition.duration_milliseconds(), 4_000);
+            assert_eq!(transition.paused_at_milliseconds(), None);
+            assert_eq!(transition.paused_duration_milliseconds(), 2_000);
+        }
+    }
+
+    #[test]
+    fn paused_location_duration_excludes_the_in_flight_pause() {
         let state = RideWriteState::with_duration(
             RideSource::Live,
             RideLifecycleState::Paused,
@@ -363,10 +384,30 @@ mod tests {
             Some(1_000),
             4_000,
             Some(5_000),
-            2_000,
+            0,
+        );
+        let sample = LocationSample::new(
+            Coordinate::from_degrees(40.0, -105.0).unwrap(),
+            10_000,
+            1_700_000_010_000,
+            None,
+            LocationSource::Live,
         );
 
-        let transition = state.transition_at(RideEvent::Stop, 10_000, None).unwrap();
+        let LocationWriteDecision::Accepted {
+            duration_milliseconds,
+            ..
+        } = state
+            .decide_location(
+                None,
+                sample,
+                RideMapSegmentId::new(0),
+                LocationWriteMode::Live,
+            )
+            .unwrap()
+        else {
+            panic!("paused location should be admitted");
+        };
 
         assert_eq!(transition.duration_milliseconds(), 2_000);
         assert_eq!(transition.paused_at_milliseconds(), None);

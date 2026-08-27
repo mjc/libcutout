@@ -29,9 +29,11 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 14;
+const CURRENT_SCHEMA_VERSION: i64 = 15;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
+const MAX_HISTORY_CONTEXT_ROUTES: usize = 8;
+const MAX_HISTORY_CONTEXT_POINTS: usize = 4_096;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PEVCAP_RECORDS: u64 = 10_000_000;
 const MAX_PEVCAP_DURATION_MILLISECONDS: u64 = 24 * 60 * 60 * 1_000;
@@ -112,6 +114,91 @@ impl QueryLimit {
 
     const fn get(self) -> u32 {
         self.0
+    }
+}
+
+/// Rust-owned bounds for one history overview context projection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HistoryContextBudget {
+    history_page_limit: QueryLimit,
+    max_routes: usize,
+    per_route_budget: RouteDisplayBudget,
+    total_point_budget: usize,
+}
+
+impl HistoryContextBudget {
+    /// Creates bounded history-page, route-count, and point budgets.
+    ///
+    /// `history_page_limit` bounds the records loaded for the context query. `max_routes` bounds
+    /// the context routes returned after selected-ride exclusion. The point budgets apply after
+    /// viewport filtering and are enforced by the Rust projection worker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::InvalidHistoryContextBudget`] when any bound is outside the
+    /// supported range.
+    pub fn new(
+        history_page_limit: u32,
+        max_routes: u32,
+        per_route_points: u32,
+        total_point_budget: u32,
+    ) -> Result<Self, StorageError> {
+        let history_page_limit = QueryLimit::new(history_page_limit)?;
+        let max_routes =
+            usize::try_from(max_routes).map_err(|_| StorageError::InvalidHistoryContextBudget {
+                field: "max routes",
+                value: max_routes,
+            })?;
+        if !(1..=MAX_HISTORY_CONTEXT_ROUTES).contains(&max_routes) {
+            return Err(StorageError::InvalidHistoryContextBudget {
+                field: "max routes",
+                value: u32::try_from(max_routes).unwrap_or(u32::MAX),
+            });
+        }
+        let per_route_budget = usize::try_from(per_route_points)
+            .ok()
+            .and_then(RouteDisplayBudget::new)
+            .ok_or(StorageError::InvalidHistoryContextBudget {
+                field: "per-route point budget",
+                value: per_route_points,
+            })?;
+        let total_point_budget = usize::try_from(total_point_budget)
+            .ok()
+            .filter(|value| (1..=MAX_HISTORY_CONTEXT_POINTS).contains(value))
+            .ok_or(StorageError::InvalidHistoryContextBudget {
+                field: "aggregate point budget",
+                value: total_point_budget,
+            })?;
+        Ok(Self {
+            history_page_limit,
+            max_routes,
+            per_route_budget,
+            total_point_budget,
+        })
+    }
+
+    /// Returns the bounded history page size.
+    #[must_use]
+    pub const fn history_page_limit(self) -> QueryLimit {
+        self.history_page_limit
+    }
+
+    /// Returns the maximum number of context routes.
+    #[must_use]
+    pub const fn max_routes(self) -> usize {
+        self.max_routes
+    }
+
+    /// Returns the per-route display budget.
+    #[must_use]
+    pub const fn per_route_budget(self) -> RouteDisplayBudget {
+        self.per_route_budget
+    }
+
+    /// Returns the aggregate display-point budget.
+    #[must_use]
+    pub const fn total_point_budget(self) -> usize {
+        self.total_point_budget
     }
 }
 
@@ -383,6 +470,76 @@ impl RidePage {
     }
 }
 
+/// One bounded contextual route from a history overview projection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryContextRoute {
+    ride_id: RideId,
+    projection: RoutePointProjection,
+}
+
+impl HistoryContextRoute {
+    /// Returns the ride represented by this contextual route.
+    #[must_use]
+    pub const fn ride_id(&self) -> RideId {
+        self.ride_id
+    }
+
+    /// Returns the bounded route projection.
+    #[must_use]
+    pub const fn projection(&self) -> &RoutePointProjection {
+        &self.projection
+    }
+}
+
+/// Bounded context routes for a history overview.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HistoryContextProjection {
+    routes: Vec<HistoryContextRoute>,
+    source_history_route_count: u64,
+    context_route_count: u64,
+    total_display_point_count: u64,
+    routes_omitted_by_budget: bool,
+    history_page_has_more: bool,
+}
+
+impl HistoryContextProjection {
+    /// Returns contextual routes in the same newest-first order as the history page.
+    #[must_use]
+    pub fn routes(&self) -> &[HistoryContextRoute] {
+        &self.routes
+    }
+
+    /// Returns the number of rides loaded from the bounded history page.
+    #[must_use]
+    pub const fn source_history_route_count(&self) -> u64 {
+        self.source_history_route_count
+    }
+
+    /// Returns the number of eligible context rides after selected-ride exclusion.
+    #[must_use]
+    pub const fn context_route_count(&self) -> u64 {
+        self.context_route_count
+    }
+
+    /// Returns the number of display points emitted across contextual routes.
+    #[must_use]
+    pub const fn total_display_point_count(&self) -> u64 {
+        self.total_display_point_count
+    }
+
+    /// Returns whether the point or route budget omitted eligible context data.
+    #[must_use]
+    pub const fn routes_omitted_by_budget(&self) -> bool {
+        self.routes_omitted_by_budget
+    }
+
+    /// Returns whether more history exists after the loaded bounded page.
+    #[must_use]
+    pub const fn history_page_has_more(&self) -> bool {
+        self.history_page_has_more
+    }
+}
+
 /// Stable cursor for ascending route-point pagination.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RoutePointCursor(u64);
@@ -421,6 +578,12 @@ impl RoutePoint {
     #[must_use]
     pub const fn segment_id(self) -> u64 {
         self.segment_id
+    }
+
+    /// Returns why this point's segment began.
+    #[must_use]
+    pub const fn start_reason(self) -> RideSegmentStartReason {
+        self.start_reason
     }
 
     /// Returns the admitted canonical sample.
@@ -990,6 +1153,14 @@ pub enum StorageError {
     /// A growing query was not bounded by a supported limit.
     #[error("invalid query limit {0}; expected 1..={MAX_QUERY_LIMIT}")]
     InvalidQueryLimit(u32),
+    /// A history context budget exceeded one of the Rust-owned limits.
+    #[error("invalid history context budget for {field}: {value}")]
+    InvalidHistoryContextBudget {
+        /// Human-readable budget component.
+        field: &'static str,
+        /// Rejected caller value.
+        value: u32,
+    },
     /// Geographic bounds were non-finite, out of range, or had reversed latitudes.
     #[error("invalid geographic bounds")]
     InvalidGeographicBounds,
@@ -2386,6 +2557,43 @@ impl RideDatabase {
         })
     }
 
+    /// Projects the bounded history page into subdued contextual routes.
+    ///
+    /// Rust loads at most the requested history page, excludes `selected_ride`, and projects
+    /// only the configured number of remaining routes. Each route uses the same viewport,
+    /// privacy, endpoint, and segment policy as selected-route projection. The aggregate point
+    /// budget prevents a dense history page from multiplying the per-route display budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::DeadlineExceeded`] when the Rust-owned projection deadline expires
+    /// or another typed storage error when the page or route cannot be decoded.
+    pub fn project_history_context(
+        &self,
+        query: RideHistoryQuery,
+        selected_ride: Option<RideId>,
+        budget: HistoryContextBudget,
+        viewport: Option<RouteViewport>,
+        privacy: RoutePrivacyPolicy,
+    ) -> Result<HistoryContextProjection, StorageError> {
+        let cancellation = default_route_projection_cancellation();
+        let deadline = cancellation.deadline();
+        let (reply, response) = response_channel();
+        self.enqueue(Command::ProjectHistoryContext {
+            query,
+            selected_ride,
+            budget,
+            viewport,
+            privacy,
+            cancellation: cancellation.clone(),
+            reply,
+        })?;
+        match deadline {
+            Some(deadline) => receive_until(&response, deadline, &cancellation),
+            None => receive(&response),
+        }
+    }
+
     /// Lists every vehicle identity referenced by a visible ride.
     ///
     /// The result is not derived from a history page, so older vehicles remain available to the
@@ -2903,6 +3111,15 @@ enum Command {
         query: RideHistoryQuery,
         reply: Reply<RidePage>,
     },
+    ProjectHistoryContext {
+        query: RideHistoryQuery,
+        selected_ride: Option<RideId>,
+        budget: HistoryContextBudget,
+        viewport: Option<RouteViewport>,
+        privacy: RoutePrivacyPolicy,
+        cancellation: RouteProjectionCancellation,
+        reply: Reply<HistoryContextProjection>,
+    },
     ListRideHistoryVehicleOptions {
         reply: Reply<Vec<RideHistoryVehicleOption>>,
     },
@@ -3345,6 +3562,30 @@ fn worker_loop(
             } => {
                 let _ = reply.send(list_rides(&connection, cursor, limit, &query));
             }
+            Command::ProjectHistoryContext {
+                query,
+                selected_ride,
+                budget,
+                viewport,
+                privacy,
+                cancellation,
+                reply,
+            } => {
+                cancellation.install_interrupt(connection.get_interrupt_handle());
+                let result = project_history_context(
+                    &connection,
+                    &query,
+                    selected_ride,
+                    budget,
+                    viewport,
+                    privacy,
+                    &cancellation,
+                );
+                #[cfg(test)]
+                connection.progress_handler(0, None::<fn() -> bool>);
+                cancellation.clear_interrupt();
+                let _ = reply.send(result);
+            }
             Command::ListRideHistoryVehicleOptions { reply } => {
                 let _ = reply.send(list_ride_history_vehicle_options(&connection));
             }
@@ -3593,7 +3834,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 14;
+                PRAGMA user_version = 15;
                  COMMIT;",
             )?;
         }
@@ -3655,6 +3896,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         11 => migrate_v11_to_current(connection)?,
         12 => migrate_v12_to_current(connection)?,
         13 => migrate_v13_to_current(connection)?,
+        14 => migrate_v14_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -3694,6 +3936,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
         CREATE TABLE ride_segments (
             ride_id TEXT NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
             segment_id INTEGER NOT NULL CHECK (segment_id >= 0),
+            point_count INTEGER NOT NULL CHECK (point_count >= 0),
             sequence INTEGER NOT NULL CHECK (sequence >= 0),
             start_reason TEXT NOT NULL CHECK (start_reason IN ('initial', 'resume', 'background_gap', 'import_boundary')),
             source TEXT NOT NULL CHECK (source IN ('live', 'pevcap_import')),
@@ -4327,6 +4570,33 @@ fn migrate_v13_to_current(connection: &mut Connection) -> Result<(), StorageErro
     copy_legacy_spatial_rows(&transaction)?;
     transaction.execute_batch("DROP TABLE trail_segments_legacy; DROP TABLE map_points_legacy; PRAGMA application_id = 1129665615; PRAGMA user_version = 14;")?;
     transaction.commit()?;
+    migrate_v14_to_current(connection)
+}
+
+fn migrate_v14_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    verify_legacy_schema(connection)?;
+    if table_has_column(connection, "ride_segments", "point_count")? {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 15;",
+        )?;
+        return Ok(());
+    }
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "ALTER TABLE ride_segments
+             ADD COLUMN point_count INTEGER NOT NULL DEFAULT 0 CHECK (point_count >= 0);
+         UPDATE ride_segments
+         SET point_count = (
+             SELECT COUNT(*)
+             FROM ride_points
+             WHERE ride_points.ride_id = ride_segments.ride_id
+               AND ride_points.segment_id = ride_segments.segment_id
+         );
+         PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 15;",
+    )?;
+    transaction.commit()?;
     Ok(())
 }
 
@@ -4379,7 +4649,24 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
     verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
     verify_singleton_schema(connection, "ride_session_marker", "marker")?;
     verify_device_schema(connection)?;
+    verify_ride_segment_schema(connection)?;
     verify_spatial_identity_schema(connection)?;
+    Ok(())
+}
+
+fn verify_ride_segment_schema(connection: &Connection) -> Result<(), StorageError> {
+    let point_count: Option<(String, i64)> = connection
+        .query_row(
+            "SELECT type, \"notnull\"
+             FROM pragma_table_info('ride_segments')
+             WHERE name = 'point_count'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if point_count != Some(("INTEGER".to_owned(), 1)) {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
     Ok(())
 }
 
@@ -5985,9 +6272,9 @@ fn ensure_ride_segment(
     }
     connection.execute(
         "INSERT INTO ride_segments
-            (ride_id, segment_id, sequence, start_reason, source,
+            (ride_id, segment_id, point_count, sequence, start_reason, source,
              started_monotonic_ms, ended_monotonic_ms, started_wall_clock_ms, ended_wall_clock_ms)
-         VALUES (?1, ?2, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
+         VALUES (?1, ?2, 0, ?2, ?3, ?4, ?5, ?5, ?6, ?6)",
         params![
             ride_id.uuid().to_string(),
             segment_id,
@@ -6110,6 +6397,12 @@ fn insert_location(connection: &Connection, insert: &LocationInsert) -> Result<(
             updated_at_ms,
             sample.monotonic_milliseconds().as_u64(),
         ],
+    )?;
+    connection.execute(
+        "UPDATE ride_segments
+         SET point_count = point_count + 1
+         WHERE ride_id = ?1 AND segment_id = ?2",
+        params![ride_id.uuid().to_string(), segment_id.value()],
     )?;
     Ok(())
 }
@@ -6423,11 +6716,14 @@ fn route_points(
     let after = cursor.map_or(-1_i64, |cursor| i64::try_from(cursor.0).unwrap_or(i64::MAX));
     let fetch_limit = i64::from(limit.get()) + 1;
     let mut statement = connection.prepare(
-        "SELECT sequence, segment_id, telemetry_state, monotonic_ms, wall_clock_ms, latitude_e7, longitude_e7,
-                horizontal_accuracy_mm, source
-         FROM ride_points
-         WHERE ride_id = ?1 AND sequence > ?2
-         ORDER BY sequence ASC
+        "SELECT points.sequence, points.segment_id, points.telemetry_state, points.monotonic_ms,
+                points.wall_clock_ms, points.latitude_e7, points.longitude_e7,
+                points.horizontal_accuracy_mm, points.source, segments.start_reason
+         FROM ride_points AS points
+         JOIN ride_segments AS segments
+           ON segments.ride_id = points.ride_id AND segments.segment_id = points.segment_id
+         WHERE points.ride_id = ?1 AND points.sequence > ?2
+         ORDER BY points.sequence ASC
          LIMIT ?3",
     )?;
     let rows = statement.query_map(
@@ -6559,7 +6855,7 @@ fn route_projection_counts(
 ) -> Result<RouteProjectionCounts, StorageError> {
     let source_point_count = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(*) FROM ride_points WHERE ride_id = ?1",
+            "SELECT point_count FROM rides WHERE id = ?1",
             [ride_id],
             |row| row.get::<_, u64>(0),
         ),
@@ -6568,9 +6864,28 @@ fn route_projection_counts(
     projection_checkpoint(cancellation)?;
     let source_segment_count = projection_sqlite(
         connection.query_row(
-            "SELECT COUNT(DISTINCT segment_id) FROM ride_points WHERE ride_id = ?1",
+            "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
             [ride_id],
             |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
+    )?;
+    projection_checkpoint(cancellation)?;
+    let background_gap_count = projection_sqlite(
+        connection.query_row(
+            "SELECT COUNT(*) FROM ride_segments
+             WHERE ride_id = ?1 AND start_reason = 'background_gap'",
+            [ride_id],
+            |row| row.get::<_, u64>(0),
+        ),
+        cancellation,
+    )?;
+    projection_checkpoint(cancellation)?;
+    let (source_start_sequence, source_end_sequence) = projection_sqlite(
+        connection.query_row(
+            "SELECT MIN(sequence), MAX(sequence) FROM ride_points WHERE ride_id = ?1",
+            [ride_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         ),
         cancellation,
     )?;
@@ -6637,6 +6952,10 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
     let source = source_from_db(&source_value).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error))
     })?;
+    let start_reason_value: String = row.get(9)?;
+    let start_reason = segment_start_reason_from_db(&start_reason_value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error))
+    })?;
     let coordinate = Coordinate::from_fixed_parts(row.get(5)?, row.get(6)?).map_err(|error| {
         rusqlite::Error::FromSqlConversionFailure(
             5,
@@ -6665,6 +6984,10 @@ fn route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RoutePoint>
             source,
         ),
     })
+}
+
+fn projected_route_point_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(RoutePoint, u64)> {
+    Ok((route_point_from_row(row)?, row.get(10)?))
 }
 
 fn ride_source_from_db(value: &str) -> Result<RideSource, StorageError> {
