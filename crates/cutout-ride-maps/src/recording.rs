@@ -893,7 +893,10 @@ impl RideMapRecorder {
                 self.completed_duration_milliseconds = timing.duration_milliseconds;
             }
         }
-        if self.state == Some(RideLifecycleState::Paused) && state == RideLifecycleState::Active {
+        if self.state == Some(RideLifecycleState::Paused)
+            && state == RideLifecycleState::Active
+            && !self.summary.point_count().is_zero()
+        {
             self.segment_id = self.segment_id.next();
             self.segment_started = true;
         }
@@ -1183,6 +1186,28 @@ mod tests {
         assert_eq!(
             recorder.points()[1].segment_start_reason(),
             RideSegmentStartReason::Resume
+        );
+    }
+
+    #[test]
+    fn resume_before_first_sample_keeps_initial_segment_identity() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(2_000));
+        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(3_000));
+
+        assert_eq!(
+            recorder.current_segment_id(),
+            super::RideMapSegmentId::new(0)
+        );
+        assert!(recorder.record_sample(sample(3_001, 40.0)));
+        assert_eq!(
+            recorder.points()[0].segment_id(),
+            super::RideMapSegmentId::new(0)
+        );
+        assert_eq!(
+            recorder.points()[0].segment_start_reason(),
+            RideSegmentStartReason::Initial
         );
     }
 
