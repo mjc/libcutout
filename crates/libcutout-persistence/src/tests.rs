@@ -1103,6 +1103,7 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
         .unwrap();
     assert_eq!(preview.record_count(), 10);
     assert_eq!(preview.location_count(), 3);
+    assert_eq!(preview.duration_milliseconds(), 39_000);
     assert_eq!(preview.outcome(), PevcapImportOutcome::RideAndCapture);
 
     let receipt = database
@@ -1138,6 +1139,14 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
             .unwrap()
             .segment_count(),
         2
+    );
+    assert_eq!(
+        database
+            .find_ride(ride_id)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        39_000
     );
     let managed_capture = PevcapCapture::decode(
         &std::fs::read(&receipt.managed_artifact_path).unwrap(),
@@ -1181,6 +1190,16 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
     );
 
     database.shutdown().unwrap();
+    let reopened = RideDatabase::open(&database_path).unwrap();
+    assert_eq!(
+        reopened
+            .find_ride(ride_id)
+            .unwrap()
+            .unwrap()
+            .duration_milliseconds(),
+        39_000
+    );
+    reopened.shutdown().unwrap();
     let _ = std::fs::remove_file(&receipt.managed_artifact_path);
     let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
     let _ = std::fs::remove_file(database_path);

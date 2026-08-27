@@ -2108,6 +2108,7 @@ impl RideDatabase {
                 artifact_size: preview.artifact_size,
                 record_count: preview.record_count,
                 location_count,
+                duration_milliseconds: preview.duration_milliseconds,
                 imported_at_ms: created_at_ms,
                 reply,
             })
@@ -3198,6 +3199,7 @@ enum Command {
         artifact_size: u64,
         record_count: u64,
         location_count: u64,
+        duration_milliseconds: u64,
         imported_at_ms: u64,
         reply: Reply<PevcapImportReceipt>,
     },
@@ -3536,6 +3538,7 @@ fn worker_loop(
                 artifact_size,
                 record_count,
                 location_count,
+                duration_milliseconds,
                 imported_at_ms,
                 reply,
             } => {
@@ -3548,6 +3551,7 @@ fn worker_loop(
                     artifact_size,
                     record_count,
                     location_count,
+                    duration_milliseconds,
                     imported_at_ms,
                 ));
             }
@@ -5531,11 +5535,24 @@ fn preflight_pevcap(
                 Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
         }
     }
+    let mut route_earliest_milliseconds = None::<u64>;
+    let mut route_latest_milliseconds = None::<u64>;
     let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
+        for point in &samples {
+            let milliseconds = point.sample.monotonic_milliseconds().as_u64();
+            route_earliest_milliseconds = Some(
+                route_earliest_milliseconds
+                    .map_or(milliseconds, |current| current.min(milliseconds)),
+            );
+            route_latest_milliseconds = Some(
+                route_latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)),
+            );
+        }
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
-    let duration_milliseconds = latest_milliseconds
-        .zip(earliest_milliseconds)
+    let duration_milliseconds = route_latest_milliseconds
+        .zip(route_earliest_milliseconds)
+        .or_else(|| latest_milliseconds.zip(earliest_milliseconds))
         .map_or(0, |(latest, earliest)| latest.saturating_sub(earliest));
     check_pevcap_limit(
         "duration milliseconds",
@@ -5877,6 +5894,7 @@ fn finish_pevcap_import(
     artifact_size: u64,
     record_count: u64,
     location_count: u64,
+    duration_milliseconds: u64,
     imported_at_ms: u64,
 ) -> Result<PevcapImportReceipt, StorageError> {
     let transaction = connection.transaction()?;
@@ -5896,6 +5914,12 @@ fn finish_pevcap_import(
             RideEvent::Import,
             imported_at_ms,
             None,
+        )?;
+        transaction.execute(
+            "UPDATE rides
+             SET duration_ms = MAX(duration_ms, ?1)
+             WHERE id = ?2",
+            params![duration_milliseconds, ride_id.uuid().to_string()],
         )?;
     }
     transaction.execute(
