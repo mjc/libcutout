@@ -1,6 +1,6 @@
 use cutout_core::{
-    HostSession, PevcapEncoding, PevcapReader, PevcapReplayMode, ProtocolSession, SessionInput,
-    SessionOutput,
+    HostSession, PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapReplayMode,
+    ProtocolSession, SessionInput, SessionOutput,
 };
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
@@ -34,7 +34,7 @@ use ride_write::{
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
-const CURRENT_SCHEMA_VERSION: i64 = 12;
+const CURRENT_SCHEMA_VERSION: i64 = 13;
 const APPLICATION_ID: i64 = 0x4355_544f;
 const MAX_QUERY_LIMIT: u32 = 500;
 const MAX_PEVCAP_ARTIFACT_BYTES: u64 = 512 * 1024 * 1024;
@@ -747,6 +747,51 @@ impl Default for TrailId {
     }
 }
 
+/// Stable key for the one selected-device row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SelectedDeviceKey(Uuid);
+
+impl SelectedDeviceKey {
+    pub(crate) const VALUE: Self = Self(Uuid::from_u128(1));
+
+    pub(crate) fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
+/// Stable key for the one ride-session marker row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RideSessionMarkerKey(Uuid);
+
+impl RideSessionMarkerKey {
+    const VALUE: Self = Self(Uuid::from_u128(2));
+
+    fn blob(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+}
+
+/// Validated SQLite row identifier used only to connect a spatial table to its R*Tree row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SpatialRowId(i64);
+
+impl SpatialRowId {
+    fn from_sqlite(value: i64) -> Result<Self, StorageError> {
+        if (1..=i64::from(i32::MAX)).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(StorageError::InvalidStoredValue {
+                field: "spatial row identifier",
+                value: value.to_string(),
+            })
+        }
+    }
+
+    const fn get(self) -> i64 {
+        self.0
+    }
+}
+
 /// One canonical trail segment stored in the spatial index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrailSegment {
@@ -1272,6 +1317,31 @@ mod default_route_projection_tests {
                 .expect("default projection has a deadline")
                 > Instant::now()
         );
+    }
+}
+
+#[cfg(test)]
+mod spatial_identity_tests {
+    use super::{SpatialRowId, StorageError};
+
+    #[test]
+    fn sqlite_row_ids_are_validated_before_cross_table_use() {
+        let id = SpatialRowId::from_sqlite(7).expect("positive SQLite row IDs are valid");
+        assert_eq!(id.get(), 7);
+        assert!(matches!(
+            SpatialRowId::from_sqlite(0),
+            Err(StorageError::InvalidStoredValue {
+                field: "spatial row identifier",
+                ..
+            })
+        ));
+        assert!(matches!(
+            SpatialRowId::from_sqlite(i64::from(i32::MAX) + 1),
+            Err(StorageError::InvalidStoredValue {
+                field: "spatial row identifier",
+                ..
+            })
+        ));
     }
 }
 
@@ -2312,15 +2382,6 @@ impl RideDatabase {
         })
     }
 
-    /// Installs a deterministic worker-failure gate for pending-write recovery tests.
-    #[cfg(test)]
-    pub(crate) fn install_worker_panic_test_gate(
-        &self,
-        entered: SyncSender<()>,
-    ) -> Result<(), StorageError> {
-        self.request(|reply| Command::InstallWorkerPanicTestGate { entered, reply })
-    }
-
     /// Stops the worker without releasing the owner entry, simulating an unexpected worker exit.
     #[cfg(test)]
     pub(crate) fn stop_worker_for_test(&self) -> Result<(), StorageError> {
@@ -2392,6 +2453,9 @@ impl RideDatabase {
             Ok(()) => Ok(()),
             Err(mpsc::TrySendError::Full(_)) => Err(StorageError::QueueFull),
             Err(mpsc::TrySendError::Disconnected(command)) => {
+                if !self.worker_can_restart() {
+                    return Err(StorageError::WorkerStopped);
+                }
                 let recovered = self.reopen()?;
                 recovered
                     .sender
@@ -2408,6 +2472,9 @@ impl RideDatabase {
         match self.sender.send(command) {
             Ok(()) => Ok(()),
             Err(mpsc::SendError(command)) => {
+                if !self.worker_can_restart() {
+                    return Err(StorageError::WorkerStopped);
+                }
                 let recovered = self.reopen()?;
                 recovered
                     .sender
@@ -2415,6 +2482,18 @@ impl RideDatabase {
                     .map_err(|_| StorageError::WorkerStopped)
             }
         }
+    }
+
+    /// Returns whether this stale handle still belongs to a process-owned worker that exited
+    /// unexpectedly. An explicit shutdown removes the owner entry, so stale handles must remain
+    /// unusable instead of silently starting a new service during a later callback.
+    fn worker_can_restart(&self) -> bool {
+        owner().lock().ok().is_some_and(|owner| {
+            owner.as_ref().is_some_and(|entry| {
+                entry.service_id == self.service_id
+                    && entry.join.as_ref().is_some_and(JoinHandle::is_finished)
+            })
+        })
     }
 }
 
@@ -2689,11 +2768,6 @@ enum Command {
     InstallRouteProjectionTestGate {
         entered: SyncSender<()>,
         release: Receiver<()>,
-        reply: Reply<()>,
-    },
-    #[cfg(test)]
-    InstallWorkerPanicTestGate {
-        entered: SyncSender<()>,
         reply: Reply<()>,
     },
     #[cfg(test)]
@@ -3069,17 +3143,6 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 let _ = reply.send(Ok(()));
             }
             #[cfg(test)]
-            Command::InstallWorkerPanicTestGate { entered, reply } => {
-                connection.progress_handler(
-                    1,
-                    Some(move || {
-                        let _ = entered.send(());
-                        panic!("deliberate worker failure for persistence test");
-                    }),
-                );
-                let _ = reply.send(Ok(()));
-            }
-            #[cfg(test)]
             Command::StopForTest { reply } => {
                 let _ = reply.send(Ok(()));
                 break;
@@ -3246,7 +3309,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             }
             connection.execute_batch(
                 "PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 12;
+                PRAGMA user_version = 13;
                  COMMIT;",
             )?;
         }
@@ -3306,6 +3369,7 @@ fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         9 => migrate_v9_to_current(connection)?,
         10 => migrate_v10_to_current(connection)?,
         11 => migrate_v11_to_current(connection)?,
+        12 => migrate_v12_to_current(connection)?,
         CURRENT_SCHEMA_VERSION => {
             if application_id != APPLICATION_ID {
                 return Err(StorageError::InvalidDatabaseIdentity);
@@ -3370,7 +3434,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             FOREIGN KEY (ride_id, segment_id) REFERENCES ride_segments(ride_id, segment_id)
         );
         CREATE TABLE selected_device (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
             platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
             updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
         );
@@ -3388,7 +3452,7 @@ pub(crate) fn create_current_schema(connection: &Connection) -> Result<(), Stora
             last_learned_wall_clock_ms INTEGER NOT NULL CHECK (last_learned_wall_clock_ms >= 0)
         );
         CREATE TABLE ride_session_marker (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
+            singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
             marker BLOB NOT NULL CHECK (length(marker) BETWEEN 1 AND 4096)
         );
         CREATE TABLE pevcap_imports (
@@ -3528,9 +3592,15 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         SELECT ride_id, sequence, 0, 0, monotonic_ms, wall_clock_ms, latitude_e7,
                longitude_e7, horizontal_accuracy_mm, source
         FROM ride_points_legacy;
-        INSERT INTO selected_device SELECT * FROM selected_device_legacy;
+        INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+        SELECT X'00000000000000000000000000000001', platform_identifier, updated_at_ms
+        FROM selected_device_legacy
+        WHERE id = 1;
         INSERT INTO voltage_sag_models SELECT * FROM voltage_sag_models_legacy;
-        INSERT INTO ride_session_marker SELECT * FROM ride_session_marker_legacy;
+        INSERT INTO ride_session_marker (singleton_key, marker)
+        SELECT X'00000000000000000000000000000002', marker
+        FROM ride_session_marker_legacy
+        WHERE id = 1;
         INSERT INTO pevcap_imports
             (artifact_digest, artifact_path, ride_id, outcome, artifact_size,
              record_count, location_count, imported_at_ms)
@@ -3544,7 +3614,7 @@ fn migrate_v3_to_current(connection: &mut Connection) -> Result<(), StorageError
         DROP TABLE voltage_sag_models_legacy;
         DROP TABLE ride_session_marker_legacy;
         PRAGMA application_id = 1129665615;
-                PRAGMA user_version = 12;
+                PRAGMA user_version = 13;
         ",
     )?;
     transaction.commit()?;
@@ -3724,7 +3794,7 @@ fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageErro
             "PRAGMA application_id = 1129665615;
              PRAGMA user_version = 12;",
         )?;
-        return Ok(());
+        return migrate_v12_to_current(connection);
     }
     let transaction = connection.transaction()?;
     transaction.execute_batch(
@@ -3778,7 +3848,71 @@ fn migrate_v11_to_current(connection: &mut Connection) -> Result<(), StorageErro
         ",
     )?;
     transaction.commit()?;
+    migrate_v12_to_current(connection)
+}
+
+fn migrate_v12_to_current(connection: &mut Connection) -> Result<(), StorageError> {
+    let selected_device_has_uuid_key =
+        table_has_column(connection, "selected_device", "singleton_key")?;
+    let ride_session_marker_has_uuid_key =
+        table_has_column(connection, "ride_session_marker", "singleton_key")?;
+    if selected_device_has_uuid_key && ride_session_marker_has_uuid_key {
+        connection.execute_batch(
+            "PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 13;",
+        )?;
+        return Ok(());
+    }
+
+    let transaction = connection.transaction()?;
+    if !selected_device_has_uuid_key {
+        transaction.execute_batch(
+            "ALTER TABLE selected_device RENAME TO selected_device_legacy;
+             CREATE TABLE selected_device (
+                 singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
+                 platform_identifier TEXT NOT NULL CHECK (length(platform_identifier) BETWEEN 1 AND 512),
+                 updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+             );
+             INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+             SELECT X'00000000000000000000000000000001', platform_identifier, updated_at_ms
+             FROM selected_device_legacy
+             WHERE id = 1;
+             DROP TABLE selected_device_legacy;",
+        )?;
+    }
+    if !ride_session_marker_has_uuid_key {
+        transaction.execute_batch(
+            "ALTER TABLE ride_session_marker RENAME TO ride_session_marker_legacy;
+             CREATE TABLE ride_session_marker (
+                 singleton_key BLOB PRIMARY KEY NOT NULL CHECK (length(singleton_key) = 16),
+                 marker BLOB NOT NULL CHECK (length(marker) BETWEEN 1 AND 4096)
+             );
+             INSERT INTO ride_session_marker (singleton_key, marker)
+             SELECT X'00000000000000000000000000000002', marker
+             FROM ride_session_marker_legacy
+             WHERE id = 1;
+             DROP TABLE ride_session_marker_legacy;",
+        )?;
+    }
+    transaction.execute_batch(
+        "PRAGMA application_id = 1129665615;
+         PRAGMA user_version = 13;",
+    )?;
+    transaction.commit()?;
     Ok(())
+}
+
+fn table_has_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+) -> Result<bool, StorageError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    Ok(columns
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column))
 }
 
 fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
@@ -3811,6 +3945,63 @@ fn verify_current_schema(connection: &Connection) -> Result<(), StorageError> {
         if !exists {
             return Err(StorageError::InvalidDatabaseIdentity);
         }
+    }
+    verify_singleton_schema(connection, "selected_device", "platform_identifier")?;
+    verify_singleton_schema(connection, "ride_session_marker", "marker")?;
+    verify_device_schema(connection)?;
+    Ok(())
+}
+
+fn verify_singleton_schema(
+    connection: &Connection,
+    table: &str,
+    value_column: &str,
+) -> Result<(), StorageError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let valid = if value_column == "marker" {
+        columns.len() == 2
+            && columns[0] == ("singleton_key".to_owned(), "BLOB".to_owned(), 1, 1)
+            && columns[1] == ("marker".to_owned(), "BLOB".to_owned(), 1, 0)
+    } else {
+        columns.len() == 3
+            && columns[0] == ("singleton_key".to_owned(), "BLOB".to_owned(), 1, 1)
+            && columns[1] == (value_column.to_owned(), "TEXT".to_owned(), 1, 0)
+            && columns[2] == ("updated_at_ms".to_owned(), "INTEGER".to_owned(), 1, 0)
+    };
+    if !valid {
+        return Err(StorageError::InvalidDatabaseIdentity);
+    }
+    Ok(())
+}
+
+fn verify_device_schema(connection: &Connection) -> Result<(), StorageError> {
+    let mut statement = connection.prepare("PRAGMA table_info(devices)")?;
+    let columns = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if columns.len() != 3
+        || columns[0] != ("platform_identifier".to_owned(), "TEXT".to_owned(), 1, 1)
+        || columns[1] != ("display_name".to_owned(), "TEXT".to_owned(), 1, 0)
+        || columns[2] != ("updated_at_ms".to_owned(), "INTEGER".to_owned(), 1, 0)
+    {
+        return Err(StorageError::InvalidDatabaseIdentity);
     }
     Ok(())
 }
@@ -4055,20 +4246,24 @@ fn append_trail_segment(
     if !exists {
         return Err(StorageError::NotFound);
     }
-    transaction.execute(
-        "INSERT INTO trail_segments
+    let segment_id = transaction
+        .query_row(
+            "INSERT INTO trail_segments
             (trail_id, sequence, start_lat_e7, start_lon_e7, end_lat_e7, end_lon_e7)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            trail,
-            sequence,
-            start.latitude().as_i32(),
-            start.longitude().as_i32(),
-            end.latitude().as_i32(),
-            end.longitude().as_i32(),
-        ],
-    )?;
-    let segment_id = transaction.last_insert_rowid();
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         RETURNING id",
+            params![
+                trail,
+                sequence,
+                start.latitude().as_i32(),
+                start.longitude().as_i32(),
+                end.latitude().as_i32(),
+                end.longitude().as_i32(),
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(StorageError::from)?;
+    let segment_id = SpatialRowId::from_sqlite(segment_id)?;
     let min_lat = start.latitude().as_i32().min(end.latitude().as_i32());
     let max_lat = start.latitude().as_i32().max(end.latitude().as_i32());
     let min_lon = start.longitude().as_i32().min(end.longitude().as_i32());
@@ -4077,7 +4272,7 @@ fn append_trail_segment(
         "INSERT INTO trail_segments_rtree
             (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![segment_id, min_lat, max_lat, min_lon, max_lon],
+        params![segment_id.get(), min_lat, max_lat, min_lon, max_lon],
     )?;
     transaction.commit()?;
     Ok(())
@@ -4175,31 +4370,35 @@ fn create_map_point(
     }
     ensure_spatial_schema(connection, state)?;
     let transaction = connection.transaction()?;
-    transaction.execute(
-        "INSERT INTO map_points (name, latitude_e7, longitude_e7) VALUES (?1, ?2, ?3)",
-        params![
-            name,
-            coordinate.latitude().as_i32(),
-            coordinate.longitude().as_i32()
-        ],
-    )?;
-    let id = transaction.last_insert_rowid();
+    let id = transaction
+        .query_row(
+            "INSERT INTO map_points (name, latitude_e7, longitude_e7) VALUES (?1, ?2, ?3)
+             RETURNING id",
+            params![
+                name,
+                coordinate.latitude().as_i32(),
+                coordinate.longitude().as_i32()
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(StorageError::from)?;
+    let id = SpatialRowId::from_sqlite(id)?;
     transaction.execute(
         "INSERT INTO map_points_rtree
             (id, min_lat_e7, max_lat_e7, min_lon_e7, max_lon_e7)
          VALUES (?1, ?2, ?2, ?3, ?3)",
         params![
-            id,
+            id.get(),
             coordinate.latitude().as_i32(),
             coordinate.longitude().as_i32()
         ],
     )?;
     transaction.commit()?;
-    u64::try_from(id)
+    u64::try_from(id.get())
         .map(MapPointId)
         .map_err(|_| StorageError::InvalidStoredValue {
             field: "map point identifier",
-            value: id.to_string(),
+            value: id.get().to_string(),
         })
 }
 
@@ -4455,59 +4654,90 @@ fn stream_pevcap_location_batches(
     let mut accepted = 0_u64;
     let mut recorder = RideMapRecorder::new();
     let mut started = false;
-    while let Some(record) = reader
-        .next_record()
+    let mut append_location = |location, monotonic_ms| {
+        append_pevcap_location(
+            location,
+            monotonic_ms,
+            &mut recorder,
+            &mut started,
+            &mut batch,
+            &mut accepted,
+            &mut append,
+        )
+    };
+    while let Some(event) = reader
+        .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
     {
-        let Some(location) = record.phone_location else {
-            continue;
-        };
-        let Ok(location) = location.canonical() else {
-            continue;
-        };
-        let Ok(coordinate) =
-            Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
-        else {
-            continue;
-        };
-        let Some(horizontal_accuracy_millimetres) =
-            pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
-        else {
-            continue;
-        };
-        let sample = LocationSample::new(
-            coordinate,
-            record.monotonic_ms.as_milliseconds(),
-            location.wall_clock_unix_ms,
-            Some(horizontal_accuracy_millimetres),
-            LocationSource::PevcapImport,
-        );
-        if !started {
-            recorder
-                .start(sample.monotonic_milliseconds(), None)
-                .map_err(|_| StorageError::InvalidRideState(RideLifecycleState::Active))?;
-            started = true;
-        }
-        let segment_id = recorder.segment_id_for_sample(&sample);
-        if recorder.check_sample(&sample) != LocationAdmission::Accepted {
-            continue;
-        }
-        let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
-        recorder.record_sample_with_telemetry_state(sample, telemetry_state);
-        batch.push(PevcapRoutePoint {
-            sample,
-            segment_id,
-            telemetry_state,
-        });
-        if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
-            accepted = accepted.saturating_add(append(std::mem::take(&mut batch))?);
-            batch.reserve(PEVCAP_LOCATION_BATCH_SIZE);
+        match event {
+            PevcapEvent::Record(record) => {
+                if let Some(location) = record.phone_location {
+                    append_location(location, record.monotonic_ms.as_milliseconds())?;
+                }
+            }
+            PevcapEvent::Location(location) => append_location(
+                location.location,
+                location.receipt_monotonic_ms.as_milliseconds(),
+            )?,
         }
     }
     if !batch.is_empty() {
         accepted = accepted.saturating_add(append(batch)?);
     }
     Ok(accepted)
+}
+
+fn append_pevcap_location(
+    location: PevcapPhoneLocation,
+    monotonic_ms: u64,
+    recorder: &mut RideMapRecorder,
+    started: &mut bool,
+    batch: &mut Vec<PevcapRoutePoint>,
+    accepted: &mut u64,
+    append: &mut impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
+) -> Result<(), StorageError> {
+    let Ok(location) = location.canonical() else {
+        return Ok(());
+    };
+    let Ok(coordinate) =
+        Coordinate::from_degrees(location.latitude_degrees, location.longitude_degrees)
+    else {
+        return Ok(());
+    };
+    let Some(horizontal_accuracy_millimetres) =
+        pevcap_accuracy_millimetres(location.horizontal_accuracy_meters)
+    else {
+        return Ok(());
+    };
+    let sample = LocationSample::new(
+        coordinate,
+        monotonic_ms,
+        location.wall_clock_unix_ms,
+        Some(horizontal_accuracy_millimetres),
+        LocationSource::PevcapImport,
+    );
+    if !*started {
+        recorder
+            .start(sample.monotonic_milliseconds(), None)
+            .map_err(|_| StorageError::InvalidRideState(RideLifecycleState::Active))?;
+        *started = true;
+    }
+    let segment_id = recorder.segment_id_for_sample(&sample);
+    if recorder.check_sample(&sample) != LocationAdmission::Accepted {
+        return Ok(());
+    }
+    let telemetry_state = recorder.telemetry_state_at(sample.monotonic_milliseconds());
+    recorder.record_sample_with_telemetry_state(sample, telemetry_state);
+    batch.push(PevcapRoutePoint {
+        sample,
+        segment_id,
+        telemetry_state,
+    });
+    if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
+        *accepted = accepted.saturating_add(append(std::mem::take(batch))?);
+        batch.reserve(PEVCAP_LOCATION_BATCH_SIZE);
+    }
+    Ok(())
 }
 
 fn pevcap_accuracy_millimetres(metres: Option<f64>) -> Option<u32> {
@@ -4734,11 +4964,11 @@ fn save_selected_device(
     updated_at_ms: u64,
 ) -> Result<(), StorageError> {
     connection.execute(
-        "INSERT INTO selected_device (id, platform_identifier, updated_at_ms)
-         VALUES (1, ?1, ?2)
-         ON CONFLICT(id) DO UPDATE SET platform_identifier = excluded.platform_identifier,
+        "INSERT INTO selected_device (singleton_key, platform_identifier, updated_at_ms)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(singleton_key) DO UPDATE SET platform_identifier = excluded.platform_identifier,
              updated_at_ms = excluded.updated_at_ms",
-        params![platform_identifier, updated_at_ms],
+        params![SelectedDeviceKey::VALUE.blob(), platform_identifier, updated_at_ms],
     )?;
     Ok(())
 }
@@ -4746,8 +4976,8 @@ fn save_selected_device(
 fn selected_device(connection: &Connection) -> Result<Option<String>, StorageError> {
     connection
         .query_row(
-            "SELECT platform_identifier FROM selected_device WHERE id = 1",
-            [],
+            "SELECT platform_identifier FROM selected_device WHERE singleton_key = ?1",
+            [SelectedDeviceKey::VALUE.blob()],
             |row| row.get(0),
         )
         .optional()
@@ -4755,7 +4985,10 @@ fn selected_device(connection: &Connection) -> Result<Option<String>, StorageErr
 }
 
 fn clear_selected_device(connection: &Connection) -> Result<(), StorageError> {
-    connection.execute("DELETE FROM selected_device WHERE id = 1", [])?;
+    connection.execute(
+        "DELETE FROM selected_device WHERE singleton_key = ?1",
+        [SelectedDeviceKey::VALUE.blob()],
+    )?;
     Ok(())
 }
 fn save_device_name(
@@ -4855,9 +5088,9 @@ fn save_ride_session_marker(connection: &Connection, marker: &[u8]) -> Result<()
         return clear_ride_session_marker(connection);
     }
     connection.execute(
-        "INSERT INTO ride_session_marker (id, marker) VALUES (1, ?1)
-         ON CONFLICT(id) DO UPDATE SET marker = excluded.marker",
-        params![marker],
+        "INSERT INTO ride_session_marker (singleton_key, marker) VALUES (?1, ?2)
+         ON CONFLICT(singleton_key) DO UPDATE SET marker = excluded.marker",
+        params![RideSessionMarkerKey::VALUE.blob(), marker],
     )?;
     Ok(())
 }
@@ -4865,8 +5098,8 @@ fn save_ride_session_marker(connection: &Connection, marker: &[u8]) -> Result<()
 fn ride_session_marker(connection: &Connection) -> Result<Option<Vec<u8>>, StorageError> {
     connection
         .query_row(
-            "SELECT marker FROM ride_session_marker WHERE id = 1",
-            [],
+            "SELECT marker FROM ride_session_marker WHERE singleton_key = ?1",
+            [RideSessionMarkerKey::VALUE.blob()],
             |row| row.get(0),
         )
         .optional()
@@ -4874,7 +5107,10 @@ fn ride_session_marker(connection: &Connection) -> Result<Option<Vec<u8>>, Stora
 }
 
 fn clear_ride_session_marker(connection: &Connection) -> Result<(), StorageError> {
-    connection.execute("DELETE FROM ride_session_marker WHERE id = 1", [])?;
+    connection.execute(
+        "DELETE FROM ride_session_marker WHERE singleton_key = ?1",
+        [RideSessionMarkerKey::VALUE.blob()],
+    )?;
     Ok(())
 }
 

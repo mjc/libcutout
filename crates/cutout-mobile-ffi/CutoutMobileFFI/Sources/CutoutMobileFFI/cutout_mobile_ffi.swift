@@ -2106,6 +2106,15 @@ public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
     func recordLinkUp(monotonicMs: MobileMonotonicMillisDto, maxWriteLen: MobileTransportWriteLimitDto?)  -> Bool
 
     /**
+     * Records an independent Core Location sample in the PEVCAP location stream.
+     *
+     * The sample is kept separate from transport records so it remains available even when no
+     * BLE notification is received at the same instant. The writer queue is bounded; `false`
+     * means the sample was rejected by canonical validation or could not be queued.
+     */
+    func recordLocationSample(receiptMonotonicMs: MobileMonotonicMillisDto, sample: MobilePhoneLocationSampleDto, simulated: Bool?, producedByAccessory: Bool?)  -> Bool
+
+    /**
      * Records inbound notification bytes.
      */
     func recordNotification(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data)  -> Bool
@@ -2284,6 +2293,25 @@ open func recordLinkUp(monotonicMs: MobileMonotonicMillisDto, maxWriteLen: Mobil
             self.uniffiCloneHandle(),
         FfiConverterTypeMobileMonotonicMillisDto_lower(monotonicMs),
         FfiConverterOptionTypeMobileTransportWriteLimitDto.lower(maxWriteLen),$0
+    )
+})
+}
+
+    /**
+     * Records an independent Core Location sample in the PEVCAP location stream.
+     *
+     * The sample is kept separate from transport records so it remains available even when no
+     * BLE notification is received at the same instant. The writer queue is bounded; `false`
+     * means the sample was rejected by canonical validation or could not be queued.
+     */
+open func recordLocationSample(receiptMonotonicMs: MobileMonotonicMillisDto, sample: MobilePhoneLocationSampleDto, simulated: Bool?, producedByAccessory: Bool?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilepevcapcapturebuilder_record_location_sample(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMonotonicMillisDto_lower(receiptMonotonicMs),
+        FfiConverterTypeMobilePhoneLocationSampleDto_lower(sample),
+        FfiConverterOptionBool.lower(simulated),
+        FfiConverterOptionBool.lower(producedByAccessory),$0
     )
 })
 }
@@ -2694,8 +2722,9 @@ public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
     /**
      * Returns durable outcomes for queued location writes without waiting for `SQLite`.
      *
-     * The returned decisions are ordered by the bounded write queue. An empty result means that
-     * the oldest queued write is still pending.
+     * The returned decisions are ordered by the bounded write queue. Outcomes settled by a
+     * lifecycle barrier are returned before writes that are still queued or in progress. An
+     * empty result means that the oldest queued write is still pending.
      */
     func pollLocationWrites()  -> [MobileRideMapCoreDecisionDto]
 
@@ -3074,8 +3103,9 @@ open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideM
     /**
      * Returns durable outcomes for queued location writes without waiting for `SQLite`.
      *
-     * The returned decisions are ordered by the bounded write queue. An empty result means that
-     * the oldest queued write is still pending.
+     * The returned decisions are ordered by the bounded write queue. Outcomes settled by a
+     * lifecycle barrier are returned before writes that are still queued or in progress. An
+     * empty result means that the oldest queued write is still pending.
      */
 open func pollLocationWrites() -> [MobileRideMapCoreDecisionDto]  {
     return try!  FfiConverterSequenceTypeMobileRideMapCoreDecisionDto.lift(try! rustCall() {
@@ -24981,6 +25011,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_link_up() != 11809) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_location_sample() != 35136) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_notification() != 31915) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -25044,7 +25077,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_poll_location_writes() != 7706) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_poll_location_writes() != 1668) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_project_points() != 12775) {

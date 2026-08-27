@@ -4,8 +4,8 @@ use std::{
 };
 
 use cutout_core::{
-    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapPhoneLocation,
-    PevcapRecord, RawTelemetryReadback, WallClockUnixTimestamp,
+    MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapLocationSample,
+    PevcapPhoneLocation, PevcapRecord, RawTelemetryReadback, WallClockUnixTimestamp,
 };
 use cutout_ride_maps::{
     Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
@@ -327,6 +327,50 @@ fn async_location_write_reports_completion_without_waiting() {
 }
 
 #[test]
+fn async_location_write_can_bound_wait_for_a_delayed_worker() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-deadline-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database.create_ride(RideSource::Live, 1_000).unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+
+    let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+    let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+    database
+        .install_route_projection_test_gate(entered_sender, release_receiver)
+        .unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+    let pending = database
+        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .unwrap();
+    entered_receiver
+        .recv_timeout(Duration::from_secs(1))
+        .expect("location write reaches the deliberate worker gate");
+
+    assert!(matches!(
+        pending.wait_result_until(Instant::now()),
+        Ok(None)
+    ));
+    release_sender.send(()).unwrap();
+    assert!(matches!(
+        pending.wait_result(),
+        Ok(Ok(LocationAdmission::Accepted))
+    ));
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_reopens_after_an_unexpected_worker_exit() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -337,16 +381,32 @@ fn database_reopens_after_an_unexpected_worker_exit() {
     let stale_handle = database.clone();
 
     database.stop_worker_for_test().unwrap();
-    assert!(matches!(
-        stale_handle.capabilities(),
-        Err(StorageError::WorkerStopped)
-    ));
+    // Commands on a stale handle transparently reacquire the process-wide service.
+    assert!(stale_handle.capabilities().is_ok());
 
     let recovered = stale_handle.reopen().unwrap();
-    assert_ne!(recovered.service_id(), stale_handle.service_id());
+    assert_eq!(recovered.service_id(), stale_handle.service_id());
     assert!(recovered.capabilities().is_ok());
 
     recovered.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn database_commands_restart_the_worker_after_an_unexpected_exit() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-worker-auto-recovery-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let service_id = database.service_id();
+
+    database.stop_worker_for_test().unwrap();
+    assert!(database.capabilities().is_ok());
+    assert_eq!(database.service_id(), service_id);
+
+    database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
 
@@ -899,6 +959,152 @@ fn pevcap_import_uses_live_admission_and_segmentation_policy() {
 }
 
 #[test]
+fn pevcap_imports_independent_location_samples_into_the_route() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-independent-location-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-independent-location-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let location = PevcapLocationSample::new(
+        MonotonicTimestamp::new(1_000),
+        pevcap_location(1_000, 40.0, 3.0),
+        Some(false),
+        Some(false),
+    )
+    .unwrap();
+    let capture = PevcapCapture::new_with_locations(header, vec![], vec![location]);
+    std::fs::write(&artifact_path, capture.to_jsonl().unwrap()).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.record_count(), 0);
+    assert_eq!(preview.location_count(), 1);
+    assert_eq!(preview.outcome(), PevcapImportOutcome::RideAndCapture);
+
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let ride_id = receipt.ride_id.unwrap();
+    assert_eq!(receipt.location_count, 1);
+    let points = database
+        .route_points(ride_id, None, QueryLimit::new(10).unwrap())
+        .unwrap()
+        .points()
+        .to_vec();
+    assert_eq!(points.len(), 1);
+    assert_eq!(points[0].sample().source(), LocationSource::PevcapImport);
+
+    let managed_capture = PevcapCapture::decode(
+        &std::fs::read(&receipt.managed_artifact_path).unwrap(),
+        PevcapEncoding::Jsonl,
+    )
+    .unwrap();
+    assert_eq!(managed_capture.records.len(), 0);
+    assert_eq!(managed_capture.locations, vec![location]);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
+    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
+fn pevcap_import_preserves_interleaved_location_and_record_order() {
+    let _guard = test_guard();
+    let database_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-interleaved-location-db-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let artifact_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-pevcap-interleaved-location-{}.jsonl",
+        uuid::Uuid::new_v4()
+    ));
+    let header = PevcapHeader::new(
+        WallClockUnixTimestamp::new(1_700_000_000_000),
+        "darwin",
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        "test",
+        [0; 32],
+        &[],
+    )
+    .unwrap();
+    let first_location = PevcapLocationSample::new(
+        MonotonicTimestamp::new(1_000),
+        pevcap_location(1_000, 40.0, 3.0),
+        None,
+        None,
+    )
+    .unwrap();
+    let record = PevcapRecord::link_up(MonotonicTimestamp::new(2_000), None)
+        .with_phone_location(pevcap_location(2_000, 40.0001, 3.0));
+    let input = format!(
+        "{}\n{}\n{}\n",
+        header.to_jsonl_line().unwrap(),
+        first_location.to_jsonl_line().unwrap(),
+        record.to_jsonl_line().unwrap()
+    );
+    std::fs::write(&artifact_path, input).unwrap();
+
+    let database = RideDatabase::open(&database_path).unwrap();
+    let preview = database
+        .preflight_pevcap(&artifact_path, PevcapEncoding::Jsonl)
+        .unwrap();
+    assert_eq!(preview.record_count(), 1);
+    assert_eq!(preview.location_count(), 2);
+
+    let receipt = database
+        .confirm_pevcap_import(&preview, 1_700_000_000_000)
+        .unwrap();
+    let ride_id = receipt.ride_id.unwrap();
+    let points = database
+        .route_points(ride_id, None, QueryLimit::new(10).unwrap())
+        .unwrap()
+        .points()
+        .to_vec();
+    assert_eq!(points.len(), 2);
+    assert_eq!(
+        points
+            .iter()
+            .map(|point| point.sample().monotonic_milliseconds())
+            .collect::<Vec<_>>(),
+        vec![
+            MonotonicMilliseconds::new(1_000),
+            MonotonicMilliseconds::new(2_000)
+        ]
+    );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(&receipt.managed_artifact_path);
+    let _ = std::fs::remove_dir(receipt.managed_artifact_path.parent().unwrap());
+    let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(artifact_path);
+}
+
+#[test]
 fn pevcap_with_no_admitted_locations_is_capture_only() {
     let _guard = test_guard();
     let database_path = std::env::temp_dir().join(format!(
@@ -1257,7 +1463,7 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 12);
+        assert_eq!(current_version, 13);
         let devices_table: String = connection
             .query_row(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'devices'",
@@ -1285,8 +1491,8 @@ fn legacy_schema_versions_migrate_to_the_current_schema() {
         if version >= 2 {
             let selected: String = connection
                 .query_row(
-                    "SELECT platform_identifier FROM selected_device WHERE id = 1",
-                    [],
+                    "SELECT platform_identifier FROM selected_device WHERE singleton_key = ?1",
+                    [crate::storage::SelectedDeviceKey::VALUE.blob()],
                     |row| row.get(0),
                 )
                 .unwrap();
@@ -1384,7 +1590,7 @@ fn schema_ten_and_eleven_migrations_create_segment_rows_and_foreign_keys() {
         let current_version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(current_version, 12);
+        assert_eq!(current_version, 13);
         let segment_count: u64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM ride_segments WHERE ride_id = ?1",
@@ -1558,6 +1764,132 @@ fn database_rejects_an_unrelated_current_version_schema() {
         RideDatabase::open(&path),
         Err(StorageError::InvalidDatabaseIdentity)
     ));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn current_schema_uses_uuid_singleton_keys_and_keeps_device_names_non_unique() {
+    let _guard = test_guard();
+    let connection = Connection::open_in_memory().unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+
+    for table in ["selected_device", "ride_session_marker"] {
+        let columns: Vec<(String, String)> = connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .unwrap()
+            .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(columns[0].0, "singleton_key");
+        assert_eq!(columns[0].1, "BLOB");
+        assert!(!columns.iter().any(|(name, _)| name == "id"));
+    }
+
+    let device_columns: Vec<(String, String)> = connection
+        .prepare("PRAGMA table_info(devices)")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        device_columns[0],
+        ("platform_identifier".to_owned(), "TEXT".to_owned())
+    );
+    assert_eq!(
+        device_columns[1],
+        ("display_name".to_owned(), "TEXT".to_owned())
+    );
+
+    connection
+        .execute(
+            "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+             VALUES ('corebluetooth-a', 'NF2557', 1), ('corebluetooth-b', 'NF2557', 2)",
+            [],
+        )
+        .unwrap();
+    let count: u64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM devices WHERE display_name = 'NF2557'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2);
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO devices (platform_identifier, display_name, updated_at_ms)
+             VALUES ('corebluetooth-a', 'Renamed NF2557', 3)",
+                [],
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn schema_v12_singleton_rows_migrate_to_uuid_keys_without_data_loss() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-singleton-key-migration-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let connection = Connection::open(&path).unwrap();
+    crate::storage::create_current_schema(&connection).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE selected_device;
+             DROP TABLE ride_session_marker;
+             CREATE TABLE selected_device (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 platform_identifier TEXT NOT NULL,
+                 updated_at_ms INTEGER NOT NULL
+             );
+             CREATE TABLE ride_session_marker (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 marker BLOB NOT NULL
+             );
+             INSERT INTO selected_device (id, platform_identifier, updated_at_ms)
+             VALUES (1, 'corebluetooth-a', 42);
+             INSERT INTO ride_session_marker (id, marker) VALUES (1, X'010203');
+             PRAGMA application_id = 1129665615;
+             PRAGMA user_version = 12;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let database = RideDatabase::open(&path).unwrap();
+    assert_eq!(
+        database.selected_device().unwrap().as_deref(),
+        Some("corebluetooth-a")
+    );
+    assert_eq!(database.ride_session_marker().unwrap(), Some(vec![1, 2, 3]));
+    database.shutdown().unwrap();
+
+    let connection = Connection::open(&path).unwrap();
+    let version: i64 = connection
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 13);
+    let selected_key_length: u64 = connection
+        .query_row(
+            "SELECT length(singleton_key) FROM selected_device",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(selected_key_length, 16);
+    assert!(
+        !connection
+            .prepare("PRAGMA table_info(selected_device)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+            .contains(&"id".to_owned())
+    );
     let _ = std::fs::remove_file(path);
 }
 
@@ -2108,7 +2440,7 @@ fn version_eight_migration_adds_monotonic_ride_start_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 12);
+    assert_eq!(version, 13);
     assert!(has_monotonic_start);
 
     let _ = std::fs::remove_file(path);

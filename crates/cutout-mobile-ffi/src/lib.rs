@@ -38,10 +38,11 @@ use cutout_core::{
     NotificationEvidenceDto, NotificationIngestOutcomeDto, ParserDiagnosticCountDto,
     ParserDiagnosticsDto, ParserDroppedBytesDto, ParserErrorDto, ParserFrameLenDto,
     ParserGapEvidenceDto, PayloadBodyLenDto, PevcapEncoding as CorePevcapEncoding, PevcapHeader,
-    PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity, PhaseCurrentReadingDto,
-    PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag, RIDE_SESSION_STALE_AFTER,
-    RawFieldValue, RawFieldValueDto, RawTelemetryReadback, RawTelemetryReadbackDto,
-    ReadOnlyOutputPayload, ReservedPayloadEvidenceDto, RideOperatingModeDto, RideOperatingStateDto,
+    PevcapLocationSample, PevcapPhoneLocation, PevcapRecord, PevcapResolvedIdentity,
+    PhaseCurrentReadingDto, PowerReadingDto, ProtocolFamily, ProtocolFamilyDto, ProtocolTag,
+    RIDE_SESSION_STALE_AFTER, RawFieldValue, RawFieldValueDto, RawTelemetryReadback,
+    RawTelemetryReadbackDto, ReadOnlyOutputPayload, ReservedPayloadEvidenceDto,
+    RideOperatingModeDto, RideOperatingStateDto,
     RideSessionAppPresence as CoreRideSessionAppPresence,
     RideSessionDecision as CoreRideSessionDecision, RideSessionEffect as CoreRideSessionEffect,
     RideSessionEndReason as CoreRideSessionEndReason,
@@ -5362,6 +5363,10 @@ impl MobileRideMapCoreInner {
             .map_err(|_| MobileRideMapCoreErrorDto::AlreadyRecording)?;
         self.admission_recorder = self.recorder.clone();
         self.active_ride_id = Some(id);
+        // Terminal outcomes belong to the ride that just ended. Once a new ride starts there is
+        // no safe way for callers to associate an old decision with the new capture, so retire
+        // any unpolled terminal decisions at this lifecycle boundary.
+        self.terminal_location_decisions.clear();
         Ok(self.snapshot(MobileRideLifecycleStateDto::Active))
     }
 
@@ -6280,7 +6285,7 @@ impl MobileRideMapCoreInner {
         let next = current
             .apply(lifecycle_event)
             .map_err(|_| MobileRideMapCoreErrorDto::InvalidTransition)?;
-        self.drain_pending_locations();
+        self.drain_pending_locations()?;
         if let Some(database) = self.database.as_ref() {
             match at_milliseconds {
                 Some(at) => database
@@ -7653,6 +7658,7 @@ struct CaptureMetadata {
 
 enum CaptureWriterMessage {
     Record,
+    Location(PevcapLocationSample),
     Metadata(CaptureMetadata),
     Flush(SyncSender<Result<(), String>>),
     Finish(SyncSender<Result<(), String>>),
@@ -7891,6 +7897,24 @@ fn write_capture_stream(
                     .take()
                     .ok_or_else(|| "capture record slot was empty".to_string())?;
                 let line = record.to_jsonl_line().map_err(|error| error.to_string())?;
+                let bytes = write_line(&mut writer, &line)? as u64;
+                state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
+                state
+                    .physical_bytes_written
+                    .fetch_add(bytes, Ordering::AcqRel);
+                bytes_since_flush = bytes_since_flush.saturating_add(bytes);
+                maybe_flush(
+                    &mut writer,
+                    &mut bytes_since_flush,
+                    &mut last_flush,
+                    &mut last_sync,
+                    false,
+                )?;
+            }
+            CaptureWriterMessage::Location(location) => {
+                let line = location
+                    .to_jsonl_line()
+                    .map_err(|error| error.to_string())?;
                 let bytes = write_line(&mut writer, &line)? as u64;
                 state.bytes_written.fetch_add(bytes, Ordering::AcqRel);
                 state
@@ -8306,6 +8330,33 @@ impl MobilePevcapCaptureBuilder {
         }
         self.send_record(record)
     }
+
+    /// Records an independent Core Location sample in the PEVCAP location stream.
+    ///
+    /// The sample is kept separate from transport records so it remains available even when no
+    /// BLE notification is received at the same instant. The writer queue is bounded; `false`
+    /// means the sample was rejected by canonical validation or could not be queued.
+    pub fn record_location_sample(
+        &self,
+        receipt_monotonic_ms: MobileMonotonicMillisDto,
+        sample: MobilePhoneLocationSampleDto,
+        simulated: Option<bool>,
+        produced_by_accessory: Option<bool>,
+    ) -> bool {
+        let Some(sample) = sample.canonical() else {
+            return false;
+        };
+        let location = match PevcapLocationSample::new(
+            receipt_monotonic_ms.into_core(),
+            sample.pevcap_location(),
+            simulated,
+            produced_by_accessory,
+        ) {
+            Ok(location) => location,
+            Err(_) => return false,
+        };
+        self.send_location(location)
+    }
 }
 
 impl MobilePevcapCaptureBuilder {
@@ -8349,6 +8400,14 @@ impl MobilePevcapCaptureBuilder {
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
             .is_some_and(|writer| writer.try_send_record(record))
+    }
+
+    fn send_location(&self, location: PevcapLocationSample) -> bool {
+        self.writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|writer| writer.try_send(CaptureWriterMessage::Location(location)))
     }
 }
 
@@ -10447,7 +10506,10 @@ mod tests {
         assert_eq!(stopped.summary.point_count, 1);
         let terminal = terminal_action(&state).expect("terminal action succeeds");
         assert_eq!(terminal.summary.point_count, 1);
-        assert!(state.poll_location_writes().is_empty());
+        assert!(matches!(
+            state.poll_location_writes().as_slice(),
+            [MobileRideMapCoreDecisionDto::Accepted { .. }]
+        ));
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);
@@ -13465,6 +13527,15 @@ mod tests {
             }),
             firmware: None,
         }));
+        assert!(builder.record_location_sample(
+            ms(7),
+            capture_phone_location_fixture(),
+            Some(false),
+            Some(true)
+        ));
+        let mut invalid_location = capture_phone_location_fixture();
+        invalid_location.latitude_degrees = f64::NAN;
+        assert!(!builder.record_location_sample(ms(7), invalid_location, None, None));
         assert!(builder.record_notification_with_context(
             ms(8),
             vec![0; 16],
@@ -13495,6 +13566,10 @@ mod tests {
         let capture = PevcapCapture::decode(&bytes, PevcapEncoding::Jsonl)
             .expect("stream writer output is PEVCAP");
         assert_eq!(capture.records.len(), 2);
+        assert_eq!(capture.locations.len(), 1);
+        assert_eq!(capture.locations[0].receipt_monotonic_ms, ms(7).into_core());
+        assert_eq!(capture.locations[0].simulated, Some(false));
+        assert_eq!(capture.locations[0].produced_by_accessory, Some(true));
         let notification = &capture.records[0];
         let telemetry = notification
             .telemetry
@@ -14433,6 +14508,41 @@ mod tests {
             await_location_decision(&state, new_pending),
             MobileRideMapCoreDecisionDto::Accepted { .. }
         ));
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn mobile_ride_map_core_retires_unpolled_terminal_outcomes_on_restart() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-map-terminal-restart-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let state = MobileRideMapCore::with_database(database.clone());
+        state
+            .start_gps_only(1_000, None)
+            .expect("first recording starts");
+        let pending = state
+            .ingest_location(1_001, 1_700_000_000_001, 40.0, -105.0, 3.0)
+            .expect("location queues");
+        assert!(matches!(
+            pending,
+            MobileRideMapCoreDecisionDto::Pending { .. }
+        ));
+        state.stop().expect("first recording stops");
+
+        state
+            .start_gps_only(2_000, None)
+            .expect("second recording starts");
+        assert!(state.poll_location_writes().is_empty());
 
         database.shutdown().expect("database shuts down");
         let _ = fs::remove_file(path);

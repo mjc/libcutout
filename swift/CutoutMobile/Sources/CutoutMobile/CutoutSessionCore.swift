@@ -2895,8 +2895,15 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
         )
         withRideMapLifecycleLock {
             for (location, monotonicMs) in zip(locations, monotonicMilliseconds) {
-                guard let monotonicMs else { continue }
                 guard let sample = MobilePhoneLocationSampleDto(location: location) else { continue }
+                // Keep every valid Core Location observation as a first-class PEVCAP event while
+                // a BLE capture is active. This is independent of ride-map admission: a fix can
+                // be useful evidence even when it is a duplicate, stale, or too inaccurate for
+                // the route policy, and it may arrive between BLE notifications.
+                recordCaptureLocationSample(location, sample: sample)
+                // A duplicate, stale, or future source timestamp is not a route point, but the
+                // canonical location event above still preserves that source observation.
+                guard let monotonicMs else { continue }
                 // Current-location readback is independent of ride recording. The map
                 // admission result below only controls the canonical capture context.
                 phoneLocationSnapshot = phoneLocationState.ingest(sample: sample)
@@ -2913,6 +2920,27 @@ extension CutoutSessionCore: CLLocationManagerDelegate {
             }
         }
         publishPhoneLocationSnapshot()
+    }
+
+    /// Serializes independent location capture with BLE capture lifecycle mutations.
+    private func recordCaptureLocationSample(
+        _ location: CLLocation,
+        sample: MobilePhoneLocationSampleDto
+    ) {
+        onBleQueue {
+            guard let captureBuilder else { return }
+            let recorded = captureBuilder.recordLocationSample(
+                receiptMonotonicMs: MobileMonotonicMillisDto(
+                    milliseconds: captureElapsedMilliseconds()
+                ),
+                sample: sample,
+                simulated: location.sourceInformation?.isSimulatedBySoftware,
+                producedByAccessory: location.sourceInformation?.isProducedByAccessory
+            )
+            if !recorded {
+                _ = acceptCaptureWrite(false)
+            }
+        }
     }
 
     /// Applies a location decision to the PEVCAP context and publishes it. Pending decisions are
@@ -3079,8 +3107,9 @@ func monotonicMillisecondsForLocationBatch(
 
 /// Returns a phone sample only when the map accepted that exact sample into the ride.
 ///
-/// Keeping this decision at the Core Location boundary prevents PEVCAP capture context
-/// from observing a raw update that the canonical map rejected or ignored.
+/// This helper controls the optional location context attached to a BLE notification. Independent
+/// Core Location observations are recorded by `recordLocationSample` and intentionally do not
+/// depend on route admission.
 func capturePhoneLocationSample(
     sample: MobilePhoneLocationSampleDto,
     decision: MobileRideMapDecisionDto,
