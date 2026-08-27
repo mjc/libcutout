@@ -5490,7 +5490,7 @@ impl MobileRideMapCoreInner {
                 last_telemetry_at_milliseconds: ride
                     .last_telemetry_at_milliseconds
                     .map(ride_maps::MonotonicMilliseconds::new),
-                background_gap_count,
+                background_gap_count: ride_maps::BackgroundGapCount::new(background_gap_count),
             },
             ride_maps::RideLifecycleTiming {
                 duration_milliseconds: ride_maps::RideDurationMilliseconds::new(
@@ -6574,7 +6574,7 @@ fn project_live_route_points(
             state.recorder.first_point_sequence(),
             state.recorder.point_count(),
             state.recorder.segment_count().as_u64(),
-            state.recorder.background_gap_count(),
+            state.recorder.background_gap_count().as_u64(),
         )
     };
     if is_cancelled() {

@@ -24,9 +24,9 @@ pub use summary::{
 };
 mod recording;
 pub use recording::{
-    MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideLifecycleTiming,
-    RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
-    RideSegmentCount, RideSegmentStartReason, RouteTelemetryState,
+    BackgroundGapCount, MAX_GAP_MILLISECONDS, MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds,
+    RideLifecycleTiming, RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId,
+    RidePointSequence, RideSegmentCount, RideSegmentStartReason, RouteTelemetryState,
     TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
     VehicleIdentityError,
 };
@@ -44,14 +44,15 @@ mod tests {
     use std::cell::Cell;
 
     use super::{
-        AverageSpeedMillimetresPerSecond, Coordinate, DistanceMillimetres, LatitudeE7,
-        LocationAdmission, LocationSample, LocationSource, LongitudeE7, MAX_ROUTE_DISPLAY_POINTS,
-        MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint, RideMapRecorder,
-        RideMapSegmentId, RidePointCount, RidePointSequence, RideSegmentStartReason, RideSummary,
-        RouteDisplayBudget, RoutePrivacyClass, RoutePrivacyGridE7, RoutePrivacyPolicy,
-        RouteProjectionError, RouteTelemetryState, RouteViewport, TransitionError, VehicleIdentity,
-        WallClockUnixMilliseconds, project_route_points, project_route_points_cancellable,
-        project_route_points_from_iter, route_endpoint_metadata, route_segment_display_metadata,
+        AverageSpeedMillimetresPerSecond, BackgroundGapCount, Coordinate, DistanceMillimetres,
+        LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
+        MAX_ROUTE_DISPLAY_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState,
+        RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointCount, RidePointSequence,
+        RideSegmentStartReason, RideSummary, RouteDisplayBudget, RoutePrivacyClass,
+        RoutePrivacyGridE7, RoutePrivacyPolicy, RouteProjectionError, RouteTelemetryState,
+        RouteViewport, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
+        project_route_points, project_route_points_cancellable, project_route_points_from_iter,
+        route_endpoint_metadata, route_segment_display_metadata,
     };
 
     #[test]
@@ -67,6 +68,12 @@ mod tests {
         let coordinate = Coordinate::from_degrees(40.123_456_7, -105.765_432_1).unwrap();
         assert_eq!(coordinate.latitude(), LatitudeE7::new(401_234_567));
         assert_eq!(coordinate.longitude(), LongitudeE7::new(-1_057_654_321));
+    }
+
+    #[test]
+    fn background_gap_count_is_typed_and_saturating() {
+        let count = BackgroundGapCount::new(u64::MAX).saturating_add(BackgroundGapCount::new(1));
+        assert_eq!(count.as_u64(), u64::MAX);
     }
 
     #[test]
