@@ -1,10 +1,7 @@
 use core::convert::Infallible;
 
 #[cfg(feature = "serde")]
-use std::{
-    collections::VecDeque,
-    io::{self, BufRead, BufReader, Read},
-};
+use std::io::{self, BufRead, BufReader, Read};
 
 use arrayvec::ArrayVec;
 use bytes::Bytes;
@@ -317,7 +314,6 @@ enum PevcapReaderState<R: Read> {
         line_number: usize,
         header: PevcapHeader,
         line: String,
-        pending_locations: VecDeque<PevcapLocationSample>,
     },
     Binary {
         reader: R,
@@ -401,7 +397,6 @@ impl<R: Read> PevcapReader<R> {
                     line_number,
                     header: header.try_into_header()?,
                     line: String::new(),
-                    pending_locations: VecDeque::new(),
                 },
             });
         }
@@ -449,107 +444,21 @@ impl<R: Read> PevcapReader<R> {
         }
     }
 
-    /// Reads the next record, retaining no previously decoded records.
+    /// Reads the next transport record and consumes the capture through EOF.
+    ///
+    /// Location events are validated and discarded in constant space. Use
+    /// [`Self::next_event`] when transport and location events must both be observed.
     ///
     /// # Errors
     ///
     /// Returns [`PevcapStreamError`] when the next record is malformed, the
     /// stream is truncated, or an underlying read fails.
     pub fn next_record(&mut self) -> Result<Option<PevcapRecord>, PevcapStreamError> {
-        match &mut self.state {
-            PevcapReaderState::Jsonl {
-                reader,
-                line_number,
-                line,
-                pending_locations,
-                ..
-            } => loop {
-                line.clear();
-                if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
-                    return Ok(None);
-                }
-                *line_number += 1;
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                let parsed =
-                    serde_json::from_str::<PevcapJsonlLine>(trimmed).map_err(|source| {
-                        PevcapJsonlError::Deserialize {
-                            line: *line_number,
-                            source,
-                        }
-                    })?;
-                return match parsed {
-                    PevcapJsonlLine::Header { .. } => {
-                        Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into())
-                    }
-                    PevcapJsonlLine::Record { record } => {
-                        Ok(Some(record.try_into_record().map_err(|source| {
-                            PevcapJsonlError::Record {
-                                line: *line_number,
-                                source,
-                            }
-                        })?))
-                    }
-                    PevcapJsonlLine::Location { location } => {
-                        let location = location.try_into_location().map_err(|source| {
-                            PevcapJsonlError::Location {
-                                line: *line_number,
-                                source,
-                            }
-                        })?;
-                        // Preserve standalone samples for callers that consume transport and
-                        // location streams through the same reader.
-                        pending_locations.push_back(location);
-                        continue;
-                    }
-                };
-            },
-            PevcapReaderState::Binary {
-                reader,
-                remaining_records,
-                remaining_locations,
-                locations_count_read,
-                finished,
-                ..
-            } => {
-                if *remaining_records > 0 {
-                    let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
-                    *remaining_records -= 1;
-                    let record = serde_json::from_slice::<PevcapRecordJson>(&payload)
-                        .map_err(|source| PevcapBinaryError::Deserialize {
-                            section: PevcapBinarySection::Record,
-                            source,
-                        })?
-                        .try_into_record()
-                        .map_err(PevcapBinaryError::Record)?;
-                    return Ok(Some(record));
-                }
-                if !*locations_count_read {
-                    *remaining_locations =
-                        read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
-                    *locations_count_read = true;
-                }
-                if *remaining_locations > 0 {
-                    return Ok(None);
-                }
-                if *finished {
-                    return Ok(None);
-                }
-                *finished = true;
-                let mut trailing = Vec::new();
-                reader
-                    .read_to_end(&mut trailing)
-                    .map_err(PevcapBinaryError::Io)?;
-                if trailing.is_empty() {
-                    Ok(None)
-                } else {
-                    Err(PevcapBinaryError::TrailingBytes {
-                        len: trailing.len(),
-                    }
-                    .into())
-                }
+        loop {
+            match self.next_event()? {
+                Some(PevcapEvent::Record(record)) => return Ok(Some(record)),
+                Some(PevcapEvent::Location(_) | PevcapEvent::LocationRejected(_)) => {}
+                None => return Ok(None),
             }
         }
     }
@@ -564,36 +473,49 @@ impl<R: Read> PevcapReader<R> {
     /// Returns [`PevcapStreamError`] when the next event is malformed, the stream is truncated,
     /// or an underlying read fails.
     pub fn next_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
-        if matches!(&self.state, PevcapReaderState::Binary { .. }) {
-            if let Some(record) = self.next_record()? {
-                return Ok(Some(PevcapEvent::Record(record)));
-            }
-            return self.next_binary_event();
+        match &mut self.state {
+            PevcapReaderState::Jsonl {
+                reader,
+                line_number,
+                line,
+                ..
+            } => Self::next_jsonl_event(reader, line_number, line),
+            PevcapReaderState::Binary {
+                reader,
+                remaining_records,
+                remaining_locations,
+                locations_count_read,
+                finished,
+                ..
+            } => Self::next_binary_event(
+                reader,
+                remaining_records,
+                remaining_locations,
+                locations_count_read,
+                finished,
+            ),
         }
-
-        let PevcapReaderState::Jsonl {
-            reader,
-            line_number,
-            line,
-            ..
-        } = &mut self.state
-        else {
-            return Ok(None);
-        };
-        Self::next_jsonl_event(reader, line_number, line)
     }
 
-    fn next_binary_event(&mut self) -> Result<Option<PevcapEvent>, PevcapStreamError> {
-        let PevcapReaderState::Binary {
-            reader,
-            remaining_locations,
-            locations_count_read,
-            finished,
-            ..
-        } = &mut self.state
-        else {
-            return Ok(None);
-        };
+    fn next_binary_event(
+        reader: &mut R,
+        remaining_records: &mut u32,
+        remaining_locations: &mut u32,
+        locations_count_read: &mut bool,
+        finished: &mut bool,
+    ) -> Result<Option<PevcapEvent>, PevcapStreamError> {
+        if *remaining_records > 0 {
+            let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
+            *remaining_records -= 1;
+            let record = serde_json::from_slice::<PevcapRecordJson>(&payload)
+                .map_err(|source| PevcapBinaryError::Deserialize {
+                    section: PevcapBinarySection::Record,
+                    source,
+                })?
+                .try_into_record()
+                .map_err(PevcapBinaryError::Record)?;
+            return Ok(Some(PevcapEvent::Record(record)));
+        }
         if !*locations_count_read {
             *remaining_locations = read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
             *locations_count_read = true;
@@ -628,86 +550,38 @@ impl<R: Read> PevcapReader<R> {
         }
     }
 
-    /// Reads the next independent location sample, retaining no previously decoded samples.
+    /// Reads the next independent location sample and consumes the capture through EOF.
     ///
-    /// Transport records are skipped when this method is called before the transport stream has
-    /// been exhausted. Location samples are never passed to protocol replay.
+    /// Transport records are validated and discarded in constant space. Use
+    /// [`Self::next_event`] when transport and location events must both be observed. Location
+    /// samples are never passed to protocol replay.
     ///
     /// # Errors
     ///
     /// Returns [`PevcapStreamError`] when a sample is malformed, the stream is truncated, or an
     /// underlying read fails.
     pub fn next_location(&mut self) -> Result<Option<PevcapLocationSample>, PevcapStreamError> {
-        match &mut self.state {
-            PevcapReaderState::Jsonl {
-                reader,
-                line_number,
-                line,
-                pending_locations,
-                ..
-            } => Self::next_jsonl_location(reader, line_number, line, pending_locations),
-            PevcapReaderState::Binary {
-                reader,
-                remaining_records,
-                remaining_locations,
-                locations_count_read,
-                finished,
-                ..
-            } => Self::next_binary_location(
-                reader,
-                remaining_records,
-                remaining_locations,
-                locations_count_read,
-                finished,
-            ),
+        loop {
+            match self.next_event()? {
+                Some(PevcapEvent::Record(_)) => {}
+                Some(PevcapEvent::Location(location)) => return Ok(Some(location)),
+                Some(PevcapEvent::LocationRejected(rejection)) => {
+                    return Err(self.location_rejection_error(rejection));
+                }
+                None => return Ok(None),
+            }
         }
     }
 
-    fn next_jsonl_location(
-        reader: &mut BufReader<R>,
-        line_number: &mut usize,
-        line: &mut String,
-        pending_locations: &mut VecDeque<PevcapLocationSample>,
-    ) -> Result<Option<PevcapLocationSample>, PevcapStreamError> {
-        if let Some(location) = pending_locations.pop_front() {
-            return Ok(Some(location));
-        }
-        loop {
-            line.clear();
-            if reader.read_line(line).map_err(PevcapJsonlError::Io)? == 0 {
-                return Ok(None);
+    fn location_rejection_error(&self, rejection: PevcapLocationRejection) -> PevcapStreamError {
+        match &self.state {
+            PevcapReaderState::Jsonl { line_number, .. } => PevcapJsonlError::Location {
+                line: *line_number,
+                source: rejection.reason,
             }
-            *line_number += 1;
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let parsed = serde_json::from_str::<PevcapJsonlLine>(trimmed).map_err(|source| {
-                PevcapJsonlError::Deserialize {
-                    line: *line_number,
-                    source,
-                }
-            })?;
-            match parsed {
-                PevcapJsonlLine::Header { .. } => {
-                    return Err(PevcapJsonlError::DuplicateHeader { line: *line_number }.into());
-                }
-                PevcapJsonlLine::Record { record } => {
-                    record
-                        .try_into_record()
-                        .map_err(|source| PevcapJsonlError::Record {
-                            line: *line_number,
-                            source,
-                        })?;
-                }
-                PevcapJsonlLine::Location { location } => {
-                    return Ok(Some(location.try_into_location().map_err(|source| {
-                        PevcapJsonlError::Location {
-                            line: *line_number,
-                            source,
-                        }
-                    })?));
-                }
+            .into(),
+            PevcapReaderState::Binary { .. } => {
+                PevcapBinaryError::Location(rejection.reason).into()
             }
         }
     }
@@ -747,58 +621,6 @@ impl<R: Read> PevcapReader<R> {
                 ))),
                 PevcapJsonlLine::Location { location } => Ok(Some(location_event(location))),
             };
-        }
-    }
-
-    fn next_binary_location(
-        reader: &mut R,
-        remaining_records: &mut u32,
-        remaining_locations: &mut u32,
-        locations_count_read: &mut bool,
-        finished: &mut bool,
-    ) -> Result<Option<PevcapLocationSample>, PevcapStreamError> {
-        while *remaining_records > 0 {
-            let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Record)?;
-            *remaining_records -= 1;
-            serde_json::from_slice::<PevcapRecordJson>(&payload)
-                .map_err(|source| PevcapBinaryError::Deserialize {
-                    section: PevcapBinarySection::Record,
-                    source,
-                })?
-                .try_into_record()
-                .map_err(PevcapBinaryError::Record)?;
-        }
-        if !*locations_count_read {
-            *remaining_locations = read_stream_u32(reader, PevcapBinarySection::LocationCount)?;
-            *locations_count_read = true;
-        }
-        if *remaining_locations > 0 {
-            let payload = read_stream_len_prefixed(reader, PevcapBinarySection::Location)?;
-            *remaining_locations -= 1;
-            let location = serde_json::from_slice::<PevcapLocationJson>(&payload)
-                .map_err(|source| PevcapBinaryError::Deserialize {
-                    section: PevcapBinarySection::Location,
-                    source,
-                })?
-                .try_into_location()
-                .map_err(PevcapBinaryError::Location)?;
-            return Ok(Some(location));
-        }
-        if *finished {
-            return Ok(None);
-        }
-        *finished = true;
-        let mut trailing = Vec::new();
-        reader
-            .read_to_end(&mut trailing)
-            .map_err(PevcapBinaryError::Io)?;
-        if trailing.is_empty() {
-            Ok(None)
-        } else {
-            Err(PevcapBinaryError::TrailingBytes {
-                len: trailing.len(),
-            }
-            .into())
         }
     }
 }
@@ -3436,9 +3258,67 @@ mod tests {
         assert_eq!(reader.next_record().expect("stream should finish"), None);
     }
 
+    #[test]
+    fn streaming_record_reader_reports_truncated_binary_location_section() {
+        let characteristic = GattChannel::from_bytes([0x55; 16]);
+        let header = PevcapHeader::new(
+            wc(1),
+            "darwin",
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            "0.1.0",
+            [0; 32],
+            &[],
+        )
+        .expect("header should validate");
+        let location = PevcapLocationSample::new(
+            ms(3),
+            PevcapPhoneLocation {
+                wall_clock_unix_ms: 1_700_000_000_003,
+                latitude_degrees: 39.7,
+                longitude_degrees: -104.9,
+                altitude_meters: 1_600.0,
+                horizontal_accuracy_meters: Some(2.0),
+                vertical_accuracy_meters: None,
+                speed_meters_per_second: None,
+                speed_accuracy_meters_per_second: None,
+                course_degrees: Some(0.0),
+                course_accuracy_degrees: None,
+            },
+            None,
+            None,
+        )
+        .expect("location should validate");
+        let capture = PevcapCapture::new_with_locations(
+            header,
+            vec![PevcapRecord::inbound_notification(
+                ms(2),
+                characteristic,
+                characteristic,
+                Bytes::from_static(b"telemetry"),
+            )],
+            vec![location],
+        );
+        let mut input = capture
+            .encode(PevcapEncoding::Binary)
+            .expect("capture should encode");
+        input.pop();
+        let mut reader = PevcapReader::new(Cursor::new(input), PevcapEncoding::Binary)
+            .expect("streaming binary reader should validate the header");
+
+        assert_eq!(
+            reader.next_record().expect("record should decode"),
+            Some(capture.records[0].clone())
+        );
+        assert!(reader.next_record().is_err());
+    }
+
     #[cfg(feature = "serde")]
     #[test]
-    fn streaming_reader_exposes_locations_after_transport_records() {
+    fn streaming_reader_filters_records_or_locations_through_capture_eof() {
         let header = PevcapHeader::new(
             wc(1),
             "darwin",
@@ -3478,19 +3358,55 @@ mod tests {
 
         for encoding in [PevcapEncoding::Jsonl, PevcapEncoding::Binary] {
             let input = capture.encode(encoding).expect("capture should encode");
-            let mut reader = PevcapReader::new(Cursor::new(input), encoding)
+            let mut record_reader = PevcapReader::new(Cursor::new(input.clone()), encoding)
                 .expect("streaming reader should validate the header");
             assert_eq!(
-                reader.next_record().expect("record should decode"),
+                record_reader.next_record().expect("record should decode"),
                 Some(capture.records[0].clone())
             );
-            assert_eq!(reader.next_record().expect("records should finish"), None);
             assert_eq!(
-                reader.next_location().expect("location should decode"),
+                record_reader
+                    .next_record()
+                    .expect("capture should finish after validating locations"),
+                None
+            );
+            assert_eq!(
+                record_reader
+                    .next_location()
+                    .expect("record filtering should consume locations"),
+                None
+            );
+
+            let mut location_reader = PevcapReader::new(Cursor::new(input), encoding)
+                .expect("streaming reader should validate the header");
+            assert_eq!(
+                location_reader
+                    .next_location()
+                    .expect("location should decode"),
                 Some(location)
             );
             assert_eq!(
-                reader.next_location().expect("locations should finish"),
+                location_reader
+                    .next_location()
+                    .expect("locations should finish"),
+                None
+            );
+
+            let mut event_reader = PevcapReader::new(
+                Cursor::new(capture.encode(encoding).expect("capture should encode")),
+                encoding,
+            )
+            .expect("streaming reader should validate the header");
+            assert_eq!(
+                event_reader.next_event().expect("record should decode"),
+                Some(PevcapEvent::Record(capture.records[0].clone()))
+            );
+            assert_eq!(
+                event_reader.next_event().expect("location should decode"),
+                Some(PevcapEvent::Location(location))
+            );
+            assert_eq!(
+                event_reader.next_event().expect("capture should finish"),
                 None
             );
         }
