@@ -15890,6 +15890,85 @@ mod tests {
     }
 
     #[test]
+    fn mobile_database_history_context_projection_bounds_and_excludes_selected() {
+        let _guard = RIDE_DATABASE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let path = std::env::temp_dir().join(format!(
+            "cutout-mobile-history-context-{}-{}.sqlite3",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        let _ = fs::remove_file(&path);
+        let database =
+            open_ride_database(path.to_string_lossy().into_owned()).expect("database opens");
+        let mut rides = Vec::new();
+        for ride_index in 0_u64..3 {
+            let ride = database
+                .create_ride(MobileRideSourceDto::Live, 1_700_000_000_000 + ride_index)
+                .expect("ride creates");
+            database
+                .transition(ride.clone(), MobileRideEventDto::Start)
+                .expect("ride starts");
+            for point_index in 0_u32..4 {
+                let point_index_milliseconds = u64::from(point_index);
+                database
+                    .append_location_with_segment(
+                        ride.clone(),
+                        MobileRideLocationDto {
+                            latitude_degrees: 40.0 + f64::from(point_index) / 10_000.0,
+                            longitude_degrees: -105.0,
+                            monotonic_milliseconds: ride_index * 10
+                                + point_index_milliseconds
+                                + 1,
+                            wall_clock_unix_milliseconds: 1_700_000_000_000
+                                + ride_index * 10
+                                + point_index_milliseconds,
+                            horizontal_accuracy_millimetres: Some(3_000),
+                            source: MobileRideSourceDto::Live,
+                        },
+                        0,
+                    )
+                    .expect("location appends");
+            }
+            rides.push(ride);
+        }
+
+        let projection = database
+            .project_history_context(MobileRideHistoryContextOptionsDto {
+                filter: MobileRideHistoryFilterDto {
+                    created_after_milliseconds: None,
+                    vehicle_identity: None,
+                    search_text: None,
+                },
+                selected_ride_id: Some(rides[1].clone()),
+                budget: MobileRideHistoryContextBudgetDto {
+                    history_page_limit: 10,
+                    max_routes: 2,
+                    per_route_budget: 3,
+                    total_point_budget: 4,
+                },
+                viewport: None,
+                privacy: MobileRideMapRoutePrivacyPolicyDto::Precise,
+            })
+            .expect("history context projection succeeds");
+
+        assert_eq!(projection.source_history_route_count, 3);
+        assert_eq!(projection.context_route_count, 2);
+        assert_eq!(projection.routes.len(), 2);
+        assert_eq!(projection.total_display_point_count, 4);
+        assert!(!projection.routes_omitted_by_budget);
+        assert!(!projection.history_page_has_more);
+        assert!(projection
+            .routes
+            .iter()
+            .all(|route| route.ride_id != rides[1] && route.projection.points.len() <= 3));
+
+        database.shutdown().expect("database shuts down");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn mobile_ride_map_core_reports_segments_omitted_by_display_budget() {
         let state = MobileRideMapCore::new_for_testing();
         state
