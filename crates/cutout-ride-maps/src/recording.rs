@@ -1223,13 +1223,14 @@ mod tests {
     fn recording_a_late_sample_does_not_move_the_monotonic_watermark_backwards() {
         let mut recorder = RideMapRecorder::new();
         recorder.start(monotonic(1_000), None).expect("starts");
-        recorder.record_sample(sample(2_000, 40.0));
+        recorder.apply_transition_at(RideLifecycleState::Paused, monotonic(3_000));
+        recorder.apply_transition_at(RideLifecycleState::Active, monotonic(5_000));
 
-        recorder.record_sample(sample(1_500, 40.001));
+        recorder.record_sample(sample(4_000, 40.0));
 
         assert_eq!(
-            recorder.duration_milliseconds_at(monotonic(2_000)),
-            RideDurationMilliseconds::new(1_000)
+            recorder.duration_milliseconds(),
+            RideDurationMilliseconds::new(2_000)
         );
     }
 }
