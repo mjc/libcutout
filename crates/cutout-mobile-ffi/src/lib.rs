@@ -4020,9 +4020,17 @@ fn mobile_ride_record_dto(ride: &persistence::RideRecord) -> MobileRideRecordDto
 fn parse_mobile_ride_id(
     id: &MobileRideIdDto,
 ) -> Result<persistence::RideId, MobileRideDatabaseError> {
-    Uuid::parse_str(&id.value)
-        .map(persistence::RideId::from_uuid)
-        .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+    id.try_into()
+}
+
+impl TryFrom<&MobileRideIdDto> for persistence::RideId {
+    type Error = MobileRideDatabaseError;
+
+    fn try_from(id: &MobileRideIdDto) -> Result<Self, Self::Error> {
+        Uuid::parse_str(&id.value)
+            .map(Self::from_uuid)
+            .map_err(|_| MobileRideDatabaseError::InvalidIdentifier)
+    }
 }
 
 fn parse_mobile_trail_id(
@@ -4137,32 +4145,24 @@ fn mobile_route_display_point_dto(
     }
 }
 
-fn mobile_segment_start_reason_dto(
-    reason: ride_maps::RideSegmentStartReason,
-) -> MobileRideSegmentStartReasonDto {
-    match reason {
-        ride_maps::RideSegmentStartReason::Initial => MobileRideSegmentStartReasonDto::Initial,
-        ride_maps::RideSegmentStartReason::Resume => MobileRideSegmentStartReasonDto::Resume,
-        ride_maps::RideSegmentStartReason::BackgroundGap => {
-            MobileRideSegmentStartReasonDto::BackgroundGap
-        }
-        ride_maps::RideSegmentStartReason::ImportBoundary => {
-            MobileRideSegmentStartReasonDto::ImportBoundary
+impl From<ride_maps::RideSegmentStartReason> for MobileRideSegmentStartReasonDto {
+    fn from(reason: ride_maps::RideSegmentStartReason) -> Self {
+        match reason {
+            ride_maps::RideSegmentStartReason::Initial => Self::Initial,
+            ride_maps::RideSegmentStartReason::Resume => Self::Resume,
+            ride_maps::RideSegmentStartReason::BackgroundGap => Self::BackgroundGap,
+            ride_maps::RideSegmentStartReason::ImportBoundary => Self::ImportBoundary,
         }
     }
 }
 
-fn mobile_segment_start_reason(
-    reason: MobileRideSegmentStartReasonDto,
-) -> ride_maps::RideSegmentStartReason {
-    match reason {
-        MobileRideSegmentStartReasonDto::Initial => ride_maps::RideSegmentStartReason::Initial,
-        MobileRideSegmentStartReasonDto::Resume => ride_maps::RideSegmentStartReason::Resume,
-        MobileRideSegmentStartReasonDto::BackgroundGap => {
-            ride_maps::RideSegmentStartReason::BackgroundGap
-        }
-        MobileRideSegmentStartReasonDto::ImportBoundary => {
-            ride_maps::RideSegmentStartReason::ImportBoundary
+impl From<MobileRideSegmentStartReasonDto> for ride_maps::RideSegmentStartReason {
+    fn from(reason: MobileRideSegmentStartReasonDto) -> Self {
+        match reason {
+            MobileRideSegmentStartReasonDto::Initial => Self::Initial,
+            MobileRideSegmentStartReasonDto::Resume => Self::Resume,
+            MobileRideSegmentStartReasonDto::BackgroundGap => Self::BackgroundGap,
+            MobileRideSegmentStartReasonDto::ImportBoundary => Self::ImportBoundary,
         }
     }
 }
@@ -4172,7 +4172,7 @@ fn mobile_segment_display_metadata_dto(
 ) -> MobileRideMapSegmentDisplayMetadataDto {
     MobileRideMapSegmentDisplayMetadataDto {
         segment_id: segment.segment_id().value(),
-        start_reason: mobile_segment_start_reason_dto(segment.start_reason()),
+        start_reason: segment.start_reason().into(),
         visible_point_count: segment.visible_point_count(),
         canonical_point_count: segment
             .canonical_point_count()
@@ -4630,7 +4630,7 @@ impl RideDatabaseHandle {
                     .map(|point| MobileRoutePointDto {
                         sequence: point.sequence().as_u64(),
                         segment_id: point.segment_id().value(),
-                        start_reason: mobile_segment_start_reason_dto(point.start_reason()),
+                        start_reason: point.start_reason().into(),
                         location: mobile_ride_location_dto(point.sample()),
                         telemetry_state: point.telemetry_state().into(),
                     })
@@ -5375,7 +5375,7 @@ impl RideDatabaseHandle {
                 id,
                 location,
                 segment_id,
-                map_ride_telemetry_state(telemetry_state),
+                telemetry_state.into(),
             )
             .map(Into::into)
             .map_err(map_ride_database_error)
@@ -5401,7 +5401,7 @@ impl RideDatabaseHandle {
                 id,
                 location,
                 segment_id,
-                map_ride_telemetry_state(telemetry_state),
+                telemetry_state.into(),
             )
             .map(Into::into)
             .map_err(map_ride_database_error)
@@ -5473,12 +5473,7 @@ impl RideDatabaseHandle {
         let id = parse_mobile_ride_id(&id)?;
         let location = mobile_ride_location(location)?;
         self.inner
-            .enqueue_location_async(
-                id,
-                location,
-                segment_id,
-                map_ride_telemetry_state(telemetry_state),
-            )
+            .enqueue_location_async(id, location, segment_id, telemetry_state.into())
             .map_err(map_ride_database_error)
     }
 
@@ -5595,7 +5590,7 @@ impl MobileRideMapCoreInner {
             .latest_route_map_points(ride.id.clone())
             .map_err(map_core_error)?;
         self.recorder = ride_maps::RideMapRecorder::restored_with_metadata_and_summary_and_timing(
-            map_ride_lifecycle_state(ride.state),
+            ride.state.into(),
             ride_maps::MonotonicMilliseconds::new(
                 monotonic_created_at_milliseconds
                     .or_else(|| {
@@ -5653,7 +5648,7 @@ impl MobileRideMapCoreInner {
         MobileRideMapCorePointDto {
             sequence,
             segment_id: segment_id.value(),
-            start_reason: mobile_segment_start_reason_dto(start_reason),
+            start_reason: start_reason.into(),
             latitude_degrees: location.latitude_degrees,
             longitude_degrees: location.longitude_degrees,
             wall_clock_unix_ms: location.wall_clock_unix_milliseconds,
@@ -6025,32 +6020,30 @@ fn wall_clock_unix_milliseconds() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-fn map_ride_lifecycle_state(state: MobileRideLifecycleStateDto) -> ride_maps::RideLifecycleState {
-    match state {
-        MobileRideLifecycleStateDto::Draft => ride_maps::RideLifecycleState::Draft,
-        MobileRideLifecycleStateDto::Active => ride_maps::RideLifecycleState::Active,
-        MobileRideLifecycleStateDto::Paused => ride_maps::RideLifecycleState::Paused,
-        MobileRideLifecycleStateDto::Stopped => ride_maps::RideLifecycleState::Stopped,
-        MobileRideLifecycleStateDto::Interrupted => ride_maps::RideLifecycleState::Interrupted,
-        MobileRideLifecycleStateDto::Discarded => ride_maps::RideLifecycleState::Discarded,
-        MobileRideLifecycleStateDto::Saved => ride_maps::RideLifecycleState::Saved,
-        MobileRideLifecycleStateDto::Imported => ride_maps::RideLifecycleState::Imported,
+impl From<MobileRideLifecycleStateDto> for ride_maps::RideLifecycleState {
+    fn from(state: MobileRideLifecycleStateDto) -> Self {
+        match state {
+            MobileRideLifecycleStateDto::Draft => Self::Draft,
+            MobileRideLifecycleStateDto::Active => Self::Active,
+            MobileRideLifecycleStateDto::Paused => Self::Paused,
+            MobileRideLifecycleStateDto::Stopped => Self::Stopped,
+            MobileRideLifecycleStateDto::Interrupted => Self::Interrupted,
+            MobileRideLifecycleStateDto::Discarded => Self::Discarded,
+            MobileRideLifecycleStateDto::Saved => Self::Saved,
+            MobileRideLifecycleStateDto::Imported => Self::Imported,
+        }
     }
 }
 
-fn map_ride_telemetry_state(
-    state: MobileRideMapCoreTelemetryStateDto,
-) -> ride_maps::RouteTelemetryState {
-    match state {
-        MobileRideMapCoreTelemetryStateDto::GpsOnly => ride_maps::RouteTelemetryState::GpsOnly,
-        MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
-            ride_maps::RouteTelemetryState::AssociatedNoTelemetry
-        }
-        MobileRideMapCoreTelemetryStateDto::AssociatedFresh => {
-            ride_maps::RouteTelemetryState::AssociatedFresh
-        }
-        MobileRideMapCoreTelemetryStateDto::AssociatedStale => {
-            ride_maps::RouteTelemetryState::AssociatedStale
+impl From<MobileRideMapCoreTelemetryStateDto> for ride_maps::RouteTelemetryState {
+    fn from(state: MobileRideMapCoreTelemetryStateDto) -> Self {
+        match state {
+            MobileRideMapCoreTelemetryStateDto::GpsOnly => Self::GpsOnly,
+            MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
+                Self::AssociatedNoTelemetry
+            }
+            MobileRideMapCoreTelemetryStateDto::AssociatedFresh => Self::AssociatedFresh,
+            MobileRideMapCoreTelemetryStateDto::AssociatedStale => Self::AssociatedStale,
         }
     }
 }
@@ -6565,8 +6558,8 @@ impl MobileRideMapCore {
                         point.location,
                         point.sequence,
                         ride_maps::RideMapSegmentId::new(point.segment_id),
-                        mobile_segment_start_reason(point.start_reason),
-                        map_ride_telemetry_state(point.telemetry_state),
+                        point.start_reason.into(),
+                        point.telemetry_state.into(),
                     )
                 })
                 .collect();
