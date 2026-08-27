@@ -4811,6 +4811,7 @@ fn load_ride_write_state(
         lifecycle,
         monotonic_created_at_ms,
         monotonic_last_event_ms,
+        latest_observed_monotonic_ms,
         paused_at_ms,
         paused_duration_ms,
         completed_duration_ms,
@@ -4821,12 +4822,14 @@ fn load_ride_write_state(
         Option<u64>,
         Option<u64>,
         Option<u64>,
+        Option<u64>,
         u64,
         u64,
         u64,
     ) = connection
         .query_row(
             "SELECT source, state, monotonic_created_at_ms, monotonic_last_event_ms,
+                    (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id),
                     paused_at_ms, paused_duration_ms, completed_duration_ms, updated_at_ms
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
@@ -4840,6 +4843,7 @@ fn load_ride_write_state(
                     row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
+                    row.get(8)?,
                 ))
             },
         )
@@ -4850,6 +4854,7 @@ fn load_ride_write_state(
         state_from_db(&lifecycle)?,
         monotonic_created_at_ms,
         monotonic_last_event_ms,
+        latest_observed_monotonic_ms,
         paused_at_ms,
         paused_duration_ms,
         completed_duration_ms,

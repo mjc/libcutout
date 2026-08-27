@@ -28,7 +28,7 @@ pub use recording::{
     RideMapMetadata, RideMapPoint, RideMapRecorder, RideMapSegmentId, RidePointSequence,
     RideRecordingTiming, RideSegmentCount, RideSegmentStartReason, RouteTelemetryState,
     TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
-    VehicleIdentityError,
+    VehicleIdentityError, clamped_transition_timestamp,
 };
 mod projection;
 pub use projection::{

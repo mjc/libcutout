@@ -401,6 +401,18 @@ impl RideRecordingTiming {
     }
 }
 
+/// Clamps a lifecycle timestamp to the monotonic watermark already observed by a ride.
+#[must_use]
+pub const fn clamped_transition_timestamp(
+    created_at_milliseconds: MonotonicMilliseconds,
+    latest_observed_milliseconds: Option<MonotonicMilliseconds>,
+    requested_at_milliseconds: MonotonicMilliseconds,
+) -> MonotonicMilliseconds {
+    requested_at_milliseconds
+        .max(created_at_milliseconds)
+        .max(latest_observed_milliseconds.unwrap_or_default())
+}
+
 /// Rust-owned live recording projection independent of storage or FFI DTOs.
 #[derive(Clone, Debug)]
 pub struct RideMapRecorder {
@@ -858,9 +870,11 @@ impl RideMapRecorder {
         state: RideLifecycleState,
         at_milliseconds: MonotonicMilliseconds,
     ) {
-        let at_milliseconds = at_milliseconds
-            .max(self.created_at_milliseconds)
-            .max(self.last_monotonic_milliseconds);
+        let at_milliseconds = clamped_transition_timestamp(
+            self.created_at_milliseconds,
+            Some(self.last_monotonic_milliseconds),
+            at_milliseconds,
+        );
         match (self.state, state) {
             (Some(RideLifecycleState::Active), RideLifecycleState::Paused) => {
                 self.paused_at_milliseconds = Some(at_milliseconds);
@@ -1123,6 +1137,18 @@ mod tests {
             None,
             LocationSource::Live,
         )
+    }
+
+    #[test]
+    fn clamped_transition_timestamp_uses_the_latest_watermark() {
+        assert_eq!(
+            super::clamped_transition_timestamp(
+                monotonic(1_000),
+                Some(monotonic(5_000)),
+                monotonic(3_000),
+            ),
+            monotonic(5_000)
+        );
     }
 
     #[test]
