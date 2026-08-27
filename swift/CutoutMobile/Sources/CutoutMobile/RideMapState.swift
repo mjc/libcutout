@@ -1,0 +1,586 @@
+import CutoutMobileFFI
+import Foundation
+
+public enum MobileRideMapAvailability: Equatable, Hashable, Sendable {
+    case checking
+    case ready
+    case permissionRequired
+    case denied
+    case restricted
+    case servicesDisabled
+    case locationUnavailable
+    case storageUnavailable
+}
+
+/// Errors surfaced by the map presentation adapter.
+public enum MobileRideMapError: Error, Equatable, Hashable, Sendable {
+    case AlreadyRecording
+    case NoActiveRide
+    case InvalidTransition
+    case InvalidLocation
+    case InvalidRouteProjection
+    case RideNotFound
+    case cancelled
+    case Storage(String)
+}
+
+private func monotonicMillisecondsNow() -> UInt64 {
+    DispatchTime.now().uptimeNanoseconds / 1_000_000
+}
+
+/// Swift-owned handle for cancelling one Rust durable route projection.
+public final class MobileRideMapProjectionCancellation: @unchecked Sendable {
+    fileprivate let ffi: MobileRouteProjectionCancellation
+
+    public init(timeoutMilliseconds: UInt64 = 2_000) {
+        _ = timeoutMilliseconds
+        ffi = MobileRouteProjectionCancellation()
+    }
+
+    public func cancel() {
+        ffi.cancel()
+    }
+}
+
+/// Swift-owned handle for cancelling one live in-memory route projection.
+public final class MobileLiveRideMapProjectionCancellation: @unchecked Sendable {
+    fileprivate let ffi: MobileLiveRouteProjectionCancellation
+
+    public init() {
+        ffi = MobileLiveRouteProjectionCancellation()
+    }
+
+    public func cancel() {
+        ffi.cancel()
+    }
+}
+
+public enum MobileRideMapStateDto: Equatable, Hashable, Sendable {
+    case recording
+    case paused
+    case stopped
+    case saved
+    case discarded
+}
+
+public enum MobileRideMapTelemetryStateDto: Equatable, Hashable, Sendable {
+    case gpsOnly
+    case associatedNoTelemetry
+    case associatedFresh
+    case associatedStale
+    case unknown
+}
+
+public enum MobileRideMapTelemetryObservation: Equatable, Hashable, Sendable {
+    case observed
+    case alreadyObserved
+    case notAssociated
+    case timestampOutOfOrder
+    case rideNotOpen
+    case unknown
+}
+
+public struct MobileRideMapSummaryDto: Equatable, Hashable, Sendable {
+    public var pointCount: UInt64
+    public var distanceMeters: Double
+    public var durationMilliseconds: UInt64
+    public var averageSpeedMillimetresPerSecond: UInt64?
+
+    public init(
+        pointCount: UInt64,
+        distanceMeters: Double,
+        durationMilliseconds: UInt64,
+        averageSpeedMillimetresPerSecond: UInt64? = nil
+    ) {
+        self.pointCount = pointCount
+        self.distanceMeters = distanceMeters
+        self.durationMilliseconds = durationMilliseconds
+        self.averageSpeedMillimetresPerSecond = averageSpeedMillimetresPerSecond
+    }
+}
+
+public struct MobileRideMapPointDto: Equatable, Hashable, Sendable {
+    public var sequence: UInt64
+    public var segmentId: UInt64
+    public var startReason: MobileRideMapSegmentStartReason
+    public var latitudeDegrees: Double
+    public var longitudeDegrees: Double
+    public var wallClockUnixMs: UInt64
+    public var monotonicMs: UInt64
+    public var horizontalAccuracyMeters: Double?
+    public var telemetryState: MobileRideMapTelemetryStateDto
+
+    public init(
+        sequence: UInt64,
+        segmentId: UInt64,
+        startReason: MobileRideMapSegmentStartReason = .unknown,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+        wallClockUnixMs: UInt64,
+        monotonicMs: UInt64,
+        horizontalAccuracyMeters: Double?,
+        telemetryState: MobileRideMapTelemetryStateDto
+    ) {
+        self.sequence = sequence
+        self.segmentId = segmentId
+        self.startReason = startReason
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.wallClockUnixMs = wallClockUnixMs
+        self.monotonicMs = monotonicMs
+        self.horizontalAccuracyMeters = horizontalAccuracyMeters
+        self.telemetryState = telemetryState
+    }
+}
+
+public struct MobileRideMapPointBatchDto: Equatable, Hashable, Sendable {
+    public var points: [MobileRideMapPointDto]
+    public var nextCursor: UInt64?
+    public var hasMore: Bool
+}
+
+public enum MobileRideMapRoutePrivacyPolicy: Equatable, Hashable, Sendable {
+    case precise
+    case grid(e7: UInt32)
+}
+
+public enum MobileRideMapRoutePrivacyClass: Equatable, Hashable, Sendable {
+    case precise
+    case gridRedacted
+}
+
+/// Rust's reason for starting a route segment.
+///
+/// Segment identity alone is not enough to decide whether a route should be drawn as a gap:
+/// resuming a paused ride and crossing an import boundary are different from a background
+/// location gap. The map presentation uses `isBackgroundGap` rather than inferring semantics from
+/// adjacent segment IDs.
+public enum MobileRideMapSegmentStartReason: Equatable, Hashable, Sendable {
+    case initial
+    case resume
+    case backgroundGap
+    case importBoundary
+    case unknown
+
+    public var isBackgroundGap: Bool {
+        self == .backgroundGap
+    }
+
+    public var accessibilityLabel: String {
+        switch self {
+        case .initial:
+            return pevLocalizedText("ride_map.segment.initial")
+        case .resume:
+            return pevLocalizedText("ride_map.segment.resume")
+        case .backgroundGap:
+            return pevLocalizedText("ride_map.segment.background_gap")
+        case .importBoundary:
+            return pevLocalizedText("ride_map.segment.import_boundary")
+        case .unknown:
+            return pevLocalizedText("ride_map.segment.unknown")
+        }
+    }
+
+    /// Accessibility text for a singleton retained by the bounded display projection.
+    ///
+    /// The wording intentionally describes the displayed point rather than claiming that the
+    /// canonical source segment contains one point or that this point is a route endpoint.
+    public var retainedSingletonAccessibilityLabel: String {
+        switch self {
+        case .initial:
+            return pevLocalizedText("ride_map.segment.singleton_initial")
+        case .resume:
+            return pevLocalizedText("ride_map.segment.singleton_resume")
+        case .backgroundGap:
+            return pevLocalizedText("ride_map.segment.singleton_background_gap")
+        case .importBoundary:
+            return pevLocalizedText("ride_map.segment.singleton_import_boundary")
+        case .unknown:
+            return pevLocalizedText("ride_map.segment.singleton_unknown")
+        }
+    }
+}
+
+public struct MobileRideMapRouteDisplayPoint: Equatable, Hashable, Sendable {
+    public var sequence: UInt64
+    public var segmentId: UInt64
+    public var latitudeDegrees: Double
+    public var longitudeDegrees: Double
+    public var privacyClass: MobileRideMapRoutePrivacyClass
+
+    public init(
+        sequence: UInt64,
+        segmentId: UInt64,
+        latitudeDegrees: Double,
+        longitudeDegrees: Double,
+        privacyClass: MobileRideMapRoutePrivacyClass
+    ) {
+        self.sequence = sequence
+        self.segmentId = segmentId
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.privacyClass = privacyClass
+    }
+
+    public init(_ point: MobileRideMapPointDto) {
+        self.init(
+            sequence: point.sequence,
+            segmentId: point.segmentId,
+            latitudeDegrees: point.latitudeDegrees,
+            longitudeDegrees: point.longitudeDegrees,
+            privacyClass: .precise
+        )
+    }
+}
+
+/// Bounded metadata for one segment represented by a route projection.
+public struct MobileRideMapSegmentDisplayMetadata: Equatable, Hashable, Sendable, Identifiable {
+    public var segmentId: UInt64
+    public var startReason: MobileRideMapSegmentStartReason
+    /// Number of points retained for this segment in the bounded display projection.
+    /// This is not the cardinality of the canonical source segment.
+    public var visiblePointCount: UInt64
+    /// Number of points in the canonical source segment, when the projection has durable data.
+    /// Live-tail projections may leave this unknown after older points are evicted.
+    public var canonicalPointCount: UInt64?
+    public var firstVisibleSequence: UInt64?
+    public var lastVisibleSequence: UInt64?
+
+    public var id: UInt64 { segmentId }
+
+    public var isBackgroundGap: Bool {
+        startReason.isBackgroundGap
+    }
+
+    /// Whether exactly one point from this segment was retained for display.
+    ///
+    /// A retained singleton does not imply that the canonical source segment contains one point.
+    public var isRetainedSingleton: Bool {
+        visiblePointCount == 1
+    }
+
+    /// Whether the canonical source segment contains exactly one point.
+    public var isCanonicalSingleton: Bool {
+        canonicalPointCount == 1
+    }
+
+    /// Accessibility text that distinguishes a canonical singleton from a display-only LOD
+    /// singleton. A missing canonical count is intentionally left as the generic retained-point
+    /// wording used by live-tail projections.
+    public var singletonAccessibilityLabel: String? {
+        guard isRetainedSingleton else { return nil }
+        guard let canonicalPointCount else {
+            return startReason.retainedSingletonAccessibilityLabel
+        }
+        if canonicalPointCount == 1 {
+            return pevLocalizedText(
+                "ride_map.segment.canonical_singleton",
+                startReason.accessibilityLabel
+            )
+        }
+        return pevLocalizedText(
+            "ride_map.segment.display_singleton",
+            startReason.accessibilityLabel,
+            canonicalPointCount.formatted()
+        )
+    }
+
+    /// Counts displayed segments that represent a background location gap.
+    ///
+    /// This is a visible-segment helper for secondary presentation diagnostics. Canonical route
+    /// truth must use `MobileRideMapRouteProjection.backgroundGapCount`, which covers omitted
+    /// segments too.
+    public static func visibleBackgroundGapCount(
+        for segments: [MobileRideMapSegmentDisplayMetadata]
+    ) -> UInt64 {
+        UInt64(segments.lazy.filter(\.isBackgroundGap).count)
+    }
+
+    public init(
+        segmentId: UInt64,
+        startReason: MobileRideMapSegmentStartReason,
+        visiblePointCount: UInt64,
+        canonicalPointCount: UInt64? = nil,
+        firstVisibleSequence: UInt64?,
+        lastVisibleSequence: UInt64?
+    ) {
+        self.segmentId = segmentId
+        self.startReason = startReason
+        self.visiblePointCount = visiblePointCount
+        self.canonicalPointCount = canonicalPointCount
+        self.firstVisibleSequence = firstVisibleSequence
+        self.lastVisibleSequence = lastVisibleSequence
+    }
+}
+
+public struct MobileRideMapRouteProjection: Equatable, Hashable, Sendable {
+    public var points: [MobileRideMapRouteDisplayPoint]
+    public var segments: [MobileRideMapSegmentDisplayMetadata]
+    public var sourcePointCount: UInt64
+    public var sourceSegmentCount: UInt64
+    public var candidatePointCount: UInt64
+    public var candidateSegmentCount: UInt64
+    public var displayedSegmentCount: UInt64
+    /// Number of canonical BackgroundGap segments in the complete route.
+    public var backgroundGapCount: UInt64
+    public var canonicalStartSequence: UInt64?
+    public var canonicalEndSequence: UInt64?
+    public var canonicalStartVisible: Bool
+    public var canonicalEndVisible: Bool
+
+    public init(
+        points: [MobileRideMapRouteDisplayPoint],
+        segments: [MobileRideMapSegmentDisplayMetadata],
+        sourcePointCount: UInt64,
+        sourceSegmentCount: UInt64,
+        candidatePointCount: UInt64,
+        candidateSegmentCount: UInt64,
+        displayedSegmentCount: UInt64,
+        backgroundGapCount: UInt64,
+        canonicalStartSequence: UInt64? = nil,
+        canonicalEndSequence: UInt64? = nil,
+        canonicalStartVisible: Bool = false,
+        canonicalEndVisible: Bool = false
+    ) {
+        self.points = points
+        self.segments = segments
+        self.sourcePointCount = sourcePointCount
+        self.sourceSegmentCount = sourceSegmentCount
+        self.candidatePointCount = candidatePointCount
+        self.candidateSegmentCount = candidateSegmentCount
+        self.displayedSegmentCount = displayedSegmentCount
+        self.backgroundGapCount = backgroundGapCount
+        self.canonicalStartSequence = canonicalStartSequence
+        self.canonicalEndSequence = canonicalEndSequence
+        self.canonicalStartVisible = canonicalStartVisible
+        self.canonicalEndVisible = canonicalEndVisible
+    }
+
+    public var endpointMetadata: MobileRideMapRouteEndpointMetadata {
+        MobileRideMapRouteEndpointMetadata(
+            canonicalStartSequence: canonicalStartSequence,
+            canonicalEndSequence: canonicalEndSequence,
+            canonicalStartVisible: canonicalStartVisible,
+            canonicalEndVisible: canonicalEndVisible
+        )
+    }
+
+    /// Whether display LOD omitted candidate points after viewport filtering.
+    public var pointsOmittedByBudget: Bool {
+        UInt64(points.count) < candidatePointCount
+    }
+
+    /// Whether route segments were omitted by the bounded display projection.
+    public var segmentsOmittedByBudget: Bool {
+        displayedSegmentCount < candidateSegmentCount
+    }
+
+}
+
+/// Canonical endpoint identity and viewport visibility for a bounded route projection.
+///
+/// The Rust projection owns which points are the route endpoints. Swift only decides whether
+/// to annotate a displayed point when its canonical sequence matches this metadata.
+public struct MobileRideMapRouteEndpointMetadata: Equatable, Hashable, Sendable {
+    public let canonicalStartSequence: UInt64?
+    public let canonicalEndSequence: UInt64?
+    public let canonicalStartVisible: Bool
+    public let canonicalEndVisible: Bool
+
+    public init(
+        canonicalStartSequence: UInt64? = nil,
+        canonicalEndSequence: UInt64? = nil,
+        canonicalStartVisible: Bool = false,
+        canonicalEndVisible: Bool = false
+    ) {
+        self.canonicalStartSequence = canonicalStartSequence
+        self.canonicalEndSequence = canonicalEndSequence
+        self.canonicalStartVisible = canonicalStartVisible
+        self.canonicalEndVisible = canonicalEndVisible
+    }
+
+    public static let empty = Self()
+}
+
+public struct MobileRideMapSnapshotDto: Equatable, Hashable, Sendable {
+    public var rideId: String
+    public var state: MobileRideMapStateDto
+    public var summary: MobileRideMapSummaryDto
+    public var segmentCount: UInt64
+    public var associatedVehicle: String?
+}
+
+public struct MobileRideMapHistorySummaryDto: Equatable, Hashable, Sendable {
+    public var rideId: String
+    public var state: MobileRideMapStateDto
+    public var summary: MobileRideMapSummaryDto
+    public var segmentCount: UInt64
+    public var createdAtMilliseconds: UInt64
+    public var candidateVehicle: String?
+    public var associatedVehicle: String?
+    public var candidateVehicleName: String?
+    public var associatedVehicleName: String?
+    /// Rust-derived telemetry provenance for the latest durable route evidence.
+    public var telemetryState: MobileRideMapTelemetryStateDto
+
+    public init(
+        rideId: String,
+        state: MobileRideMapStateDto,
+        summary: MobileRideMapSummaryDto,
+        segmentCount: UInt64,
+        createdAtMilliseconds: UInt64,
+        candidateVehicle: String?,
+        associatedVehicle: String?,
+        candidateVehicleName: String? = nil,
+        associatedVehicleName: String? = nil,
+        telemetryState: MobileRideMapTelemetryStateDto
+    ) {
+        self.rideId = rideId
+        self.state = state
+        self.summary = summary
+        self.segmentCount = segmentCount
+        self.createdAtMilliseconds = createdAtMilliseconds
+        self.candidateVehicle = candidateVehicle
+        self.associatedVehicle = associatedVehicle
+        self.candidateVehicleName = candidateVehicleName
+        self.associatedVehicleName = associatedVehicleName
+        self.telemetryState = telemetryState
+    }
+
+    /// Returns the persisted display name for the confirmed vehicle, falling back to the ride's
+    /// candidate vehicle name when association was not completed.
+    public var vehicleDisplayName: String? {
+        associatedVehicleName ?? candidateVehicleName
+    }
+
+    /// Derives the historical telemetry label from Rust's persisted association metadata.
+    /// A timestamp proves that telemetry was observed; freshness is evaluated while recording.
+    public static func telemetryState(
+        associatedVehicle: String?,
+        lastTelemetryAtMilliseconds: UInt64?
+    ) -> MobileRideMapTelemetryStateDto {
+        guard associatedVehicle != nil else { return .gpsOnly }
+        return lastTelemetryAtMilliseconds == nil ? .associatedNoTelemetry : .associatedFresh
+    }
+}
+
+public struct MobileRideMapHistoryVehicleOptionDto: Equatable, Hashable, Sendable, Identifiable {
+    public var platformIdentifier: String
+    public var displayName: String?
+
+    public init(platformIdentifier: String, displayName: String?) {
+        self.platformIdentifier = platformIdentifier
+        self.displayName = displayName
+    }
+
+    public var id: String { platformIdentifier }
+}
+
+public struct MobileRideMapHistoryPageDto: Equatable, Hashable, Sendable {
+    public var summaries: [MobileRideMapHistorySummaryDto]
+    public var nextCursor: MobileRideCursorDto?
+}
+
+/// Rust-enforced bounds for the history overview's contextual route projection.
+///
+/// The application passes this value across the FFI boundary; it never pages raw route points
+/// into Swift. Keeping the limits in one value makes the memory contract visible at the call site
+/// and prevents a new history surface from accidentally requesting an unbounded projection.
+public struct MobileRideMapHistoryContextBudget: Equatable, Hashable, Sendable {
+    public var historyPageLimit: UInt32
+    public var maxRoutes: UInt32
+    public var perRouteBudget: UInt32
+    public var totalPointBudget: UInt32
+
+    public init(
+        historyPageLimit: UInt32,
+        maxRoutes: UInt32,
+        perRouteBudget: UInt32,
+        totalPointBudget: UInt32
+    ) {
+        self.historyPageLimit = historyPageLimit
+        self.maxRoutes = maxRoutes
+        self.perRouteBudget = perRouteBudget
+        self.totalPointBudget = totalPointBudget
+    }
+
+    /// The bounded overview contract: at most eight surrounding rides and 4,096 display points.
+    public static let overview = Self(
+        historyPageLimit: 50,
+        maxRoutes: 8,
+        perRouteBudget: 512,
+        totalPointBudget: 4_096
+    )
+}
+
+/// One bounded contextual route returned by Rust for a history overview.
+public struct MobileRideMapHistoryContextRoute: Equatable, Hashable, Sendable, Identifiable {
+    public var rideID: String
+    public var projection: MobileRideMapRouteProjection
+
+    public init(rideID: String, projection: MobileRideMapRouteProjection) {
+        self.rideID = rideID
+        self.projection = projection
+    }
+
+    public var id: String { rideID }
+}
+
+/// Bounded surrounding-route context for a selected history route.
+public struct MobileRideMapHistoryContextProjection: Equatable, Hashable, Sendable {
+    public var routes: [MobileRideMapHistoryContextRoute]
+    public var sourceHistoryRouteCount: UInt64
+    public var contextRouteCount: UInt64
+    public var totalDisplayPointCount: UInt64
+    public var routesOmittedByBudget: Bool
+    public var historyPageHasMore: Bool
+
+    public init(
+        routes: [MobileRideMapHistoryContextRoute],
+        sourceHistoryRouteCount: UInt64,
+        contextRouteCount: UInt64,
+        totalDisplayPointCount: UInt64,
+        routesOmittedByBudget: Bool,
+        historyPageHasMore: Bool
+    ) {
+        self.routes = routes
+        self.sourceHistoryRouteCount = sourceHistoryRouteCount
+        self.contextRouteCount = contextRouteCount
+        self.totalDisplayPointCount = totalDisplayPointCount
+        self.routesOmittedByBudget = routesOmittedByBudget
+        self.historyPageHasMore = historyPageHasMore
+    }
+}
+
+public enum MobileRideMapAssociationDto: Equatable, Hashable, Sendable {
+    case associated
+    case alreadyAssociated
+    case candidateMissing
+    case identityMismatch
+    case timestampOutOfOrder
+    case rideNotOpen
+    case unknown
+}
+
+public enum MobileRideMapDecisionReason: Equatable, Hashable, Sendable {
+    case rideNotRecording
+    case duplicateLocation
+    case timestampOutOfOrder
+    case accuracyTooLow
+    case unrealisticJump
+}
+
+public enum MobileRideMapDecisionDto: Equatable, Hashable, Sendable {
+    /// The point passed admission but is still awaiting durable SQLite confirmation.
+    case pending(point: MobileRideMapPointDto, segmentStarted: Bool)
+    case accepted(point: MobileRideMapPointDto, segmentStarted: Bool)
+    case rejected(reason: MobileRideMapDecisionReason)
+    case ignored(reason: MobileRideMapDecisionReason)
+    /// The point could not be queued or persisted. It is not part of the ride.
+    ///
+    /// `retryable` is true only after Rust reconciles a dropped response and proves that the
+    /// write was not committed. The caller may explicitly re-admit that sample; this adapter
+    /// never retries it automatically.
+    case storageError(message: String, retryable: Bool)
+}
+
