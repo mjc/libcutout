@@ -1,8 +1,8 @@
 use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use cutout_ride_maps::{
-    LocationAdmission, LocationSample, RideEvent, RideLifecycleState, RideMapSegmentId,
-    TransitionError, distance_between,
+    LocationAdmission, LocationSample, MonotonicMilliseconds, RideDurationMilliseconds, RideEvent,
+    RideLifecycleState, RideLifecycleTiming, RideMapSegmentId, TransitionError, distance_between,
 };
 
 use super::{RideSource, RoutePoint};
@@ -52,77 +52,38 @@ impl RideWriteState {
         monotonic_at_ms: Option<u64>,
     ) -> Result<RideTransition, TransitionError> {
         let lifecycle = self.lifecycle.apply(event)?;
-        let mut duration_ms = self.duration_ms;
-        let mut paused_at_ms = self.paused_at_ms;
-        let mut paused_duration_ms = self.paused_duration_ms;
-
-        if let Some(at_ms) = monotonic_at_ms {
-            match (self.lifecycle, lifecycle) {
-                (RideLifecycleState::Active, RideLifecycleState::Paused) => {
-                    duration_ms = duration_ms.max(self.active_duration_at(at_ms));
-                    paused_at_ms = Some(at_ms.max(self.monotonic_created_at_ms.unwrap_or(at_ms)));
-                }
-                (RideLifecycleState::Paused, RideLifecycleState::Active) => {
-                    if let Some(paused_at_ms) = paused_at_ms {
-                        paused_duration_ms =
-                            paused_duration_ms.saturating_add(at_ms.saturating_sub(paused_at_ms));
-                    }
-                    paused_at_ms = None;
-                }
-                (
-                    RideLifecycleState::Active | RideLifecycleState::Paused,
-                    RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-                ) => {
-                    duration_ms = duration_ms.max(self.active_duration_at(at_ms));
-                    if let Some(paused_at_ms) = paused_at_ms.take() {
-                        paused_duration_ms =
-                            paused_duration_ms.saturating_add(at_ms.saturating_sub(paused_at_ms));
-                    }
-                }
-                _ => {}
-            }
-        } else if matches!(
-            (self.lifecycle, lifecycle),
-            (
-                RideLifecycleState::Paused,
-                RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
-            )
-        ) {
-            // Without a monotonic timestamp, preserve the known timing and close the terminal
-            // state rather than retaining a pause that can never be resumed.
-            paused_at_ms = None;
-        }
+        let timing = self.timing().transition(
+            self.lifecycle,
+            lifecycle,
+            self.monotonic_created_at_ms.map(MonotonicMilliseconds::new),
+            monotonic_at_ms.map(MonotonicMilliseconds::new),
+        );
         Ok(RideTransition {
             lifecycle,
             updated_at_ms: self.updated_at_ms.max(occurred_at_ms),
-            duration_ms,
-            paused_at_ms,
-            paused_duration_ms,
+            duration_ms: timing.duration_milliseconds.as_u64(),
+            paused_at_ms: timing
+                .paused_at_milliseconds
+                .map(MonotonicMilliseconds::as_u64),
+            paused_duration_ms: timing.paused_duration_milliseconds.as_u64(),
         })
     }
 
-    pub(super) const fn duration_at(&self, monotonic_at_ms: u64) -> u64 {
-        let active_duration = self.active_duration_at(monotonic_at_ms);
-        if active_duration > self.duration_ms {
-            active_duration
-        } else {
-            self.duration_ms
-        }
+    pub(super) fn duration_at(&self, monotonic_at_ms: u64) -> u64 {
+        self.timing()
+            .duration_at(
+                Some(self.lifecycle),
+                self.monotonic_created_at_ms.map(MonotonicMilliseconds::new),
+                MonotonicMilliseconds::new(monotonic_at_ms),
+            )
+            .as_u64()
     }
 
-    const fn active_duration_at(&self, monotonic_at_ms: u64) -> u64 {
-        match self.monotonic_created_at_ms {
-            Some(start_ms) => {
-                let current_pause_ms = match self.paused_at_ms {
-                    Some(paused_at_ms) => monotonic_at_ms.saturating_sub(paused_at_ms),
-                    None => 0,
-                };
-                monotonic_at_ms
-                    .saturating_sub(start_ms)
-                    .saturating_sub(current_pause_ms)
-                    .saturating_sub(self.paused_duration_ms)
-            }
-            None => self.duration_ms,
+    fn timing(self) -> RideLifecycleTiming {
+        RideLifecycleTiming {
+            duration_milliseconds: RideDurationMilliseconds::new(self.duration_ms),
+            paused_at_milliseconds: self.paused_at_ms.map(MonotonicMilliseconds::new),
+            paused_duration_milliseconds: RideDurationMilliseconds::new(self.paused_duration_ms),
         }
     }
 
