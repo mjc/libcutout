@@ -10269,7 +10269,7 @@ public func FfiConverterTypeMobilePevcapImportReceiptDto_lower(_ value: MobilePe
 
 
 /**
- * Raw phone location sample forwarded by the mobile platform.
+ * Unit-typed phone location sample forwarded by the mobile platform.
  */
 public struct MobilePhoneLocationSampleDto: Equatable, Hashable {
     public var wallClockUnixMs: UInt64
@@ -19441,7 +19441,13 @@ public enum MobileRideMapCoreDecisionDto: Equatable, Hashable {
     case storageError(
         /**
          * Stable storage failure text for the mobile diagnostic surface.
-         */message: String
+         */message: String,
+        /**
+         * Whether the caller may explicitly re-admit the sample after resolving the failure.
+         *
+         * This is true only when reconciliation proved that a response-lost write was not
+         * committed. The map core never retries that sample automatically.
+         */retryable: Bool
     )
 
 
@@ -19476,7 +19482,7 @@ public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuff
         case 4: return .ignored(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
         )
 
-        case 5: return .storageError(message: try FfiConverterString.read(from: &buf)
+        case 5: return .storageError(message: try FfiConverterString.read(from: &buf), retryable: try FfiConverterBool.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -19509,9 +19515,10 @@ public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuff
             FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
 
 
-        case let .storageError(message):
+        case let .storageError(message,retryable):
             writeInt(&buf, Int32(5))
             FfiConverterString.write(message, into: &buf)
+            FfiConverterBool.write(retryable, into: &buf)
 
         }
     }
