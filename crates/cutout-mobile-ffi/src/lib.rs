@@ -6859,10 +6859,17 @@ impl MobilePhoneLocationState {
         let Some(sample) = sample.canonical() else {
             return self.current_snapshot();
         };
-        *self
+        let mut latest = self
             .latest_sample
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(sample);
+            .unwrap_or_else(PoisonError::into_inner);
+        if latest
+            .as_ref()
+            .is_some_and(|current| sample.wall_clock_unix_ms < current.wall_clock_unix_ms)
+        {
+            return phone_location_snapshot(*latest);
+        }
+        *latest = Some(sample);
         phone_location_snapshot(Some(sample))
     }
 
@@ -14051,6 +14058,21 @@ mod tests {
         state.clear();
 
         assert_eq!(state.current_snapshot().latest_sample, None);
+    }
+
+    #[test]
+    fn phone_location_state_ignores_older_source_timestamp() {
+        let state = MobilePhoneLocationState::default();
+        let newest = capture_phone_location_fixture();
+        let mut older = newest;
+        older.wall_clock_unix_ms -= 1;
+        older.latitude_degrees.value += 1.0;
+
+        state.ingest(newest);
+        let snapshot = state.ingest(older);
+
+        assert_eq!(snapshot.latest_sample, Some(newest));
+        assert_eq!(state.current_snapshot().latest_sample, Some(newest));
     }
 
     #[allow(
