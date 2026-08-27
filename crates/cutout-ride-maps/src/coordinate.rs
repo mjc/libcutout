@@ -86,6 +86,13 @@ impl Coordinate {
         })
     }
 
+    pub(crate) const fn from_bounded_fixed_parts(latitude: i32, longitude: i32) -> Self {
+        Self {
+            latitude: LatitudeE7::new(latitude),
+            longitude: LongitudeE7::new(longitude),
+        }
+    }
+
     /// Returns the fixed-point latitude.
     #[must_use]
     pub const fn latitude(self) -> LatitudeE7 {

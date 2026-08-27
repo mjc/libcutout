@@ -221,6 +221,40 @@ mod tests {
     }
 
     #[test]
+    fn privacy_grid_does_not_leak_exact_coordinates_at_world_boundaries() {
+        let mut recorder = RideMapRecorder::new();
+        recorder
+            .start(MonotonicMilliseconds::new(1_000), None)
+            .unwrap();
+        let coordinate = Coordinate::from_fixed_parts(-900_000_000, -1_800_000_000).unwrap();
+        let sample = LocationSample::new(
+            coordinate,
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
+            None,
+            LocationSource::Live,
+        );
+        assert_eq!(recorder.check_sample(&sample), LocationAdmission::Accepted);
+        recorder.record_sample(sample);
+
+        let projection = project_route_points(
+            recorder.points(),
+            recorder.first_point_sequence(),
+            None,
+            RouteDisplayBudget::new(1).unwrap(),
+            RoutePrivacyPolicy::grid(RoutePrivacyGridE7::new(7).unwrap()),
+        );
+
+        assert_eq!(
+            projection[0].privacy_class(),
+            RoutePrivacyClass::GridRedacted
+        );
+        assert_ne!(projection[0].coordinate(), coordinate);
+        assert!(projection[0].coordinate().latitude().as_i32() > -900_000_000);
+        assert!(projection[0].coordinate().longitude().as_i32() > -1_800_000_000);
+    }
+
+    #[test]
     fn streamed_route_projection_preserves_sequence_without_retaining_input() {
         let mut recorder = RideMapRecorder::new();
         recorder
