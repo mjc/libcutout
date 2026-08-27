@@ -1,7 +1,4 @@
-use cutout_core::{
-    HostSession, PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader, PevcapReplayMode,
-    ProtocolSession, SessionInput, SessionOutput,
-};
+use cutout_core::{PevcapEncoding, PevcapEvent, PevcapPhoneLocation, PevcapReader};
 use cutout_ride_maps::{
     Coordinate, LocationAdmission, LocationSample, LocationSource, MAX_GAP_MILLISECONDS,
     MAX_LIVE_ROUTE_POINTS, MonotonicMilliseconds, RideEvent, RideLifecycleState, RideMapPoint,
@@ -2245,21 +2242,14 @@ impl RideDatabase {
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_worker_failure_for_test(
         &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
+        _ride_id: RideId,
+        _sample: LocationSample,
+        _segment_id: u64,
+        _telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
     ) -> Result<PendingLocationWrite, StorageError> {
         let (reply, response) = response_channel();
-        self.enqueue(Command::AppendLocationWithWorkerFailure {
-            ride_id,
-            sample,
-            segment_id: RideMapSegmentId::new(segment_id),
-            telemetry_state,
-            entered,
-            reply,
-        })?;
+        self.enqueue(Command::AppendLocationWithWorkerFailure { entered, reply })?;
         Ok(PendingLocationWrite { response })
     }
 
@@ -2622,13 +2612,6 @@ struct ManagedArtifact {
     created: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct PevcapValidationSession;
-
-impl ProtocolSession for PevcapValidationSession {
-    fn handle(&mut self, _input: SessionInput<'_>, _output: &mut Vec<SessionOutput>) {}
-}
-
 enum Command {
     Capabilities {
         reply: Reply<SqliteCapabilities>,
@@ -2797,10 +2780,6 @@ enum Command {
     },
     #[cfg(test)]
     AppendLocationWithWorkerFailure {
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: RideMapSegmentId,
-        telemetry_state: RouteTelemetryState,
         entered: SyncSender<()>,
         reply: Reply<LocationAdmission>,
     },
@@ -3160,14 +3139,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 ));
             }
             #[cfg(test)]
-            Command::AppendLocationWithWorkerFailure {
-                ride_id: _,
-                sample: _,
-                segment_id: _,
-                telemetry_state: _,
-                entered,
-                reply,
-            } => {
+            Command::AppendLocationWithWorkerFailure { entered, reply } => {
                 let _ = entered.send(());
                 drop(reply);
                 break;
@@ -4845,29 +4817,23 @@ fn preflight_pevcap(
     let file = File::open(&path)?;
     let mut reader = PevcapReader::new(BufReader::new(file), encoding)
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-    let mut host = HostSession::new(PevcapValidationSession);
-    let mut outputs = Vec::new();
-    reader
-        .replay_into_host(PevcapReplayMode::Whole, &mut host, &mut outputs)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-
-    let file = File::open(&path)?;
-    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
     let mut record_count = 0_u64;
     let mut earliest_milliseconds = None::<u64>;
     let mut latest_milliseconds = None::<u64>;
-    while let Some(record) = reader
-        .next_record()
+    while let Some(event) = reader
+        .next_event()
         .map_err(|error| StorageError::PevcapImport(error.to_string()))?
     {
-        record_count = record_count.saturating_add(1);
-        check_pevcap_limit("records", MAX_PEVCAP_RECORDS, record_count)?;
-        let milliseconds = record.monotonic_ms.as_milliseconds();
-        earliest_milliseconds =
-            Some(earliest_milliseconds.map_or(milliseconds, |current| current.min(milliseconds)));
-        latest_milliseconds =
-            Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
+        if let PevcapEvent::Record(record) = event {
+            record_count = record_count.saturating_add(1);
+            check_pevcap_limit("records", MAX_PEVCAP_RECORDS, record_count)?;
+            let milliseconds = record.monotonic_ms.as_milliseconds();
+            earliest_milliseconds = Some(
+                earliest_milliseconds.map_or(milliseconds, |current| current.min(milliseconds)),
+            );
+            latest_milliseconds =
+                Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
+        }
     }
     let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
@@ -5008,6 +4974,7 @@ fn stream_pevcap_location_batches(
                 location.location,
                 location.receipt_monotonic_ms.as_milliseconds(),
             )?,
+            PevcapEvent::LocationRejected(_) => {}
         }
     }
     if !batch.is_empty() {

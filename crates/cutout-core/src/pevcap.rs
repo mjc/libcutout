@@ -19,11 +19,11 @@ use crate::VerificationStatus;
 #[cfg(any(feature = "serde", test))]
 use crate::VescControllerId;
 use crate::{
-    drain_semantic_events_checked, DeviceEvent, GattChannel, GattFingerprint, HostSession,
-    LinkInfo, MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
+    DEFAULT_REPLAY_OUTPUT_LIMIT, DeviceEvent, GattChannel, GattFingerprint, HostSession, LinkInfo,
+    MonotonicTimestamp, NotificationChunkLen, ProtocolFamily, ProtocolSession,
     RawTelemetryReadback, ReplayChunkComparison, RequestTarget, SemanticEventCount, SessionInput,
     SessionOutput, SessionOutputError, TransportWriteLimit, VerifiedValue, WallClockUnixTimestamp,
-    WriteMode, DEFAULT_REPLAY_OUTPUT_LIMIT,
+    WriteMode, drain_semantic_events_checked,
 };
 
 /// PEVCAP file format magic bytes.

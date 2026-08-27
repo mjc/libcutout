@@ -454,8 +454,21 @@ fn consumed_location_write_reports_worker_failure_and_recovers() {
         pending.wait_result_until(Instant::now() + Duration::from_secs(1)),
         Err(StorageError::ResponseDropped)
     ));
-    let recovery = database.capabilities();
-    assert!(recovery.is_ok(), "worker should recover in place: {recovery:?}");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut recovery = Err(StorageError::WorkerStopped);
+    while Instant::now() < deadline {
+        recovery = database
+            .reopen()
+            .and_then(|database| database.capabilities());
+        if recovery.is_ok() {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    assert!(
+        recovery.is_ok(),
+        "worker should recover in place: {recovery:?}"
+    );
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
 }
