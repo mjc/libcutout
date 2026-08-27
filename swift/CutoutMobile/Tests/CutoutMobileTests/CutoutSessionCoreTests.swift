@@ -1221,6 +1221,20 @@ final class CutoutSessionCoreTests: XCTestCase {
         XCTAssertFalse(core.recordOnly(platformIdentifier: "ios-local-missing", note: "unknown wheel"))
     }
 
+    func testNotificationCapturePassesThroughWhenCaptureIsInactive() {
+        let core = CutoutSessionCore()
+
+        XCTAssertNil(
+            core.captureFrame(
+                direction: "notify",
+                characteristic: CBUUID(string: "FFE1"),
+                service: CBUUID(string: "FFE0"),
+                bytes: Data([0x01])
+            )
+        )
+        XCTAssertEqual(core.phase, .starting)
+    }
+
     func testSuccessfulScriptedRecordOnlyFlushUsesTheRealWriter() async throws {
         let started = expectation(description: "real capture writer starts")
         var captureURL: URL?
