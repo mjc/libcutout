@@ -3297,18 +3297,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 release,
                 reply,
             } => {
-                let first_progress_callback = Arc::new(AtomicBool::new(true));
-                let callback_is_first = Arc::clone(&first_progress_callback);
-                connection.progress_handler(
-                    1,
-                    Some(move || {
-                        if callback_is_first.swap(false, Ordering::AcqRel) {
-                            let _ = entered.send(());
-                            let _ = release.recv();
-                        }
-                        false
-                    }),
-                );
+                install_sqlite_progress_gate(&connection, entered, release);
                 let result = append_location(
                     &mut connection,
                     ride_id,
@@ -3403,19 +3392,7 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                 release,
                 reply,
             } => {
-                let first_progress_callback = Arc::new(AtomicBool::new(true));
-                let callback_is_first = Arc::clone(&first_progress_callback);
-                connection.progress_handler(
-                    1,
-                    Some(move || {
-                        if callback_is_first.swap(false, Ordering::AcqRel)
-                            && entered.send(()).is_ok()
-                        {
-                            let _ = release.recv();
-                        }
-                        false
-                    }),
-                );
+                install_sqlite_progress_gate(&connection, entered, release);
                 let _ = reply.send(Ok(()));
             }
             #[cfg(test)]
@@ -3432,6 +3409,25 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
             }
         }
     }
+}
+
+#[cfg(test)]
+fn install_sqlite_progress_gate(
+    connection: &Connection,
+    entered: SyncSender<()>,
+    release: Receiver<()>,
+) {
+    let first_progress_callback = Arc::new(AtomicBool::new(true));
+    let callback_is_first = Arc::clone(&first_progress_callback);
+    connection.progress_handler(
+        1,
+        Some(move || {
+            if callback_is_first.swap(false, Ordering::AcqRel) && entered.send(()).is_ok() {
+                let _ = release.recv();
+            }
+            false
+        }),
+    );
 }
 
 fn canonical_database_path(path: &Path) -> Result<PathBuf, StorageError> {
