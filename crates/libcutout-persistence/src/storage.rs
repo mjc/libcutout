@@ -2286,7 +2286,7 @@ impl RideDatabase {
         Ok(PendingLocationWrite { response })
     }
 
-    /// Enqueues a location while a SQLite progress callback holds the worker before the write.
+    /// Enqueues a location while a `SQLite` progress callback holds the worker before the write.
     #[cfg(test)]
     pub(crate) fn enqueue_location_with_slow_sqlite_worker_for_test(
         &self,

@@ -2937,7 +2937,7 @@ mobile_location_value!(
     "Course accuracy in degrees when available."
 );
 
-/// Raw phone location sample forwarded by the mobile platform.
+/// Unit-typed phone location sample forwarded by the mobile platform.
 #[derive(Clone, Copy, Debug, PartialEq, uniffi::Record)]
 pub struct MobilePhoneLocationSampleDto {
     pub wall_clock_unix_ms: u64,
