@@ -1923,6 +1923,149 @@ public func FfiConverterTypeMobileChargeEstimator_lower(_ value: MobileChargeEst
 
 
 /**
+ * Cooperative cancellation for one live in-memory route projection.
+ *
+ * This token is intentionally separate from [`MobileRouteProjectionCancellation`]: live
+ * projections do not use the `SQLite` worker or its interrupt handle.
+ */
+public protocol MobileLiveRouteProjectionCancellationProtocol: AnyObject, Sendable {
+
+    /**
+     * Requests cancellation of the associated live projection.
+     */
+    func cancel()
+
+}
+/**
+ * Cooperative cancellation for one live in-memory route projection.
+ *
+ * This token is intentionally separate from [`MobileRouteProjectionCancellation`]: live
+ * projections do not use the `SQLite` worker or its interrupt handle.
+ */
+open class MobileLiveRouteProjectionCancellation: MobileLiveRouteProjectionCancellationProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobileliverouteprojectioncancellation(self.handle, $0) }
+    }
+    /**
+     * Creates an active live-projection cancellation token.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobileliverouteprojectioncancellation_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobileliverouteprojectioncancellation(handle, $0) }
+    }
+
+
+
+
+    /**
+     * Requests cancellation of the associated live projection.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileliverouteprojectioncancellation_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLiveRouteProjectionCancellation: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileLiveRouteProjectionCancellation
+
+    public static func lift(_ handle: UInt64) throws -> MobileLiveRouteProjectionCancellation {
+        return MobileLiveRouteProjectionCancellation(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileLiveRouteProjectionCancellation) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLiveRouteProjectionCancellation {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileLiveRouteProjectionCancellation, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLiveRouteProjectionCancellation_lift(_ handle: UInt64) throws -> MobileLiveRouteProjectionCancellation {
+    return try FfiConverterTypeMobileLiveRouteProjectionCancellation.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLiveRouteProjectionCancellation_lower(_ value: MobileLiveRouteProjectionCancellation) -> UInt64 {
+    return FfiConverterTypeMobileLiveRouteProjectionCancellation.lower(value)
+}
+
+
+
+
+
+
+/**
  * Mobile-facing builder for a PEVCAP capture export.
  */
 public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
@@ -1961,6 +2104,15 @@ public protocol MobilePevcapCaptureBuilderProtocol: AnyObject, Sendable {
      * Records a link-up lifecycle event.
      */
     func recordLinkUp(monotonicMs: MobileMonotonicMillisDto, maxWriteLen: MobileTransportWriteLimitDto?)  -> Bool
+
+    /**
+     * Records an independent Core Location sample in the PEVCAP location stream.
+     *
+     * The sample is kept separate from transport records so it remains available even when no
+     * BLE notification is received at the same instant. The writer queue is bounded; `false`
+     * means the sample was rejected by canonical validation or could not be queued.
+     */
+    func recordLocationSample(receiptMonotonicMs: MobileMonotonicMillisDto, sample: MobilePhoneLocationSampleDto, simulated: Bool?, producedByAccessory: Bool?)  -> Bool
 
     /**
      * Records inbound notification bytes.
@@ -2146,6 +2298,25 @@ open func recordLinkUp(monotonicMs: MobileMonotonicMillisDto, maxWriteLen: Mobil
 }
 
     /**
+     * Records an independent Core Location sample in the PEVCAP location stream.
+     *
+     * The sample is kept separate from transport records so it remains available even when no
+     * BLE notification is received at the same instant. The writer queue is bounded; `false`
+     * means the sample was rejected by canonical validation or could not be queued.
+     */
+open func recordLocationSample(receiptMonotonicMs: MobileMonotonicMillisDto, sample: MobilePhoneLocationSampleDto, simulated: Bool?, producedByAccessory: Bool?) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilepevcapcapturebuilder_record_location_sample(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileMonotonicMillisDto_lower(receiptMonotonicMs),
+        FfiConverterTypeMobilePhoneLocationSampleDto_lower(sample),
+        FfiConverterOptionBool.lower(simulated),
+        FfiConverterOptionBool.lower(producedByAccessory),$0
+    )
+})
+}
+
+    /**
      * Records inbound notification bytes.
      */
 open func recordNotification(monotonicMs: MobileMonotonicMillisDto, characteristic: Data, service: Data, bytes: Data) -> Bool  {
@@ -2281,6 +2452,11 @@ public func FfiConverterTypeMobilePevcapCaptureBuilder_lower(_ value: MobilePevc
  */
 public protocol MobilePhoneLocationStateProtocol: AnyObject, Sendable {
 
+    /**
+     * Clears the latest sample so a new capture cannot inherit an older location context.
+     */
+    func clear()
+
     func currentSnapshot()  -> MobilePhoneLocationSnapshotDto
 
     func ingest(sample: MobilePhoneLocationSampleDto)  -> MobilePhoneLocationSnapshotDto
@@ -2348,6 +2524,16 @@ public convenience init() {
 
 
 
+
+    /**
+     * Clears the latest sample so a new capture cannot inherit an older location context.
+     */
+open func clear()  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilephonelocationstate_clear(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
 
 open func currentSnapshot() -> MobilePhoneLocationSnapshotDto  {
     return try!  FfiConverterTypeMobilePhoneLocationSnapshotDto_lift(try! rustCall() {
@@ -2417,22 +2603,889 @@ public func FfiConverterTypeMobilePhoneLocationState_lower(_ value: MobilePhoneL
 
 
 /**
+ * Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
+ * delegate queues while the database handle keeps durable lifecycle and route writes in Rust.
+ */
+public protocol MobileRideMapCoreProtocol: AnyObject, Sendable {
+
+    /**
+     * Returns the active ride snapshot, if one exists.
+     */
+    func currentSnapshot()  -> MobileRideMapCoreSnapshotDto?
+
+    /**
+     * Returns the active ride snapshot evaluated at the supplied monotonic timestamp.
+     */
+    func currentSnapshotAt(atMs: UInt64)  -> MobileRideMapCoreSnapshotDto?
+
+    /**
+     * Discards the stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
+     */
+    func discard() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Ensures a live map ride exists for a connected vehicle and associates it.
+     *
+     * A fresh connection starts a new live ride when no open ride exists. An already-open
+     * GPS-only ride is associated with this vehicle, preserving the route recorded before the
+     * Bluetooth connection was available.
+     *
+     * # Errors
+     *
+     * Returns an error when the vehicle cannot be associated or durable storage rejects the
+     * lifecycle update.
+     */
+    func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Queues one Core Location sample for durable admission into the active recording.
+     *
+     * A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
+     * callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
+     * The callback never waits for `SQLite` or the database worker.
+     *
+     * # Errors
+     *
+     * Returns an error when there is no active ride or the location is invalid. Queue saturation,
+     * worker shutdown, and durable rejection are explicit decision outcomes.
+     */
+    func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double) throws  -> MobileRideMapCoreDecisionDto
+
+    /**
+     * Queues one normalized Core Location sample for durable ride admission.
+     *
+     * Unlike the legacy scalar convenience method, this boundary preserves typed absence for
+     * optional Core Location metrics and rejects invalid required fields before admission.
+     *
+     * # Errors
+     *
+     * Returns a typed map error when the sample is invalid, no ride is active, or durable
+     * admission cannot be queued.
+     */
+    func ingestLocationSample(monotonicMs: UInt64, sample: MobilePhoneLocationSampleDto) throws  -> MobileRideMapCoreDecisionDto
+
+    /**
+     * Returns a storage error encountered while restoring the previous ride projection.
+     */
+    func initializationError()  -> MobileRideMapCoreErrorDto?
+
+    /**
+     * Returns the recorder's bounded active-route tail in sequence order.
+     *
+     * The recorder deliberately retains only [`ride_maps::MAX_LIVE_ROUTE_POINTS`] points for
+     * active-route recovery. This API exposes that tail directly, so clients do not have to
+     * page durable storage from sequence zero merely to rebuild the live map after reconnect.
+     *
+     * # Errors
+     *
+     * Returns a typed map error if the active recorder cannot produce its route tail.
+     */
+    func latestRoutePoints() throws  -> MobileRideMapCorePointBatchDto
+
+    /**
+     * Records a confirmed vehicle telemetry timestamp without backfilling route points.
+     *
+     * # Errors
+     *
+     * Returns an error when durable telemetry metadata cannot be persisted.
+     */
+    func observeTelemetry(atMs: UInt64) throws  -> MobileRideMapTelemetryObservationDto
+
+    /**
+     * Associates a connected vehicle with the active recording.
+     *
+     * # Errors
+     *
+     * Returns an error when durable association metadata cannot be persisted.
+     */
+    func observeVehicleConnection(platformIdentifier: String, atMs: UInt64) throws  -> MobileRideMapCoreAssociationDto
+
+    /**
+     * Pauses the active ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
+     */
+    func pause() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Evaluates the pause transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
+     */
+    func pauseAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Returns a bounded page of active route points.
+     *
+     * Durable recordings are paged directly from `SQLite` so the bridge never materializes the
+     * complete route just to answer a preview request.
+     *
+     * # Errors
+     *
+     * Returns an error when durable route paging fails.
+     */
+    func pointsAfter(afterCursor: UInt64?, limit: UInt32) throws  -> MobileRideMapCorePointBatchDto
+
+    /**
+     * Returns durable outcomes for queued location writes without waiting for `SQLite`.
+     *
+     * The returned decisions are ordered by the bounded write queue. Outcomes settled by a
+     * lifecycle barrier are returned before writes that are still queued or in progress. An
+     * empty result means that the oldest queued write is still pending.
+     */
+    func pollLocationWrites()  -> [MobileRideMapCoreDecisionDto]
+
+    /**
+     * Projects the Rust-owned route tail into a bounded viewport/privacy display.
+     *
+     * The projection is deliberately separate from [`Self::points_after`]: that method is the
+     * durable canonical paging API, while this method is a presentation projection over the
+     * recorder's bounded in-memory tail. `source_point_count` remains the canonical ride count
+     * so callers can distinguish a bounded display tail from the full route.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] when the budget, viewport,
+     * or privacy policy cannot be represented by the Rust domain policy.
+     */
+    func projectPoints(options: MobileRideMapRouteProjectionOptionsDto) throws  -> MobileRideMapRouteProjectionDto
+
+    /**
+     * Projects the Rust-owned route tail while honoring live-projection cancellation.
+     *
+     * The recorder snapshot is copied while the core mutex is held, then all route scanning and
+     * projection work happens after the mutex is released. This keeps a long presentation
+     * projection from blocking location admission or lifecycle transitions.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapCoreErrorDto::Cancelled`] when the caller requests cancellation,
+     * or [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] for invalid options.
+     */
+    func projectPointsCancellable(options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileLiveRouteProjectionCancellation) throws  -> MobileRideMapRouteProjectionDto
+
+    /**
+     * Resumes the paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
+     */
+    func resume() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Evaluates the resume transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
+     */
+    func resumeAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Saves a stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
+     */
+    func save() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+     *
+     * # Errors
+     *
+     * Returns an error when another ride is open or durable storage rejects creation.
+     */
+    func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?) throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Stops the active or paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
+     */
+    func stop() throws  -> MobileRideMapCoreSnapshotDto
+
+    /**
+     * Evaluates the stop transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
+     */
+    func stopAt(atMs: UInt64) throws  -> MobileRideMapCoreSnapshotDto
+
+}
+/**
+ * Rust-owned live ride map state. The mutex protects callbacks arriving from different Apple
+ * delegate queues while the database handle keeps durable lifecycle and route writes in Rust.
+ */
+open class MobileRideMapCore: MobileRideMapCoreProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobileridemapcore(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobileridemapcore(handle, $0) }
+    }
+
+
+    /**
+     * Creates a Rust-owned map state backed by the process-wide ride database.
+     */
+public static func withDatabase(database: RideDatabaseHandle) -> MobileRideMapCore  {
+    return try!  FfiConverterTypeMobileRideMapCore_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobileridemapcore_with_database(
+        FfiConverterTypeRideDatabaseHandle_lower(database),$0
+    )
+})
+}
+
+
+
+    /**
+     * Returns the active ride snapshot, if one exists.
+     */
+open func currentSnapshot() -> MobileRideMapCoreSnapshotDto?  {
+    return try!  FfiConverterOptionTypeMobileRideMapCoreSnapshotDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_current_snapshot(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the active ride snapshot evaluated at the supplied monotonic timestamp.
+     */
+open func currentSnapshotAt(atMs: UInt64) -> MobileRideMapCoreSnapshotDto?  {
+    return try!  FfiConverterOptionTypeMobileRideMapCoreSnapshotDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_current_snapshot_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
+     * Discards the stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
+     */
+open func discard()throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_discard(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Ensures a live map ride exists for a connected vehicle and associates it.
+     *
+     * A fresh connection starts a new live ride when no open ride exists. An already-open
+     * GPS-only ride is associated with this vehicle, preserving the route recorded before the
+     * Bluetooth connection was available.
+     *
+     * # Errors
+     *
+     * Returns an error when the vehicle cannot be associated or durable storage rejects the
+     * lifecycle update.
+     */
+open func ensureRecordingForVehicle(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_ensure_recording_for_vehicle(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
+     * Queues one Core Location sample for durable admission into the active recording.
+     *
+     * A database-backed recording returns [`MobileRideMapCoreDecisionDto::Pending`] immediately;
+     * callers must use [`Self::poll_location_writes`] to publish the eventual durable outcome.
+     * The callback never waits for `SQLite` or the database worker.
+     *
+     * # Errors
+     *
+     * Returns an error when there is no active ride or the location is invalid. Queue saturation,
+     * worker shutdown, and durable rejection are explicit decision outcomes.
+     */
+open func ingestLocation(monotonicMs: UInt64, wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, horizontalAccuracyMeters: Double)throws  -> MobileRideMapCoreDecisionDto  {
+    return try  FfiConverterTypeMobileRideMapCoreDecisionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_ingest_location(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(monotonicMs),
+        FfiConverterUInt64.lower(wallClockUnixMs),
+        FfiConverterDouble.lower(latitudeDegrees),
+        FfiConverterDouble.lower(longitudeDegrees),
+        FfiConverterDouble.lower(horizontalAccuracyMeters),$0
+    )
+})
+}
+
+    /**
+     * Queues one normalized Core Location sample for durable ride admission.
+     *
+     * Unlike the legacy scalar convenience method, this boundary preserves typed absence for
+     * optional Core Location metrics and rejects invalid required fields before admission.
+     *
+     * # Errors
+     *
+     * Returns a typed map error when the sample is invalid, no ride is active, or durable
+     * admission cannot be queued.
+     */
+open func ingestLocationSample(monotonicMs: UInt64, sample: MobilePhoneLocationSampleDto)throws  -> MobileRideMapCoreDecisionDto  {
+    return try  FfiConverterTypeMobileRideMapCoreDecisionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_ingest_location_sample(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(monotonicMs),
+        FfiConverterTypeMobilePhoneLocationSampleDto_lower(sample),$0
+    )
+})
+}
+
+    /**
+     * Returns a storage error encountered while restoring the previous ride projection.
+     */
+open func initializationError() -> MobileRideMapCoreErrorDto?  {
+    return try!  FfiConverterOptionTypeMobileRideMapCoreErrorDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_initialization_error(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Returns the recorder's bounded active-route tail in sequence order.
+     *
+     * The recorder deliberately retains only [`ride_maps::MAX_LIVE_ROUTE_POINTS`] points for
+     * active-route recovery. This API exposes that tail directly, so clients do not have to
+     * page durable storage from sequence zero merely to rebuild the live map after reconnect.
+     *
+     * # Errors
+     *
+     * Returns a typed map error if the active recorder cannot produce its route tail.
+     */
+open func latestRoutePoints()throws  -> MobileRideMapCorePointBatchDto  {
+    return try  FfiConverterTypeMobileRideMapCorePointBatchDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_latest_route_points(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Records a confirmed vehicle telemetry timestamp without backfilling route points.
+     *
+     * # Errors
+     *
+     * Returns an error when durable telemetry metadata cannot be persisted.
+     */
+open func observeTelemetry(atMs: UInt64)throws  -> MobileRideMapTelemetryObservationDto  {
+    return try  FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_observe_telemetry(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
+     * Associates a connected vehicle with the active recording.
+     *
+     * # Errors
+     *
+     * Returns an error when durable association metadata cannot be persisted.
+     */
+open func observeVehicleConnection(platformIdentifier: String, atMs: UInt64)throws  -> MobileRideMapCoreAssociationDto  {
+    return try  FfiConverterTypeMobileRideMapCoreAssociationDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_observe_vehicle_connection(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
+     * Pauses the active ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
+     */
+open func pause()throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_pause(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Evaluates the pause transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no active ride exists or the lifecycle transition is invalid.
+     */
+open func pauseAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_pause_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
+     * Returns a bounded page of active route points.
+     *
+     * Durable recordings are paged directly from `SQLite` so the bridge never materializes the
+     * complete route just to answer a preview request.
+     *
+     * # Errors
+     *
+     * Returns an error when durable route paging fails.
+     */
+open func pointsAfter(afterCursor: UInt64?, limit: UInt32)throws  -> MobileRideMapCorePointBatchDto  {
+    return try  FfiConverterTypeMobileRideMapCorePointBatchDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_points_after(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionUInt64.lower(afterCursor),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+    /**
+     * Returns durable outcomes for queued location writes without waiting for `SQLite`.
+     *
+     * The returned decisions are ordered by the bounded write queue. Outcomes settled by a
+     * lifecycle barrier are returned before writes that are still queued or in progress. An
+     * empty result means that the oldest queued write is still pending.
+     */
+open func pollLocationWrites() -> [MobileRideMapCoreDecisionDto]  {
+    return try!  FfiConverterSequenceTypeMobileRideMapCoreDecisionDto.lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_poll_location_writes(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Projects the Rust-owned route tail into a bounded viewport/privacy display.
+     *
+     * The projection is deliberately separate from [`Self::points_after`]: that method is the
+     * durable canonical paging API, while this method is a presentation projection over the
+     * recorder's bounded in-memory tail. `source_point_count` remains the canonical ride count
+     * so callers can distinguish a bounded display tail from the full route.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] when the budget, viewport,
+     * or privacy policy cannot be represented by the Rust domain policy.
+     */
+open func projectPoints(options: MobileRideMapRouteProjectionOptionsDto)throws  -> MobileRideMapRouteProjectionDto  {
+    return try  FfiConverterTypeMobileRideMapRouteProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_project_points(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),$0
+    )
+})
+}
+
+    /**
+     * Projects the Rust-owned route tail while honoring live-projection cancellation.
+     *
+     * The recorder snapshot is copied while the core mutex is held, then all route scanning and
+     * projection work happens after the mutex is released. This keeps a long presentation
+     * projection from blocking location admission or lifecycle transitions.
+     *
+     * # Errors
+     *
+     * Returns [`MobileRideMapCoreErrorDto::Cancelled`] when the caller requests cancellation,
+     * or [`MobileRideMapCoreErrorDto::InvalidRouteProjection`] for invalid options.
+     */
+open func projectPointsCancellable(options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileLiveRouteProjectionCancellation)throws  -> MobileRideMapRouteProjectionDto  {
+    return try  FfiConverterTypeMobileRideMapRouteProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_project_points_cancellable(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),
+        FfiConverterTypeMobileLiveRouteProjectionCancellation_lower(cancellation),$0
+    )
+})
+}
+
+    /**
+     * Resumes the paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
+     */
+open func resume()throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_resume(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Evaluates the resume transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no paused ride exists or durable storage rejects the transition.
+     */
+open func resumeAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_resume_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+    /**
+     * Saves a stopped ride and removes it from the active projection.
+     *
+     * # Errors
+     *
+     * Returns an error when no stopped ride exists or durable storage rejects the transition.
+     */
+open func save()throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_save(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Starts a GPS-only ride and retains the last connected vehicle as a candidate.
+     *
+     * # Errors
+     *
+     * Returns an error when another ride is open or durable storage rejects creation.
+     */
+open func startGpsOnly(atMs: UInt64, lastConnectedVehicle: String?)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_start_gps_only(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),
+        FfiConverterOptionString.lower(lastConnectedVehicle),$0
+    )
+})
+}
+
+    /**
+     * Stops the active or paused ride.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
+     */
+open func stop()throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_stop(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
+     * Evaluates the stop transition at the supplied monotonic timestamp.
+     *
+     * # Errors
+     *
+     * Returns an error when no open ride exists or durable storage rejects the transition.
+     */
+open func stopAt(atMs: UInt64)throws  -> MobileRideMapCoreSnapshotDto  {
+    return try  FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(try rustCallWithError(FfiConverterTypeMobileRideMapCoreErrorDto_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_mobileridemapcore_stop_at(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(atMs),$0
+    )
+})
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCore: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRideMapCore
+
+    public static func lift(_ handle: UInt64) throws -> MobileRideMapCore {
+        return MobileRideMapCore(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileRideMapCore) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCore {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRideMapCore, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCore_lift(_ handle: UInt64) throws -> MobileRideMapCore {
+    return try FfiConverterTypeMobileRideMapCore.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCore_lower(_ value: MobileRideMapCore) -> UInt64 {
+    return FfiConverterTypeMobileRideMapCore.lower(value)
+}
+
+
+
+
+
+
+/**
+ * Cooperative cancellation for one durable route projection.
+ */
+public protocol MobileRouteProjectionCancellationProtocol: AnyObject, Sendable {
+
+    /**
+     * Requests cancellation of the associated durable projection.
+     */
+    func cancel()
+
+}
+/**
+ * Cooperative cancellation for one durable route projection.
+ */
+open class MobileRouteProjectionCancellation: MobileRouteProjectionCancellationProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_cutout_mobile_ffi_fn_clone_mobilerouteprojectioncancellation(self.handle, $0) }
+    }
+    /**
+     * Creates an active projection cancellation token.
+     */
+public convenience init() {
+    let handle =
+        try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilerouteprojectioncancellation_new($0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_cutout_mobile_ffi_fn_free_mobilerouteprojectioncancellation(handle, $0) }
+    }
+
+
+    /**
+     * Creates a projection cancellation token with a Rust-owned timeout.
+     */
+public static func withTimeoutMilliseconds(timeoutMilliseconds: UInt64) -> MobileRouteProjectionCancellation  {
+    return try!  FfiConverterTypeMobileRouteProjectionCancellation_lift(try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_constructor_mobilerouteprojectioncancellation_with_timeout_milliseconds(
+        FfiConverterUInt64.lower(timeoutMilliseconds),$0
+    )
+})
+}
+
+
+
+    /**
+     * Requests cancellation of the associated durable projection.
+     */
+open func cancel()  {try! rustCall() {
+    uniffi_cutout_mobile_ffi_fn_method_mobilerouteprojectioncancellation_cancel(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+
+
+
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRouteProjectionCancellation: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = MobileRouteProjectionCancellation
+
+    public static func lift(_ handle: UInt64) throws -> MobileRouteProjectionCancellation {
+        return MobileRouteProjectionCancellation(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: MobileRouteProjectionCancellation) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRouteProjectionCancellation {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: MobileRouteProjectionCancellation, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRouteProjectionCancellation_lift(_ handle: UInt64) throws -> MobileRouteProjectionCancellation {
+    return try FfiConverterTypeMobileRouteProjectionCancellation.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRouteProjectionCancellation_lower(_ value: MobileRouteProjectionCancellation) -> UInt64 {
+    return FfiConverterTypeMobileRouteProjectionCancellation.lower(value)
+}
+
+
+
+
+
+
+/**
  * Rust-owned synchronous ride database handle for mobile clients.
  */
 public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
 
     /**
-     * Appends a location sample and reports duplicate/out-of-order admission.
-     */
-    func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto) throws  -> MobileRideLocationAdmissionDto
-
-    /**
      * Appends and spatially indexes one trail segment.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail or spatial index rejects the segment.
      */
     func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start: MobileMapCoordinateDto, end: MobileMapCoordinateDto) throws
 
     /**
      * Writes a consistent `SQLite` backup to a caller-selected file.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the destination or worker cannot complete the backup.
      */
     func backupTo(path: String) throws
 
@@ -2443,53 +3496,140 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
 
     /**
      * Returns runtime `SQLite` capabilities.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot report capabilities.
      */
     func capabilities() throws  -> MobileSqliteCapabilitiesDto
 
     /**
      * Clears opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the marker.
      */
     func clearRideSessionMarker() throws
 
     /**
      * Clears the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the selection.
      */
     func clearSelectedDevice() throws
 
     /**
      * Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the preview changed or the import cannot be committed.
      */
     func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMilliseconds: UInt64) throws  -> MobilePevcapImportReceiptDto
 
     /**
      * Stores and spatially indexes one charging/food map point.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the point or spatial index rejects the value.
      */
-    func createMapPoint(name: String, coordinate: MobileMapCoordinateDto) throws  -> UInt64
+    func createMapPoint(name: String, coordinate: MobileMapCoordinateDto) throws  -> String
 
     /**
      * Creates a draft ride and returns its Rust-created identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot create the ride.
      */
     func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64) throws  -> MobileRideIdDto
 
+    func createRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?) throws  -> MobileRideIdDto
+
+    func createStartedRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?, candidateVehicle: String?) throws  -> MobileRideIdDto
+
     /**
      * Creates an indexed trail definition.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail cannot be stored or indexed.
      */
     func createTrail(name: String) throws  -> MobileTrailIdDto
 
     /**
+     * Loads a stored display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
+     */
+    func deviceName(platformIdentifier: String) throws  -> String?
+
+    /**
      * Exports one ride summary as a versioned JSON document.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, destination, or worker is invalid.
      */
     func exportRideJson(id: MobileRideIdDto, path: String) throws
 
     /**
+     * Finds one visible ride by stable identifier without scanning history pages.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier, worker, or stored record is invalid.
+     */
+    func findRide(rideId: MobileRideIdDto) throws  -> MobileRideRecordDto?
+
+    /**
+     * Lists every vehicle identity referenced by visible ride history.
+     *
+     * This is a separate Rust-owned lookup rather than a projection of the first history page,
+     * so the filter remains complete when history contains more than one page or the current
+     * device is disconnected.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot query the device identities.
+     */
+    func listRideHistoryVehicleOptions() throws  -> [MobileRideHistoryVehicleOptionDto]
+
+    /**
      * Lists one bounded page of ride history in stable newest-first order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, limit, worker, or stored page is invalid.
      */
     func listRides(cursor: MobileRideCursorDto?, limit: UInt32) throws  -> MobileRidePageDto
 
     /**
+     * Lists one bounded page of ride history using Rust-owned filters.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, filter, limit, worker, or stored page is
+     * invalid.
+     */
+    func listRidesFiltered(cursor: MobileRideCursorDto?, filter: MobileRideHistoryFilterDto, limit: UInt32) throws  -> MobileRidePageDto
+
+    /**
      * Queries indexed map points intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
     func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32) throws  -> MobileMapPointPageDto
+
+    func monotonicCreatedAtMilliseconds(id: MobileRideIdDto) throws  -> UInt64?
 
     /**
      * Validates a PEVCAP artifact and returns bounded facts for explicit confirmation.
@@ -2501,42 +3641,120 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
     func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto) throws  -> MobilePevcapImportPreviewDto
 
     /**
+     * Projects bounded contextual routes for a history overview.
+     *
+     * The Rust worker owns history paging, selected-route exclusion, aggregate/per-route
+     * display bounds, viewport filtering, privacy, endpoint, and segment metadata. Swift only
+     * receives the bounded display projections.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the history filter, context budget, projection options,
+     * or database worker is invalid or unavailable.
+     */
+    func projectHistoryContext(options: MobileRideHistoryContextOptionsDto) throws  -> MobileRideHistoryContextProjectionDto
+
+    /**
+     * Projects one durable route through Rust-owned viewport, LOD, and privacy policy.
+     *
+     * The database worker owns raw route paging and returns only the bounded display projection;
+     * mobile callers must not scan or decimate route points themselves.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride ID, projection options, or database worker is
+     * invalid or unavailable.
+     */
+    func projectRoutePoints(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto) throws  -> MobileRideMapRouteProjectionDto
+
+    /**
+     * Projects one durable route while honoring cooperative cancellation.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride ID, projection options, cancellation token,
+     * or database worker is invalid or unavailable.
+     */
+    func projectRoutePointsCancellable(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileRouteProjectionCancellation) throws  -> MobileRideMapRouteProjectionDto
+
+    /**
      * Rebuilds all derived spatial indexes from their canonical tables.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the spatial schema or worker is unavailable.
      */
     func rebuildSpatialIndexes() throws
 
     /**
      * Removes a learned voltage-sag model.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
     func removeVoltageSagModel(deviceIdentity: String) throws
 
     /**
      * Loads opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the marker.
      */
     func rideSessionMarker() throws  -> Data?
 
     /**
      * Loads one bounded page of canonical route points in stable sequence order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
      */
     func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32) throws  -> MobileRoutePointPageDto
 
     /**
+     * Stores a display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity, display name, or worker is invalid.
+     */
+    func saveDeviceName(platformIdentifier: String, displayName: String, updatedAtMilliseconds: UInt64) throws
+
+    /**
      * Stores opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the marker or worker is invalid.
      */
     func saveRideSessionMarker(marker: Data) throws
 
     /**
      * Stores the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier or worker is invalid.
      */
     func saveSelectedDevice(platformIdentifier: String, updatedAtMilliseconds: UInt64) throws
 
     /**
      * Stores a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the model, identity, or worker is invalid.
      */
     func saveVoltageSagModel(deviceIdentity: String, model: MobileVoltageSagModelDto, learnedAtMilliseconds: UInt64) throws
 
     /**
      * Loads the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the selection.
      */
     func selectedDevice() throws  -> String?
 
@@ -2551,26 +3769,57 @@ public protocol RideDatabaseHandleProtocol: AnyObject, Sendable {
      * This is an explicit process-wide teardown operation. Callers must not use any
      * `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
      * `WorkerStopped` until the process opens a new database service.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot stop cleanly.
      */
     func shutdown() throws
 
     /**
      * Loads the durable summary projection for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride or worker cannot provide its summary.
      */
     func summary(id: MobileRideIdDto) throws  -> MobileRideSummaryDto
 
     /**
      * Queries indexed trail segments intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
     func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailSegmentCursorDto?, limit: UInt32) throws  -> MobileTrailSegmentPageDto
 
     /**
      * Applies a lifecycle event to a Rust-created ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the transition or worker rejects the event.
      */
     func transition(id: MobileRideIdDto, event: MobileRideEventDto) throws  -> MobileRideLifecycleStateDto
 
+    func transitionAt(id: MobileRideIdDto, event: MobileRideEventDto, monotonicAtMilliseconds: UInt64) throws  -> MobileRideLifecycleStateDto
+
+    /**
+     * Persists Rust-owned map association and telemetry metadata for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the metadata or worker rejects the update.
+     */
+    func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) throws
+
     /**
      * Loads a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
     func voltageSagModel(deviceIdentity: String) throws  -> MobileVoltageSagModelDto?
 
@@ -2632,20 +3881,11 @@ open class RideDatabaseHandle: RideDatabaseHandleProtocol, @unchecked Sendable {
 
 
     /**
-     * Appends a location sample and reports duplicate/out-of-order admission.
-     */
-open func appendLocation(id: MobileRideIdDto, location: MobileRideLocationDto)throws  -> MobileRideLocationAdmissionDto  {
-    return try  FfiConverterTypeMobileRideLocationAdmissionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
-    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_append_location(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeMobileRideIdDto_lower(id),
-        FfiConverterTypeMobileRideLocationDto_lower(location),$0
-    )
-})
-}
-
-    /**
      * Appends and spatially indexes one trail segment.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail or spatial index rejects the segment.
      */
 open func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start: MobileMapCoordinateDto, end: MobileMapCoordinateDto)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_append_trail_segment(
@@ -2660,6 +3900,10 @@ open func appendTrailSegment(trailId: MobileTrailIdDto, sequence: UInt32, start:
 
     /**
      * Writes a consistent `SQLite` backup to a caller-selected file.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the destination or worker cannot complete the backup.
      */
 open func backupTo(path: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_backup_to(
@@ -2682,6 +3926,10 @@ open func bootstrapSnapshot() -> MobileBootstrapSnapshotDto  {
 
     /**
      * Returns runtime `SQLite` capabilities.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot report capabilities.
      */
 open func capabilities()throws  -> MobileSqliteCapabilitiesDto  {
     return try  FfiConverterTypeMobileSqliteCapabilitiesDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2693,6 +3941,10 @@ open func capabilities()throws  -> MobileSqliteCapabilitiesDto  {
 
     /**
      * Clears opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the marker.
      */
 open func clearRideSessionMarker()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_clear_ride_session_marker(
@@ -2703,6 +3955,10 @@ open func clearRideSessionMarker()throws   {try rustCallWithError(FfiConverterTy
 
     /**
      * Clears the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot clear the selection.
      */
 open func clearSelectedDevice()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_clear_selected_device(
@@ -2713,6 +3969,10 @@ open func clearSelectedDevice()throws   {try rustCallWithError(FfiConverterTypeM
 
     /**
      * Confirms a previously reviewed PEVCAP preview and imports it into managed storage.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the preview changed or the import cannot be committed.
      */
 open func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMilliseconds: UInt64)throws  -> MobilePevcapImportReceiptDto  {
     return try  FfiConverterTypeMobilePevcapImportReceiptDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2726,9 +3986,13 @@ open func confirmPevcapImport(preview: MobilePevcapImportPreviewDto, createdAtMi
 
     /**
      * Stores and spatially indexes one charging/food map point.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the point or spatial index rejects the value.
      */
-open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws  -> UInt64  {
-    return try  FfiConverterUInt64.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_create_map_point(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(name),
@@ -2739,6 +4003,10 @@ open func createMapPoint(name: String, coordinate: MobileMapCoordinateDto)throws
 
     /**
      * Creates a draft ride and returns its Rust-created identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot create the ride.
      */
 open func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64)throws  -> MobileRideIdDto  {
     return try  FfiConverterTypeMobileRideIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2750,8 +4018,35 @@ open func createRide(source: MobileRideSourceDto, createdAtMilliseconds: UInt64)
 })
 }
 
+open func createRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?)throws  -> MobileRideIdDto  {
+    return try  FfiConverterTypeMobileRideIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_create_ride_with_monotonic_start(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideSourceDto_lower(source),
+        FfiConverterUInt64.lower(createdAtMilliseconds),
+        FfiConverterOptionUInt64.lower(monotonicCreatedAtMilliseconds),$0
+    )
+})
+}
+
+open func createStartedRideWithMonotonicStart(source: MobileRideSourceDto, createdAtMilliseconds: UInt64, monotonicCreatedAtMilliseconds: UInt64?, candidateVehicle: String?)throws  -> MobileRideIdDto  {
+    return try  FfiConverterTypeMobileRideIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_create_started_ride_with_monotonic_start(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideSourceDto_lower(source),
+        FfiConverterUInt64.lower(createdAtMilliseconds),
+        FfiConverterOptionUInt64.lower(monotonicCreatedAtMilliseconds),
+        FfiConverterOptionString.lower(candidateVehicle),$0
+    )
+})
+}
+
     /**
      * Creates an indexed trail definition.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the trail cannot be stored or indexed.
      */
 open func createTrail(name: String)throws  -> MobileTrailIdDto  {
     return try  FfiConverterTypeMobileTrailIdDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2763,7 +4058,27 @@ open func createTrail(name: String)throws  -> MobileTrailIdDto  {
 }
 
     /**
+     * Loads a stored display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
+     */
+open func deviceName(platformIdentifier: String)throws  -> String?  {
+    return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_device_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),$0
+    )
+})
+}
+
+    /**
      * Exports one ride summary as a versioned JSON document.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, destination, or worker is invalid.
      */
 open func exportRideJson(id: MobileRideIdDto, path: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_export_ride_json(
@@ -2775,7 +4090,46 @@ open func exportRideJson(id: MobileRideIdDto, path: String)throws   {try rustCal
 }
 
     /**
+     * Finds one visible ride by stable identifier without scanning history pages.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier, worker, or stored record is invalid.
+     */
+open func findRide(rideId: MobileRideIdDto)throws  -> MobileRideRecordDto?  {
+    return try  FfiConverterOptionTypeMobileRideRecordDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_find_ride(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(rideId),$0
+    )
+})
+}
+
+    /**
+     * Lists every vehicle identity referenced by visible ride history.
+     *
+     * This is a separate Rust-owned lookup rather than a projection of the first history page,
+     * so the filter remains complete when history contains more than one page or the current
+     * device is disconnected.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot query the device identities.
+     */
+open func listRideHistoryVehicleOptions()throws  -> [MobileRideHistoryVehicleOptionDto]  {
+    return try  FfiConverterSequenceTypeMobileRideHistoryVehicleOptionDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_list_ride_history_vehicle_options(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+
+    /**
      * Lists one bounded page of ride history in stable newest-first order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, limit, worker, or stored page is invalid.
      */
 open func listRides(cursor: MobileRideCursorDto?, limit: UInt32)throws  -> MobileRidePageDto  {
     return try  FfiConverterTypeMobileRidePageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2788,7 +4142,30 @@ open func listRides(cursor: MobileRideCursorDto?, limit: UInt32)throws  -> Mobil
 }
 
     /**
+     * Lists one bounded page of ride history using Rust-owned filters.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the cursor, filter, limit, worker, or stored page is
+     * invalid.
+     */
+open func listRidesFiltered(cursor: MobileRideCursorDto?, filter: MobileRideHistoryFilterDto, limit: UInt32)throws  -> MobileRidePageDto  {
+    return try  FfiConverterTypeMobileRidePageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_list_rides_filtered(
+            self.uniffiCloneHandle(),
+        FfiConverterOptionTypeMobileRideCursorDto.lower(cursor),
+        FfiConverterTypeMobileRideHistoryFilterDto_lower(filter),
+        FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+    /**
      * Queries indexed map points intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
 open func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCursorDto?, limit: UInt32)throws  -> MobileMapPointPageDto  {
     return try  FfiConverterTypeMobileMapPointPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2797,6 +4174,15 @@ open func mapPointsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileMapPointCu
         FfiConverterTypeMobileGeoBoundsDto_lower(bounds),
         FfiConverterOptionTypeMobileMapPointCursorDto.lower(cursor),
         FfiConverterUInt32.lower(limit),$0
+    )
+})
+}
+
+open func monotonicCreatedAtMilliseconds(id: MobileRideIdDto)throws  -> UInt64?  {
+    return try  FfiConverterOptionUInt64.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_monotonic_created_at_milliseconds(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),$0
     )
 })
 }
@@ -2819,7 +4205,72 @@ open func preflightPevcap(path: String, encoding: MobilePevcapEncodingDto)throws
 }
 
     /**
+     * Projects bounded contextual routes for a history overview.
+     *
+     * The Rust worker owns history paging, selected-route exclusion, aggregate/per-route
+     * display bounds, viewport filtering, privacy, endpoint, and segment metadata. Swift only
+     * receives the bounded display projections.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the history filter, context budget, projection options,
+     * or database worker is invalid or unavailable.
+     */
+open func projectHistoryContext(options: MobileRideHistoryContextOptionsDto)throws  -> MobileRideHistoryContextProjectionDto  {
+    return try  FfiConverterTypeMobileRideHistoryContextProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_project_history_context(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideHistoryContextOptionsDto_lower(options),$0
+    )
+})
+}
+
+    /**
+     * Projects one durable route through Rust-owned viewport, LOD, and privacy policy.
+     *
+     * The database worker owns raw route paging and returns only the bounded display projection;
+     * mobile callers must not scan or decimate route points themselves.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride ID, projection options, or database worker is
+     * invalid or unavailable.
+     */
+open func projectRoutePoints(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto)throws  -> MobileRideMapRouteProjectionDto  {
+    return try  FfiConverterTypeMobileRideMapRouteProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_project_route_points(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(rideId),
+        FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),$0
+    )
+})
+}
+
+    /**
+     * Projects one durable route while honoring cooperative cancellation.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride ID, projection options, cancellation token,
+     * or database worker is invalid or unavailable.
+     */
+open func projectRoutePointsCancellable(rideId: MobileRideIdDto, options: MobileRideMapRouteProjectionOptionsDto, cancellation: MobileRouteProjectionCancellation)throws  -> MobileRideMapRouteProjectionDto  {
+    return try  FfiConverterTypeMobileRideMapRouteProjectionDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_project_route_points_cancellable(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(rideId),
+        FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(options),
+        FfiConverterTypeMobileRouteProjectionCancellation_lower(cancellation),$0
+    )
+})
+}
+
+    /**
      * Rebuilds all derived spatial indexes from their canonical tables.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the spatial schema or worker is unavailable.
      */
 open func rebuildSpatialIndexes()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_rebuild_spatial_indexes(
@@ -2830,6 +4281,10 @@ open func rebuildSpatialIndexes()throws   {try rustCallWithError(FfiConverterTyp
 
     /**
      * Removes a learned voltage-sag model.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
 open func removeVoltageSagModel(deviceIdentity: String)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_remove_voltage_sag_model(
@@ -2841,6 +4296,10 @@ open func removeVoltageSagModel(deviceIdentity: String)throws   {try rustCallWit
 
     /**
      * Loads opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the marker.
      */
 open func rideSessionMarker()throws  -> Data?  {
     return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2852,6 +4311,10 @@ open func rideSessionMarker()throws  -> Data?  {
 
     /**
      * Loads one bounded page of canonical route points in stable sequence order.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride, cursor, limit, worker, or stored page is invalid.
      */
 open func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto?, limit: UInt32)throws  -> MobileRoutePointPageDto  {
     return try  FfiConverterTypeMobileRoutePointPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2865,7 +4328,28 @@ open func routePoints(rideId: MobileRideIdDto, cursor: MobileRoutePointCursorDto
 }
 
     /**
+     * Stores a display name for a platform-local device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity, display name, or worker is invalid.
+     */
+open func saveDeviceName(platformIdentifier: String, displayName: String, updatedAtMilliseconds: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_device_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(platformIdentifier),
+        FfiConverterString.lower(displayName),
+        FfiConverterUInt64.lower(updatedAtMilliseconds),$0
+    )
+}
+}
+
+    /**
      * Stores opaque Rust-owned ride-session marker bytes.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the marker or worker is invalid.
      */
 open func saveRideSessionMarker(marker: Data)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_ride_session_marker(
@@ -2877,6 +4361,10 @@ open func saveRideSessionMarker(marker: Data)throws   {try rustCallWithError(Ffi
 
     /**
      * Stores the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identifier or worker is invalid.
      */
 open func saveSelectedDevice(platformIdentifier: String, updatedAtMilliseconds: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_selected_device(
@@ -2889,6 +4377,10 @@ open func saveSelectedDevice(platformIdentifier: String, updatedAtMilliseconds: 
 
     /**
      * Stores a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the model, identity, or worker is invalid.
      */
 open func saveVoltageSagModel(deviceIdentity: String, model: MobileVoltageSagModelDto, learnedAtMilliseconds: UInt64)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_save_voltage_sag_model(
@@ -2902,6 +4394,10 @@ open func saveVoltageSagModel(deviceIdentity: String, model: MobileVoltageSagMod
 
     /**
      * Loads the selected platform-local device identifier.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot read the selection.
      */
 open func selectedDevice()throws  -> String?  {
     return try  FfiConverterOptionString.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2928,6 +4424,10 @@ open func serviceId() -> String  {
      * This is an explicit process-wide teardown operation. Callers must not use any
      * `RideDatabaseHandle` after shutdown; subsequent requests from other handles return
      * `WorkerStopped` until the process opens a new database service.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the worker cannot stop cleanly.
      */
 open func shutdown()throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
     uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_shutdown(
@@ -2938,6 +4438,10 @@ open func shutdown()throws   {try rustCallWithError(FfiConverterTypeMobileRideDa
 
     /**
      * Loads the durable summary projection for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the ride or worker cannot provide its summary.
      */
 open func summary(id: MobileRideIdDto)throws  -> MobileRideSummaryDto  {
     return try  FfiConverterTypeMobileRideSummaryDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2950,6 +4454,10 @@ open func summary(id: MobileRideIdDto)throws  -> MobileRideSummaryDto  {
 
     /**
      * Queries indexed trail segments intersecting a WGS84 bounding box.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the bounds, cursor, limit, or worker is invalid.
      */
 open func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailSegmentCursorDto?, limit: UInt32)throws  -> MobileTrailSegmentPageDto  {
     return try  FfiConverterTypeMobileTrailSegmentPageDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2964,6 +4472,10 @@ open func trailSegmentsInBounds(bounds: MobileGeoBoundsDto, cursor: MobileTrailS
 
     /**
      * Applies a lifecycle event to a Rust-created ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the transition or worker rejects the event.
      */
 open func transition(id: MobileRideIdDto, event: MobileRideEventDto)throws  -> MobileRideLifecycleStateDto  {
     return try  FfiConverterTypeMobileRideLifecycleStateDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -2975,8 +4487,42 @@ open func transition(id: MobileRideIdDto, event: MobileRideEventDto)throws  -> M
 })
 }
 
+open func transitionAt(id: MobileRideIdDto, event: MobileRideEventDto, monotonicAtMilliseconds: UInt64)throws  -> MobileRideLifecycleStateDto  {
+    return try  FfiConverterTypeMobileRideLifecycleStateDto_lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_transition_at(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterTypeMobileRideEventDto_lower(event),
+        FfiConverterUInt64.lower(monotonicAtMilliseconds),$0
+    )
+})
+}
+
+    /**
+     * Persists Rust-owned map association and telemetry metadata for a ride.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the metadata or worker rejects the update.
+     */
+open func updateRideMapMetadata(id: MobileRideIdDto, candidateVehicle: String?, associatedVehicle: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?)throws   {try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
+    uniffi_cutout_mobile_ffi_fn_method_ridedatabasehandle_update_ride_map_metadata(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeMobileRideIdDto_lower(id),
+        FfiConverterOptionString.lower(candidateVehicle),
+        FfiConverterOptionString.lower(associatedVehicle),
+        FfiConverterOptionUInt64.lower(associatedAtMilliseconds),
+        FfiConverterOptionUInt64.lower(lastTelemetryAtMilliseconds),$0
+    )
+}
+}
+
     /**
      * Loads a learned voltage-sag model for one device identity.
+     *
+     * # Errors
+     *
+     * Returns a typed database error when the identity or worker is invalid.
      */
 open func voltageSagModel(deviceIdentity: String)throws  -> MobileVoltageSagModelDto?  {
     return try  FfiConverterOptionTypeMobileVoltageSagModelDto.lift(try rustCallWithError(FfiConverterTypeMobileRideDatabaseError_lift) {
@@ -4549,6 +6095,65 @@ public func FfiConverterTypeDutyCycle_lower(_ value: DutyCycle) -> RustBuffer {
 
 
 /**
+ * Altitude above mean sea level in metres.
+ */
+public struct MobileAltitudeMeters: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileAltitudeMeters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileAltitudeMeters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileAltitudeMeters {
+        return
+            try MobileAltitudeMeters(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileAltitudeMeters, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAltitudeMeters_lift(_ buf: RustBuffer) throws -> MobileAltitudeMeters {
+    return try FfiConverterTypeMobileAltitudeMeters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileAltitudeMeters_lower(_ value: MobileAltitudeMeters) -> RustBuffer {
+    return FfiConverterTypeMobileAltitudeMeters.lower(value)
+}
+
+
+/**
  * Begode/Gotway protocol identity probe evidence.
  */
 public struct MobileBegodeIdentityProbeDto: Equatable, Hashable {
@@ -6041,6 +7646,124 @@ public func FfiConverterTypeMobileChargeTimeEstimateDto_lower(_ value: MobileCha
 
 
 /**
+ * Course accuracy in degrees when available.
+ */
+public struct MobileCourseAccuracyDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileCourseAccuracyDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileCourseAccuracyDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCourseAccuracyDegrees {
+        return
+            try MobileCourseAccuracyDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileCourseAccuracyDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseAccuracyDegrees_lift(_ buf: RustBuffer) throws -> MobileCourseAccuracyDegrees {
+    return try FfiConverterTypeMobileCourseAccuracyDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseAccuracyDegrees_lower(_ value: MobileCourseAccuracyDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileCourseAccuracyDegrees.lower(value)
+}
+
+
+/**
+ * Direction of travel in degrees clockwise from true north when available.
+ */
+public struct MobileCourseDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileCourseDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileCourseDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileCourseDegrees {
+        return
+            try MobileCourseDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileCourseDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseDegrees_lift(_ buf: RustBuffer) throws -> MobileCourseDegrees {
+    return try FfiConverterTypeMobileCourseDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileCourseDegrees_lower(_ value: MobileCourseDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileCourseDegrees.lower(value)
+}
+
+
+/**
  * Current-rate summary used by an available estimate.
  */
 public struct MobileCurrentRateSummaryDto: Equatable, Hashable {
@@ -6749,6 +8472,65 @@ public func FfiConverterTypeMobileGeoBoundsDto_lower(_ value: MobileGeoBoundsDto
 
 
 /**
+ * Horizontal location accuracy in metres when available.
+ */
+public struct MobileHorizontalAccuracyMeters: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileHorizontalAccuracyMeters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileHorizontalAccuracyMeters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileHorizontalAccuracyMeters {
+        return
+            try MobileHorizontalAccuracyMeters(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileHorizontalAccuracyMeters, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHorizontalAccuracyMeters_lift(_ buf: RustBuffer) throws -> MobileHorizontalAccuracyMeters {
+    return try FfiConverterTypeMobileHorizontalAccuracyMeters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileHorizontalAccuracyMeters_lower(_ value: MobileHorizontalAccuracyMeters) -> RustBuffer {
+    return FfiConverterTypeMobileHorizontalAccuracyMeters.lower(value)
+}
+
+
+/**
  * One Rust-authorized, bounded identification query write.
  */
 public struct MobileIdentificationProbeWriteDto: Equatable, Hashable {
@@ -6927,6 +8709,124 @@ public func FfiConverterTypeMobileIgnoredNotificationEvidenceDto_lower(_ value: 
 
 
 /**
+ * WGS84 latitude in degrees. Rust validates the range before use.
+ */
+public struct MobileLatitudeDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileLatitudeDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLatitudeDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLatitudeDegrees {
+        return
+            try MobileLatitudeDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileLatitudeDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLatitudeDegrees_lift(_ buf: RustBuffer) throws -> MobileLatitudeDegrees {
+    return try FfiConverterTypeMobileLatitudeDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLatitudeDegrees_lower(_ value: MobileLatitudeDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileLatitudeDegrees.lower(value)
+}
+
+
+/**
+ * WGS84 longitude in degrees. Rust validates the range before use.
+ */
+public struct MobileLongitudeDegrees: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileLongitudeDegrees: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileLongitudeDegrees: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileLongitudeDegrees {
+        return
+            try MobileLongitudeDegrees(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileLongitudeDegrees, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLongitudeDegrees_lift(_ buf: RustBuffer) throws -> MobileLongitudeDegrees {
+    return try FfiConverterTypeMobileLongitudeDegrees.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileLongitudeDegrees_lower(_ value: MobileLongitudeDegrees) -> RustBuffer {
+    return FfiConverterTypeMobileLongitudeDegrees.lower(value)
+}
+
+
+/**
  * Coordinate used by map and trail DTOs.
  */
 public struct MobileMapCoordinateDto: Equatable, Hashable {
@@ -6999,11 +8899,11 @@ public func FfiConverterTypeMobileMapCoordinateDto_lower(_ value: MobileMapCoord
  * Stable cursor for a subsequent map-point page.
  */
 public struct MobileMapPointCursorDto: Equatable, Hashable {
-    public var id: UInt64
+    public var id: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: UInt64) {
+    public init(id: String) {
         self.id = id
     }
 
@@ -7023,12 +8923,12 @@ public struct FfiConverterTypeMobileMapPointCursorDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMapPointCursorDto {
         return
             try MobileMapPointCursorDto(
-                id: FfiConverterUInt64.read(from: &buf)
+                id: FfiConverterString.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMapPointCursorDto, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
     }
 }
 
@@ -7055,7 +8955,7 @@ public struct MobileMapPointDto: Equatable, Hashable {
     /**
      * Stable point identifier.
      */
-    public var id: UInt64
+    public var id: String
     /**
      * User-visible point name.
      */
@@ -7070,7 +8970,7 @@ public struct MobileMapPointDto: Equatable, Hashable {
     public init(
         /**
          * Stable point identifier.
-         */id: UInt64,
+         */id: String,
         /**
          * User-visible point name.
          */name: String,
@@ -7098,14 +8998,14 @@ public struct FfiConverterTypeMobileMapPointDto: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileMapPointDto {
         return
             try MobileMapPointDto(
-                id: FfiConverterUInt64.read(from: &buf),
+                id: FfiConverterString.read(from: &buf),
                 name: FfiConverterString.read(from: &buf),
                 coordinate: FfiConverterTypeMobileMapCoordinateDto.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileMapPointDto, into buf: inout [UInt8]) {
-        FfiConverterUInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterTypeMobileMapCoordinateDto.write(value.coordinate, into: &buf)
     }
@@ -8327,23 +10227,23 @@ public func FfiConverterTypeMobilePevcapImportReceiptDto_lower(_ value: MobilePe
 
 
 /**
- * Raw phone location sample forwarded by the mobile platform.
+ * Unit-typed phone location sample forwarded by the mobile platform.
  */
 public struct MobilePhoneLocationSampleDto: Equatable, Hashable {
     public var wallClockUnixMs: UInt64
-    public var latitudeDegrees: Double
-    public var longitudeDegrees: Double
-    public var altitudeMeters: Double
-    public var horizontalAccuracyMeters: Double
-    public var verticalAccuracyMeters: Double
-    public var speedMetersPerSecond: Double
-    public var speedAccuracyMetersPerSecond: Double
-    public var courseDegrees: Double
-    public var courseAccuracyDegrees: Double
+    public var latitudeDegrees: MobileLatitudeDegrees
+    public var longitudeDegrees: MobileLongitudeDegrees
+    public var altitudeMeters: MobileAltitudeMeters
+    public var horizontalAccuracyMeters: MobileHorizontalAccuracyMeters?
+    public var verticalAccuracyMeters: MobileVerticalAccuracyMeters?
+    public var speedMetersPerSecond: MobileSpeedMetersPerSecond?
+    public var speedAccuracyMetersPerSecond: MobileSpeedAccuracyMetersPerSecond?
+    public var courseDegrees: MobileCourseDegrees?
+    public var courseAccuracyDegrees: MobileCourseAccuracyDegrees?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(wallClockUnixMs: UInt64, latitudeDegrees: Double, longitudeDegrees: Double, altitudeMeters: Double, horizontalAccuracyMeters: Double, verticalAccuracyMeters: Double, speedMetersPerSecond: Double, speedAccuracyMetersPerSecond: Double, courseDegrees: Double, courseAccuracyDegrees: Double) {
+    public init(wallClockUnixMs: UInt64, latitudeDegrees: MobileLatitudeDegrees, longitudeDegrees: MobileLongitudeDegrees, altitudeMeters: MobileAltitudeMeters, horizontalAccuracyMeters: MobileHorizontalAccuracyMeters?, verticalAccuracyMeters: MobileVerticalAccuracyMeters?, speedMetersPerSecond: MobileSpeedMetersPerSecond?, speedAccuracyMetersPerSecond: MobileSpeedAccuracyMetersPerSecond?, courseDegrees: MobileCourseDegrees?, courseAccuracyDegrees: MobileCourseAccuracyDegrees?) {
         self.wallClockUnixMs = wallClockUnixMs
         self.latitudeDegrees = latitudeDegrees
         self.longitudeDegrees = longitudeDegrees
@@ -8373,29 +10273,29 @@ public struct FfiConverterTypeMobilePhoneLocationSampleDto: FfiConverterRustBuff
         return
             try MobilePhoneLocationSampleDto(
                 wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
-                latitudeDegrees: FfiConverterDouble.read(from: &buf),
-                longitudeDegrees: FfiConverterDouble.read(from: &buf),
-                altitudeMeters: FfiConverterDouble.read(from: &buf),
-                horizontalAccuracyMeters: FfiConverterDouble.read(from: &buf),
-                verticalAccuracyMeters: FfiConverterDouble.read(from: &buf),
-                speedMetersPerSecond: FfiConverterDouble.read(from: &buf),
-                speedAccuracyMetersPerSecond: FfiConverterDouble.read(from: &buf),
-                courseDegrees: FfiConverterDouble.read(from: &buf),
-                courseAccuracyDegrees: FfiConverterDouble.read(from: &buf)
+                latitudeDegrees: FfiConverterTypeMobileLatitudeDegrees.read(from: &buf),
+                longitudeDegrees: FfiConverterTypeMobileLongitudeDegrees.read(from: &buf),
+                altitudeMeters: FfiConverterTypeMobileAltitudeMeters.read(from: &buf),
+                horizontalAccuracyMeters: FfiConverterOptionTypeMobileHorizontalAccuracyMeters.read(from: &buf),
+                verticalAccuracyMeters: FfiConverterOptionTypeMobileVerticalAccuracyMeters.read(from: &buf),
+                speedMetersPerSecond: FfiConverterOptionTypeMobileSpeedMetersPerSecond.read(from: &buf),
+                speedAccuracyMetersPerSecond: FfiConverterOptionTypeMobileSpeedAccuracyMetersPerSecond.read(from: &buf),
+                courseDegrees: FfiConverterOptionTypeMobileCourseDegrees.read(from: &buf),
+                courseAccuracyDegrees: FfiConverterOptionTypeMobileCourseAccuracyDegrees.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobilePhoneLocationSampleDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)
-        FfiConverterDouble.write(value.latitudeDegrees, into: &buf)
-        FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
-        FfiConverterDouble.write(value.altitudeMeters, into: &buf)
-        FfiConverterDouble.write(value.horizontalAccuracyMeters, into: &buf)
-        FfiConverterDouble.write(value.verticalAccuracyMeters, into: &buf)
-        FfiConverterDouble.write(value.speedMetersPerSecond, into: &buf)
-        FfiConverterDouble.write(value.speedAccuracyMetersPerSecond, into: &buf)
-        FfiConverterDouble.write(value.courseDegrees, into: &buf)
-        FfiConverterDouble.write(value.courseAccuracyDegrees, into: &buf)
+        FfiConverterTypeMobileLatitudeDegrees.write(value.latitudeDegrees, into: &buf)
+        FfiConverterTypeMobileLongitudeDegrees.write(value.longitudeDegrees, into: &buf)
+        FfiConverterTypeMobileAltitudeMeters.write(value.altitudeMeters, into: &buf)
+        FfiConverterOptionTypeMobileHorizontalAccuracyMeters.write(value.horizontalAccuracyMeters, into: &buf)
+        FfiConverterOptionTypeMobileVerticalAccuracyMeters.write(value.verticalAccuracyMeters, into: &buf)
+        FfiConverterOptionTypeMobileSpeedMetersPerSecond.write(value.speedMetersPerSecond, into: &buf)
+        FfiConverterOptionTypeMobileSpeedAccuracyMetersPerSecond.write(value.speedAccuracyMetersPerSecond, into: &buf)
+        FfiConverterOptionTypeMobileCourseDegrees.write(value.courseDegrees, into: &buf)
+        FfiConverterOptionTypeMobileCourseAccuracyDegrees.write(value.courseAccuracyDegrees, into: &buf)
     }
 }
 
@@ -8891,6 +10791,490 @@ public func FfiConverterTypeMobileRideCursorDto_lower(_ value: MobileRideCursorD
 
 
 /**
+ * Rust-owned bounds for the history overview's contextual route projection.
+ */
+public struct MobileRideHistoryContextBudgetDto: Equatable, Hashable {
+    /**
+     * Maximum number of history records loaded for contextual projection.
+     */
+    public var historyPageLimit: UInt32
+    /**
+     * Maximum number of non-selected routes returned.
+     */
+    public var maxRoutes: UInt32
+    /**
+     * Maximum display points returned for one contextual route.
+     */
+    public var perRouteBudget: UInt32
+    /**
+     * Maximum display points returned across all contextual routes.
+     */
+    public var totalPointBudget: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Maximum number of history records loaded for contextual projection.
+         */historyPageLimit: UInt32,
+        /**
+         * Maximum number of non-selected routes returned.
+         */maxRoutes: UInt32,
+        /**
+         * Maximum display points returned for one contextual route.
+         */perRouteBudget: UInt32,
+        /**
+         * Maximum display points returned across all contextual routes.
+         */totalPointBudget: UInt32) {
+        self.historyPageLimit = historyPageLimit
+        self.maxRoutes = maxRoutes
+        self.perRouteBudget = perRouteBudget
+        self.totalPointBudget = totalPointBudget
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextBudgetDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextBudgetDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextBudgetDto {
+        return
+            try MobileRideHistoryContextBudgetDto(
+                historyPageLimit: FfiConverterUInt32.read(from: &buf),
+                maxRoutes: FfiConverterUInt32.read(from: &buf),
+                perRouteBudget: FfiConverterUInt32.read(from: &buf),
+                totalPointBudget: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextBudgetDto, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.historyPageLimit, into: &buf)
+        FfiConverterUInt32.write(value.maxRoutes, into: &buf)
+        FfiConverterUInt32.write(value.perRouteBudget, into: &buf)
+        FfiConverterUInt32.write(value.totalPointBudget, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextBudgetDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextBudgetDto {
+    return try FfiConverterTypeMobileRideHistoryContextBudgetDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextBudgetDto_lower(_ value: MobileRideHistoryContextBudgetDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextBudgetDto.lower(value)
+}
+
+
+/**
+ * Inputs for a bounded history overview context projection.
+ */
+public struct MobileRideHistoryContextOptionsDto: Equatable, Hashable {
+    /**
+     * Rust-owned history filters applied before route projection.
+     */
+    public var filter: MobileRideHistoryFilterDto
+    /**
+     * Selected ride omitted from the subdued contextual routes, when present.
+     */
+    public var selectedRideId: MobileRideIdDto?
+    /**
+     * Rust-enforced history and display bounds.
+     */
+    public var budget: MobileRideHistoryContextBudgetDto
+    /**
+     * Optional inclusive viewport shared by every contextual route.
+     */
+    public var viewport: MobileGeoBoundsDto?
+    /**
+     * Privacy policy applied before coordinates cross the FFI boundary.
+     */
+    public var privacy: MobileRideMapRoutePrivacyPolicyDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Rust-owned history filters applied before route projection.
+         */filter: MobileRideHistoryFilterDto,
+        /**
+         * Selected ride omitted from the subdued contextual routes, when present.
+         */selectedRideId: MobileRideIdDto?,
+        /**
+         * Rust-enforced history and display bounds.
+         */budget: MobileRideHistoryContextBudgetDto,
+        /**
+         * Optional inclusive viewport shared by every contextual route.
+         */viewport: MobileGeoBoundsDto?,
+        /**
+         * Privacy policy applied before coordinates cross the FFI boundary.
+         */privacy: MobileRideMapRoutePrivacyPolicyDto) {
+        self.filter = filter
+        self.selectedRideId = selectedRideId
+        self.budget = budget
+        self.viewport = viewport
+        self.privacy = privacy
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextOptionsDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextOptionsDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextOptionsDto {
+        return
+            try MobileRideHistoryContextOptionsDto(
+                filter: FfiConverterTypeMobileRideHistoryFilterDto.read(from: &buf),
+                selectedRideId: FfiConverterOptionTypeMobileRideIdDto.read(from: &buf),
+                budget: FfiConverterTypeMobileRideHistoryContextBudgetDto.read(from: &buf),
+                viewport: FfiConverterOptionTypeMobileGeoBoundsDto.read(from: &buf),
+                privacy: FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextOptionsDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRideHistoryFilterDto.write(value.filter, into: &buf)
+        FfiConverterOptionTypeMobileRideIdDto.write(value.selectedRideId, into: &buf)
+        FfiConverterTypeMobileRideHistoryContextBudgetDto.write(value.budget, into: &buf)
+        FfiConverterOptionTypeMobileGeoBoundsDto.write(value.viewport, into: &buf)
+        FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.write(value.privacy, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextOptionsDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextOptionsDto {
+    return try FfiConverterTypeMobileRideHistoryContextOptionsDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextOptionsDto_lower(_ value: MobileRideHistoryContextOptionsDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextOptionsDto.lower(value)
+}
+
+
+/**
+ * Bounded route context for a history overview.
+ */
+public struct MobileRideHistoryContextProjectionDto: Equatable, Hashable {
+    /**
+     * Contextual routes in newest-first history order.
+     */
+    public var routes: [MobileRideHistoryContextRouteDto]
+    /**
+     * Number of records loaded from the bounded history page.
+     */
+    public var sourceHistoryRouteCount: UInt64
+    /**
+     * Number of eligible routes after selected-ride exclusion.
+     */
+    public var contextRouteCount: UInt64
+    /**
+     * Total display points returned across contextual routes.
+     */
+    public var totalDisplayPointCount: UInt64
+    /**
+     * Whether route or aggregate point budgets omitted eligible context data.
+     */
+    public var routesOmittedByBudget: Bool
+    /**
+     * Whether the bounded history page has another page after it.
+     */
+    public var historyPageHasMore: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Contextual routes in newest-first history order.
+         */routes: [MobileRideHistoryContextRouteDto],
+        /**
+         * Number of records loaded from the bounded history page.
+         */sourceHistoryRouteCount: UInt64,
+        /**
+         * Number of eligible routes after selected-ride exclusion.
+         */contextRouteCount: UInt64,
+        /**
+         * Total display points returned across contextual routes.
+         */totalDisplayPointCount: UInt64,
+        /**
+         * Whether route or aggregate point budgets omitted eligible context data.
+         */routesOmittedByBudget: Bool,
+        /**
+         * Whether the bounded history page has another page after it.
+         */historyPageHasMore: Bool) {
+        self.routes = routes
+        self.sourceHistoryRouteCount = sourceHistoryRouteCount
+        self.contextRouteCount = contextRouteCount
+        self.totalDisplayPointCount = totalDisplayPointCount
+        self.routesOmittedByBudget = routesOmittedByBudget
+        self.historyPageHasMore = historyPageHasMore
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextProjectionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextProjectionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextProjectionDto {
+        return
+            try MobileRideHistoryContextProjectionDto(
+                routes: FfiConverterSequenceTypeMobileRideHistoryContextRouteDto.read(from: &buf),
+                sourceHistoryRouteCount: FfiConverterUInt64.read(from: &buf),
+                contextRouteCount: FfiConverterUInt64.read(from: &buf),
+                totalDisplayPointCount: FfiConverterUInt64.read(from: &buf),
+                routesOmittedByBudget: FfiConverterBool.read(from: &buf),
+                historyPageHasMore: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextProjectionDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRideHistoryContextRouteDto.write(value.routes, into: &buf)
+        FfiConverterUInt64.write(value.sourceHistoryRouteCount, into: &buf)
+        FfiConverterUInt64.write(value.contextRouteCount, into: &buf)
+        FfiConverterUInt64.write(value.totalDisplayPointCount, into: &buf)
+        FfiConverterBool.write(value.routesOmittedByBudget, into: &buf)
+        FfiConverterBool.write(value.historyPageHasMore, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextProjectionDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextProjectionDto {
+    return try FfiConverterTypeMobileRideHistoryContextProjectionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextProjectionDto_lower(_ value: MobileRideHistoryContextProjectionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextProjectionDto.lower(value)
+}
+
+
+/**
+ * One bounded contextual route paired with its stable ride identifier.
+ */
+public struct MobileRideHistoryContextRouteDto: Equatable, Hashable {
+    public var rideId: MobileRideIdDto
+    public var projection: MobileRideMapRouteProjectionDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(rideId: MobileRideIdDto, projection: MobileRideMapRouteProjectionDto) {
+        self.rideId = rideId
+        self.projection = projection
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryContextRouteDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryContextRouteDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryContextRouteDto {
+        return
+            try MobileRideHistoryContextRouteDto(
+                rideId: FfiConverterTypeMobileRideIdDto.read(from: &buf),
+                projection: FfiConverterTypeMobileRideMapRouteProjectionDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryContextRouteDto, into buf: inout [UInt8]) {
+        FfiConverterTypeMobileRideIdDto.write(value.rideId, into: &buf)
+        FfiConverterTypeMobileRideMapRouteProjectionDto.write(value.projection, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextRouteDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryContextRouteDto {
+    return try FfiConverterTypeMobileRideHistoryContextRouteDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryContextRouteDto_lower(_ value: MobileRideHistoryContextRouteDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryContextRouteDto.lower(value)
+}
+
+
+/**
+ * Rust-owned filters for bounded ride-history queries.
+ */
+public struct MobileRideHistoryFilterDto: Equatable, Hashable {
+    public var createdAfterMilliseconds: UInt64?
+    public var vehicleIdentity: String?
+    public var searchText: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(createdAfterMilliseconds: UInt64?, vehicleIdentity: String?, searchText: String?) {
+        self.createdAfterMilliseconds = createdAfterMilliseconds
+        self.vehicleIdentity = vehicleIdentity
+        self.searchText = searchText
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryFilterDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryFilterDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryFilterDto {
+        return
+            try MobileRideHistoryFilterDto(
+                createdAfterMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                vehicleIdentity: FfiConverterOptionString.read(from: &buf),
+                searchText: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryFilterDto, into buf: inout [UInt8]) {
+        FfiConverterOptionUInt64.write(value.createdAfterMilliseconds, into: &buf)
+        FfiConverterOptionString.write(value.vehicleIdentity, into: &buf)
+        FfiConverterOptionString.write(value.searchText, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryFilterDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryFilterDto {
+    return try FfiConverterTypeMobileRideHistoryFilterDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryFilterDto_lower(_ value: MobileRideHistoryFilterDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryFilterDto.lower(value)
+}
+
+
+/**
+ * One vehicle identity available to the history filter.
+ */
+public struct MobileRideHistoryVehicleOptionDto: Equatable, Hashable {
+    /**
+     * Stable platform-local identity used as the filter value.
+     */
+    public var platformIdentifier: String
+    /**
+     * Display name persisted in the Rust device table, when available.
+     */
+    public var displayName: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable platform-local identity used as the filter value.
+         */platformIdentifier: String,
+        /**
+         * Display name persisted in the Rust device table, when available.
+         */displayName: String?) {
+        self.platformIdentifier = platformIdentifier
+        self.displayName = displayName
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideHistoryVehicleOptionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideHistoryVehicleOptionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideHistoryVehicleOptionDto {
+        return
+            try MobileRideHistoryVehicleOptionDto(
+                platformIdentifier: FfiConverterString.read(from: &buf),
+                displayName: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideHistoryVehicleOptionDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.platformIdentifier, into: &buf)
+        FfiConverterOptionString.write(value.displayName, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryVehicleOptionDto_lift(_ buf: RustBuffer) throws -> MobileRideHistoryVehicleOptionDto {
+    return try FfiConverterTypeMobileRideHistoryVehicleOptionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideHistoryVehicleOptionDto_lower(_ value: MobileRideHistoryVehicleOptionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideHistoryVehicleOptionDto.lower(value)
+}
+
+
+/**
  * Stable ride identifier returned by Rust.
  */
 public struct MobileRideIdDto: Equatable, Hashable {
@@ -9059,6 +11443,858 @@ public func FfiConverterTypeMobileRideLocationDto_lower(_ value: MobileRideLocat
 
 
 /**
+ * One bounded page of Rust-owned live route points.
+ */
+public struct MobileRideMapCorePointBatchDto: Equatable, Hashable {
+    /**
+     * Points after the supplied cursor.
+     */
+    public var points: [MobileRideMapCorePointDto]
+    /**
+     * Cursor for the next page, when more points remain.
+     */
+    public var nextCursor: UInt64?
+    /**
+     * Whether another page is available.
+     */
+    public var hasMore: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Points after the supplied cursor.
+         */points: [MobileRideMapCorePointDto],
+        /**
+         * Cursor for the next page, when more points remain.
+         */nextCursor: UInt64?,
+        /**
+         * Whether another page is available.
+         */hasMore: Bool) {
+        self.points = points
+        self.nextCursor = nextCursor
+        self.hasMore = hasMore
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCorePointBatchDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCorePointBatchDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCorePointBatchDto {
+        return
+            try MobileRideMapCorePointBatchDto(
+                points: FfiConverterSequenceTypeMobileRideMapCorePointDto.read(from: &buf),
+                nextCursor: FfiConverterOptionUInt64.read(from: &buf),
+                hasMore: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapCorePointBatchDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRideMapCorePointDto.write(value.points, into: &buf)
+        FfiConverterOptionUInt64.write(value.nextCursor, into: &buf)
+        FfiConverterBool.write(value.hasMore, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCorePointBatchDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCorePointBatchDto {
+    return try FfiConverterTypeMobileRideMapCorePointBatchDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCorePointBatchDto_lower(_ value: MobileRideMapCorePointBatchDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCorePointBatchDto.lower(value)
+}
+
+
+/**
+ * One Rust-owned live route point.
+ */
+public struct MobileRideMapCorePointDto: Equatable, Hashable {
+    /**
+     * Stable sequence within the ride.
+     */
+    public var sequence: UInt64
+    /**
+     * Segment sequence within the ride.
+     */
+    public var segmentId: UInt64
+    /**
+     * Rust-owned reason this segment began.
+     */
+    public var startReason: MobileRideSegmentStartReasonDto
+    /**
+     * Latitude in WGS84 decimal degrees.
+     */
+    public var latitudeDegrees: Double
+    /**
+     * Longitude in WGS84 decimal degrees.
+     */
+    public var longitudeDegrees: Double
+    /**
+     * Wall-clock Unix timestamp in milliseconds.
+     */
+    public var wallClockUnixMs: UInt64
+    /**
+     * Monotonic timestamp in milliseconds.
+     */
+    public var monotonicMs: UInt64
+    /**
+     * Horizontal accuracy in metres, when the source provided it.
+     */
+    public var horizontalAccuracyMeters: Double?
+    /**
+     * Vehicle telemetry provenance.
+     */
+    public var telemetryState: MobileRideMapCoreTelemetryStateDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable sequence within the ride.
+         */sequence: UInt64,
+        /**
+         * Segment sequence within the ride.
+         */segmentId: UInt64,
+        /**
+         * Rust-owned reason this segment began.
+         */startReason: MobileRideSegmentStartReasonDto,
+        /**
+         * Latitude in WGS84 decimal degrees.
+         */latitudeDegrees: Double,
+        /**
+         * Longitude in WGS84 decimal degrees.
+         */longitudeDegrees: Double,
+        /**
+         * Wall-clock Unix timestamp in milliseconds.
+         */wallClockUnixMs: UInt64,
+        /**
+         * Monotonic timestamp in milliseconds.
+         */monotonicMs: UInt64,
+        /**
+         * Horizontal accuracy in metres, when the source provided it.
+         */horizontalAccuracyMeters: Double?,
+        /**
+         * Vehicle telemetry provenance.
+         */telemetryState: MobileRideMapCoreTelemetryStateDto) {
+        self.sequence = sequence
+        self.segmentId = segmentId
+        self.startReason = startReason
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.wallClockUnixMs = wallClockUnixMs
+        self.monotonicMs = monotonicMs
+        self.horizontalAccuracyMeters = horizontalAccuracyMeters
+        self.telemetryState = telemetryState
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCorePointDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCorePointDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCorePointDto {
+        return
+            try MobileRideMapCorePointDto(
+                sequence: FfiConverterUInt64.read(from: &buf),
+                segmentId: FfiConverterUInt64.read(from: &buf),
+                startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
+                latitudeDegrees: FfiConverterDouble.read(from: &buf),
+                longitudeDegrees: FfiConverterDouble.read(from: &buf),
+                wallClockUnixMs: FfiConverterUInt64.read(from: &buf),
+                monotonicMs: FfiConverterUInt64.read(from: &buf),
+                horizontalAccuracyMeters: FfiConverterOptionDouble.read(from: &buf),
+                telemetryState: FfiConverterTypeMobileRideMapCoreTelemetryStateDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapCorePointDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
+        FfiConverterDouble.write(value.latitudeDegrees, into: &buf)
+        FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
+        FfiConverterUInt64.write(value.wallClockUnixMs, into: &buf)
+        FfiConverterUInt64.write(value.monotonicMs, into: &buf)
+        FfiConverterOptionDouble.write(value.horizontalAccuracyMeters, into: &buf)
+        FfiConverterTypeMobileRideMapCoreTelemetryStateDto.write(value.telemetryState, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCorePointDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCorePointDto {
+    return try FfiConverterTypeMobileRideMapCorePointDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCorePointDto_lower(_ value: MobileRideMapCorePointDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCorePointDto.lower(value)
+}
+
+
+/**
+ * Snapshot of the Rust-owned live map recording.
+ */
+public struct MobileRideMapCoreSnapshotDto: Equatable, Hashable {
+    /**
+     * Rust-created ride identifier.
+     */
+    public var rideId: String
+    /**
+     * Current durable lifecycle state.
+     */
+    public var state: MobileRideLifecycleStateDto
+    /**
+     * Current route summary.
+     */
+    public var summary: MobileRideMapCoreSummaryDto
+    /**
+     * Rust-owned number of admitted route segments.
+     */
+    public var segmentCount: UInt64
+    /**
+     * Associated vehicle platform identifier, when available.
+     */
+    public var associatedVehicle: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Rust-created ride identifier.
+         */rideId: String,
+        /**
+         * Current durable lifecycle state.
+         */state: MobileRideLifecycleStateDto,
+        /**
+         * Current route summary.
+         */summary: MobileRideMapCoreSummaryDto,
+        /**
+         * Rust-owned number of admitted route segments.
+         */segmentCount: UInt64,
+        /**
+         * Associated vehicle platform identifier, when available.
+         */associatedVehicle: String?) {
+        self.rideId = rideId
+        self.state = state
+        self.summary = summary
+        self.segmentCount = segmentCount
+        self.associatedVehicle = associatedVehicle
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCoreSnapshotDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCoreSnapshotDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCoreSnapshotDto {
+        return
+            try MobileRideMapCoreSnapshotDto(
+                rideId: FfiConverterString.read(from: &buf),
+                state: FfiConverterTypeMobileRideLifecycleStateDto.read(from: &buf),
+                summary: FfiConverterTypeMobileRideMapCoreSummaryDto.read(from: &buf),
+                segmentCount: FfiConverterUInt64.read(from: &buf),
+                associatedVehicle: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapCoreSnapshotDto, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.rideId, into: &buf)
+        FfiConverterTypeMobileRideLifecycleStateDto.write(value.state, into: &buf)
+        FfiConverterTypeMobileRideMapCoreSummaryDto.write(value.summary, into: &buf)
+        FfiConverterUInt64.write(value.segmentCount, into: &buf)
+        FfiConverterOptionString.write(value.associatedVehicle, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreSnapshotDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCoreSnapshotDto {
+    return try FfiConverterTypeMobileRideMapCoreSnapshotDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreSnapshotDto_lower(_ value: MobileRideMapCoreSnapshotDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCoreSnapshotDto.lower(value)
+}
+
+
+/**
+ * Summary projected for an active map recording.
+ */
+public struct MobileRideMapCoreSummaryDto: Equatable, Hashable {
+    /**
+     * Number of accepted route points.
+     */
+    public var pointCount: UInt64
+    /**
+     * Accumulated route distance in metres.
+     */
+    public var distanceMeters: Double
+    /**
+     * Elapsed recording duration in milliseconds.
+     */
+    public var durationMilliseconds: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Number of accepted route points.
+         */pointCount: UInt64,
+        /**
+         * Accumulated route distance in metres.
+         */distanceMeters: Double,
+        /**
+         * Elapsed recording duration in milliseconds.
+         */durationMilliseconds: UInt64) {
+        self.pointCount = pointCount
+        self.distanceMeters = distanceMeters
+        self.durationMilliseconds = durationMilliseconds
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCoreSummaryDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCoreSummaryDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCoreSummaryDto {
+        return
+            try MobileRideMapCoreSummaryDto(
+                pointCount: FfiConverterUInt64.read(from: &buf),
+                distanceMeters: FfiConverterDouble.read(from: &buf),
+                durationMilliseconds: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapCoreSummaryDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.pointCount, into: &buf)
+        FfiConverterDouble.write(value.distanceMeters, into: &buf)
+        FfiConverterUInt64.write(value.durationMilliseconds, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreSummaryDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCoreSummaryDto {
+    return try FfiConverterTypeMobileRideMapCoreSummaryDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreSummaryDto_lower(_ value: MobileRideMapCoreSummaryDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCoreSummaryDto.lower(value)
+}
+
+
+/**
+ * One bounded, privacy-classified Rust route display point.
+ */
+public struct MobileRideMapRouteDisplayPointDto: Equatable, Hashable {
+    /**
+     * Stable sequence within the canonical ride.
+     */
+    public var sequence: UInt64
+    /**
+     * Canonical segment sequence within the ride.
+     */
+    public var segmentId: UInt64
+    /**
+     * Privacy-projected latitude in WGS84 decimal degrees.
+     */
+    public var latitudeDegrees: Double
+    /**
+     * Privacy-projected longitude in WGS84 decimal degrees.
+     */
+    public var longitudeDegrees: Double
+    /**
+     * Classification applied before this point crossed the boundary.
+     */
+    public var privacyClass: MobileRideMapRoutePrivacyClassDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Stable sequence within the canonical ride.
+         */sequence: UInt64,
+        /**
+         * Canonical segment sequence within the ride.
+         */segmentId: UInt64,
+        /**
+         * Privacy-projected latitude in WGS84 decimal degrees.
+         */latitudeDegrees: Double,
+        /**
+         * Privacy-projected longitude in WGS84 decimal degrees.
+         */longitudeDegrees: Double,
+        /**
+         * Classification applied before this point crossed the boundary.
+         */privacyClass: MobileRideMapRoutePrivacyClassDto) {
+        self.sequence = sequence
+        self.segmentId = segmentId
+        self.latitudeDegrees = latitudeDegrees
+        self.longitudeDegrees = longitudeDegrees
+        self.privacyClass = privacyClass
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapRouteDisplayPointDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapRouteDisplayPointDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapRouteDisplayPointDto {
+        return
+            try MobileRideMapRouteDisplayPointDto(
+                sequence: FfiConverterUInt64.read(from: &buf),
+                segmentId: FfiConverterUInt64.read(from: &buf),
+                latitudeDegrees: FfiConverterDouble.read(from: &buf),
+                longitudeDegrees: FfiConverterDouble.read(from: &buf),
+                privacyClass: FfiConverterTypeMobileRideMapRoutePrivacyClassDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapRouteDisplayPointDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterDouble.write(value.latitudeDegrees, into: &buf)
+        FfiConverterDouble.write(value.longitudeDegrees, into: &buf)
+        FfiConverterTypeMobileRideMapRoutePrivacyClassDto.write(value.privacyClass, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRouteDisplayPointDto_lift(_ buf: RustBuffer) throws -> MobileRideMapRouteDisplayPointDto {
+    return try FfiConverterTypeMobileRideMapRouteDisplayPointDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRouteDisplayPointDto_lower(_ value: MobileRideMapRouteDisplayPointDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapRouteDisplayPointDto.lower(value)
+}
+
+
+/**
+ * Bounded Rust route display projection.
+ */
+public struct MobileRideMapRouteProjectionDto: Equatable, Hashable {
+    /**
+     * Evenly sampled points visible in the requested viewport.
+     */
+    public var points: [MobileRideMapRouteDisplayPointDto]
+    /**
+     * Bounded metadata for the visible projected segment runs.
+     */
+    public var segments: [MobileRideMapSegmentDisplayMetadataDto]
+    /**
+     * Total canonical point count before viewport filtering or display LOD.
+     */
+    public var sourcePointCount: UInt64
+    /**
+     * Total canonical segment count before viewport filtering or display LOD.
+     */
+    public var sourceSegmentCount: UInt64
+    /**
+     * Number of canonical points inside the requested viewport before display LOD.
+     */
+    public var candidatePointCount: UInt64
+    /**
+     * Number of canonical segments with points inside the requested viewport.
+     */
+    public var candidateSegmentCount: UInt64
+    /**
+     * Number of segments represented by the bounded display points.
+     */
+    public var displayedSegmentCount: UInt64
+    /**
+     * Total canonical segments started by a background location gap.
+     */
+    public var backgroundGapCount: UInt64
+    /**
+     * Canonical first-point sequence, when the route has points.
+     */
+    public var canonicalStartSequence: UInt64?
+    /**
+     * Canonical last-point sequence, when the route has points.
+     */
+    public var canonicalEndSequence: UInt64?
+    /**
+     * Whether the canonical first point lies in the requested viewport.
+     */
+    public var canonicalStartVisible: Bool
+    /**
+     * Whether the canonical last point lies in the requested viewport.
+     */
+    public var canonicalEndVisible: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Evenly sampled points visible in the requested viewport.
+         */points: [MobileRideMapRouteDisplayPointDto],
+        /**
+         * Bounded metadata for the visible projected segment runs.
+         */segments: [MobileRideMapSegmentDisplayMetadataDto],
+        /**
+         * Total canonical point count before viewport filtering or display LOD.
+         */sourcePointCount: UInt64,
+        /**
+         * Total canonical segment count before viewport filtering or display LOD.
+         */sourceSegmentCount: UInt64,
+        /**
+         * Number of canonical points inside the requested viewport before display LOD.
+         */candidatePointCount: UInt64,
+        /**
+         * Number of canonical segments with points inside the requested viewport.
+         */candidateSegmentCount: UInt64,
+        /**
+         * Number of segments represented by the bounded display points.
+         */displayedSegmentCount: UInt64,
+        /**
+         * Total canonical segments started by a background location gap.
+         */backgroundGapCount: UInt64,
+        /**
+         * Canonical first-point sequence, when the route has points.
+         */canonicalStartSequence: UInt64?,
+        /**
+         * Canonical last-point sequence, when the route has points.
+         */canonicalEndSequence: UInt64?,
+        /**
+         * Whether the canonical first point lies in the requested viewport.
+         */canonicalStartVisible: Bool,
+        /**
+         * Whether the canonical last point lies in the requested viewport.
+         */canonicalEndVisible: Bool) {
+        self.points = points
+        self.segments = segments
+        self.sourcePointCount = sourcePointCount
+        self.sourceSegmentCount = sourceSegmentCount
+        self.candidatePointCount = candidatePointCount
+        self.candidateSegmentCount = candidateSegmentCount
+        self.displayedSegmentCount = displayedSegmentCount
+        self.backgroundGapCount = backgroundGapCount
+        self.canonicalStartSequence = canonicalStartSequence
+        self.canonicalEndSequence = canonicalEndSequence
+        self.canonicalStartVisible = canonicalStartVisible
+        self.canonicalEndVisible = canonicalEndVisible
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapRouteProjectionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapRouteProjectionDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapRouteProjectionDto {
+        return
+            try MobileRideMapRouteProjectionDto(
+                points: FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.read(from: &buf),
+                segments: FfiConverterSequenceTypeMobileRideMapSegmentDisplayMetadataDto.read(from: &buf),
+                sourcePointCount: FfiConverterUInt64.read(from: &buf),
+                sourceSegmentCount: FfiConverterUInt64.read(from: &buf),
+                candidatePointCount: FfiConverterUInt64.read(from: &buf),
+                candidateSegmentCount: FfiConverterUInt64.read(from: &buf),
+                displayedSegmentCount: FfiConverterUInt64.read(from: &buf),
+                backgroundGapCount: FfiConverterUInt64.read(from: &buf),
+                canonicalStartSequence: FfiConverterOptionUInt64.read(from: &buf),
+                canonicalEndSequence: FfiConverterOptionUInt64.read(from: &buf),
+                canonicalStartVisible: FfiConverterBool.read(from: &buf),
+                canonicalEndVisible: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapRouteProjectionDto, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto.write(value.points, into: &buf)
+        FfiConverterSequenceTypeMobileRideMapSegmentDisplayMetadataDto.write(value.segments, into: &buf)
+        FfiConverterUInt64.write(value.sourcePointCount, into: &buf)
+        FfiConverterUInt64.write(value.sourceSegmentCount, into: &buf)
+        FfiConverterUInt64.write(value.candidatePointCount, into: &buf)
+        FfiConverterUInt64.write(value.candidateSegmentCount, into: &buf)
+        FfiConverterUInt64.write(value.displayedSegmentCount, into: &buf)
+        FfiConverterUInt64.write(value.backgroundGapCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.canonicalStartSequence, into: &buf)
+        FfiConverterOptionUInt64.write(value.canonicalEndSequence, into: &buf)
+        FfiConverterBool.write(value.canonicalStartVisible, into: &buf)
+        FfiConverterBool.write(value.canonicalEndVisible, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRouteProjectionDto_lift(_ buf: RustBuffer) throws -> MobileRideMapRouteProjectionDto {
+    return try FfiConverterTypeMobileRideMapRouteProjectionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRouteProjectionDto_lower(_ value: MobileRideMapRouteProjectionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapRouteProjectionDto.lower(value)
+}
+
+
+/**
+ * Rust-owned options for a bounded route display projection.
+ */
+public struct MobileRideMapRouteProjectionOptionsDto: Equatable, Hashable {
+    /**
+     * Optional inclusive viewport. Reversed bounds are rejected.
+     */
+    public var viewport: MobileGeoBoundsDto?
+    /**
+     * Maximum number of display points to return.
+     */
+    public var budget: UInt32
+    /**
+     * Privacy policy applied to every returned coordinate.
+     */
+    public var privacy: MobileRideMapRoutePrivacyPolicyDto
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Optional inclusive viewport. Reversed bounds are rejected.
+         */viewport: MobileGeoBoundsDto?,
+        /**
+         * Maximum number of display points to return.
+         */budget: UInt32,
+        /**
+         * Privacy policy applied to every returned coordinate.
+         */privacy: MobileRideMapRoutePrivacyPolicyDto) {
+        self.viewport = viewport
+        self.budget = budget
+        self.privacy = privacy
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapRouteProjectionOptionsDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapRouteProjectionOptionsDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapRouteProjectionOptionsDto {
+        return
+            try MobileRideMapRouteProjectionOptionsDto(
+                viewport: FfiConverterOptionTypeMobileGeoBoundsDto.read(from: &buf),
+                budget: FfiConverterUInt32.read(from: &buf),
+                privacy: FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapRouteProjectionOptionsDto, into buf: inout [UInt8]) {
+        FfiConverterOptionTypeMobileGeoBoundsDto.write(value.viewport, into: &buf)
+        FfiConverterUInt32.write(value.budget, into: &buf)
+        FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.write(value.privacy, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lift(_ buf: RustBuffer) throws -> MobileRideMapRouteProjectionOptionsDto {
+    return try FfiConverterTypeMobileRideMapRouteProjectionOptionsDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRouteProjectionOptionsDto_lower(_ value: MobileRideMapRouteProjectionOptionsDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapRouteProjectionOptionsDto.lower(value)
+}
+
+
+/**
+ * Bounded metadata for one visible projected route segment.
+ */
+public struct MobileRideMapSegmentDisplayMetadataDto: Equatable, Hashable {
+    /**
+     * Canonical segment identity within the ride.
+     */
+    public var segmentId: UInt64
+    /**
+     * Rust-owned reason this segment began.
+     */
+    public var startReason: MobileRideSegmentStartReasonDto
+    /**
+     * Number of projected points retained for this segment.
+     */
+    public var visiblePointCount: UInt64
+    /**
+     * Number of points in the canonical source segment, when known.
+     */
+    public var canonicalPointCount: UInt64?
+    /**
+     * First retained projected point sequence.
+     */
+    public var firstVisibleSequence: UInt64?
+    /**
+     * Last retained projected point sequence.
+     */
+    public var lastVisibleSequence: UInt64?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Canonical segment identity within the ride.
+         */segmentId: UInt64,
+        /**
+         * Rust-owned reason this segment began.
+         */startReason: MobileRideSegmentStartReasonDto,
+        /**
+         * Number of projected points retained for this segment.
+         */visiblePointCount: UInt64,
+        /**
+         * Number of points in the canonical source segment, when known.
+         */canonicalPointCount: UInt64?,
+        /**
+         * First retained projected point sequence.
+         */firstVisibleSequence: UInt64?,
+        /**
+         * Last retained projected point sequence.
+         */lastVisibleSequence: UInt64?) {
+        self.segmentId = segmentId
+        self.startReason = startReason
+        self.visiblePointCount = visiblePointCount
+        self.canonicalPointCount = canonicalPointCount
+        self.firstVisibleSequence = firstVisibleSequence
+        self.lastVisibleSequence = lastVisibleSequence
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapSegmentDisplayMetadataDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapSegmentDisplayMetadataDto {
+        return
+            try MobileRideMapSegmentDisplayMetadataDto(
+                segmentId: FfiConverterUInt64.read(from: &buf),
+                startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
+                visiblePointCount: FfiConverterUInt64.read(from: &buf),
+                canonicalPointCount: FfiConverterOptionUInt64.read(from: &buf),
+                firstVisibleSequence: FfiConverterOptionUInt64.read(from: &buf),
+                lastVisibleSequence: FfiConverterOptionUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileRideMapSegmentDisplayMetadataDto, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
+        FfiConverterUInt64.write(value.visiblePointCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.canonicalPointCount, into: &buf)
+        FfiConverterOptionUInt64.write(value.firstVisibleSequence, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastVisibleSequence, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto_lift(_ buf: RustBuffer) throws -> MobileRideMapSegmentDisplayMetadataDto {
+    return try FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto_lower(_ value: MobileRideMapSegmentDisplayMetadataDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.lower(value)
+}
+
+
+/**
  * One bounded page of ride-history projections.
  */
 public struct MobileRidePageDto: Equatable, Hashable {
@@ -9124,17 +12360,49 @@ public struct MobileRideRecordDto: Equatable, Hashable {
     public var state: MobileRideLifecycleStateDto
     public var createdAtMilliseconds: UInt64
     public var updatedAtMilliseconds: UInt64
+    public var durationMilliseconds: UInt64
+    public var pausedAtMilliseconds: UInt64?
+    public var pausedDurationMilliseconds: UInt64
     public var summary: MobileRideSummaryDto
+    public var segmentCount: UInt64
+    public var candidateVehicle: String?
+    public var associatedVehicle: String?
+    /**
+     * Persisted display name for the candidate vehicle, when available.
+     */
+    public var candidateVehicleName: String?
+    /**
+     * Persisted display name for the associated vehicle, when available.
+     */
+    public var associatedVehicleName: String?
+    public var associatedAtMilliseconds: UInt64?
+    public var lastTelemetryAtMilliseconds: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, summary: MobileRideSummaryDto) {
+    public init(id: MobileRideIdDto, source: MobileRideSourceDto, state: MobileRideLifecycleStateDto, createdAtMilliseconds: UInt64, updatedAtMilliseconds: UInt64, durationMilliseconds: UInt64, pausedAtMilliseconds: UInt64?, pausedDurationMilliseconds: UInt64, summary: MobileRideSummaryDto, segmentCount: UInt64, candidateVehicle: String?, associatedVehicle: String?,
+        /**
+         * Persisted display name for the candidate vehicle, when available.
+         */candidateVehicleName: String?,
+        /**
+         * Persisted display name for the associated vehicle, when available.
+         */associatedVehicleName: String?, associatedAtMilliseconds: UInt64?, lastTelemetryAtMilliseconds: UInt64?) {
         self.id = id
         self.source = source
         self.state = state
         self.createdAtMilliseconds = createdAtMilliseconds
         self.updatedAtMilliseconds = updatedAtMilliseconds
+        self.durationMilliseconds = durationMilliseconds
+        self.pausedAtMilliseconds = pausedAtMilliseconds
+        self.pausedDurationMilliseconds = pausedDurationMilliseconds
         self.summary = summary
+        self.segmentCount = segmentCount
+        self.candidateVehicle = candidateVehicle
+        self.associatedVehicle = associatedVehicle
+        self.candidateVehicleName = candidateVehicleName
+        self.associatedVehicleName = associatedVehicleName
+        self.associatedAtMilliseconds = associatedAtMilliseconds
+        self.lastTelemetryAtMilliseconds = lastTelemetryAtMilliseconds
     }
 
 
@@ -9158,7 +12426,17 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
                 state: FfiConverterTypeMobileRideLifecycleStateDto.read(from: &buf),
                 createdAtMilliseconds: FfiConverterUInt64.read(from: &buf),
                 updatedAtMilliseconds: FfiConverterUInt64.read(from: &buf),
-                summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf)
+                durationMilliseconds: FfiConverterUInt64.read(from: &buf),
+                pausedAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                pausedDurationMilliseconds: FfiConverterUInt64.read(from: &buf),
+                summary: FfiConverterTypeMobileRideSummaryDto.read(from: &buf),
+                segmentCount: FfiConverterUInt64.read(from: &buf),
+                candidateVehicle: FfiConverterOptionString.read(from: &buf),
+                associatedVehicle: FfiConverterOptionString.read(from: &buf),
+                candidateVehicleName: FfiConverterOptionString.read(from: &buf),
+                associatedVehicleName: FfiConverterOptionString.read(from: &buf),
+                associatedAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf),
+                lastTelemetryAtMilliseconds: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
@@ -9168,7 +12446,17 @@ public struct FfiConverterTypeMobileRideRecordDto: FfiConverterRustBuffer {
         FfiConverterTypeMobileRideLifecycleStateDto.write(value.state, into: &buf)
         FfiConverterUInt64.write(value.createdAtMilliseconds, into: &buf)
         FfiConverterUInt64.write(value.updatedAtMilliseconds, into: &buf)
+        FfiConverterUInt64.write(value.durationMilliseconds, into: &buf)
+        FfiConverterOptionUInt64.write(value.pausedAtMilliseconds, into: &buf)
+        FfiConverterUInt64.write(value.pausedDurationMilliseconds, into: &buf)
         FfiConverterTypeMobileRideSummaryDto.write(value.summary, into: &buf)
+        FfiConverterUInt64.write(value.segmentCount, into: &buf)
+        FfiConverterOptionString.write(value.candidateVehicle, into: &buf)
+        FfiConverterOptionString.write(value.associatedVehicle, into: &buf)
+        FfiConverterOptionString.write(value.candidateVehicleName, into: &buf)
+        FfiConverterOptionString.write(value.associatedVehicleName, into: &buf)
+        FfiConverterOptionUInt64.write(value.associatedAtMilliseconds, into: &buf)
+        FfiConverterOptionUInt64.write(value.lastTelemetryAtMilliseconds, into: &buf)
     }
 }
 
@@ -9447,6 +12735,10 @@ public struct MobileRideSummaryDto: Equatable, Hashable {
      * Accumulated path distance in millimetres.
      */
     public var distanceMillimetres: UInt64
+    /**
+     * Rust-derived average speed in millimetres per second, when meaningful.
+     */
+    public var averageSpeedMillimetresPerSecond: UInt64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -9456,9 +12748,13 @@ public struct MobileRideSummaryDto: Equatable, Hashable {
          */pointCount: UInt64,
         /**
          * Accumulated path distance in millimetres.
-         */distanceMillimetres: UInt64) {
+         */distanceMillimetres: UInt64,
+        /**
+         * Rust-derived average speed in millimetres per second, when meaningful.
+         */averageSpeedMillimetresPerSecond: UInt64?) {
         self.pointCount = pointCount
         self.distanceMillimetres = distanceMillimetres
+        self.averageSpeedMillimetresPerSecond = averageSpeedMillimetresPerSecond
     }
 
 
@@ -9478,13 +12774,15 @@ public struct FfiConverterTypeMobileRideSummaryDto: FfiConverterRustBuffer {
         return
             try MobileRideSummaryDto(
                 pointCount: FfiConverterUInt64.read(from: &buf),
-                distanceMillimetres: FfiConverterUInt64.read(from: &buf)
+                distanceMillimetres: FfiConverterUInt64.read(from: &buf),
+                averageSpeedMillimetresPerSecond: FfiConverterOptionUInt64.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileRideSummaryDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.pointCount, into: &buf)
         FfiConverterUInt64.write(value.distanceMillimetres, into: &buf)
+        FfiConverterOptionUInt64.write(value.averageSpeedMillimetresPerSecond, into: &buf)
     }
 }
 
@@ -9562,13 +12860,19 @@ public func FfiConverterTypeMobileRoutePointCursorDto_lower(_ value: MobileRoute
  */
 public struct MobileRoutePointDto: Equatable, Hashable {
     public var sequence: UInt64
+    public var segmentId: UInt64
+    public var startReason: MobileRideSegmentStartReasonDto
     public var location: MobileRideLocationDto
+    public var telemetryState: MobileRideMapCoreTelemetryStateDto
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sequence: UInt64, location: MobileRideLocationDto) {
+    public init(sequence: UInt64, segmentId: UInt64, startReason: MobileRideSegmentStartReasonDto, location: MobileRideLocationDto, telemetryState: MobileRideMapCoreTelemetryStateDto) {
         self.sequence = sequence
+        self.segmentId = segmentId
+        self.startReason = startReason
         self.location = location
+        self.telemetryState = telemetryState
     }
 
 
@@ -9588,13 +12892,19 @@ public struct FfiConverterTypeMobileRoutePointDto: FfiConverterRustBuffer {
         return
             try MobileRoutePointDto(
                 sequence: FfiConverterUInt64.read(from: &buf),
-                location: FfiConverterTypeMobileRideLocationDto.read(from: &buf)
+                segmentId: FfiConverterUInt64.read(from: &buf),
+                startReason: FfiConverterTypeMobileRideSegmentStartReasonDto.read(from: &buf),
+                location: FfiConverterTypeMobileRideLocationDto.read(from: &buf),
+                telemetryState: FfiConverterTypeMobileRideMapCoreTelemetryStateDto.read(from: &buf)
         )
     }
 
     public static func write(_ value: MobileRoutePointDto, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.sequence, into: &buf)
+        FfiConverterUInt64.write(value.segmentId, into: &buf)
+        FfiConverterTypeMobileRideSegmentStartReasonDto.write(value.startReason, into: &buf)
         FfiConverterTypeMobileRideLocationDto.write(value.location, into: &buf)
+        FfiConverterTypeMobileRideMapCoreTelemetryStateDto.write(value.telemetryState, into: &buf)
     }
 }
 
@@ -10291,6 +13601,124 @@ public func FfiConverterTypeMobileSettingsReadbackDto_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeMobileSettingsReadbackDto_lower(_ value: MobileSettingsReadbackDto) -> RustBuffer {
     return FfiConverterTypeMobileSettingsReadbackDto.lower(value)
+}
+
+
+/**
+ * Ground-speed accuracy in metres per second when available.
+ */
+public struct MobileSpeedAccuracyMetersPerSecond: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSpeedAccuracyMetersPerSecond: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSpeedAccuracyMetersPerSecond: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSpeedAccuracyMetersPerSecond {
+        return
+            try MobileSpeedAccuracyMetersPerSecond(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSpeedAccuracyMetersPerSecond, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedAccuracyMetersPerSecond_lift(_ buf: RustBuffer) throws -> MobileSpeedAccuracyMetersPerSecond {
+    return try FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedAccuracyMetersPerSecond_lower(_ value: MobileSpeedAccuracyMetersPerSecond) -> RustBuffer {
+    return FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.lower(value)
+}
+
+
+/**
+ * Ground speed in metres per second when available.
+ */
+public struct MobileSpeedMetersPerSecond: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileSpeedMetersPerSecond: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileSpeedMetersPerSecond: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileSpeedMetersPerSecond {
+        return
+            try MobileSpeedMetersPerSecond(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileSpeedMetersPerSecond, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedMetersPerSecond_lift(_ buf: RustBuffer) throws -> MobileSpeedMetersPerSecond {
+    return try FfiConverterTypeMobileSpeedMetersPerSecond.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileSpeedMetersPerSecond_lower(_ value: MobileSpeedMetersPerSecond) -> RustBuffer {
+    return FfiConverterTypeMobileSpeedMetersPerSecond.lower(value)
 }
 
 
@@ -11079,6 +14507,65 @@ public func FfiConverterTypeMobileVerifiedStringDto_lift(_ buf: RustBuffer) thro
 #endif
 public func FfiConverterTypeMobileVerifiedStringDto_lower(_ value: MobileVerifiedStringDto) -> RustBuffer {
     return FfiConverterTypeMobileVerifiedStringDto.lower(value)
+}
+
+
+/**
+ * Vertical location accuracy in metres when available.
+ */
+public struct MobileVerticalAccuracyMeters: Equatable, Hashable {
+    /**
+     * Value in the unit named by the type.
+     */
+    public var value: Double
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Value in the unit named by the type.
+         */value: Double) {
+        self.value = value
+    }
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileVerticalAccuracyMeters: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileVerticalAccuracyMeters: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileVerticalAccuracyMeters {
+        return
+            try MobileVerticalAccuracyMeters(
+                value: FfiConverterDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MobileVerticalAccuracyMeters, into buf: inout [UInt8]) {
+        FfiConverterDouble.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVerticalAccuracyMeters_lift(_ buf: RustBuffer) throws -> MobileVerticalAccuracyMeters {
+    return try FfiConverterTypeMobileVerticalAccuracyMeters.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileVerticalAccuracyMeters_lower(_ value: MobileVerticalAccuracyMeters) -> RustBuffer {
+    return FfiConverterTypeMobileVerticalAccuracyMeters.lower(value)
 }
 
 
@@ -15774,9 +19261,17 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case InvalidQueryLimit
     /**
-     * Geographic query bounds were non-finite, out of range, or reversed.
+     * Geographic query bounds were non-finite, out of range, or had reversed latitudes.
      */
     case InvalidGeographicBounds
+    /**
+     * The history context page or display budgets are outside Rust's supported bounds.
+     */
+    case InvalidHistoryContextBudget
+    /**
+     * The route display budget, viewport, or privacy policy is invalid.
+     */
+    case InvalidRouteProjection
     /**
      * PEVCAP preflight rejected an artifact that exceeded a hard resource limit.
      */
@@ -15806,9 +19301,21 @@ public enum MobileRideDatabaseError: Swift.Error, Equatable, Hashable, Foundatio
      */
     case InvalidRideState
     /**
+     * A route point supplied a segment identity outside Rust's canonical sequence.
+     */
+    case InvalidSegmentId
+    /**
      * The bounded Rust worker queue is full.
      */
     case QueueFull
+    /**
+     * A durable route projection was cancelled by its caller.
+     */
+    case Cancelled
+    /**
+     * A durable route projection exceeded its caller-provided deadline.
+     */
+    case DeadlineExceeded
     /**
      * The Rust worker is no longer available.
      */
@@ -15854,16 +19361,21 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
         case 6: return .IntegrityCheckFailed
         case 7: return .InvalidQueryLimit
         case 8: return .InvalidGeographicBounds
-        case 9: return .PevcapLimitExceeded
-        case 10: return .PevcapPreviewChanged
-        case 11: return .PevcapImportInProgress
-        case 12: return .InvalidCoordinate
-        case 13: return .NotFound
-        case 14: return .InvalidTransition
-        case 15: return .InvalidRideState
-        case 16: return .QueueFull
-        case 17: return .WorkerStopped
-        case 18: return .StorageFailure
+        case 9: return .InvalidHistoryContextBudget
+        case 10: return .InvalidRouteProjection
+        case 11: return .PevcapLimitExceeded
+        case 12: return .PevcapPreviewChanged
+        case 13: return .PevcapImportInProgress
+        case 14: return .InvalidCoordinate
+        case 15: return .NotFound
+        case 16: return .InvalidTransition
+        case 17: return .InvalidRideState
+        case 18: return .InvalidSegmentId
+        case 19: return .QueueFull
+        case 20: return .Cancelled
+        case 21: return .DeadlineExceeded
+        case 22: return .WorkerStopped
+        case 23: return .StorageFailure
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -15908,44 +19420,64 @@ public struct FfiConverterTypeMobileRideDatabaseError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(8))
 
 
-        case .PevcapLimitExceeded:
+        case .InvalidHistoryContextBudget:
             writeInt(&buf, Int32(9))
 
 
-        case .PevcapPreviewChanged:
+        case .InvalidRouteProjection:
             writeInt(&buf, Int32(10))
 
 
-        case .PevcapImportInProgress:
+        case .PevcapLimitExceeded:
             writeInt(&buf, Int32(11))
 
 
-        case .InvalidCoordinate:
+        case .PevcapPreviewChanged:
             writeInt(&buf, Int32(12))
 
 
-        case .NotFound:
+        case .PevcapImportInProgress:
             writeInt(&buf, Int32(13))
 
 
-        case .InvalidTransition:
+        case .InvalidCoordinate:
             writeInt(&buf, Int32(14))
 
 
-        case .InvalidRideState:
+        case .NotFound:
             writeInt(&buf, Int32(15))
 
 
-        case .QueueFull:
+        case .InvalidTransition:
             writeInt(&buf, Int32(16))
 
 
-        case .WorkerStopped:
+        case .InvalidRideState:
             writeInt(&buf, Int32(17))
 
 
-        case .StorageFailure:
+        case .InvalidSegmentId:
             writeInt(&buf, Int32(18))
+
+
+        case .QueueFull:
+            writeInt(&buf, Int32(19))
+
+
+        case .Cancelled:
+            writeInt(&buf, Int32(20))
+
+
+        case .DeadlineExceeded:
+            writeInt(&buf, Int32(21))
+
+
+        case .WorkerStopped:
+            writeInt(&buf, Int32(22))
+
+
+        case .StorageFailure:
+            writeInt(&buf, Int32(23))
 
         }
     }
@@ -16241,23 +19773,39 @@ public func FfiConverterTypeMobileRideLifecycleStateDto_lower(_ value: MobileRid
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
- * Result of admitting a location sample.
+ * Result of associating a connected vehicle with the active recording.
  */
 
-public enum MobileRideLocationAdmissionDto: Equatable, Hashable {
+public enum MobileRideMapCoreAssociationDto: Equatable, Hashable {
 
     /**
-     * Sample was durably appended.
+     * The connection was associated with the recording.
      */
-    case accepted
+    case associated
     /**
-     * Sample repeated the latest durable sample.
+     * The same connection was already associated.
      */
-    case duplicate
+    case alreadyAssociated
     /**
-     * Sample was older than the latest durable sample.
+     * The recording has no candidate vehicle to reconcile.
      */
-    case outOfOrder
+    case candidateMissing
+    /**
+     * The connected identity conflicts with the candidate identity.
+     */
+    case identityMismatch
+    /**
+     * The connection timestamp moved backwards.
+     */
+    case timestampOutOfOrder
+    /**
+     * No recording is currently open.
+     */
+    case rideNotOpen
+    /**
+     * A newer Rust association state is not understood by this mobile binding.
+     */
+    case unsupported
 
 
 
@@ -16266,43 +19814,67 @@ public enum MobileRideLocationAdmissionDto: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension MobileRideLocationAdmissionDto: Sendable {}
+extension MobileRideMapCoreAssociationDto: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeMobileRideLocationAdmissionDto: FfiConverterRustBuffer {
-    typealias SwiftType = MobileRideLocationAdmissionDto
+public struct FfiConverterTypeMobileRideMapCoreAssociationDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreAssociationDto
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideLocationAdmissionDto {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCoreAssociationDto {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
-        case 1: return .accepted
+        case 1: return .associated
 
-        case 2: return .duplicate
+        case 2: return .alreadyAssociated
 
-        case 3: return .outOfOrder
+        case 3: return .candidateMissing
+
+        case 4: return .identityMismatch
+
+        case 5: return .timestampOutOfOrder
+
+        case 6: return .rideNotOpen
+
+        case 7: return .unsupported
 
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
-    public static func write(_ value: MobileRideLocationAdmissionDto, into buf: inout [UInt8]) {
+    public static func write(_ value: MobileRideMapCoreAssociationDto, into buf: inout [UInt8]) {
         switch value {
 
 
-        case .accepted:
+        case .associated:
             writeInt(&buf, Int32(1))
 
 
-        case .duplicate:
+        case .alreadyAssociated:
             writeInt(&buf, Int32(2))
 
 
-        case .outOfOrder:
+        case .candidateMissing:
             writeInt(&buf, Int32(3))
+
+
+        case .identityMismatch:
+            writeInt(&buf, Int32(4))
+
+
+        case .timestampOutOfOrder:
+            writeInt(&buf, Int32(5))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(6))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(7))
 
         }
     }
@@ -16312,15 +19884,879 @@ public struct FfiConverterTypeMobileRideLocationAdmissionDto: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMobileRideLocationAdmissionDto_lift(_ buf: RustBuffer) throws -> MobileRideLocationAdmissionDto {
-    return try FfiConverterTypeMobileRideLocationAdmissionDto.lift(buf)
+public func FfiConverterTypeMobileRideMapCoreAssociationDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCoreAssociationDto {
+    return try FfiConverterTypeMobileRideMapCoreAssociationDto.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeMobileRideLocationAdmissionDto_lower(_ value: MobileRideLocationAdmissionDto) -> RustBuffer {
-    return FfiConverterTypeMobileRideLocationAdmissionDto.lower(value)
+public func FfiConverterTypeMobileRideMapCoreAssociationDto_lower(_ value: MobileRideMapCoreAssociationDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCoreAssociationDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Result of admitting one Core Location sample into the live recording.
+ */
+
+public enum MobileRideMapCoreDecisionDto: Equatable, Hashable {
+
+    /**
+     * The location was queued for durable persistence but has not completed yet.
+     */
+    case pending(
+        /**
+         * The provisional route point; it is not part of the durable projection yet.
+         */point: MobileRideMapCorePointDto,
+        /**
+         * Whether this point starts a new route segment after durable admission.
+         */segmentStarted: Bool
+    )
+    /**
+     * The location was accepted into the canonical route.
+     */
+    case accepted(
+        /**
+         * The resulting route point.
+         */point: MobileRideMapCorePointDto,
+        /**
+         * Whether this point starts a new route segment.
+         */segmentStarted: Bool
+    )
+    /**
+     * The location was rejected as invalid input.
+     */
+    case rejected(
+        /**
+         * Stable admission reason.
+         */reason: MobileRideMapDecisionReasonDto
+    )
+    /**
+     * The location was ignored because the ride is not recording.
+     */
+    case ignored(
+        /**
+         * Stable admission reason.
+         */reason: MobileRideMapDecisionReasonDto
+    )
+    /**
+     * Durable persistence failed before the point could be admitted.
+     */
+    case storageError(
+        /**
+         * Stable storage failure text for the mobile diagnostic surface.
+         */message: String,
+        /**
+         * Whether the caller may explicitly re-admit the sample after resolving the failure.
+         *
+         * This is true only when reconciliation proved that a response-lost write was not
+         * committed. The map core never retries that sample automatically.
+         */retryable: Bool
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCoreDecisionDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreDecisionDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCoreDecisionDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .pending(point: try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf), segmentStarted: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 2: return .accepted(point: try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf), segmentStarted: try FfiConverterBool.read(from: &buf)
+        )
+
+        case 3: return .rejected(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
+        )
+
+        case 4: return .ignored(reason: try FfiConverterTypeMobileRideMapDecisionReasonDto.read(from: &buf)
+        )
+
+        case 5: return .storageError(message: try FfiConverterString.read(from: &buf), retryable: try FfiConverterBool.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapCoreDecisionDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case let .pending(point,segmentStarted):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeMobileRideMapCorePointDto.write(point, into: &buf)
+            FfiConverterBool.write(segmentStarted, into: &buf)
+
+
+        case let .accepted(point,segmentStarted):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeMobileRideMapCorePointDto.write(point, into: &buf)
+            FfiConverterBool.write(segmentStarted, into: &buf)
+
+
+        case let .rejected(reason):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
+
+
+        case let .ignored(reason):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeMobileRideMapDecisionReasonDto.write(reason, into: &buf)
+
+
+        case let .storageError(message,retryable):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterBool.write(retryable, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreDecisionDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCoreDecisionDto {
+    return try FfiConverterTypeMobileRideMapCoreDecisionDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreDecisionDto_lower(_ value: MobileRideMapCoreDecisionDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCoreDecisionDto.lower(value)
+}
+
+
+
+/**
+ * Error returned by the Rust-owned live map recording core.
+ */
+public enum MobileRideMapCoreErrorDto: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+
+
+    /**
+     * A live ride is already open.
+     */
+    case AlreadyRecording
+    /**
+     * No live ride is open.
+     */
+    case NoActiveRide
+    /**
+     * The requested lifecycle event is not valid for the current state.
+     */
+    case InvalidTransition
+    /**
+     * The supplied location values are invalid.
+     */
+    case InvalidLocation
+    /**
+     * The route display budget, viewport, or privacy policy is invalid.
+     */
+    case InvalidRouteProjection
+    /**
+     * A live route projection was cancelled by its caller.
+     */
+    case Cancelled
+    /**
+     * The canonical database rejected the operation.
+     */
+    case Storage(String
+    )
+
+
+
+
+
+
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCoreErrorDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreErrorDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCoreErrorDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+
+
+
+        case 1: return .AlreadyRecording
+        case 2: return .NoActiveRide
+        case 3: return .InvalidTransition
+        case 4: return .InvalidLocation
+        case 5: return .InvalidRouteProjection
+        case 6: return .Cancelled
+        case 7: return .Storage(
+            try FfiConverterString.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapCoreErrorDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+
+
+
+        case .AlreadyRecording:
+            writeInt(&buf, Int32(1))
+
+
+        case .NoActiveRide:
+            writeInt(&buf, Int32(2))
+
+
+        case .InvalidTransition:
+            writeInt(&buf, Int32(3))
+
+
+        case .InvalidLocation:
+            writeInt(&buf, Int32(4))
+
+
+        case .InvalidRouteProjection:
+            writeInt(&buf, Int32(5))
+
+
+        case .Cancelled:
+            writeInt(&buf, Int32(6))
+
+
+        case let .Storage(v1):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(v1, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreErrorDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCoreErrorDto {
+    return try FfiConverterTypeMobileRideMapCoreErrorDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreErrorDto_lower(_ value: MobileRideMapCoreErrorDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCoreErrorDto.lower(value)
+}
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Telemetry provenance projected onto a live route point.
+ */
+
+public enum MobileRideMapCoreTelemetryStateDto: Equatable, Hashable {
+
+    /**
+     * No vehicle telemetry has been associated with the recording.
+     */
+    case gpsOnly
+    /**
+     * A vehicle is associated, but no fresh telemetry sample is available.
+     */
+    case associatedNoTelemetry
+    /**
+     * A fresh vehicle telemetry sample is available.
+     */
+    case associatedFresh
+    /**
+     * The associated vehicle telemetry has gone stale.
+     */
+    case associatedStale
+    /**
+     * A newer Rust telemetry state is not understood by this mobile binding.
+     */
+    case unsupported
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapCoreTelemetryStateDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapCoreTelemetryStateDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreTelemetryStateDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapCoreTelemetryStateDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .gpsOnly
+
+        case 2: return .associatedNoTelemetry
+
+        case 3: return .associatedFresh
+
+        case 4: return .associatedStale
+
+        case 5: return .unsupported
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapCoreTelemetryStateDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .gpsOnly:
+            writeInt(&buf, Int32(1))
+
+
+        case .associatedNoTelemetry:
+            writeInt(&buf, Int32(2))
+
+
+        case .associatedFresh:
+            writeInt(&buf, Int32(3))
+
+
+        case .associatedStale:
+            writeInt(&buf, Int32(4))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lift(_ buf: RustBuffer) throws -> MobileRideMapCoreTelemetryStateDto {
+    return try FfiConverterTypeMobileRideMapCoreTelemetryStateDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapCoreTelemetryStateDto_lower(_ value: MobileRideMapCoreTelemetryStateDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapCoreTelemetryStateDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Result of admitting one Core Location sample into the live recording.
+ */
+
+public enum MobileRideMapDecisionReasonDto: Equatable, Hashable {
+
+    /**
+     * The ride is paused, stopped, or otherwise not recording.
+     */
+    case rideNotRecording
+    /**
+     * The sample repeats the latest accepted location.
+     */
+    case duplicateLocation
+    /**
+     * The sample timestamp is not newer than the latest accepted sample.
+     */
+    case timestampOutOfOrder
+    /**
+     * The reported horizontal accuracy exceeds the admission threshold.
+     */
+    case accuracyTooLow
+    /**
+     * The sample implies an impossible travel speed.
+     */
+    case unrealisticJump
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapDecisionReasonDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapDecisionReasonDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapDecisionReasonDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapDecisionReasonDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .rideNotRecording
+
+        case 2: return .duplicateLocation
+
+        case 3: return .timestampOutOfOrder
+
+        case 4: return .accuracyTooLow
+
+        case 5: return .unrealisticJump
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapDecisionReasonDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .rideNotRecording:
+            writeInt(&buf, Int32(1))
+
+
+        case .duplicateLocation:
+            writeInt(&buf, Int32(2))
+
+
+        case .timestampOutOfOrder:
+            writeInt(&buf, Int32(3))
+
+
+        case .accuracyTooLow:
+            writeInt(&buf, Int32(4))
+
+
+        case .unrealisticJump:
+            writeInt(&buf, Int32(5))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapDecisionReasonDto_lift(_ buf: RustBuffer) throws -> MobileRideMapDecisionReasonDto {
+    return try FfiConverterTypeMobileRideMapDecisionReasonDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapDecisionReasonDto_lower(_ value: MobileRideMapDecisionReasonDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapDecisionReasonDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Privacy classification attached to a Rust-owned route display coordinate.
+ */
+
+public enum MobileRideMapRoutePrivacyClassDto: Equatable, Hashable {
+
+    /**
+     * The exact canonical coordinate was retained.
+     */
+    case precise
+    /**
+     * The coordinate was snapped to a privacy grid.
+     */
+    case gridRedacted
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapRoutePrivacyClassDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapRoutePrivacyClassDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapRoutePrivacyClassDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapRoutePrivacyClassDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .precise
+
+        case 2: return .gridRedacted
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapRoutePrivacyClassDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .precise:
+            writeInt(&buf, Int32(1))
+
+
+        case .gridRedacted:
+            writeInt(&buf, Int32(2))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRoutePrivacyClassDto_lift(_ buf: RustBuffer) throws -> MobileRideMapRoutePrivacyClassDto {
+    return try FfiConverterTypeMobileRideMapRoutePrivacyClassDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRoutePrivacyClassDto_lower(_ value: MobileRideMapRoutePrivacyClassDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapRoutePrivacyClassDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Privacy policy applied before route display coordinates cross the FFI boundary.
+ */
+
+public enum MobileRideMapRoutePrivacyPolicyDto: Equatable, Hashable {
+
+    /**
+     * Preserve exact coordinates for an authorized detail surface.
+     */
+    case precise
+    /**
+     * Snap both coordinate components to this non-zero E7 grid size.
+     */
+    case grid(gridE7: UInt32
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapRoutePrivacyPolicyDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapRoutePrivacyPolicyDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapRoutePrivacyPolicyDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .precise
+
+        case 2: return .grid(gridE7: try FfiConverterUInt32.read(from: &buf)
+        )
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapRoutePrivacyPolicyDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .precise:
+            writeInt(&buf, Int32(1))
+
+
+        case let .grid(gridE7):
+            writeInt(&buf, Int32(2))
+            FfiConverterUInt32.write(gridE7, into: &buf)
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto_lift(_ buf: RustBuffer) throws -> MobileRideMapRoutePrivacyPolicyDto {
+    return try FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto_lower(_ value: MobileRideMapRoutePrivacyPolicyDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapRoutePrivacyPolicyDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Result of observing a confirmed vehicle telemetry timestamp.
+ */
+
+public enum MobileRideMapTelemetryObservationDto: Equatable, Hashable {
+
+    /**
+     * The timestamp became the newest telemetry evidence.
+     */
+    case observed
+    /**
+     * The timestamp was already observed.
+     */
+    case alreadyObserved
+    /**
+     * The ride has no confirmed association.
+     */
+    case notAssociated
+    /**
+     * The timestamp moved backwards.
+     */
+    case timestampOutOfOrder
+    /**
+     * The ride is not open for telemetry.
+     */
+    case rideNotOpen
+    /**
+     * A newer Rust observation state is not understood by this mobile binding.
+     */
+    case unsupported
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideMapTelemetryObservationDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideMapTelemetryObservationDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapTelemetryObservationDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideMapTelemetryObservationDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .observed
+
+        case 2: return .alreadyObserved
+
+        case 3: return .notAssociated
+
+        case 4: return .timestampOutOfOrder
+
+        case 5: return .rideNotOpen
+
+        case 6: return .unsupported
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideMapTelemetryObservationDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .observed:
+            writeInt(&buf, Int32(1))
+
+
+        case .alreadyObserved:
+            writeInt(&buf, Int32(2))
+
+
+        case .notAssociated:
+            writeInt(&buf, Int32(3))
+
+
+        case .timestampOutOfOrder:
+            writeInt(&buf, Int32(4))
+
+
+        case .rideNotOpen:
+            writeInt(&buf, Int32(5))
+
+
+        case .unsupported:
+            writeInt(&buf, Int32(6))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lift(_ buf: RustBuffer) throws -> MobileRideMapTelemetryObservationDto {
+    return try FfiConverterTypeMobileRideMapTelemetryObservationDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideMapTelemetryObservationDto_lower(_ value: MobileRideMapTelemetryObservationDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideMapTelemetryObservationDto.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * Why a Rust-owned route segment began.
+ */
+
+public enum MobileRideSegmentStartReasonDto: Equatable, Hashable {
+
+    /**
+     * The first accepted point in a ride.
+     */
+    case initial
+    /**
+     * A paused ride resumed.
+     */
+    case resume
+    /**
+     * A location gap exceeded the route continuity threshold.
+     */
+    case backgroundGap
+    /**
+     * An imported artifact established the first route segment.
+     */
+    case importBoundary
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension MobileRideSegmentStartReasonDto: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMobileRideSegmentStartReasonDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideSegmentStartReasonDto
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MobileRideSegmentStartReasonDto {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        case 1: return .initial
+
+        case 2: return .resume
+
+        case 3: return .backgroundGap
+
+        case 4: return .importBoundary
+
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: MobileRideSegmentStartReasonDto, into buf: inout [UInt8]) {
+        switch value {
+
+
+        case .initial:
+            writeInt(&buf, Int32(1))
+
+
+        case .resume:
+            writeInt(&buf, Int32(2))
+
+
+        case .backgroundGap:
+            writeInt(&buf, Int32(3))
+
+
+        case .importBoundary:
+            writeInt(&buf, Int32(4))
+
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSegmentStartReasonDto_lift(_ buf: RustBuffer) throws -> MobileRideSegmentStartReasonDto {
+    return try FfiConverterTypeMobileRideSegmentStartReasonDto.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMobileRideSegmentStartReasonDto_lower(_ value: MobileRideSegmentStartReasonDto) -> RustBuffer {
+    return FfiConverterTypeMobileRideSegmentStartReasonDto.lower(value)
 }
 
 
@@ -19259,6 +23695,30 @@ fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionBool: FfiConverterRustBuffer {
     typealias SwiftType = Bool?
 
@@ -19547,6 +24007,54 @@ fileprivate struct FfiConverterOptionTypeMobileChargeTimeEstimateDto: FfiConvert
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileCourseAccuracyDegrees: FfiConverterRustBuffer {
+    typealias SwiftType = MobileCourseAccuracyDegrees?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileCourseAccuracyDegrees.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileCourseAccuracyDegrees.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileCourseDegrees: FfiConverterRustBuffer {
+    typealias SwiftType = MobileCourseDegrees?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileCourseDegrees.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileCourseDegrees.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileFaultHistoryEntryDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileFaultHistoryEntryDto?
 
@@ -19611,6 +24119,54 @@ fileprivate struct FfiConverterOptionTypeMobileFootpadTelemetryDto: FfiConverter
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileFootpadTelemetryDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileGeoBoundsDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileGeoBoundsDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileGeoBoundsDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileGeoBoundsDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileHorizontalAccuracyMeters: FfiConverterRustBuffer {
+    typealias SwiftType = MobileHorizontalAccuracyMeters?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileHorizontalAccuracyMeters.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileHorizontalAccuracyMeters.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -19955,6 +24511,54 @@ fileprivate struct FfiConverterOptionTypeMobileRideIdDto: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRideMapCoreSnapshotDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreSnapshotDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideMapCoreSnapshotDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideMapCoreSnapshotDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileRideRecordDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideRecordDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideRecordDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideRecordDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileRideSessionIdentityDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileRideSessionIdentityDto?
 
@@ -20075,6 +24679,54 @@ fileprivate struct FfiConverterOptionTypeMobileSettingsReadbackDto: FfiConverter
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileSpeedAccuracyMetersPerSecond: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSpeedAccuracyMetersPerSecond?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSpeedAccuracyMetersPerSecond.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileSpeedMetersPerSecond: FfiConverterRustBuffer {
+    typealias SwiftType = MobileSpeedMetersPerSecond?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileSpeedMetersPerSecond.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileSpeedMetersPerSecond.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileTrailSegmentCursorDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileTrailSegmentCursorDto?
 
@@ -20139,6 +24791,30 @@ fileprivate struct FfiConverterOptionTypeMobileVerifiedStringDto: FfiConverterRu
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeMobileVerifiedStringDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMobileVerticalAccuracyMeters: FfiConverterRustBuffer {
+    typealias SwiftType = MobileVerticalAccuracyMeters?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileVerticalAccuracyMeters.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileVerticalAccuracyMeters.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -20603,6 +25279,30 @@ fileprivate struct FfiConverterOptionTypeMobileProtocolFamilyDto: FfiConverterRu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeMobileRideMapCoreErrorDto: FfiConverterRustBuffer {
+    typealias SwiftType = MobileRideMapCoreErrorDto?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMobileRideMapCoreErrorDto.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMobileRideMapCoreErrorDto.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeMobileVerificationStatusDto: FfiConverterRustBuffer {
     typealias SwiftType = MobileVerificationStatusDto?
 
@@ -20998,6 +25698,56 @@ fileprivate struct FfiConverterSequenceTypeMobileRawFloatFieldValueDto: FfiConve
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeMobileRideHistoryContextRouteDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideHistoryContextRouteDto]
+
+    public static func write(_ value: [MobileRideHistoryContextRouteDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideHistoryContextRouteDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideHistoryContextRouteDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideHistoryContextRouteDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideHistoryContextRouteDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideHistoryVehicleOptionDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideHistoryVehicleOptionDto]
+
+    public static func write(_ value: [MobileRideHistoryVehicleOptionDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideHistoryVehicleOptionDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideHistoryVehicleOptionDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideHistoryVehicleOptionDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideHistoryVehicleOptionDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMobileRideIdDto: FfiConverterRustBuffer {
     typealias SwiftType = [MobileRideIdDto]
 
@@ -21015,6 +25765,81 @@ fileprivate struct FfiConverterSequenceTypeMobileRideIdDto: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobileRideIdDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideMapCorePointDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideMapCorePointDto]
+
+    public static func write(_ value: [MobileRideMapCorePointDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideMapCorePointDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideMapCorePointDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideMapCorePointDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideMapCorePointDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideMapRouteDisplayPointDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideMapRouteDisplayPointDto]
+
+    public static func write(_ value: [MobileRideMapRouteDisplayPointDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideMapRouteDisplayPointDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideMapRouteDisplayPointDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideMapRouteDisplayPointDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideMapRouteDisplayPointDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideMapSegmentDisplayMetadataDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideMapSegmentDisplayMetadataDto]
+
+    public static func write(_ value: [MobileRideMapSegmentDisplayMetadataDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideMapSegmentDisplayMetadataDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideMapSegmentDisplayMetadataDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideMapSegmentDisplayMetadataDto.read(from: &buf))
         }
         return seq
     }
@@ -21240,6 +26065,31 @@ fileprivate struct FfiConverterSequenceTypeMobilePevcapImportWarningDto: FfiConv
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeMobilePevcapImportWarningDto.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMobileRideMapCoreDecisionDto: FfiConverterRustBuffer {
+    typealias SwiftType = [MobileRideMapCoreDecisionDto]
+
+    public static func write(_ value: [MobileRideMapCoreDecisionDto], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMobileRideMapCoreDecisionDto.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MobileRideMapCoreDecisionDto] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MobileRideMapCoreDecisionDto]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMobileRideMapCoreDecisionDto.read(from: &buf))
         }
         return seq
     }
@@ -21542,6 +26392,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilechargeestimator_voltage_sag_model() != 1861) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileliverouteprojectioncancellation_cancel() != 59947) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_add_advertised_service() != 1575) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21563,6 +26416,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_link_up() != 11809) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_location_sample() != 35136) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_record_notification() != 31915) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -21581,97 +26437,205 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilepevcapcapturebuilder_writer_status() != 20982) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_clear() != 58288) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_current_snapshot() != 33189) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_mobilephonelocationstate_ingest() != 46273) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_location() != 46770) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_current_snapshot() != 8028) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_trail_segment() != 21723) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_current_snapshot_at() != 56599) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_backup_to() != 57522) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_discard() != 21602) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ensure_recording_for_vehicle() != 44569) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location() != 39313) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_ingest_location_sample() != 11010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_initialization_error() != 36652) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_latest_route_points() != 35828) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_telemetry() != 27964) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_observe_vehicle_connection() != 22849) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause() != 1853) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_pause_at() != 48658) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_points_after() != 28534) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_poll_location_writes() != 1668) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_project_points() != 12775) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_project_points_cancellable() != 38088) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume() != 54874) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_resume_at() != 15920) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_save() != 34044) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_start_gps_only() != 59010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop() != 50377) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobileridemapcore_stop_at() != 58868) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_mobilerouteprojectioncancellation_cancel() != 63217) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_append_trail_segment() != 31482) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_backup_to() != 27625) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_bootstrap_snapshot() != 32370) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_capabilities() != 29297) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_capabilities() != 8245) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_ride_session_marker() != 33806) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_ride_session_marker() != 28355) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_selected_device() != 43108) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_clear_selected_device() != 56796) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_confirm_pevcap_import() != 34418) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_confirm_pevcap_import() != 44346) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 37425) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_map_point() != 3018) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride() != 26448) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride() != 30433) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 39184) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_ride_with_monotonic_start() != 36152) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 3509) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_started_ride_with_monotonic_start() != 19208) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 47097) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_create_trail() != 6712) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 46828) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_device_name() != 19773) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_export_ride_json() != 4935) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_find_ride() != 46554) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_ride_history_vehicle_options() != 8522) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides() != 9190) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_list_rides_filtered() != 39055) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_map_points_in_bounds() != 20830) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_monotonic_created_at_milliseconds() != 53564) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_preflight_pevcap() != 64663) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_rebuild_spatial_indexes() != 44741) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_history_context() != 53555) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_remove_voltage_sag_model() != 48306) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_route_points() != 34152) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_ride_session_marker() != 13432) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_project_route_points_cancellable() != 52968) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_route_points() != 34785) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_rebuild_spatial_indexes() != 39593) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_ride_session_marker() != 45915) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_remove_voltage_sag_model() != 39417) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_selected_device() != 63400) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_ride_session_marker() != 18701) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_voltage_sag_model() != 42735) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_route_points() != 59770) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_selected_device() != 48596) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_device_name() != 57501) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_ride_session_marker() != 52189) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_selected_device() != 62862) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_save_voltage_sag_model() != 1177) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_selected_device() != 26995) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_service_id() != 44814) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_shutdown() != 61276) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_shutdown() != 45190) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_summary() != 63249) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_summary() != 42214) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_trail_segments_in_bounds() != 59585) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_trail_segments_in_bounds() != 34545) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 62540) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition() != 52940) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_voltage_sag_model() != 58929) {
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_transition_at() != 14368) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_update_ride_map_metadata() != 10444) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_method_ridedatabasehandle_voltage_sag_model() != 34882) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_method_vescreadonlysession_current_snapshot() != 39573) {
@@ -21701,10 +26665,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilechargeestimator_new() != 7351) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobileliverouteprojectioncancellation_new() != 52672) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilepevcapcapturebuilder_new() != 58179) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilephonelocationstate_new() != 19112) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobileridemapcore_with_database() != 43894) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilerouteprojectioncancellation_new() != 34931) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cutout_mobile_ffi_checksum_constructor_mobilerouteprojectioncancellation_with_timeout_milliseconds() != 49536) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cutout_mobile_ffi_checksum_constructor_vescreadonlysession_new() != 39732) {
