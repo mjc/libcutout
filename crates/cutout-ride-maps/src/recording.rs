@@ -483,6 +483,22 @@ impl RideMapRecorder {
         self.segment_id
     }
 
+    /// Returns the segment that would contain a candidate sample.
+    #[must_use]
+    pub fn segment_id_for_sample(&self, sample: &LocationSample) -> RideMapSegmentId {
+        let gap_started = self.points.last().is_some_and(|previous| {
+            sample
+                .monotonic_milliseconds()
+                .saturating_sub(previous.sample().monotonic_milliseconds())
+                > MAX_GAP_MILLISECONDS
+        });
+        if gap_started {
+            self.segment_id.next()
+        } else {
+            self.segment_id
+        }
+    }
+
     /// Returns the Rust-owned number of route segments admitted to the ride.
     #[must_use]
     pub const fn segment_count(&self) -> RideSegmentCount {
@@ -722,6 +738,12 @@ impl RideMapRecorder {
         if self.associated_vehicle.is_none() {
             return RouteTelemetryState::GpsOnly;
         }
+        if self
+            .associated_at_milliseconds
+            .is_some_and(|associated_at| at_milliseconds < associated_at)
+        {
+            return RouteTelemetryState::GpsOnly;
+        }
         let Some(last) = self.last_telemetry_at_milliseconds else {
             return RouteTelemetryState::AssociatedNoTelemetry;
         };
@@ -768,15 +790,11 @@ impl RideMapRecorder {
 
     /// Records a sample after durable storage has accepted it.
     pub fn record_sample(&mut self, sample: LocationSample) -> bool {
-        let gap_started = self.points.last().is_some_and(|previous| {
-            sample
-                .monotonic_milliseconds()
-                .saturating_sub(previous.sample().monotonic_milliseconds())
-                > MAX_GAP_MILLISECONDS
-        });
+        let next_segment_id = self.segment_id_for_sample(&sample);
+        let gap_started = next_segment_id != self.segment_id;
         let segment_started = self.segment_started || gap_started;
         if gap_started {
-            self.segment_id = self.segment_id.next();
+            self.segment_id = next_segment_id;
         }
         let distance = if segment_started {
             DistanceMillimetres::default()
@@ -960,6 +978,37 @@ mod tests {
         assert_eq!(recorder.current_segment_id().value(), 1);
         assert_eq!(recorder.segment_count(), RideSegmentCount::new(2));
         assert_eq!(recorder.summary().distance_millimetres(), 0);
+    }
+
+    #[test]
+    fn candidate_segment_id_matches_the_recorded_segment_after_a_gap() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        recorder.record_sample(sample(1_001, 40.0));
+        let candidate = sample(40_000, 40.001);
+
+        assert_eq!(recorder.segment_id_for_sample(&candidate).value(), 1);
+        recorder.record_sample(candidate);
+        assert_eq!(recorder.points().last().unwrap().segment_id().value(), 1);
+    }
+
+    #[test]
+    fn location_before_association_is_gps_only() {
+        let mut recorder = RideMapRecorder::new();
+        recorder.start(monotonic(1_000), None).expect("starts");
+        assert_eq!(
+            recorder.observe_vehicle(&identity("pev-1"), monotonic(5_000)),
+            VehicleAssociation::Associated
+        );
+
+        assert_eq!(
+            recorder.telemetry_state_at(monotonic(2_000)),
+            super::RouteTelemetryState::GpsOnly
+        );
+        assert_eq!(
+            recorder.telemetry_state_at(monotonic(5_000)),
+            super::RouteTelemetryState::AssociatedNoTelemetry
+        );
     }
 
     #[test]
