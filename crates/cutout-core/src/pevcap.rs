@@ -1952,7 +1952,9 @@ impl PevcapCapture {
             .try_into_header()?;
 
         let record_count = read_u32_le(&mut remaining, PevcapBinarySection::RecordCount)?;
-        let mut records = Vec::with_capacity(record_count as usize);
+        let record_capacity =
+            bounded_binary_section_capacity(record_count, remaining, PevcapBinarySection::Record)?;
+        let mut records = Vec::with_capacity(record_capacity);
         for _ in 0..record_count {
             let payload = read_len_prefixed(&mut remaining, PevcapBinarySection::Record)?;
             records.push(
@@ -1969,7 +1971,12 @@ impl PevcapCapture {
         let mut locations = Vec::new();
         if version.supports_locations() {
             let location_count = read_u32_le(&mut remaining, PevcapBinarySection::LocationCount)?;
-            locations = Vec::with_capacity(location_count as usize);
+            let location_capacity = bounded_binary_section_capacity(
+                location_count,
+                remaining,
+                PevcapBinarySection::Location,
+            )?;
+            locations = Vec::with_capacity(location_capacity);
             for _ in 0..location_count {
                 let payload = read_len_prefixed(&mut remaining, PevcapBinarySection::Location)?;
                 let location = serde_json::from_slice::<PevcapLocationJson>(payload)
@@ -2490,6 +2497,19 @@ fn read_len_prefixed<'input>(
 ) -> Result<&'input [u8], PevcapBinaryError> {
     let len = read_u32_le(input, section)? as usize;
     read_exact(input, len, section)
+}
+
+#[cfg(feature = "serde")]
+fn bounded_binary_section_capacity(
+    count: u32,
+    remaining: &[u8],
+    section: PevcapBinarySection,
+) -> Result<usize, PevcapBinaryError> {
+    let count =
+        usize::try_from(count).map_err(|_error| PevcapBinaryError::Truncated { section })?;
+    (count <= remaining.len() / PEVCAP_BINARY_LENGTH_PREFIX_BYTES)
+        .then_some(count)
+        .ok_or(PevcapBinaryError::Truncated { section })
 }
 
 #[cfg(feature = "serde")]
@@ -3170,6 +3190,24 @@ mod tests {
         let decoded_binary = PevcapCapture::from_binary(&binary).expect("location binary decodes");
         assert_eq!(decoded_binary.locations, capture.locations);
         assert_eq!(decoded_binary.replay_input_count(), 1);
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn binary_section_capacity_is_bounded_by_remaining_bytes() {
+        let error = bounded_binary_section_capacity(
+            u32::MAX,
+            &[0; PEVCAP_BINARY_LENGTH_PREFIX_BYTES],
+            PevcapBinarySection::Record,
+        )
+        .expect_err("a count larger than the remaining input must be rejected");
+
+        assert!(matches!(
+            error,
+            PevcapBinaryError::Truncated {
+                section: PevcapBinarySection::Record
+            }
+        ));
     }
 
     #[test]
