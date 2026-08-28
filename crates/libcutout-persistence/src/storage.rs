@@ -2147,13 +2147,19 @@ impl RideDatabase {
 
         let result = (|| {
             let location_count = if let Some(ride_id) = ride_id {
-                stream_pevcap_location_batches(&managed.path, preview.encoding(), |samples| {
-                    self.request(|reply| Command::AppendPevcapLocationBatch {
-                        ride_id,
-                        samples,
-                        reply,
-                    })
-                })?
+                let mut scan = PevcapScanSummary::default();
+                stream_pevcap_location_batches(
+                    &managed.path,
+                    preview.encoding(),
+                    &mut scan,
+                    |samples| {
+                        self.request(|reply| Command::AppendPevcapLocationBatch {
+                            ride_id,
+                            samples,
+                            reply,
+                        })
+                    },
+                )?
             } else {
                 0
             };
@@ -5582,52 +5588,24 @@ fn preflight_pevcap(
     check_pevcap_limit("artifact bytes", MAX_PEVCAP_ARTIFACT_BYTES, artifact_size)?;
     let artifact_digest = artifact_digest(&path)?;
 
-    let file = File::open(&path)?;
-    let mut reader = PevcapReader::new(BufReader::new(file), encoding)
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?;
-    let mut record_count = 0_u64;
-    let mut earliest_milliseconds = None::<u64>;
-    let mut latest_milliseconds = None::<u64>;
-    while let Some(event) = reader
-        .next_event()
-        .map_err(|error| StorageError::PevcapImport(error.to_string()))?
-    {
-        if let PevcapEvent::Record(record) = event {
-            record_count = record_count.saturating_add(1);
-            check_pevcap_limit("records", MAX_PEVCAP_RECORDS, record_count)?;
-            let milliseconds = record.monotonic_ms.as_milliseconds();
-            earliest_milliseconds = Some(
-                earliest_milliseconds.map_or(milliseconds, |current| current.min(milliseconds)),
-            );
-            latest_milliseconds =
-                Some(latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)));
-        }
-    }
-    let mut route_earliest_milliseconds = None::<u64>;
-    let mut route_latest_milliseconds = None::<u64>;
-    let location_count = stream_pevcap_location_batches(&path, encoding, |samples| {
-        for point in &samples {
-            let milliseconds = point.sample.monotonic_milliseconds().as_u64();
-            route_earliest_milliseconds = Some(
-                route_earliest_milliseconds
-                    .map_or(milliseconds, |current| current.min(milliseconds)),
-            );
-            route_latest_milliseconds = Some(
-                route_latest_milliseconds.map_or(milliseconds, |current| current.max(milliseconds)),
-            );
-        }
+    let mut scan = PevcapScanSummary::default();
+    stream_pevcap_location_batches(&path, encoding, &mut scan, |samples| {
         Ok(u64::try_from(samples.len()).unwrap_or(u64::MAX))
     })?;
-    let duration_milliseconds = route_latest_milliseconds
-        .zip(route_earliest_milliseconds)
-        .or_else(|| latest_milliseconds.zip(earliest_milliseconds))
+    let duration_milliseconds = scan
+        .route_latest_milliseconds
+        .zip(scan.route_earliest_milliseconds)
+        .or_else(|| {
+            scan.record_latest_milliseconds
+                .zip(scan.record_earliest_milliseconds)
+        })
         .map_or(0, |(latest, earliest)| latest.saturating_sub(earliest));
     check_pevcap_limit(
         "duration milliseconds",
         MAX_PEVCAP_DURATION_MILLISECONDS,
         duration_milliseconds,
     )?;
-    let outcome = if location_count == 0 {
+    let outcome = if scan.route_location_count == 0 {
         PevcapImportOutcome::CaptureOnly
     } else {
         PevcapImportOutcome::RideAndCapture
@@ -5642,8 +5620,8 @@ fn preflight_pevcap(
         encoding,
         artifact_digest,
         artifact_size,
-        record_count,
-        location_count,
+        record_count: scan.record_count,
+        location_count: scan.route_location_count,
         duration_milliseconds,
         outcome,
         warnings,
@@ -5725,47 +5703,51 @@ fn pevcap_import_directory(database_path: &Path) -> PathBuf {
 fn stream_pevcap_location_batches(
     path: &Path,
     encoding: PevcapEncoding,
+    scan: &mut PevcapScanSummary,
     mut append: impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
 ) -> Result<u64, StorageError> {
     let mut batch = Vec::with_capacity(PEVCAP_LOCATION_BATCH_SIZE);
-    let mut accepted = 0_u64;
     let mut recorder = RideMapRecorder::new();
     let mut started = false;
-    let mut append_location = |location, monotonic_ms| {
-        append_pevcap_location(
-            location,
-            monotonic_ms,
-            &mut recorder,
-            &mut started,
-            &mut batch,
-            &mut accepted,
-            &mut append,
-        )
-    };
 
     // Binary PEVCAP stores records and independent locations in separate sections. Replay both
     // encodings in that same canonical order without buffering the capture in memory.
     stream_pevcap_events(path, encoding, |event| {
         if let PevcapEvent::Record(record) = event {
+            scan.observe_record(&record)?;
             if let Some(location) = record.phone_location {
-                append_location(location, record.monotonic_ms.as_milliseconds())?;
+                append_pevcap_location(
+                    location,
+                    record.monotonic_ms.as_milliseconds(),
+                    &mut recorder,
+                    &mut started,
+                    &mut batch,
+                    scan,
+                    &mut append,
+                )?;
             }
         }
         Ok(())
     })?;
     stream_pevcap_events(path, encoding, |event| {
         if let PevcapEvent::Location(location) = event {
-            append_location(
+            append_pevcap_location(
                 location.location,
                 location.receipt_monotonic_ms.as_milliseconds(),
+                &mut recorder,
+                &mut started,
+                &mut batch,
+                scan,
+                &mut append,
             )?;
         }
         Ok(())
     })?;
     if !batch.is_empty() {
-        accepted = accepted.saturating_add(append(batch)?);
+        scan.observe_route_points(&batch);
+        scan.written_location_count = scan.written_location_count.saturating_add(append(batch)?);
     }
-    Ok(accepted)
+    Ok(scan.written_location_count)
 }
 
 fn stream_pevcap_events(
@@ -5791,7 +5773,7 @@ fn append_pevcap_location(
     recorder: &mut RideMapRecorder,
     started: &mut bool,
     batch: &mut Vec<PevcapRoutePoint>,
-    accepted: &mut u64,
+    scan: &mut PevcapScanSummary,
     append: &mut impl FnMut(Vec<PevcapRoutePoint>) -> Result<u64, StorageError>,
 ) -> Result<(), StorageError> {
     let Ok(location) = location.canonical() else {
@@ -5832,10 +5814,58 @@ fn append_pevcap_location(
         telemetry_state,
     });
     if batch.len() == PEVCAP_LOCATION_BATCH_SIZE {
-        *accepted = accepted.saturating_add(append(std::mem::take(batch))?);
+        scan.observe_route_points(batch);
+        scan.written_location_count = scan
+            .written_location_count
+            .saturating_add(append(std::mem::take(batch))?);
         batch.reserve(PEVCAP_LOCATION_BATCH_SIZE);
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct PevcapScanSummary {
+    record_count: u64,
+    record_earliest_milliseconds: Option<u64>,
+    record_latest_milliseconds: Option<u64>,
+    route_location_count: u64,
+    written_location_count: u64,
+    route_earliest_milliseconds: Option<u64>,
+    route_latest_milliseconds: Option<u64>,
+}
+
+impl PevcapScanSummary {
+    fn observe_record(&mut self, record: &cutout_core::PevcapRecord) -> Result<(), StorageError> {
+        self.record_count = self.record_count.saturating_add(1);
+        check_pevcap_limit("records", MAX_PEVCAP_RECORDS, self.record_count)?;
+        let milliseconds = record.monotonic_ms.as_milliseconds();
+        self.record_earliest_milliseconds = Some(
+            self.record_earliest_milliseconds
+                .map_or(milliseconds, |current| current.min(milliseconds)),
+        );
+        self.record_latest_milliseconds = Some(
+            self.record_latest_milliseconds
+                .map_or(milliseconds, |current| current.max(milliseconds)),
+        );
+        Ok(())
+    }
+
+    fn observe_route_points(&mut self, points: &[PevcapRoutePoint]) {
+        self.route_location_count = self
+            .route_location_count
+            .saturating_add(u64::try_from(points.len()).unwrap_or(u64::MAX));
+        for point in points {
+            let milliseconds = point.sample.monotonic_milliseconds().as_u64();
+            self.route_earliest_milliseconds = Some(
+                self.route_earliest_milliseconds
+                    .map_or(milliseconds, |current| current.min(milliseconds)),
+            );
+            self.route_latest_milliseconds = Some(
+                self.route_latest_milliseconds
+                    .map_or(milliseconds, |current| current.max(milliseconds)),
+            );
+        }
+    }
 }
 
 fn pevcap_accuracy_millimetres(metres: Option<f64>) -> Option<u32> {
