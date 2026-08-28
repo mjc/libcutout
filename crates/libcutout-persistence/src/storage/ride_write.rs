@@ -2,7 +2,7 @@ use std::time::{SystemTime, SystemTimeError, UNIX_EPOCH};
 
 use cutout_ride_maps::{
     LocationAdmission, LocationSample, RideEvent, RideLifecycleState, TransitionError,
-    distance_between_millimetres,
+    distance_between,
 };
 
 use super::RideSource;
@@ -17,55 +17,143 @@ pub(super) enum LocationWriteMode {
 pub(super) struct RideWriteState {
     source: RideSource,
     lifecycle: RideLifecycleState,
+    monotonic_created_at_ms: Option<u64>,
+    monotonic_last_event_ms: Option<u64>,
+    paused_at_ms: Option<u64>,
+    paused_duration_ms: u64,
+    completed_duration_ms: u64,
     updated_at_ms: u64,
 }
 
 impl RideWriteState {
+    #[cfg(test)]
     pub(super) const fn new(
         source: RideSource,
         lifecycle: RideLifecycleState,
         updated_at_ms: u64,
     ) -> Self {
+        Self::new_with_timing(source, lifecycle, None, None, None, 0, 0, updated_at_ms)
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "fields mirror the persisted lifecycle timing columns"
+    )]
+    pub(super) const fn new_with_timing(
+        source: RideSource,
+        lifecycle: RideLifecycleState,
+        monotonic_created_at_ms: Option<u64>,
+        monotonic_last_event_ms: Option<u64>,
+        paused_at_ms: Option<u64>,
+        paused_duration_ms: u64,
+        completed_duration_ms: u64,
+        updated_at_ms: u64,
+    ) -> Self {
         Self {
             source,
             lifecycle,
+            monotonic_created_at_ms,
+            monotonic_last_event_ms,
+            paused_at_ms,
+            paused_duration_ms,
+            completed_duration_ms,
             updated_at_ms,
         }
     }
 
+    #[cfg(test)]
     pub(super) fn transition(
         self,
         event: RideEvent,
         occurred_at_ms: u64,
     ) -> Result<RideTransition, TransitionError> {
+        self.transition_at(event, occurred_at_ms, None)
+    }
+
+    pub(super) fn transition_at(
+        self,
+        event: RideEvent,
+        occurred_at_ms: u64,
+        monotonic_at_ms: Option<u64>,
+    ) -> Result<RideTransition, TransitionError> {
+        let lifecycle = self.lifecycle.apply(event)?;
+        let mut monotonic_created_at_ms = self.monotonic_created_at_ms;
+        let mut monotonic_last_event_ms = self.monotonic_last_event_ms;
+        let mut paused_at_ms = self.paused_at_ms;
+        let mut paused_duration_ms = self.paused_duration_ms;
+        let mut completed_duration_ms = self.completed_duration_ms;
+        let at = monotonic_at_ms
+            .or(self.monotonic_last_event_ms)
+            .or(self.monotonic_created_at_ms);
+        if self.lifecycle == RideLifecycleState::Draft
+            && lifecycle == RideLifecycleState::Active
+            && monotonic_created_at_ms.is_none()
+        {
+            monotonic_created_at_ms = at;
+        }
+        if let Some(at) = at {
+            let at = monotonic_last_event_ms.map_or(at, |last| last.max(at));
+            monotonic_last_event_ms = Some(at);
+            match (self.lifecycle, lifecycle) {
+                (RideLifecycleState::Active, RideLifecycleState::Paused) => {
+                    paused_at_ms = Some(at);
+                }
+                (RideLifecycleState::Paused, RideLifecycleState::Active) => {
+                    if let Some(paused_at) = paused_at_ms.take() {
+                        paused_duration_ms =
+                            paused_duration_ms.saturating_add(at.saturating_sub(paused_at));
+                    }
+                }
+                (
+                    RideLifecycleState::Active | RideLifecycleState::Paused,
+                    RideLifecycleState::Stopped | RideLifecycleState::Interrupted,
+                ) => {
+                    completed_duration_ms = active_duration_at(
+                        monotonic_created_at_ms,
+                        at,
+                        self.lifecycle == RideLifecycleState::Paused,
+                        paused_at_ms,
+                        paused_duration_ms,
+                    );
+                }
+                _ => {}
+            }
+        }
         Ok(RideTransition {
-            lifecycle: self.lifecycle.apply(event)?,
+            lifecycle,
+            monotonic_created_at_ms,
+            monotonic_last_event_ms,
+            paused_at_ms,
+            paused_duration_ms,
+            completed_duration_ms,
             updated_at_ms: self.updated_at_ms.max(occurred_at_ms),
         })
     }
 
     pub(super) fn decide_location(
         self,
-        previous: Option<LocationSample>,
+        previous: Option<(u64, LocationSample)>,
         sample: LocationSample,
+        segment_id: u64,
         mode: LocationWriteMode,
     ) -> Result<LocationWriteDecision, RideLifecycleState> {
         if !self.accepts_location(mode) {
             return Err(self.lifecycle);
         }
 
-        let admission = sample.admission(previous.as_ref());
+        let admission = sample.admission(previous.as_ref().map(|(_, sample)| sample));
         if admission != LocationAdmission::Accepted {
             return Ok(LocationWriteDecision::Rejected(admission));
         }
 
         Ok(LocationWriteDecision::Accepted {
             distance_millimetres: previous
-                .map(|previous| distance_between_millimetres(previous, sample))
+                .filter(|(previous_segment_id, _)| *previous_segment_id == segment_id)
+                .map(|(_, previous)| distance_between(previous, sample).as_u64())
                 .unwrap_or_default(),
             updated_at_ms: self
                 .updated_at_ms
-                .max(sample.wall_clock_unix_milliseconds()),
+                .max(sample.wall_clock_unix_milliseconds().as_u64()),
         })
     }
 
@@ -88,6 +176,11 @@ impl RideWriteState {
 
 pub(super) struct RideTransition {
     lifecycle: RideLifecycleState,
+    monotonic_created_at_ms: Option<u64>,
+    monotonic_last_event_ms: Option<u64>,
+    paused_at_ms: Option<u64>,
+    paused_duration_ms: u64,
+    completed_duration_ms: u64,
     updated_at_ms: u64,
 }
 
@@ -99,6 +192,50 @@ impl RideTransition {
     pub(super) const fn updated_at_milliseconds(&self) -> u64 {
         self.updated_at_ms
     }
+
+    pub(super) const fn monotonic_created_at_milliseconds(&self) -> Option<u64> {
+        self.monotonic_created_at_ms
+    }
+
+    pub(super) const fn monotonic_last_event_milliseconds(&self) -> Option<u64> {
+        self.monotonic_last_event_ms
+    }
+
+    pub(super) const fn paused_at_milliseconds(&self) -> Option<u64> {
+        self.paused_at_ms
+    }
+
+    pub(super) const fn paused_duration_milliseconds(&self) -> u64 {
+        self.paused_duration_ms
+    }
+
+    pub(super) const fn completed_duration_milliseconds(&self) -> u64 {
+        self.completed_duration_ms
+    }
+}
+
+const fn active_duration_at(
+    created_at_ms: Option<u64>,
+    at_ms: u64,
+    paused: bool,
+    paused_at_ms: Option<u64>,
+    paused_duration_ms: u64,
+) -> u64 {
+    let Some(created_at_ms) = created_at_ms else {
+        return 0;
+    };
+    let current_pause = if paused {
+        match paused_at_ms {
+            Some(paused_at) => at_ms.saturating_sub(paused_at),
+            None => 0,
+        }
+    } else {
+        0
+    };
+    at_ms
+        .saturating_sub(created_at_ms)
+        .saturating_sub(paused_duration_ms)
+        .saturating_sub(current_pause)
 }
 
 pub(super) enum LocationWriteDecision {
@@ -136,7 +273,7 @@ mod tests {
         );
         assert!(matches!(
             state
-                .decide_location(None, sample, LocationWriteMode::Live)
+                .decide_location(None, sample, 0, LocationWriteMode::Live)
                 .unwrap(),
             LocationWriteDecision::Accepted {
                 updated_at_ms: 30,

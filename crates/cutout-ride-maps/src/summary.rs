@@ -2,8 +2,60 @@ use crate::LocationSample;
 
 const EARTH_RADIUS_METRES: f64 = 6_371_000.0;
 
+/// Number of canonical route points represented by a ride summary.
+///
+/// This is distinct from segment identities, timestamps, and distances so
+/// those unrelated counters cannot be mixed inside the map domain.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RidePointCount(u64);
+
+impl RidePointCount {
+    /// Creates a point count from its persisted representation.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    /// Creates a point count from an in-memory collection length.
+    #[must_use]
+    pub const fn from_usize(value: usize) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
+        Self(value as u64)
+    }
+
+    /// Returns the persisted representation.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+
+    /// Returns whether no canonical points are represented.
+    #[must_use]
+    pub const fn is_zero(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Adds a count without overflowing.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
+
+    /// Subtracts a count without underflowing.
+    #[must_use]
+    pub const fn saturating_sub(self, other: Self) -> Self {
+        Self(self.0.saturating_sub(other.0))
+    }
+}
+
+impl From<u64> for RidePointCount {
+    fn from(value: u64) -> Self {
+        Self::new(value)
+    }
+}
+
 /// Derived distance represented in millimetres.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DistanceMillimetres(u64);
 
 impl DistanceMillimetres {
@@ -18,12 +70,18 @@ impl DistanceMillimetres {
     pub const fn as_u64(self) -> u64 {
         self.0
     }
+
+    /// Adds distances without overflowing.
+    #[must_use]
+    pub const fn saturating_add(self, other: Self) -> Self {
+        Self(self.0.saturating_add(other.0))
+    }
 }
 
 /// Deterministic projection of canonical ride location samples.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RideSummary {
-    point_count: u64,
+    point_count: RidePointCount,
     distance_millimetres: DistanceMillimetres,
 }
 
@@ -33,29 +91,38 @@ impl RideSummary {
     pub fn from_samples(samples: &[LocationSample]) -> Self {
         let distance_millimetres = samples
             .windows(2)
-            .map(|pair| distance_between_millimetres(pair[0], pair[1]))
-            .sum::<u64>();
+            .map(|pair| distance_between(pair[0], pair[1]))
+            .fold(
+                DistanceMillimetres::default(),
+                DistanceMillimetres::saturating_add,
+            );
         Self {
-            point_count: samples.len() as u64,
-            distance_millimetres: DistanceMillimetres::new(distance_millimetres),
+            point_count: RidePointCount::from_usize(samples.len()),
+            distance_millimetres,
         }
     }
 
     /// Returns the number of canonical points represented by this summary.
     #[must_use]
-    pub const fn point_count(self) -> u64 {
+    pub const fn point_count(self) -> RidePointCount {
         self.point_count
     }
 
     /// Returns the derived distance in millimetres.
     #[must_use]
+    pub const fn distance(self) -> DistanceMillimetres {
+        self.distance_millimetres
+    }
+
+    /// Returns the derived distance in millimetres as its persisted representation.
+    #[must_use]
     pub const fn distance_millimetres(self) -> u64 {
-        self.distance_millimetres.as_u64()
+        self.distance().as_u64()
     }
 
     /// Reconstructs a summary persisted by the storage layer.
     #[must_use]
-    pub const fn from_stored(point_count: u64, distance_millimetres: u64) -> Self {
+    pub const fn from_stored(point_count: RidePointCount, distance_millimetres: u64) -> Self {
         Self {
             point_count,
             distance_millimetres: DistanceMillimetres::new(distance_millimetres),
@@ -66,7 +133,15 @@ impl RideSummary {
 /// Returns the rounded distance between two location samples.
 #[must_use]
 pub fn distance_between_millimetres(first: LocationSample, second: LocationSample) -> u64 {
-    rounded_distance_millimetres(haversine_metres(first, second))
+    distance_between(first, second).as_u64()
+}
+
+/// Returns the rounded distance between two samples as a typed domain value.
+#[must_use]
+pub fn distance_between(first: LocationSample, second: LocationSample) -> DistanceMillimetres {
+    DistanceMillimetres::new(rounded_distance_millimetres(haversine_metres(
+        first, second,
+    )))
 }
 
 fn rounded_distance_millimetres(distance_metres: f64) -> u64 {

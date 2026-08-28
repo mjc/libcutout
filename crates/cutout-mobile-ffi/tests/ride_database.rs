@@ -43,7 +43,7 @@ fn mobile_clients_bootstrap_recovered_rides_and_page_history() {
         .create_ride(MobileRideSourceDto::Live, 100)
         .expect("ride is created");
     handle
-        .transition(ride_id.clone(), MobileRideEventDto::Start)
+        .transition(ride_id.clone(), MobileRideEventDto::Start, 0)
         .expect("ride starts");
     handle
         .append_location(

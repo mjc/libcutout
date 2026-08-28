@@ -9,19 +9,33 @@
 //! Rust-owned ride recording and geospatial domain primitives.
 
 mod coordinate;
-pub use coordinate::*;
+pub use coordinate::{Coordinate, CoordinateError, LatitudeE7, LongitudeE7};
 mod lifecycle;
-pub use lifecycle::*;
+pub use lifecycle::{RideEvent, RideLifecycleState, TransitionError};
 mod location;
-pub use location::*;
+pub use location::{
+    LocationAdmission, LocationSample, LocationSource, MonotonicMilliseconds,
+    WallClockUnixMilliseconds,
+};
 mod summary;
-pub use summary::*;
+pub use summary::{
+    DistanceMillimetres, RidePointCount, RideSummary, distance_between,
+    distance_between_millimetres,
+};
+mod recording;
+pub use recording::{
+    MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideMapMetadata, RideMapPoint,
+    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideRecordingTiming, RideSegmentCount,
+    RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
+    VehicleAssociation, VehicleIdentity, VehicleIdentityError,
+};
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Coordinate, LatitudeE7, LocationAdmission, LocationSample, LocationSource, LongitudeE7,
-        RideEvent, RideLifecycleState, RideSummary, TransitionError,
+        Coordinate, DistanceMillimetres, LatitudeE7, LocationAdmission, LocationSample,
+        LocationSource, LongitudeE7, MonotonicMilliseconds, RideEvent, RideLifecycleState,
+        RidePointCount, RideSummary, TransitionError, VehicleIdentity, WallClockUnixMilliseconds,
     };
 
     #[test]
@@ -55,8 +69,8 @@ mod tests {
         let coordinate = Coordinate::from_degrees(40.0, -105.0).unwrap();
         let sample = LocationSample::new(
             coordinate,
-            1_000,
-            1_700_000_000_000,
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
             Some(3_000),
             LocationSource::PevcapImport,
         );
@@ -71,21 +85,49 @@ mod tests {
     fn ride_summary_counts_points_and_distance() {
         let first = LocationSample::new(
             Coordinate::from_degrees(40.0, -105.0).unwrap(),
-            1_000,
-            1_700_000_000_000,
+            MonotonicMilliseconds::new(1_000),
+            WallClockUnixMilliseconds::new(1_700_000_000_000),
             None,
             LocationSource::Live,
         );
         let second = LocationSample::new(
             Coordinate::from_degrees(40.0, -104.999).unwrap(),
-            2_000,
-            1_700_000_001_000,
+            MonotonicMilliseconds::new(2_000),
+            WallClockUnixMilliseconds::new(1_700_000_001_000),
             None,
             LocationSource::Live,
         );
         let summary = RideSummary::from_samples(&[first, second]);
-        assert_eq!(summary.point_count(), 2);
+        assert_eq!(summary.point_count().as_u64(), 2);
         assert!(summary.distance_millimetres() > 80_000);
         assert!(summary.distance_millimetres() < 100_000);
+    }
+
+    #[test]
+    fn ride_point_count_keeps_count_arithmetic_typed_and_saturating() {
+        let count = RidePointCount::from_usize(3);
+        assert_eq!(count.saturating_add(RidePointCount::new(2)).as_u64(), 5);
+        assert_eq!(count.saturating_sub(RidePointCount::new(4)).as_u64(), 0);
+        assert!(RidePointCount::default().is_zero());
+    }
+
+    #[test]
+    fn distance_keeps_arithmetic_typed_and_saturating() {
+        let distance = DistanceMillimetres::new(u64::MAX - 1);
+        assert_eq!(
+            distance
+                .saturating_add(DistanceMillimetres::new(2))
+                .as_u64(),
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn vehicle_identity_rejects_blank_values_and_trims_boundaries() {
+        assert_eq!(
+            VehicleIdentity::new("  NF2557 "),
+            Some(VehicleIdentity::new("NF2557").expect("test identity is valid"))
+        );
+        assert_eq!(VehicleIdentity::new("   "), None);
     }
 }
