@@ -9815,6 +9815,21 @@ mod tests {
 
     static RIDE_DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+    fn drain_location_writes(state: &MobileRideMapCore) -> Vec<MobileRideMapCoreDecisionDto> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let decisions = state.poll_location_writes();
+            if !decisions.is_empty() {
+                return decisions;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "queued location write did not complete in time"
+            );
+            thread::yield_now();
+        }
+    }
+
     fn synthetic_veteran_frame_with_model_id(model_id: u16) -> [u8; 42] {
         let mut bytes = [0_u8; 42];
         bytes[0..4].copy_from_slice(&[0xdc, 0x5a, 0x5c, 38]);
@@ -13946,17 +13961,13 @@ mod tests {
                 .expect("first location is queued"),
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        while state.poll_location_writes().is_empty() {
-            thread::yield_now();
-        }
+        let _ = drain_location_writes(&state);
         state.pause(2_000).expect("map recording pauses");
         state.resume(3_000).expect("map recording resumes");
         state
             .ingest_location(2_001, 1_700_000_002_001, 40.0, -104.999, 3.0)
             .expect("second location is accepted");
-        while state.poll_location_writes().is_empty() {
-            thread::yield_now();
-        }
+        let _ = drain_location_writes(&state);
 
         let snapshot = state
             .current_snapshot(2_001)
@@ -14008,9 +14019,7 @@ mod tests {
                 .expect("first location is queued"),
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        while state.poll_location_writes().is_empty() {
-            thread::yield_now();
-        }
+        let _ = drain_location_writes(&state);
         let second = state
             .ingest_location(40_000, 1_700_000_039_000, 40.001, -105.0, 3.0)
             .expect("post-gap location is accepted");
@@ -14018,13 +14027,7 @@ mod tests {
             second,
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        let settled = loop {
-            let decisions = state.poll_location_writes();
-            if !decisions.is_empty() {
-                break decisions;
-            }
-            thread::yield_now();
-        };
+        let settled = drain_location_writes(&state);
         assert!(
             settled
                 .iter()
@@ -14098,13 +14101,7 @@ mod tests {
                 .expect("duplicate admission is queued"),
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        let settled = loop {
-            let decisions = state.poll_location_writes();
-            if !decisions.is_empty() {
-                break decisions;
-            }
-            thread::yield_now();
-        };
+        let settled = drain_location_writes(&state);
         assert!(settled.iter().any(|decision| matches!(
             decision,
             MobileRideMapCoreDecisionDto::Ignored {
@@ -14117,13 +14114,7 @@ mod tests {
                 .expect("post-duplicate location is queued"),
             MobileRideMapCoreDecisionDto::Pending { .. }
         ));
-        let settled = loop {
-            let decisions = state.poll_location_writes();
-            if !decisions.is_empty() {
-                break decisions;
-            }
-            thread::yield_now();
-        };
+        let settled = drain_location_writes(&state);
         assert!(settled.iter().any(|decision| matches!(
             decision,
             MobileRideMapCoreDecisionDto::Accepted {
@@ -14164,9 +14155,7 @@ mod tests {
                         3.0,
                     )
                     .expect("route point is accepted");
-                while state.poll_location_writes().is_empty() {
-                    thread::yield_now();
-                }
+                let _ = drain_location_writes(&state);
             }
             database.shutdown().expect("database shuts down");
         }
