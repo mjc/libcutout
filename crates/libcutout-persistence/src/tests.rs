@@ -1274,9 +1274,9 @@ fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
         &[],
     )
     .unwrap();
-    let attached = || PevcapPhoneLocation {
-        wall_clock_unix_ms: 1_700_000_000_000,
-        latitude_degrees: 40.0,
+    let attached = |monotonic_ms: u64, latitude_degrees: f64| PevcapPhoneLocation {
+        wall_clock_unix_ms: 1_700_000_000_000 + monotonic_ms,
+        latitude_degrees,
         longitude_degrees: -105.0,
         altitude_meters: 1_600.0,
         horizontal_accuracy_meters: Some(3.0),
@@ -1308,9 +1308,9 @@ fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
         header,
         vec![
             PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None)
-                .with_phone_location(attached()),
+                .with_phone_location(attached(1_000, 40.0)),
             PevcapRecord::link_up(MonotonicTimestamp::new(3_000), None)
-                .with_phone_location(attached()),
+                .with_phone_location(attached(3_000, 40.0002)),
         ],
         vec![independent],
     );
@@ -1328,21 +1328,15 @@ fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
         std::fs::write(&artifact_path, capture.encode(encoding).unwrap()).unwrap();
         let database = RideDatabase::open(&database_path).unwrap();
         let preview = database.preflight_pevcap(&artifact_path, encoding).unwrap();
-        assert_eq!(preview.location_count(), 2);
-        assert_eq!(preview.duration_milliseconds(), 1_000);
+        assert_eq!(preview.location_count(), 3);
+        assert_eq!(preview.duration_milliseconds(), 2_000);
         let receipt = database
             .confirm_pevcap_import(&preview, 1_700_000_000_000)
             .unwrap();
-        assert_eq!(
-            database
-                .find_ride(receipt.ride_id.unwrap())
-                .unwrap()
-                .unwrap()
-                .duration_milliseconds(),
-            1_000
-        );
+        let ride_id = receipt.ride_id.unwrap();
+        let ride = database.find_ride(ride_id).unwrap().unwrap();
         let route = database
-            .route_points(receipt.ride_id.unwrap(), None, QueryLimit::new(10).unwrap())
+            .route_points(ride_id, None, QueryLimit::new(10).unwrap())
             .unwrap()
             .points()
             .iter()
@@ -1354,10 +1348,20 @@ fn pevcap_jsonl_and_binary_imports_preserve_merged_route_order() {
                 )
             })
             .collect::<Vec<_>>();
-        assert_eq!(route.len(), 2);
-        assert_eq!(route[0].0, 1_000);
-        assert_eq!(route[1].0, 2_000);
-        imported_routes.push(route);
+        assert_eq!(route.len(), 3);
+        assert_eq!(
+            route.iter().map(|point| point.0).collect::<Vec<_>>(),
+            [1_000, 2_000, 3_000]
+        );
+        assert_eq!(ride.duration_milliseconds(), 2_000);
+        assert!(ride.average_speed_millimetres_per_second().is_some());
+        imported_routes.push((
+            route,
+            ride.summary(),
+            ride.duration_milliseconds(),
+            ride.average_speed_millimetres_per_second(),
+            ride.segment_count(),
+        ));
         database.shutdown().unwrap();
         let managed_artifact_path = receipt.managed_artifact_path;
         let _ = std::fs::remove_file(&managed_artifact_path);
@@ -1607,20 +1611,22 @@ fn pevcap_confirmation_reconciles_a_committed_finish_response_loss() {
             &[],
         )
         .unwrap(),
-        vec![PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None).with_phone_location(
-            PevcapPhoneLocation {
-                wall_clock_unix_ms: 1_700_000_000_000,
-                latitude_degrees: 40.0,
-                longitude_degrees: -105.0,
-                altitude_meters: 1_600.0,
-                horizontal_accuracy_meters: Some(3.0),
-                vertical_accuracy_meters: None,
-                speed_meters_per_second: None,
-                speed_accuracy_meters_per_second: None,
-                course_degrees: None,
-                course_accuracy_degrees: None,
-            },
-        )],
+        vec![
+            PevcapRecord::link_up(MonotonicTimestamp::new(1_000), None).with_phone_location(
+                PevcapPhoneLocation {
+                    wall_clock_unix_ms: 1_700_000_000_000,
+                    latitude_degrees: 40.0,
+                    longitude_degrees: -105.0,
+                    altitude_meters: 1_600.0,
+                    horizontal_accuracy_meters: Some(3.0),
+                    vertical_accuracy_meters: None,
+                    speed_meters_per_second: None,
+                    speed_accuracy_meters_per_second: None,
+                    course_degrees: None,
+                    course_accuracy_degrees: None,
+                },
+            ),
+        ],
     );
     let source_bytes = capture.to_jsonl().unwrap().into_bytes();
     std::fs::write(&artifact_path, &source_bytes).unwrap();
