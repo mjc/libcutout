@@ -1,11 +1,12 @@
 use std::{
     fs,
     sync::{Mutex, PoisonError},
+    thread,
+    time::Duration,
 };
 
 use cutout_mobile_ffi::{
-    MobileRideEventDto, MobileRideLifecycleStateDto, MobileRideLocationDto, MobileRideSourceDto,
-    open_ride_database,
+    MobileRideIdDto, MobileRideLifecycleStateDto, MobileRideMapCore, open_ride_database,
 };
 
 static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -16,7 +17,7 @@ fn mobile_clients_open_the_rust_owned_database() {
     let path = std::env::temp_dir().join(format!(
         "cutout-mobile-ffi-ride-database-{}-{}.sqlite",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test")
+        thread::current().name().unwrap_or("test")
     ));
     let handle = open_ride_database(path.to_string_lossy().into_owned())
         .expect("Rust should own the mobile database service");
@@ -34,30 +35,35 @@ fn mobile_clients_bootstrap_recovered_rides_and_page_history() {
     let path = std::env::temp_dir().join(format!(
         "cutout-mobile-ffi-recovery-{}-{}.sqlite",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test")
+        thread::current().name().unwrap_or("test")
     ));
     let _ = fs::remove_file(&path);
     let path_string = path.to_string_lossy().into_owned();
     let handle = open_ride_database(path_string.clone()).expect("database opens");
-    let ride_id = handle
-        .create_ride(MobileRideSourceDto::Live, 100)
-        .expect("ride is created");
-    handle
-        .transition(ride_id.clone(), MobileRideEventDto::Start)
-        .expect("ride starts");
-    handle
-        .append_location(
-            ride_id.clone(),
-            MobileRideLocationDto {
-                latitude_degrees: 39.7392,
-                longitude_degrees: -104.9903,
-                monotonic_milliseconds: 1,
-                wall_clock_unix_milliseconds: 102,
-                horizontal_accuracy_millimetres: Some(1_000),
-                source: MobileRideSourceDto::Live,
-            },
-        )
-        .expect("location is stored");
+    let state = MobileRideMapCore::with_database(handle.clone());
+    let ride_id = MobileRideIdDto {
+        value: state
+            .start_gps_only(100, None)
+            .expect("ride starts")
+            .ride_id,
+    };
+    state
+        .ingest_location(101, 102, 39.7392, -104.9903, 1.0)
+        .expect("location is admitted");
+    for _ in 0..100 {
+        if !state.poll_location_writes().is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        state
+            .points_after(None, 1)
+            .expect("route page is returned")
+            .points
+            .len(),
+        1
+    );
     handle.shutdown().expect("database worker shuts down");
 
     let reopened = open_ride_database(path_string).expect("database reopens");

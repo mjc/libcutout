@@ -3178,33 +3178,6 @@ pub struct MobileRideIdDto {
     pub value: String,
 }
 
-/// Result of admitting a location sample.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
-pub enum MobileRideLocationAdmissionDto {
-    /// Sample was durably appended.
-    Accepted,
-    /// Sample repeated the latest durable sample.
-    Duplicate,
-    /// Sample was older than the latest durable sample.
-    OutOfOrder,
-    /// Sample accuracy exceeded the Rust admission threshold.
-    AccuracyTooLow,
-    /// Sample implied an unrealistic travel speed.
-    UnrealisticJump,
-}
-
-impl From<ride_maps::LocationAdmission> for MobileRideLocationAdmissionDto {
-    fn from(admission: ride_maps::LocationAdmission) -> Self {
-        match admission {
-            ride_maps::LocationAdmission::Accepted => Self::Accepted,
-            ride_maps::LocationAdmission::Duplicate => Self::Duplicate,
-            ride_maps::LocationAdmission::OutOfOrder => Self::OutOfOrder,
-            ride_maps::LocationAdmission::AccuracyTooLow => Self::AccuracyTooLow,
-            ride_maps::LocationAdmission::UnrealisticJump => Self::UnrealisticJump,
-        }
-    }
-}
-
 /// Error returned by the Rust-owned live map recording core.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error, uniffi::Error)]
 pub enum MobileRideMapCoreErrorDto {
@@ -3242,6 +3215,8 @@ pub enum MobileRideMapCoreTelemetryStateDto {
     AssociatedFresh,
     /// The associated vehicle telemetry has gone stale.
     AssociatedStale,
+    /// A newer Rust telemetry state is not understood by this mobile binding.
+    Unsupported,
 }
 
 /// Result of observing a confirmed vehicle telemetry timestamp.
@@ -3257,6 +3232,8 @@ pub enum MobileRideMapTelemetryObservationDto {
     TimestampOutOfOrder,
     /// The ride is not open for telemetry.
     RideNotOpen,
+    /// A newer Rust observation state is not understood by this mobile binding.
+    Unsupported,
 }
 
 impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservationDto {
@@ -3266,7 +3243,7 @@ impl From<ride_maps::TelemetryObservation> for MobileRideMapTelemetryObservation
             ride_maps::TelemetryObservation::AlreadyObserved => Self::AlreadyObserved,
             ride_maps::TelemetryObservation::NotAssociated => Self::NotAssociated,
             ride_maps::TelemetryObservation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
-            _ => Self::RideNotOpen,
+            _ => Self::Unsupported,
         }
     }
 }
@@ -3277,7 +3254,25 @@ impl From<ride_maps::RouteTelemetryState> for MobileRideMapCoreTelemetryStateDto
             ride_maps::RouteTelemetryState::GpsOnly => Self::GpsOnly,
             ride_maps::RouteTelemetryState::AssociatedNoTelemetry => Self::AssociatedNoTelemetry,
             ride_maps::RouteTelemetryState::AssociatedFresh => Self::AssociatedFresh,
-            _ => Self::AssociatedStale,
+            _ => Self::Unsupported,
+        }
+    }
+}
+
+impl TryFrom<MobileRideMapCoreTelemetryStateDto> for ride_maps::RouteTelemetryState {
+    type Error = MobileRideMapCoreErrorDto;
+
+    fn try_from(state: MobileRideMapCoreTelemetryStateDto) -> Result<Self, Self::Error> {
+        match state {
+            MobileRideMapCoreTelemetryStateDto::GpsOnly => Ok(Self::GpsOnly),
+            MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
+                Ok(Self::AssociatedNoTelemetry)
+            }
+            MobileRideMapCoreTelemetryStateDto::AssociatedFresh => Ok(Self::AssociatedFresh),
+            MobileRideMapCoreTelemetryStateDto::AssociatedStale => Ok(Self::AssociatedStale),
+            MobileRideMapCoreTelemetryStateDto::Unsupported => Err(
+                MobileRideMapCoreErrorDto::Storage("unsupported telemetry state".to_owned()),
+            ),
         }
     }
 }
@@ -3460,6 +3455,8 @@ pub enum MobileRideMapCoreAssociationDto {
     TimestampOutOfOrder,
     /// No recording is currently open.
     RideNotOpen,
+    /// A newer Rust association state is not understood by this mobile binding.
+    Unsupported,
 }
 
 impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
@@ -3470,7 +3467,7 @@ impl From<ride_maps::VehicleAssociation> for MobileRideMapCoreAssociationDto {
             ride_maps::VehicleAssociation::CandidateMissing => Self::CandidateMissing,
             ride_maps::VehicleAssociation::IdentityMismatch => Self::IdentityMismatch,
             ride_maps::VehicleAssociation::TimestampOutOfOrder => Self::TimestampOutOfOrder,
-            _ => Self::RideNotOpen,
+            _ => Self::Unsupported,
         }
     }
 }
@@ -5316,92 +5313,6 @@ impl RideDatabaseHandle {
             .map_err(map_ride_database_error)
     }
 
-    /// Appends a location sample and reports duplicate/out-of-order admission.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the sample, ride, or worker rejects the append.
-    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn append_location(
-        &self,
-        id: MobileRideIdDto,
-        location: MobileRideLocationDto,
-    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
-        self.append_location_with_segment(id, location, 0)
-    }
-
-    /// Appends a location sample with its Rust-owned route segment identity.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the sample, ride, or worker rejects the append.
-    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn append_location_with_segment(
-        &self,
-        id: MobileRideIdDto,
-        location: MobileRideLocationDto,
-        segment_id: u64,
-    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(&id)?;
-        let location = mobile_ride_location(location)?;
-        self.inner
-            .append_location_with_segment(id, location, segment_id)
-            .map(Into::into)
-            .map_err(map_ride_database_error)
-    }
-
-    /// Appends a location sample with segment and telemetry provenance.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the sample, ride, or worker rejects the append.
-    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn append_location_with_segment_and_telemetry(
-        &self,
-        id: MobileRideIdDto,
-        location: MobileRideLocationDto,
-        segment_id: u64,
-        telemetry_state: MobileRideMapCoreTelemetryStateDto,
-    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(&id)?;
-        let location = mobile_ride_location(location)?;
-        self.inner
-            .append_location_with_segment_and_telemetry(
-                id,
-                location,
-                segment_id,
-                telemetry_state.into(),
-            )
-            .map(Into::into)
-            .map_err(map_ride_database_error)
-    }
-
-    /// Enqueues a location sample for ordered background persistence.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed database error when the durable append is rejected by the worker.
-    #[allow(clippy::needless_pass_by_value, reason = "UniFFI owns boundary DTOs")]
-    pub fn enqueue_location_with_segment_and_telemetry(
-        &self,
-        id: MobileRideIdDto,
-        location: MobileRideLocationDto,
-        segment_id: u64,
-        telemetry_state: MobileRideMapCoreTelemetryStateDto,
-    ) -> Result<MobileRideLocationAdmissionDto, MobileRideDatabaseError> {
-        let id = parse_mobile_ride_id(&id)?;
-        let location = mobile_ride_location(location)?;
-        self.inner
-            .enqueue_location_with_segment_and_telemetry(
-                id,
-                location,
-                segment_id,
-                telemetry_state.into(),
-            )
-            .map(Into::into)
-            .map_err(map_ride_database_error)
-    }
-
     /// Loads the durable summary projection for a ride.
     ///
     /// # Errors
@@ -5443,6 +5354,37 @@ impl RideDatabaseHandle {
 }
 
 impl RideDatabaseHandle {
+    #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the removed foreign boundary"
+    )]
+    fn append_location(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+    ) -> Result<ride_maps::LocationAdmission, MobileRideDatabaseError> {
+        self.append_location_with_segment(id, location, 0)
+    }
+
+    #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test helper mirrors the removed foreign boundary"
+    )]
+    fn append_location_with_segment(
+        &self,
+        id: MobileRideIdDto,
+        location: MobileRideLocationDto,
+        segment_id: u64,
+    ) -> Result<ride_maps::LocationAdmission, MobileRideDatabaseError> {
+        let id = parse_mobile_ride_id(&id)?;
+        let location = mobile_ride_location(location)?;
+        self.inner
+            .append_location_with_segment(id, location, segment_id)
+            .map_err(map_ride_database_error)
+    }
+
     fn reconcile_location_write(
         &self,
         id: &MobileRideIdDto,
@@ -5463,12 +5405,12 @@ impl RideDatabaseHandle {
         id: MobileRideIdDto,
         location: MobileRideLocationDto,
         segment_id: u64,
-        telemetry_state: MobileRideMapCoreTelemetryStateDto,
+        telemetry_state: ride_maps::RouteTelemetryState,
     ) -> Result<persistence::PendingLocationWrite, MobileRideDatabaseError> {
         let id = parse_mobile_ride_id(&id)?;
         let location = mobile_ride_location(location)?;
         self.inner
-            .enqueue_location_async(id, location, segment_id, telemetry_state.into())
+            .enqueue_location_async(id, location, segment_id, telemetry_state)
             .map_err(map_ride_database_error)
     }
 
@@ -6036,19 +5978,6 @@ impl From<MobileRideLifecycleStateDto> for ride_maps::RideLifecycleState {
     }
 }
 
-impl From<MobileRideMapCoreTelemetryStateDto> for ride_maps::RouteTelemetryState {
-    fn from(state: MobileRideMapCoreTelemetryStateDto) -> Self {
-        match state {
-            MobileRideMapCoreTelemetryStateDto::GpsOnly => Self::GpsOnly,
-            MobileRideMapCoreTelemetryStateDto::AssociatedNoTelemetry => {
-                Self::AssociatedNoTelemetry
-            }
-            MobileRideMapCoreTelemetryStateDto::AssociatedFresh => Self::AssociatedFresh,
-            MobileRideMapCoreTelemetryStateDto::AssociatedStale => Self::AssociatedStale,
-        }
-    }
-}
-
 fn location_admission_decision(
     admission: ride_maps::LocationAdmission,
 ) -> MobileRideMapCoreDecisionDto {
@@ -6434,7 +6363,7 @@ impl MobileRideMapCore {
                 id.clone(),
                 location,
                 segment_id.value(),
-                telemetry_state.into(),
+                telemetry_state,
             );
             let write = match write {
                 Ok(write) => write,
@@ -6558,16 +6487,16 @@ impl MobileRideMapCore {
             let points = page
                 .points
                 .into_iter()
-                .map(|point| {
-                    MobileRideMapCoreInner::point_from_location(
+                .map(|point| -> Result<_, MobileRideMapCoreErrorDto> {
+                    Ok(MobileRideMapCoreInner::point_from_location(
                         point.location,
                         point.sequence,
                         ride_maps::RideMapSegmentId::new(point.segment_id),
                         point.start_reason.into(),
-                        point.telemetry_state.into(),
-                    )
+                        point.telemetry_state.try_into()?,
+                    ))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             return Ok(MobileRideMapCorePointBatchDto {
                 points,
                 next_cursor: page.next_cursor.map(|cursor| cursor.sequence),
@@ -14950,6 +14879,17 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_mobile_telemetry_state_is_rejected_at_the_boundary() {
+        assert!(matches!(
+            ride_maps::RouteTelemetryState::try_from(
+                MobileRideMapCoreTelemetryStateDto::Unsupported
+            ),
+            Err(MobileRideMapCoreErrorDto::Storage(message))
+                if message == "unsupported telemetry state"
+        ));
+    }
+
+    #[test]
     fn mobile_ride_map_core_owns_lifecycle_and_vehicle_association() {
         let state = MobileRideMapCore::new_for_testing();
         assert_eq!(
@@ -16029,7 +15969,7 @@ mod tests {
                     segment_id,
                 )
                 .expect("location appends");
-            assert_eq!(admission, MobileRideLocationAdmissionDto::Accepted);
+            assert_eq!(admission, ride_maps::LocationAdmission::Accepted);
         }
 
         let projection = database
@@ -16449,7 +16389,7 @@ mod tests {
                     location,
                 )
                 .expect("external durable append succeeds"),
-            MobileRideLocationAdmissionDto::Accepted
+            ride_maps::LocationAdmission::Accepted
         );
         assert_eq!(
             await_location_decision(
