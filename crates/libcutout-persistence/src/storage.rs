@@ -971,6 +971,39 @@ pub struct RideDatabase {
     path: Arc<PathBuf>,
 }
 
+/// A location write accepted by the bounded database queue but not necessarily committed yet.
+///
+/// The ticket is deliberately polled rather than awaited so a platform location callback never
+/// has to wait for `SQLite` while holding its recording-state lock.
+#[derive(Debug)]
+pub struct PendingLocationWrite {
+    response: Receiver<Result<LocationAdmission, StorageError>>,
+    consumed: bool,
+}
+
+impl PendingLocationWrite {
+    /// Returns the durable result when the worker has completed the write.
+    ///
+    /// `None` means that the worker is still processing the command. A terminal result is
+    /// returned at most once.
+    pub fn try_result(&mut self) -> Option<Result<LocationAdmission, StorageError>> {
+        if self.consumed {
+            return None;
+        }
+        match self.response.try_recv() {
+            Ok(result) => {
+                self.consumed = true;
+                Some(result)
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.consumed = true;
+                Some(Err(StorageError::ResponseDropped))
+            }
+        }
+    }
+}
+
 impl RideDatabase {
     /// Opens or reuses the one canonical database service for this process.
     ///
@@ -1642,6 +1675,36 @@ impl RideDatabase {
             segment_id,
             telemetry_state,
             reply,
+        })
+    }
+
+    /// Queues one location write without waiting for the `SQLite` worker.
+    ///
+    /// The bounded queue applies backpressure at submission time. Once accepted, callers can
+    /// poll the returned ticket for the durable admission result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError::QueueFull`] when the bounded queue is saturated, or
+    /// [`StorageError::WorkerStopped`] when the worker is unavailable.
+    pub fn enqueue_location_async(
+        &self,
+        ride_id: RideId,
+        sample: LocationSample,
+        segment_id: u64,
+        telemetry_state: RouteTelemetryState,
+    ) -> Result<PendingLocationWrite, StorageError> {
+        let (reply, response) = response_channel();
+        self.enqueue(Command::AppendLocation {
+            ride_id,
+            sample,
+            segment_id,
+            telemetry_state,
+            reply,
+        })?;
+        Ok(PendingLocationWrite {
+            response,
+            consumed: false,
         })
     }
 

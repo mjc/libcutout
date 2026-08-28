@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use cutout_core::{
     MonotonicTimestamp, PevcapCapture, PevcapEncoding, PevcapHeader, PevcapPhoneLocation,
@@ -255,6 +256,44 @@ fn queued_location_returns_durable_admission() {
             .unwrap(),
         LocationAdmission::Duplicate
     );
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn async_location_write_returns_before_worker_completion_and_can_be_polled() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-async-location-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride(RideSource::Live, 1_700_000_000_000)
+        .unwrap();
+    database.transition(ride, RideEvent::Start).unwrap();
+    let sample = LocationSample::new(
+        Coordinate::from_degrees(40.0, -105.0).unwrap(),
+        1_001,
+        1_700_000_000_001,
+        None,
+        LocationSource::Live,
+    );
+
+    let started = Instant::now();
+    let mut pending = database
+        .enqueue_location_async(ride, sample, 0, RouteTelemetryState::GpsOnly)
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_millis(100));
+    let result = loop {
+        if let Some(result) = pending.try_result() {
+            break result;
+        }
+        std::thread::yield_now();
+    };
+    assert_eq!(result.unwrap(), LocationAdmission::Accepted);
+    assert!(pending.try_result().is_none());
 
     database.shutdown().unwrap();
     let _ = std::fs::remove_file(path);
