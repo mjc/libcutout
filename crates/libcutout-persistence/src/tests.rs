@@ -237,7 +237,7 @@ fn queued_location_reports_worker_rejection() {
     );
 
     assert!(matches!(
-        database.enqueue_location_with_segment_and_telemetry(
+        database.append_location_with_segment_and_telemetry(
             ride,
             sample,
             0,
@@ -272,7 +272,7 @@ fn queued_location_returns_durable_admission() {
 
     assert_eq!(
         database
-            .enqueue_location_with_segment_and_telemetry(
+            .append_location_with_segment_and_telemetry(
                 ride,
                 sample,
                 0,
@@ -283,7 +283,7 @@ fn queued_location_returns_durable_admission() {
     );
     assert_eq!(
         database
-            .enqueue_location_with_segment_and_telemetry(
+            .append_location_with_segment_and_telemetry(
                 ride,
                 sample,
                 0,
@@ -507,7 +507,7 @@ fn queued_location_preserves_the_durable_admission_outcome() {
     );
     assert_eq!(
         database
-            .enqueue_location_with_segment_and_telemetry(
+            .append_location_with_segment_and_telemetry(
                 ride,
                 sample,
                 0,
@@ -518,7 +518,7 @@ fn queued_location_preserves_the_durable_admission_outcome() {
     );
     assert_eq!(
         database
-            .enqueue_location_with_segment_and_telemetry(
+            .append_location_with_segment_and_telemetry(
                 ride,
                 sample,
                 0,

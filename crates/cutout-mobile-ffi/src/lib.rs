@@ -4616,7 +4616,7 @@ impl RideDatabaseHandle {
         let id = parse_mobile_ride_id(&id)?;
         let location = mobile_ride_location(location)?;
         self.inner
-            .enqueue_location_with_segment_and_telemetry(
+            .append_location_with_segment_and_telemetry(
                 id,
                 location,
                 segment_id,

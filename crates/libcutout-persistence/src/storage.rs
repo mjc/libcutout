@@ -1691,33 +1691,6 @@ impl RideDatabase {
         })
     }
 
-    /// Persists one location in order with lifecycle transitions on the database worker.
-    ///
-    /// The bounded command queue rejects submissions with [`StorageError::QueueFull`] while it is
-    /// saturated. This method waits for the durable write result and returns the admission so
-    /// callers can distinguish accepted, duplicate, and out-of-order samples. Callers must
-    /// perform admission against their Rust-owned recording projection before submitting the
-    /// sample.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StorageError::QueueFull`] when the bounded command queue is saturated, or
-    /// [`StorageError::WorkerStopped`] when the worker is no longer available.
-    pub fn enqueue_location_with_segment_and_telemetry(
-        &self,
-        ride_id: RideId,
-        sample: LocationSample,
-        segment_id: u64,
-        telemetry_state: RouteTelemetryState,
-    ) -> Result<LocationAdmission, StorageError> {
-        self.append_location_with_segment_and_telemetry(
-            ride_id,
-            sample,
-            segment_id,
-            telemetry_state,
-        )
-    }
-
     /// Queues one location write without waiting for the `SQLite` worker.
     ///
     /// The bounded queue applies backpressure at submission time. Once accepted, callers can
