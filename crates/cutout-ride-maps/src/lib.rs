@@ -25,9 +25,9 @@ pub use summary::{
 mod recording;
 pub use recording::{
     MAX_LIVE_ROUTE_POINTS, RideDurationMilliseconds, RideMapMetadata, RideMapPoint,
-    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideSegmentCount, RouteTelemetryState,
-    TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation, VehicleAssociation, VehicleIdentity,
-    VehicleIdentityError,
+    RideMapRecorder, RideMapSegmentId, RidePointSequence, RideRecordingTiming, RideSegmentCount,
+    RouteTelemetryState, TELEMETRY_FRESHNESS_MILLISECONDS, TelemetryObservation,
+    VehicleAssociation, VehicleIdentity, VehicleIdentityError,
 };
 
 #[cfg(test)]

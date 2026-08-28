@@ -341,6 +341,43 @@ fn monotonic_ride_start_is_persisted_separately_from_wall_clock_ordering() {
 }
 
 #[test]
+fn lifecycle_timing_is_persisted_across_pause_and_reopen() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-lifecycle-timing-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Pause, 3_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Resume, 5_000)
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Stop, 7_000)
+        .unwrap();
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(record.paused_duration_milliseconds(), 2_000);
+    assert_eq!(record.completed_duration_milliseconds(), 4_000);
+    database.shutdown().unwrap();
+
+    let database = RideDatabase::open(&path).unwrap();
+    let restored = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(restored.paused_duration_milliseconds(), 2_000);
+    assert_eq!(restored.completed_duration_milliseconds(), 4_000);
+    assert_eq!(restored.duration_milliseconds(), 4_000);
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
 fn database_persists_migrated_mobile_state() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(

@@ -280,6 +280,57 @@ pub struct RideMapMetadata {
     pub last_telemetry_at_milliseconds: Option<MonotonicMilliseconds>,
 }
 
+/// Monotonic lifecycle timing required to restore a recording independently of its route tail.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RideRecordingTiming {
+    last_event: MonotonicMilliseconds,
+    paused_at: Option<MonotonicMilliseconds>,
+    paused_duration: RideDurationMilliseconds,
+    completed_duration: RideDurationMilliseconds,
+}
+
+impl RideRecordingTiming {
+    /// Creates persisted lifecycle timing.
+    #[must_use]
+    pub const fn new(
+        last_monotonic_milliseconds: MonotonicMilliseconds,
+        paused_at_milliseconds: Option<MonotonicMilliseconds>,
+        paused_duration_milliseconds: RideDurationMilliseconds,
+        completed_duration_milliseconds: RideDurationMilliseconds,
+    ) -> Self {
+        Self {
+            last_event: last_monotonic_milliseconds,
+            paused_at: paused_at_milliseconds,
+            paused_duration: paused_duration_milliseconds,
+            completed_duration: completed_duration_milliseconds,
+        }
+    }
+
+    /// Returns the lifecycle watermark.
+    #[must_use]
+    pub const fn last_monotonic_milliseconds(self) -> MonotonicMilliseconds {
+        self.last_event
+    }
+
+    /// Returns the current pause start, if paused.
+    #[must_use]
+    pub const fn paused_at_milliseconds(self) -> Option<MonotonicMilliseconds> {
+        self.paused_at
+    }
+
+    /// Returns accumulated completed pause duration.
+    #[must_use]
+    pub const fn paused_duration_milliseconds(self) -> RideDurationMilliseconds {
+        self.paused_duration
+    }
+
+    /// Returns terminal active duration.
+    #[must_use]
+    pub const fn completed_duration_milliseconds(self) -> RideDurationMilliseconds {
+        self.completed_duration
+    }
+}
+
 /// Rust-owned live recording projection independent of storage or FFI DTOs.
 #[derive(Clone, Debug)]
 pub struct RideMapRecorder {
@@ -393,6 +444,26 @@ impl RideMapRecorder {
         Self::restored_with_summary(state, created_at_milliseconds, metadata, points, summary)
     }
 
+    /// Restores a bounded projection with persisted lifecycle timing.
+    #[must_use]
+    pub fn restored_with_metadata_and_summary_and_timing(
+        state: RideLifecycleState,
+        created_at_milliseconds: MonotonicMilliseconds,
+        metadata: RideMapMetadata,
+        points: Vec<RideMapPoint>,
+        summary: RideSummary,
+        timing: RideRecordingTiming,
+    ) -> Self {
+        Self::restored_with_summary_and_timing(
+            state,
+            created_at_milliseconds,
+            metadata,
+            points,
+            summary,
+            timing,
+        )
+    }
+
     fn restored_with_summary(
         state: RideLifecycleState,
         created_at_milliseconds: MonotonicMilliseconds,
@@ -435,6 +506,56 @@ impl RideMapRecorder {
                 .then_some(last_monotonic_milliseconds),
             paused_duration_milliseconds: RideDurationMilliseconds::new(0),
             completed_duration_milliseconds,
+            segment_id: points
+                .last()
+                .map_or(RideMapSegmentId::new(0), |point| point.segment_id()),
+            segment_started: false,
+            first_point_sequence,
+            summary,
+            points,
+        }
+    }
+
+    fn restored_with_summary_and_timing(
+        state: RideLifecycleState,
+        created_at_milliseconds: MonotonicMilliseconds,
+        metadata: RideMapMetadata,
+        mut points: Vec<RideMapPoint>,
+        summary: RideSummary,
+        timing: RideRecordingTiming,
+    ) -> Self {
+        if points.len() > MAX_LIVE_ROUTE_POINTS {
+            let excess = points.len() - MAX_LIVE_ROUTE_POINTS;
+            points.drain(..excess);
+        }
+        let first_point_sequence = RidePointSequence::new(
+            summary
+                .point_count()
+                .saturating_sub(RidePointCount::from_usize(points.len()))
+                .as_u64(),
+        );
+        let route_last = points.last().map_or(created_at_milliseconds, |point| {
+            point.sample().monotonic_milliseconds()
+        });
+        let last = timing
+            .last_monotonic_milliseconds()
+            .max(route_last)
+            .max(created_at_milliseconds);
+        let paused_at = timing
+            .paused_at_milliseconds()
+            .map(|at| at.max(created_at_milliseconds).min(last));
+        Self {
+            state: Some(state),
+            created_at_milliseconds,
+            candidate_vehicle: metadata.candidate_vehicle,
+            associated_vehicle: metadata.associated_vehicle,
+            associated_at_milliseconds: metadata.associated_at_milliseconds,
+            last_telemetry_at_milliseconds: metadata.last_telemetry_at_milliseconds,
+            last_monotonic_milliseconds: last,
+            paused_at_milliseconds: (state == RideLifecycleState::Paused)
+                .then_some(paused_at.unwrap_or(last)),
+            paused_duration_milliseconds: timing.paused_duration_milliseconds(),
+            completed_duration_milliseconds: timing.completed_duration_milliseconds(),
             segment_id: points
                 .last()
                 .map_or(RideMapSegmentId::new(0), |point| point.segment_id()),
@@ -531,6 +652,17 @@ impl RideMapRecorder {
     #[must_use]
     pub fn summary(&self) -> RideSummary {
         self.summary
+    }
+
+    /// Returns lifecycle timing required for durable restoration.
+    #[must_use]
+    pub const fn recording_timing(&self) -> RideRecordingTiming {
+        RideRecordingTiming::new(
+            self.last_monotonic_milliseconds,
+            self.paused_at_milliseconds,
+            self.paused_duration_milliseconds,
+            self.completed_duration_milliseconds,
+        )
     }
 
     /// Returns elapsed recording time using the latest accepted monotonic sample.
