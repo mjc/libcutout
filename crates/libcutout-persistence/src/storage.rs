@@ -1060,6 +1060,28 @@ impl RideDatabase {
         })
     }
 
+    /// Creates an active live ride with its candidate vehicle in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StorageError`] when the candidate is invalid or the worker cannot commit the
+    /// ride.
+    pub fn create_started_live_ride(
+        &self,
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<&str>,
+    ) -> Result<RideId, StorageError> {
+        let candidate_vehicle =
+            normalize_optional_stored_text(candidate_vehicle, "candidate vehicle")?;
+        self.request(move |reply| Command::CreateStartedLiveRide {
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+            reply,
+        })
+    }
+
     /// Replaces the Rust-owned candidate, association, and telemetry metadata for one ride.
     ///
     /// Every argument is written as given. A `None` argument clears that stored column, so
@@ -1729,6 +1751,12 @@ enum Command {
         monotonic_created_at_ms: Option<u64>,
         reply: Reply<RideId>,
     },
+    CreateStartedLiveRide {
+        created_at_ms: u64,
+        monotonic_created_at_ms: u64,
+        candidate_vehicle: Option<String>,
+        reply: Reply<RideId>,
+    },
     UpdateRideMapMetadata {
         ride_id: RideId,
         candidate_vehicle: Option<String>,
@@ -1910,6 +1938,19 @@ fn worker_loop(mut connection: Connection, receiver: &Receiver<Command>) {
                     source,
                     created_at_ms,
                     monotonic_created_at_ms,
+                ));
+            }
+            Command::CreateStartedLiveRide {
+                created_at_ms,
+                monotonic_created_at_ms,
+                candidate_vehicle,
+                reply,
+            } => {
+                let _ = reply.send(create_started_live_ride(
+                    &mut connection,
+                    created_at_ms,
+                    monotonic_created_at_ms,
+                    candidate_vehicle.as_deref(),
                 ));
             }
             Command::UpdateRideMapMetadata {
@@ -2848,6 +2889,30 @@ fn create_ride(
             monotonic_created_at_ms
         ],
     )?;
+    Ok(ride_id)
+}
+
+fn create_started_live_ride(
+    connection: &mut Connection,
+    created_at_ms: u64,
+    monotonic_created_at_ms: u64,
+    candidate_vehicle: Option<&str>,
+) -> Result<RideId, StorageError> {
+    let transaction = connection.transaction()?;
+    let ride_id = RideId::new();
+    transaction.execute(
+        "INSERT INTO rides
+            (id, source, state, created_at_ms, monotonic_created_at_ms, updated_at_ms,
+             point_count, distance_mm, candidate_vehicle)
+         VALUES (?1, 'live', 'active', ?2, ?3, ?2, 0, 0, ?4)",
+        params![
+            ride_id.uuid().to_string(),
+            created_at_ms,
+            monotonic_created_at_ms,
+            candidate_vehicle,
+        ],
+    )?;
+    transaction.commit()?;
     Ok(ride_id)
 }
 
