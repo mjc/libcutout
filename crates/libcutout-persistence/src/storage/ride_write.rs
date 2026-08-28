@@ -14,6 +14,19 @@ pub(super) enum LocationWriteMode {
 }
 
 #[derive(Clone, Copy)]
+pub(super) struct RideWriteStateParts {
+    pub(super) source: RideSource,
+    pub(super) lifecycle: RideLifecycleState,
+    pub(super) monotonic_created_at_ms: Option<u64>,
+    pub(super) monotonic_last_event_ms: Option<u64>,
+    pub(super) latest_observed_monotonic_ms: Option<u64>,
+    pub(super) paused_at_ms: Option<u64>,
+    pub(super) paused_duration_ms: u64,
+    pub(super) completed_duration_ms: u64,
+    pub(super) updated_at_ms: u64,
+}
+
+#[derive(Clone, Copy)]
 pub(super) struct RideWriteState {
     source: RideSource,
     lifecycle: RideLifecycleState,
@@ -33,11 +46,11 @@ impl RideWriteState {
         lifecycle: RideLifecycleState,
         updated_at_ms: u64,
         monotonic_created_at_ms: Option<u64>,
-        duration_ms: u64,
+        completed_duration_ms: u64,
         paused_at_ms: Option<u64>,
         paused_duration_ms: u64,
     ) -> Self {
-        Self {
+        Self::from_parts(&RideWriteStateParts {
             source,
             lifecycle,
             monotonic_created_at_ms,
@@ -45,9 +58,9 @@ impl RideWriteState {
             latest_observed_monotonic_ms: None,
             paused_at_ms,
             paused_duration_ms,
-            completed_duration_ms: duration_ms,
+            completed_duration_ms,
             updated_at_ms,
-        }
+        })
     }
 
     #[cfg(test)]
@@ -56,44 +69,30 @@ impl RideWriteState {
         lifecycle: RideLifecycleState,
         updated_at_ms: u64,
     ) -> Self {
-        Self::new_with_timing(
+        Self::from_parts(&RideWriteStateParts {
             source,
             lifecycle,
-            None,
-            None,
-            None,
-            None,
-            0,
-            0,
+            monotonic_created_at_ms: None,
+            monotonic_last_event_ms: None,
+            latest_observed_monotonic_ms: None,
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 0,
             updated_at_ms,
-        )
+        })
     }
 
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "fields mirror the persisted lifecycle timing columns"
-    )]
-    pub(super) const fn new_with_timing(
-        source: RideSource,
-        lifecycle: RideLifecycleState,
-        monotonic_created_at_ms: Option<u64>,
-        monotonic_last_event_ms: Option<u64>,
-        latest_observed_monotonic_ms: Option<u64>,
-        paused_at_ms: Option<u64>,
-        paused_duration_ms: u64,
-        completed_duration_ms: u64,
-        updated_at_ms: u64,
-    ) -> Self {
+    pub(super) const fn from_parts(parts: &RideWriteStateParts) -> Self {
         Self {
-            source,
-            lifecycle,
-            monotonic_created_at_ms,
-            monotonic_last_event_ms,
-            latest_observed_monotonic_ms,
-            paused_at_ms,
-            paused_duration_ms,
-            completed_duration_ms,
-            updated_at_ms,
+            source: parts.source,
+            lifecycle: parts.lifecycle,
+            monotonic_created_at_ms: parts.monotonic_created_at_ms,
+            monotonic_last_event_ms: parts.monotonic_last_event_ms,
+            latest_observed_monotonic_ms: parts.latest_observed_monotonic_ms,
+            paused_at_ms: parts.paused_at_ms,
+            paused_duration_ms: parts.paused_duration_ms,
+            completed_duration_ms: parts.completed_duration_ms,
+            updated_at_ms: parts.updated_at_ms,
         }
     }
 
@@ -405,23 +404,23 @@ mod tests {
 
     #[test]
     fn transition_time_is_clamped_to_the_latest_durable_sample() {
-        let state = RideWriteState::new_with_timing(
-            RideSource::Live,
-            RideLifecycleState::Active,
-            Some(1_000),
-            None,
-            Some(5_000),
-            None,
-            0,
-            0,
-            20,
-        );
+        let state = RideWriteState::from_parts(&RideWriteStateParts {
+            source: RideSource::Live,
+            lifecycle: RideLifecycleState::Active,
+            monotonic_created_at_ms: Some(1_000),
+            monotonic_last_event_ms: None,
+            latest_observed_monotonic_ms: Some(5_000),
+            paused_at_ms: None,
+            paused_duration_ms: 0,
+            completed_duration_ms: 0,
+            updated_at_ms: 20,
+        });
 
         let transition = state
             .transition_at(RideEvent::Pause, 30, Some(3_000))
             .unwrap();
 
         assert_eq!(transition.paused_at_milliseconds(), Some(5_000));
-        assert_eq!(transition.duration_milliseconds(), 4_000);
+        assert_eq!(transition.monotonic_last_event_milliseconds(), Some(5_000));
     }
 }

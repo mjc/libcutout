@@ -408,9 +408,13 @@ pub const fn clamped_transition_timestamp(
     latest_observed_milliseconds: Option<MonotonicMilliseconds>,
     requested_at_milliseconds: MonotonicMilliseconds,
 ) -> MonotonicMilliseconds {
+    let latest_observed_milliseconds = match latest_observed_milliseconds {
+        Some(value) => value,
+        None => MonotonicMilliseconds::new(0),
+    };
     requested_at_milliseconds
         .max(created_at_milliseconds)
-        .max(latest_observed_milliseconds.unwrap_or_default())
+        .max(latest_observed_milliseconds)
 }
 
 /// Rust-owned live recording projection independent of storage or FFI DTOs.

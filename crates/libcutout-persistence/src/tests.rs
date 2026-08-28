@@ -693,6 +693,43 @@ fn monotonic_ride_start_is_persisted_separately_from_wall_clock_ordering() {
 }
 
 #[test]
+fn lifecycle_transition_uses_latest_durable_location_timestamp() {
+    let _guard = test_guard();
+    let path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-lifecycle-watermark-{}.sqlite",
+        uuid::Uuid::new_v4()
+    ));
+    let database = RideDatabase::open(&path).unwrap();
+    let ride = database
+        .create_ride_with_monotonic_start(RideSource::Live, 1_700_000_000_000, Some(1_000))
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Start, 1_000)
+        .unwrap();
+    database
+        .append_location(
+            ride,
+            LocationSample::new(
+                Coordinate::from_degrees(40.0, -105.0).unwrap(),
+                5_000,
+                1_700_000_004_000,
+                None,
+                LocationSource::Live,
+            ),
+        )
+        .unwrap();
+    database
+        .transition_at(ride, RideEvent::Pause, 3_000)
+        .unwrap();
+
+    let record = database.find_ride(ride).unwrap().unwrap();
+    assert_eq!(record.paused_at_milliseconds(), Some(5_000));
+    assert_eq!(record.duration_milliseconds(), 4_000);
+
+    database.shutdown().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+#[test]
 fn lifecycle_timing_is_persisted_across_pause_and_reopen() {
     let _guard = test_guard();
     let path = std::env::temp_dir().join(format!(
@@ -1621,11 +1658,23 @@ fn reopen_removes_abandoned_pevcap_work_and_draft_ride() {
         "libcutout-persistence-abandoned-pevcap-db-{}.sqlite",
         uuid::Uuid::new_v4()
     ));
-    let managed_path = std::env::temp_dir().join(format!(
-        "libcutout-persistence-abandoned-pevcap-{}.jsonl",
+    let canonical_database_path = database_path
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(database_path.file_name().unwrap());
+    let mut managed_directory = canonical_database_path.as_os_str().to_owned();
+    managed_directory.push(".pevcap-imports");
+    let managed_directory = std::path::PathBuf::from(managed_directory);
+    std::fs::create_dir_all(&managed_directory).unwrap();
+    let managed_path = managed_directory.join("abandoned.jsonl");
+    let external_path = std::env::temp_dir().join(format!(
+        "libcutout-persistence-unmanaged-pevcap-{}.jsonl",
         uuid::Uuid::new_v4()
     ));
     std::fs::write(&managed_path, b"abandoned").unwrap();
+    std::fs::write(&external_path, b"outside managed storage").unwrap();
     let database = RideDatabase::open(&database_path).unwrap();
     database.shutdown().unwrap();
     let ride_id = uuid::Uuid::new_v4().to_string();
@@ -1645,10 +1694,18 @@ fn reopen_removes_abandoned_pevcap_work_and_draft_ride() {
             rusqlite::params!["0".repeat(64), managed_path.to_string_lossy(), ride_id],
         )
         .unwrap();
+    connection
+        .execute(
+            "INSERT INTO pevcap_import_work (artifact_digest, artifact_path, ride_id)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params!["1".repeat(64), external_path.to_string_lossy(), ride_id],
+        )
+        .unwrap();
     drop(connection);
 
     let reopened = RideDatabase::open(&database_path).unwrap();
     assert!(!managed_path.exists());
+    assert!(external_path.exists());
     assert!(
         reopened
             .list_rides(None, QueryLimit::new(10).unwrap())
@@ -1666,6 +1723,8 @@ fn reopen_removes_abandoned_pevcap_work_and_draft_ride() {
     assert_eq!(work_count, 0);
     drop(connection);
     let _ = std::fs::remove_file(database_path);
+    let _ = std::fs::remove_file(external_path);
+    let _ = std::fs::remove_dir(managed_directory);
 }
 
 #[test]

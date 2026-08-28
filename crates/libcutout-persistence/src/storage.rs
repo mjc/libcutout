@@ -32,7 +32,8 @@ mod worker;
 pub(crate) use migrations::create_current_schema;
 use migrations::{migrate, table_exists, verify_current_schema};
 use ride_write::{
-    LocationWriteDecision, LocationWriteMode, RideWriteState, wall_clock_now_milliseconds,
+    LocationWriteDecision, LocationWriteMode, RideWriteState, RideWriteStateParts,
+    wall_clock_now_milliseconds,
 };
 
 const COMMAND_QUEUE_CAPACITY: usize = 64;
@@ -4798,35 +4799,23 @@ fn segment_start_reason(
     }
 }
 
-#[allow(
-    clippy::type_complexity,
-    reason = "tuple mirrors the fixed-width lifecycle row"
-)]
+struct StoredRideWriteState {
+    source: String,
+    lifecycle: String,
+    monotonic_created_at_ms: Option<u64>,
+    monotonic_last_event_ms: Option<u64>,
+    latest_observed_monotonic_ms: Option<u64>,
+    paused_at_ms: Option<u64>,
+    paused_duration_ms: u64,
+    completed_duration_ms: u64,
+    updated_at_ms: u64,
+}
+
 fn load_ride_write_state(
     connection: &Connection,
     ride_id: RideId,
 ) -> Result<RideWriteState, StorageError> {
-    let (
-        source,
-        lifecycle,
-        monotonic_created_at_ms,
-        monotonic_last_event_ms,
-        latest_observed_monotonic_ms,
-        paused_at_ms,
-        paused_duration_ms,
-        completed_duration_ms,
-        updated_at_ms,
-    ): (
-        String,
-        String,
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-        Option<u64>,
-        u64,
-        u64,
-        u64,
-    ) = connection
+    let stored = connection
         .query_row(
             "SELECT source, state, monotonic_created_at_ms, monotonic_last_event_ms,
                     (SELECT MAX(monotonic_ms) FROM ride_points WHERE ride_id = rides.id),
@@ -4834,32 +4823,32 @@ fn load_ride_write_state(
              FROM rides WHERE id = ?1",
             params![ride_id.uuid().to_string()],
             |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                    row.get(8)?,
-                ))
+                Ok(StoredRideWriteState {
+                    source: row.get(0)?,
+                    lifecycle: row.get(1)?,
+                    monotonic_created_at_ms: row.get(2)?,
+                    monotonic_last_event_ms: row.get(3)?,
+                    latest_observed_monotonic_ms: row.get(4)?,
+                    paused_at_ms: row.get(5)?,
+                    paused_duration_ms: row.get(6)?,
+                    completed_duration_ms: row.get(7)?,
+                    updated_at_ms: row.get(8)?,
+                })
             },
         )
         .optional()?
         .ok_or(StorageError::NotFound)?;
-    Ok(RideWriteState::new_with_timing(
-        ride_source_from_db(&source)?,
-        state_from_db(&lifecycle)?,
-        monotonic_created_at_ms,
-        monotonic_last_event_ms,
-        latest_observed_monotonic_ms,
-        paused_at_ms,
-        paused_duration_ms,
-        completed_duration_ms,
-        updated_at_ms,
-    ))
+    Ok(RideWriteState::from_parts(&RideWriteStateParts {
+        source: ride_source_from_db(&stored.source)?,
+        lifecycle: state_from_db(&stored.lifecycle)?,
+        monotonic_created_at_ms: stored.monotonic_created_at_ms,
+        monotonic_last_event_ms: stored.monotonic_last_event_ms,
+        latest_observed_monotonic_ms: stored.latest_observed_monotonic_ms,
+        paused_at_ms: stored.paused_at_ms,
+        paused_duration_ms: stored.paused_duration_ms,
+        completed_duration_ms: stored.completed_duration_ms,
+        updated_at_ms: stored.updated_at_ms,
+    }))
 }
 
 #[derive(Clone, Copy)]
